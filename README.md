@@ -60,6 +60,39 @@ python -m jdm_agent.apps.qa_cli -q "synonymes de voiture"
 python -m jdm_agent.apps.qa_eval --provider ollama --model llama3.2:3b --show-tools
 ```
 
+### Serveur MCP (Claude Desktop / Claude Code / Cursor)
+
+Expose les 21 outils JDM à n'importe quel client MCP. Lancement standalone :
+
+```bash
+python -m jdm_agent.mcp.server      # ou: jdm-mcp
+```
+
+**Configuration côté Claude Desktop** (`%APPDATA%\Claude\claude_desktop_config.json`) :
+
+```json
+{
+  "mcpServers": {
+    "jdm": {
+      "command": "python",
+      "args": ["-m", "jdm_agent.mcp.server"]
+    }
+  }
+}
+```
+
+**Configuration côté Claude Code** (`~/.claude.json`, dans `mcpServers`) :
+
+```json
+"jdm": {
+  "command": "python",
+  "args": ["-m", "jdm_agent.mcp.server"]
+}
+```
+
+Une fois branché, demande au LLM des requêtes du type *« utilise JDM pour me dire
+les synonymes de voiture »* ou *« avec JDM, quels sont les sens du mot avocat ? »*.
+
 ## Tests
 
 ```bash
@@ -71,8 +104,8 @@ pytest
 - [x] Phase 0 — Bootstrap
 - [x] Phase 1 — Client JDM typé + cache disque
 - [x] Phase 2 — Couche LangChain (tools + agent)
-- [x] Phase 3 — App Q&A NL → JDM
-- [ ] Phase 4 — Serveur MCP
+- [x] Phase 3 — App Q&A NL → JDM (+ raffinements décodés, outils prédicatifs)
+- [x] Phase 4 — Serveur MCP
 - [ ] Phase 5 — Fact-checker
 - [ ] Phase 6 — Enrichissement actif
 - [ ] Phase 7 — Spike graphe local (DuckDB/NetworkX)
