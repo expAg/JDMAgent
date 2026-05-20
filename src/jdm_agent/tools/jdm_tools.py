@@ -352,6 +352,9 @@ def get_agents(verb: str, min_weight: Optional[float] = None, limit: Optional[in
 
     Agent (`r_agent`) — entité qui effectue l'action (sujet du verbe).
     Le terme source DOIT être un verbe à l'infinitif.
+    Pour un PRÉDICAT NOMINAL DE PROCESSUS (lecture, nettoyage, enseignement,
+    chasse, ...), utilise plutôt get_process_agents (qui interroge
+    r_processus>agent au lieu de r_agent).
     (ex.: manger | r_agent | chat ; voler | r_agent | oiseau ; courir | r_agent | sportif).
     """
     return _predicative_lookup(verb, "r_agent", "from", min_weight, limit)
@@ -363,6 +366,8 @@ def get_patients(verb: str, min_weight: Optional[float] = None, limit: Optional[
 
     Patient (`r_patient`) — entité qui subit l'action (COD du verbe).
     Le terme source DOIT être un verbe à l'infinitif.
+    Pour un PRÉDICAT NOMINAL DE PROCESSUS (découpe, soin, récolte, ...),
+    utilise plutôt get_process_patients (qui interroge r_processus>patient).
     (ex.: manger | r_patient | viande ; lire | r_patient | livre ; réparer | r_patient | voiture).
     """
     return _predicative_lookup(verb, "r_patient", "from", min_weight, limit)
@@ -374,6 +379,9 @@ def get_instruments(verb: str, min_weight: Optional[float] = None, limit: Option
 
     Instrument (`r_instr`) — objet utilisé pour réaliser l'action.
     Le terme source DOIT être un verbe à l'infinitif.
+    Pour un PRÉDICAT NOMINAL DE PROCESSUS (découpe, transport,
+    communication, ...), utilise plutôt get_process_instruments
+    (qui interroge r_processus>instr).
     (ex.: couper | r_instr | couteau ; écrire | r_instr | stylo ; peindre | r_instr | pinceau).
     """
     return _predicative_lookup(verb, "r_instr", "from", min_weight, limit)
@@ -435,10 +443,14 @@ def get_manner(verb: str, min_weight: Optional[float] = None, limit: Optional[in
     """Renvoie les MANIÈRES typiques dont une action s'effectue (`r_manner`).
 
     Manner (`r_manner`) — adverbe ou locution adverbiale décrivant comment.
-    Le terme source DOIT être un verbe à l'infinitif (action). Pour décrire
-    un nom commun, utilise plutôt get_characteristics.
+    Le terme source DOIT être un PRÉDICAT (une action). Deux formes valides :
+      - verbe à l'infinitif : manger, courir, parler
+      - prédicat nominal de processus (nom déverbal) : lecture, marche,
+        nettoyage, enseignement
+    Pour décrire un nom non-prédicatif (objet ou entité statique :
+    chat, voiture, ...), utilise plutôt get_characteristics.
     (ex.: manger | r_manner | goulûment ; courir | r_manner | rapidement ;
-     parler | r_manner | doucement).
+     lecture | r_manner | attentivement).
     """
     return _predicative_lookup(verb, "r_manner", "from", min_weight, limit)
 
@@ -467,6 +479,49 @@ def get_agentive_role(noun: str, min_weight: Optional[float] = None, limit: Opti
      tableau | r_agentif_role | peindre).
     """
     return _predicative_lookup(noun, "r_agentif_role", "from", min_weight, limit)
+
+
+# ---------- Variantes "processus" pour les prédicats nominaux ----------
+
+@tool
+def get_process_agents(process_noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les AGENTS typiques d'un PROCESSUS exprimé par un nom (`r_processus>agent`).
+
+    Équivalent nominal de get_agents : pour les verbes à l'infinitif, utilise
+    plutôt get_agents (qui interroge r_agent).
+    Le terme source DOIT être un nom déverbal de processus / d'événement
+    (lecture, nettoyage, enseignement, chasse, opération, ...).
+    (ex.: nettoyage | r_processus>agent | technicien de surface ;
+     enseignement | r_processus>agent | professeur ;
+     chirurgie | r_processus>agent | chirurgien).
+    """
+    return _predicative_lookup(process_noun, "r_processus>agent", "from", min_weight, limit)
+
+
+@tool
+def get_process_patients(process_noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les PATIENTS typiques d'un PROCESSUS exprimé par un nom (`r_processus>patient`).
+
+    Équivalent nominal de get_patients. Le terme source DOIT être un nom
+    déverbal de processus.
+    (ex.: découpe | r_processus>patient | viande ;
+     soin | r_processus>patient | malade ;
+     récolte | r_processus>patient | blé).
+    """
+    return _predicative_lookup(process_noun, "r_processus>patient", "from", min_weight, limit)
+
+
+@tool
+def get_process_instruments(process_noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les INSTRUMENTS typiques d'un PROCESSUS exprimé par un nom (`r_processus>instr`).
+
+    Équivalent nominal de get_instruments. Le terme source DOIT être un nom
+    déverbal de processus.
+    (ex.: découpe | r_processus>instr | couteau ;
+     transport | r_processus>instr | camion ;
+     communication | r_processus>instr | téléphone).
+    """
+    return _predicative_lookup(process_noun, "r_processus>instr", "from", min_weight, limit)
 
 
 # ---------- Enrichissement actif ----------
@@ -613,7 +668,7 @@ ALL_TOOLS: list[StructuredTool] = [
     get_hyponyms,
     get_parts,
     get_characteristics,
-    # Prédicatifs
+    # Prédicatifs verbaux
     get_agents,
     get_patients,
     get_instruments,
@@ -624,6 +679,10 @@ ALL_TOOLS: list[StructuredTool] = [
     get_manner,
     get_telic_role,
     get_agentive_role,
+    # Prédicatifs nominaux (processus)
+    get_process_agents,
+    get_process_patients,
+    get_process_instruments,
     # Génériques
     get_relations_of_type,
     get_relations_between,
@@ -667,6 +726,9 @@ def build_jdm_tools(
         "get_manner": "r_manner",
         "get_telic_role": "r_telic_role",
         "get_agentive_role": "r_agentif_role",
+        "get_process_agents": "r_processus>agent",
+        "get_process_patients": "r_processus>patient",
+        "get_process_instruments": "r_processus>instr",
     }
     for t in ALL_TOOLS:
         rel = suffix_map.get(t.name)
