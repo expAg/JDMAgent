@@ -449,6 +449,47 @@ def get_agentive_role(noun: str, min_weight: Optional[float] = None, limit: Opti
     return _predicative_lookup(noun, "r_agentif_role", "from", min_weight, limit)
 
 
+# ---------- Vérification de claims (fact-checking) ----------
+
+@tool
+def verify_claim(subject: str, relation: str, object: str, polarity: bool = True) -> dict:
+    """Vérifie un triplet factuel contre le graphe JDM (fact-check déterministe).
+
+    Renvoie un verdict structuré avec statut, confiance, évidence et explication.
+    PAS d'appel LLM — la décision est entièrement basée sur les données JDM.
+
+    Args:
+        subject:  terme source (ex. "baleine", "chat", "sang", verbe à l'infinitif).
+        relation: relation JDM (ex. "r_isa", "r_carac", "r_has_color", "r_has_part").
+        object:   terme cible (ex. "poisson", "rouge", "roue").
+        polarity: True pour affirmation, False pour négation ("ne ... pas").
+
+    Statuts possibles :
+      - "supported"    : JDM contient le triplet (ou un proche via synonymie)
+      - "contradicted" : JDM contient une information incompatible
+                         (typiquement via r_isa-incompatible)
+      - "unknown"      : JDM ne dit rien → ne PAS interpréter comme faux
+
+    Renvoie {claim, status, confidence (0-1), explanation, evidence_for, evidence_against}.
+
+    Exemples :
+      verify_claim("baleine", "r_isa", "poisson")  → contradicted (mammifère incompatible)
+      verify_claim("sang", "r_has_color", "rouge") → supported (w=341)
+      verify_claim("xyzzy", "r_isa", "truc")       → unknown
+    """
+    # Import local pour éviter une dépendance circulaire au chargement du module.
+    from jdm_agent.factcheck import Claim
+    from jdm_agent.factcheck.verifier import verify_claim as _verify
+
+    c = _client()
+    claim = Claim(
+        text=f"{subject} | {relation} | {object}",
+        subject=subject, relation=relation, object=object, polarity=polarity,
+    )
+    verdict = _verify(c, claim)
+    return verdict.model_dump(mode="json")
+
+
 # ---------- Découverte ----------
 
 @tool
@@ -493,6 +534,8 @@ ALL_TOOLS: list[StructuredTool] = [
     get_relations_of_type,
     get_relations_between,
     disambiguate,
+    # Fact-checking
+    verify_claim,
     list_relation_types,
 ]
 
