@@ -324,4 +324,6 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch()
+    # HF Spaces : bind explicite sur 0.0.0.0 (sinon Gradio essaye localhost
+    # qui n'est pas joignable dans le conteneur) et port standard 7860.
+    demo.launch(server_name="0.0.0.0", server_port=7860)
