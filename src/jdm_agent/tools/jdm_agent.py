@@ -73,3 +73,43 @@ def ask(agent, question: str) -> dict:
         for tc in getattr(m, "tool_calls", []) or []:
             tool_calls.append({"name": tc.get("name"), "args": tc.get("args")})
     return {"answer": answer, "messages": msgs, "tool_calls": tool_calls}
+
+
+def stream(agent, question: str, on_event=None):
+    """Stream les étapes intermédiaires de l'agent (LangGraph events).
+
+    Émet un événement par message produit (AIMessage / ToolMessage).
+    Si `on_event` est fourni, il est appelé pour chaque message avec
+    un dict {kind, name, content, tool_calls}.
+
+    Renvoie le dict final {"answer", "messages", "tool_calls"}.
+    """
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    final_msgs = []
+    tool_calls_acc: list[dict] = []
+    for chunk in agent.stream({"messages": [HumanMessage(content=question)]},
+                              stream_mode="updates"):
+        # chunk = dict {node_name: {"messages": [msg, ...]}}
+        for node_name, payload in chunk.items():
+            msgs = (payload or {}).get("messages") or []
+            for m in msgs:
+                final_msgs.append(m)
+                ev = {
+                    "kind": type(m).__name__,
+                    "node": node_name,
+                    "name": getattr(m, "name", None),
+                    "content": getattr(m, "content", ""),
+                    "tool_calls": getattr(m, "tool_calls", None) or [],
+                }
+                for tc in ev["tool_calls"]:
+                    tool_calls_acc.append({"name": tc.get("name"), "args": tc.get("args")})
+                if on_event is not None:
+                    on_event(ev)
+
+    answer = ""
+    for m in reversed(final_msgs):
+        if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+            answer = m.content
+            break
+    return {"answer": answer, "messages": final_msgs, "tool_calls": tool_calls_acc}

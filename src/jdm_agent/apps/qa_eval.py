@@ -9,6 +9,8 @@ Usage :
 """
 from __future__ import annotations
 
+from jdm_agent.apps import _console  # noqa: F401 — force stdout UTF-8 (Windows)
+
 import argparse
 import time
 from typing import Optional

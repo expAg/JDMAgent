@@ -48,11 +48,26 @@ python -m jdm_agent.apps.qa_cli
 
 # Avec Ollama local (modèle compatible tool-calling)
 ollama pull llama3.2:3b
-python -m jdm_agent.apps.qa_cli --provider ollama --model llama3.2:3b
+python -m jdm_agent.apps.qa_cli --provider ollama --model llama3.2:3b --verbose
 
-# Question unique
-python -m jdm_agent.apps.qa_cli -q "synonymes de voiture"
+# Question unique avec streaming des étapes
+python -m jdm_agent.apps.qa_cli --provider ollama --model llama3.2:3b -q "synonymes de voiture" --verbose
 ```
+
+> ⏱️ Sur CPU sans GPU, llama3.2:3b prend **30–120 s par tour** (chargement modèle
+> au 1er appel + chaque round agent ≈ 60–90 s). Utilise `--verbose` pour voir l'agent
+> travailler en direct (chaque appel d'outil et chaque retour s'affiche au fur et à mesure).
+
+### Diagnostic en couches
+
+Si quelque chose semble figé, isole l'étape qui bloque :
+
+```bash
+python -m jdm_agent.apps.diagnose --provider ollama --model llama3.2:3b
+```
+
+Teste séquentiellement : client JDM → outils LangChain → serveur Ollama → inférence
+LLM nue → un round complet d'agent, avec timing à chaque étape.
 
 ### Banc d'évaluation
 
@@ -98,6 +113,17 @@ les synonymes de voiture »* ou *« avec JDM, quels sont les sens du mot avocat 
 ```bash
 pytest
 ```
+
+## Dépannage
+
+| Symptôme | Cause probable | Solution |
+|---|---|---|
+| Le CLI semble figé pendant 60-120 s | Inférence Ollama sur CPU (premier chargement modèle + chaque tour LLM) | Utilise `--verbose` pour voir l'agent travailler en direct. Le 1er appel charge le modèle (~10-30 s), les suivants vont plus vite. |
+| `UnicodeEncodeError: 'charmap'` | Console Windows cp1252 | Déjà corrigé (`apps/_console.py` force UTF-8 au démarrage). Si tu vois encore l'erreur, fais `chcp 65001` avant de lancer Python. |
+| `could not connect to a running Ollama instance` | Daemon Ollama pas démarré | Lance `ollama serve` dans un autre terminal (ou redémarre l'app Ollama). |
+| Réponse contient `r_001 \| terme1 \| ...` inventé | Petit modèle qui hallucine les triplets | Passe à un modèle plus capable (`ollama pull qwen2.5:7b` ou `llama3.1:8b`), ou branche une vraie API (Anthropic/OpenAI). |
+| `min_weight: Input should be a valid number` | Bug ancien — déjà corrigé | Mets à jour : `git pull && pip install -e .` |
+| Outputs avec `?` à la place des accents (`syst?me`) | Encodage console non-UTF-8 | `chcp 65001` puis `set PYTHONIOENCODING=utf-8` avant Python |
 
 ## Roadmap
 

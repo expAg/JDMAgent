@@ -11,13 +11,15 @@ Variables d'environnement (alternatives aux flags) :
 """
 from __future__ import annotations
 
+from jdm_agent.apps import _console  # noqa: F401 — force stdout UTF-8 (Windows)
+
 import argparse
 import os
 import sys
 from typing import Optional
 
 from jdm_agent.client import JDMClient
-from jdm_agent.tools.jdm_agent import ask, build_jdm_agent
+from jdm_agent.tools.jdm_agent import ask, build_jdm_agent, stream
 from jdm_agent.tools.llm_factory import get_llm
 
 
@@ -54,6 +56,34 @@ def _print_tool_calls(tool_calls: list[dict]) -> None:
         args = tc.get("args") or {}
         args_str = ", ".join(f"{k}={v!r}" for k, v in args.items())
         print(f"  • {tc['name']}({args_str})")
+
+
+def _stream_printer(verbose: bool):
+    """Imprime un événement par étape de l'agent — montre que ça avance."""
+    import time
+    t0 = [time.time()]
+
+    def on_event(ev: dict) -> None:
+        dt = time.time() - t0[0]
+        kind = ev["kind"]
+        if kind == "AIMessage":
+            tcs = ev.get("tool_calls") or []
+            if tcs:
+                for tc in tcs:
+                    args = ", ".join(f"{k}={v!r}" for k, v in (tc.get("args") or {}).items())
+                    print(f"  ⏱ {dt:5.1f}s  →  appel {tc['name']}({args})", flush=True)
+            else:
+                # Réponse finale du modèle.
+                preview = (ev.get("content") or "").strip().replace("\n", " ")[:80]
+                if preview:
+                    print(f"  ⏱ {dt:5.1f}s  ←  réponse du modèle ({len(ev['content'])} chars)", flush=True)
+        elif kind == "ToolMessage":
+            content = ev.get("content") or ""
+            preview = content[:100].replace("\n", " ")
+            print(f"  ⏱ {dt:5.1f}s  ←  outil {ev.get('name')} renvoie {len(content)} chars : {preview}…", flush=True)
+        t0[0] = time.time()
+
+    return on_event if verbose else None
 
 
 def run_repl(provider: Optional[str], model: Optional[str], verbose: bool) -> int:
@@ -99,15 +129,15 @@ def run_repl(provider: Optional[str], model: Optional[str], verbose: bool) -> in
             continue
 
         try:
-            out = ask(agent, q)
+            print("(réflexion en cours…)", flush=True)
+            on_event = _stream_printer(show_tools)
+            out = stream(agent, q, on_event=on_event)
         except Exception as e:
             print(f"[erreur] {e}", file=sys.stderr)
             continue
 
         print()
         print(out["answer"])
-        if show_tools:
-            _print_tool_calls(out["tool_calls"])
         print()
 
     client.close()
@@ -126,10 +156,13 @@ def main() -> int:
         client = JDMClient()
         llm = get_llm(provider=args.provider, model=args.model)
         agent = build_jdm_agent(client=client, llm=llm)
-        out = ask(agent, args.question)
-        print(out["answer"])
         if args.verbose:
-            _print_tool_calls(out["tool_calls"])
+            print("(réflexion en cours…)", flush=True)
+            out = stream(agent, args.question, on_event=_stream_printer(True))
+        else:
+            out = ask(agent, args.question)
+        print()
+        print(out["answer"])
         client.close()
         return 0
 
