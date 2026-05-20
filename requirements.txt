@@ -19,3 +19,8 @@ langchain-anthropic>=0.2
 # UI
 gradio>=4.44
 pandas>=2.0
+
+# Back-port de `audioop` (retiré de la stdlib Python 3.13).
+# pydub (dep transitive de gradio < 5) en a besoin. Si HF respecte
+# python_version: "3.12" dans le README, c'est inutile mais inoffensif.
+audioop-lts; python_version >= "3.13"
