@@ -17,8 +17,12 @@ langgraph>=0.2
 langchain-anthropic>=0.2
 
 # UI
-gradio>=4.44
+gradio>=4.44,<5
 pandas>=2.0
+
+# Gradio 4.44 importe HfFolder, retiré dans huggingface_hub 1.0.
+# On pin hf_hub < 1.0 sinon ImportError au démarrage.
+huggingface_hub>=0.30,<1.0
 
 # Back-port de `audioop` (retiré de la stdlib Python 3.13).
 # pydub (dep transitive de gradio < 5) en a besoin. Si HF respecte
