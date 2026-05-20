@@ -68,7 +68,7 @@ côté plateformes) :
 **Canal C — Notebook Google Colab**
 - Fichier : [`notebooks/demo.ipynb`](notebooks/demo.ipynb) (17 cellules, 4 sections)
 - Badge déjà dans le README → renvoie sur Colab via l'URL
-  `https://colab.research.google.com/github/enhagu01-png/JDMAgent/blob/main/notebooks/demo.ipynb`
+  `https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb`
 - Le notebook installe le package via `pip install git+https://github.com/...`
   (le repo doit être public)
 
@@ -122,7 +122,7 @@ comme cache de niveau 2 (au-dessus de diskcache HTTP).
 ## Setup développement
 
 ```bash
-git clone https://github.com/enhagu01-png/JDMAgent.git
+git clone https://github.com/expAg/JDMAgent.git
 cd JDMAgent
 
 # Virtualenv

@@ -1,6 +1,6 @@
 # Render.com Blueprint pour le serveur MCP JDMAgent.
 # Pour déployer :
-#   1. Push ce repo sur GitHub (déjà fait : enhagu01-png/JDMAgent)
+#   1. Push ce repo sur GitHub (déjà fait : expAg/JDMAgent)
 #   2. Sur Render : New → Blueprint → connecte ce repo
 #   3. Render détecte ce fichier et provisionne le service automatiquement
 #

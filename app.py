@@ -200,8 +200,8 @@ sans rien installer.
 - **Onglet 2** : vérifier une affirmation factuelle contre JDM (déterministe, sans LLM)
 - **Onglet 3** : converser avec un agent Claude qui n'utilise QUE JDM (apporte ta clé Anthropic)
 
-Code source : [enhagu01-png/JDMAgent](https://github.com/enhagu01-png/JDMAgent) ·
-Documentation : [USAGE.md](https://github.com/enhagu01-png/JDMAgent/blob/main/USAGE.md)
+Code source : [expAg/JDMAgent](https://github.com/expAg/JDMAgent) ·
+Documentation : [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md)
 """
 
 
@@ -315,7 +315,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
     gr.Markdown(
         "---\n*Données : [JeuxDeMots](https://www.jeuxdemots.org) — "
         "M. Lafourcade, équipe TEXTE, LIRMM/CNRS. "
-        "Projet open-source : [GitHub](https://github.com/enhagu01-png/JDMAgent).*"
+        "Projet open-source : [GitHub](https://github.com/expAg/JDMAgent).*"
     )
 
 

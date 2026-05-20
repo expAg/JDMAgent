@@ -11,7 +11,7 @@
 |---|---|---|
 | 🌐 **Démo web** (Hugging Face Spaces) | Tout le monde — explorer le graphe, fact-checker, agent BYOK | *à publier — voir [DEVELOPMENT.md](DEVELOPMENT.md#déploiement-public-phase-8)* |
 | 🤖 **Serveur MCP hébergé** | Utilisateurs Claude Code/Desktop | *à publier — voir [USAGE.md](USAGE.md#mcp-héberg%C3%A9-distant)* |
-| 📓 **Notebook Google Colab** | Pédagogie, exploration interactive | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/enhagu01-png/JDMAgent/blob/main/notebooks/demo.ipynb) |
+| 📓 **Notebook Google Colab** | Pédagogie, exploration interactive | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb) |
 
 ---
 
@@ -253,7 +253,7 @@ en citant systématiquement les triplets sources.
 ## Installation
 
 ```bash
-git clone https://github.com/enhagu01-png/JDMAgent.git
+git clone https://github.com/expAg/JDMAgent.git
 cd JDMAgent
 python -m venv .venv
 .venv\Scripts\activate          # Windows  (ou source .venv/bin/activate)

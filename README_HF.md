@@ -20,7 +20,7 @@ tags:
 
 # JDMAgent — démo Hugging Face Spaces
 
-Démo interactive du projet **[JDMAgent](https://github.com/enhagu01-png/JDMAgent)** :
+Démo interactive du projet **[JDMAgent](https://github.com/expAg/JDMAgent)** :
 agentification du graphe lexical [JeuxDeMots](https://www.jeuxdemots.org) (~2 M nœuds, 180+ relations typées)
 pour les LLM modernes via LangChain + MCP.
 
@@ -33,6 +33,6 @@ pour les LLM modernes via LangChain + MCP.
 ## Crédits
 
 - **JeuxDeMots** : M. Lafourcade et l'équipe TEXTE, LIRMM/CNRS.
-- **Code source** : <https://github.com/enhagu01-png/JDMAgent>
-- **Doc utilisateur** : [USAGE.md](https://github.com/enhagu01-png/JDMAgent/blob/main/USAGE.md)
+- **Code source** : <https://github.com/expAg/JDMAgent>
+- **Doc utilisateur** : [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md)
 - **Pour brancher dans Claude Code/Desktop natif** : voir le serveur MCP dans la doc du repo.
