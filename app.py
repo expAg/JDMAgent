@@ -166,17 +166,23 @@ HF_MODELS = {
         "Qwen 2.5 72B (HF, gratuit, ~5-15s/tour)",
 }
 ANTHROPIC_MODELS = {
-    "claude-haiku-4-5":   "Claude Haiku 4.5 (BYOK, ~2-4s/tour)",
-    "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK, top qualité)",
+    "claude-haiku-4-5":   "Claude Haiku 4.5 (BYOK Anthropic, ~2-4s/tour)",
+    "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK Anthropic, top qualité)",
 }
-ALL_MODELS = {**HF_MODELS, **ANTHROPIC_MODELS}
+OPENAI_MODELS = {
+    "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI, rapide, peu cher)",
+    "gpt-4o":      "GPT-4o (BYOK OpenAI, meilleure qualité)",
+}
+ALL_MODELS = {**HF_MODELS, **ANTHROPIC_MODELS, **OPENAI_MODELS}
 
 
-def _build_llm(model: str, anthropic_key: str):
+def _build_llm(model: str, api_key: str):
     """Instancie le ChatModel selon le modèle choisi.
 
-    - hf:* → HuggingFace Inference API via HF_TOKEN (env var du Space)
-    - claude-* → Anthropic via clé visiteur (BYOK)
+    - hf:*       → HuggingFace Inference API via HF_TOKEN (env var du Space)
+    - claude-*   → Anthropic via clé visiteur (BYOK, sk-ant-...)
+    - gpt-*      → OpenAI via clé visiteur (BYOK, sk-...)
+
     Lève ValueError avec message utilisateur explicite si pré-requis manquant.
     """
     if model.startswith("hf:"):
@@ -184,7 +190,7 @@ def _build_llm(model: str, anthropic_key: str):
             raise ValueError(
                 "Le secret `HF_TOKEN` n'est pas configuré côté Space. "
                 "L'option HF gratuite n'est pas disponible. "
-                "Utilise une clé Anthropic, ou demande au propriétaire du "
+                "Utilise une clé Anthropic ou OpenAI, ou demande au propriétaire du "
                 "Space d'ajouter un HF_TOKEN dans Settings → Variables and secrets."
             )
         repo_id = model.split(":", 1)[1]
@@ -198,17 +204,31 @@ def _build_llm(model: str, anthropic_key: str):
         )
         return ChatHuggingFace(llm=endpoint)
 
-    # Sinon : Anthropic BYOK
-    if not anthropic_key.strip():
-        raise ValueError(
-            "Pour utiliser un modèle Claude, colle ta clé Anthropic ci-dessus. "
-            "Tu peux en créer une (gratuit à créer, paiement à l'usage) sur "
-            "https://console.anthropic.com/settings/keys — la clé reste dans "
-            "ta session, n'est ni sauvegardée ni loggée."
-        )
-    os.environ["ANTHROPIC_API_KEY"] = anthropic_key.strip()
-    from jdm_agent.tools.llm_factory import get_llm
-    return get_llm(provider="anthropic", model=model)
+    if model.startswith("claude-"):
+        if not api_key.strip():
+            raise ValueError(
+                "Pour utiliser un modèle Claude, colle ta clé Anthropic "
+                "(sk-ant-...) ci-dessus. Crée-en une sur "
+                "https://console.anthropic.com/settings/keys — la clé reste "
+                "dans ta session, n'est ni sauvegardée ni loggée."
+            )
+        os.environ["ANTHROPIC_API_KEY"] = api_key.strip()
+        from jdm_agent.tools.llm_factory import get_llm
+        return get_llm(provider="anthropic", model=model)
+
+    if model.startswith("gpt-"):
+        if not api_key.strip():
+            raise ValueError(
+                "Pour utiliser un modèle GPT, colle ta clé OpenAI (sk-...) "
+                "ci-dessus. Crée-en une sur "
+                "https://platform.openai.com/api-keys — la clé reste dans "
+                "ta session, n'est ni sauvegardée ni loggée."
+            )
+        os.environ["OPENAI_API_KEY"] = api_key.strip()
+        from jdm_agent.tools.llm_factory import get_llm
+        return get_llm(provider="openai", model=model)
+
+    raise ValueError(f"Modèle inconnu : {model!r}")
 
 
 def chat_with_agent(message: str, history: list[dict], api_key: str, model: str) -> str:
@@ -330,32 +350,35 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 inputs=[fc_subject, fc_relation, fc_object],
             )
 
-        # ----- Tab 3: Agent (HF gratuit OU Anthropic BYOK) -----
+        # ----- Tab 3: Agent (HF gratuit OU Anthropic / OpenAI BYOK) -----
         with gr.Tab("🤖 Agent"):
             gr.Markdown(
                 "Discute avec un agent qui n'utilise QUE les outils JDM "
                 "pour répondre. Chaque réponse cite ses triplets sources.\n\n"
-                "**Deux options de modèle** :\n"
+                "**Trois options de modèle** :\n"
                 "- 🆓 **HF Inference** (Llama 3.3, Qwen 2.5) — *gratuit*, "
                 "utilise le quota d'inférence du Space (aucune clé visiteur). "
                 "Légèrement plus lent (~5-15 s/tour).\n"
-                "- 💳 **Anthropic Claude** — *BYOK* (Bring Your Own Key). "
-                "Crée une clé sur "
-                "[console.anthropic.com](https://console.anthropic.com/settings/keys) "
-                "et colle-la ci-dessous. Plus rapide / meilleure qualité. "
-                "La clé reste en session, n'est ni sauvegardée ni loggée."
+                "- 💳 **Anthropic Claude** — *BYOK*. Crée une clé sur "
+                "[console.anthropic.com](https://console.anthropic.com/settings/keys). "
+                "Rapide, top qualité.\n"
+                "- 💳 **OpenAI GPT** — *BYOK*. Crée une clé sur "
+                "[platform.openai.com](https://platform.openai.com/api-keys). "
+                "Rapide, function-calling très mature.\n\n"
+                "*La clé reste en session, n'est ni sauvegardée ni loggée.*"
             )
             with gr.Row():
                 key_in = gr.Textbox(
-                    label="Clé API Anthropic (requise seulement pour les modèles Claude)",
-                    type="password", placeholder="sk-ant-... (optionnel si tu choisis HF)",
+                    label="Clé API (Anthropic sk-ant-... ou OpenAI sk-...)",
+                    type="password",
+                    placeholder="laisse vide si tu choisis un modèle HF",
                     scale=3,
                 )
                 model_in = gr.Dropdown(
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
                     value="hf:meta-llama/Llama-3.3-70B-Instruct",
                     label="Modèle",
-                    info="hf:* = gratuit ; claude-* = BYOK Anthropic",
+                    info="hf:* = gratuit · claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI",
                     scale=2,
                 )
             chat = gr.ChatInterface(

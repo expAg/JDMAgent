@@ -28,9 +28,12 @@ pour les LLM modernes via LangChain + MCP.
 
 - 🔎 **Explorer JDM** — sans LLM : interroge le graphe (synonymes, hyperonymes, parties, caractéristiques, agents, lieux, etc.) + désambiguïsation des polysémiques (avocat → fruit / juriste / couleur)
 - ⚖️ **Fact-checker** — vérification déterministe d'un triplet : `supported` / `contradicted` / `unknown` avec triplets justificatifs
-- 🤖 **Agent** — conversationnel, deux options de modèle :
+- 🤖 **Agent** — conversationnel, trois options de modèle :
   - **HF Inference** (gratuit) : Llama 3.3 70B ou Qwen 2.5 72B via le quota du Space. Aucune clé visiteur requise.
-  - **Anthropic Claude** (BYOK) : qualité/rapidité supérieures, ta clé reste en session.
+  - **Anthropic Claude** (BYOK) : qualité/rapidité supérieures.
+  - **OpenAI GPT** (BYOK) : function-calling très mature.
+
+  Pour les options BYOK, la clé reste en session, n'est ni sauvegardée ni loggée.
 
 ## Configuration (pour le propriétaire du Space)
 
