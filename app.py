@@ -203,28 +203,73 @@ def _build_llm(model: str, api_key: str):
     raise ValueError(f"Modèle inconnu : {model!r}")
 
 
-def chat_with_agent(message: str, history: list[dict], api_key: str, model: str) -> str:
+def chat_with_agent(message: str, history: list[dict], api_key: str, model: str):
+    """Générateur de streaming pour ChatInterface.
+
+    Yields la trace progressive (appels d'outils + résultats) puis le message
+    final. Chaque yield écrase complètement la dernière bulle assistant.
+    """
     if not message.strip():
-        return "Pose une question sur la langue française."
+        yield "Pose une question sur la langue française."
+        return
     try:
         llm = _build_llm(model, api_key)
     except ValueError as e:
-        return f"⚠️ {e}"
+        yield f"⚠️ {e}"
+        return
+
+    from jdm_agent.tools.jdm_agent import build_jdm_agent
+    from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+
+    progress_lines: list[str] = ["*🧠 Réflexion en cours…*"]
+    tool_traces: list[str] = []
+    final_answer = ""
+
+    yield "\n".join(progress_lines)
+
     try:
-        from jdm_agent.tools.jdm_agent import build_jdm_agent, ask
         agent = build_jdm_agent(client=get_client(), llm=llm)
-        out = ask(agent, message)
-        answer = out["answer"]
-        tool_calls = out.get("tool_calls") or []
-        if tool_calls:
-            trace = "\n\n---\n*Outils JDM appelés* :"
-            for tc in tool_calls:
-                args = ", ".join(f"{k}={v!r}" for k, v in (tc.get("args") or {}).items())
-                trace += f"\n- `{tc['name']}({args})`"
-            return answer + trace
-        return answer
+        for chunk in agent.stream(
+            {"messages": [HumanMessage(content=message)]},
+            stream_mode="updates",
+        ):
+            # chunk = dict {node_name: {"messages": [msg, ...]}}
+            for _node_name, payload in chunk.items():
+                msgs = (payload or {}).get("messages") or []
+                for m in msgs:
+                    if isinstance(m, AIMessage):
+                        tcs = getattr(m, "tool_calls", []) or []
+                        if tcs:
+                            # L'agent décide d'appeler un ou plusieurs outils
+                            for tc in tcs:
+                                args = ", ".join(
+                                    f"{k}={v!r}" for k, v in (tc.get("args") or {}).items()
+                                )
+                                line = f"🔧 `{tc['name']}({args})`"
+                                progress_lines.append(line)
+                                tool_traces.append(f"- `{tc['name']}({args})`")
+                            yield "\n".join(progress_lines)
+                        else:
+                            # Réponse finale du modèle (pas d'autres tool calls)
+                            final_answer = m.content or ""
+                    elif isinstance(m, ToolMessage):
+                        content = (m.content or "")
+                        preview = content[:140].replace("\n", " ")
+                        if len(content) > 140:
+                            preview += "…"
+                        progress_lines.append(
+                            f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
+                        )
+                        yield "\n".join(progress_lines)
     except Exception as e:
-        return f"❌ Erreur agent : {e}"
+        yield f"❌ Erreur agent : {e}"
+        return
+
+    # Sortie finale : la réponse synthétique + trace condensée des outils
+    out = final_answer or "*(réponse vide)*"
+    if tool_traces:
+        out += "\n\n---\n*Outils JDM appelés* :\n" + "\n".join(tool_traces)
+    yield out
 
 
 # ---------- UI ----------
