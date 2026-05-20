@@ -102,6 +102,35 @@ def test_retry_on_5xx(client):
 
 
 @respx.mock
+def test_refinements_decoded(client):
+    """Décode `avocat>116477>66699` → "avocat (personne, juriste)" via lookups node_by_id."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    respx.get(f"{BASE}/v0/refinements/avocat").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 1, "name": "avocat", "type": 1, "w": 100},
+            {"id": 116477, "name": "personne", "type": 1, "w": 1000},
+            {"id": 87286, "name": "fruit", "type": 1, "w": 50},
+        ],
+        "refinements": [
+            {"id": 100, "name": "avocat>116477>66699", "type": 1, "w": 356.0},
+            {"id": 101, "name": "avocat>87286", "type": 1, "w": 98.0},
+        ],
+    }))
+    # 66699 = juriste — pas dans nodes locales → un lookup HTTP supplémentaire.
+    respx.get(f"{BASE}/v0/node_by_id/66699").mock(return_value=httpx.Response(200, json={
+        "id": 66699, "name": "juriste", "type": 1, "w": 911,
+    }))
+
+    decoded = client.refinements_decoded("avocat")
+    by_name = {d.name: d for d in decoded}
+    assert "avocat (personne, juriste)" == by_name["avocat>116477>66699"].decoded
+    assert by_name["avocat>116477>66699"].path == ["avocat", "personne", "juriste"]
+    assert by_name["avocat>116477>66699"].path_ids == [116477, 66699]
+    assert "avocat (fruit)" == by_name["avocat>87286"].decoded
+
+
+@respx.mock
 def test_relations_between_with_filters(client):
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))

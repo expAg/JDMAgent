@@ -24,6 +24,7 @@ from tenacity import (
 
 from jdm_agent.client.cache import DiskJSONCache
 from jdm_agent.client.models import (
+    DecodedRefinement,
     Node,
     NodeType,
     RefinementsResult,
@@ -163,6 +164,46 @@ class JDMClient:
     def refinements(self, name: str) -> RefinementsResult:
         data = self._cached_get(f"/v0/refinements/{quote(name, safe='')}", ttl=self._ttl_data)
         return RefinementsResult.model_validate(data)
+
+    def refinements_decoded(self, name: str) -> list[DecodedRefinement]:
+        """Renvoie les raffinements en décodant les IDs internes (`>40056>171870`)
+        en labels humains via des lookups `node_by_id`.
+
+        Exemple :
+            "avocat>116477>66699" → "avocat (personne, juriste)"
+            path=["avocat","personne","juriste"], path_ids=[116477, 66699]
+        """
+        ref = self.refinements(name)
+        # Indexe d'abord les nœuds déjà fournis par /refinements pour éviter
+        # des aller-retours HTTP supplémentaires sur ceux qu'on connaît déjà.
+        local = {n.id: n.name for n in ref.nodes}
+        out: list[DecodedRefinement] = []
+        for r in ref.refinements:
+            parts = r.name.split(">")
+            head = parts[0]                      # le terme lui-même
+            id_tokens = parts[1:]                # liste de "12345"
+            path: list[str] = [head]
+            path_ids: list[int] = []
+            for tok in id_tokens:
+                try:
+                    nid = int(tok)
+                except ValueError:
+                    path.append(tok)
+                    continue
+                path_ids.append(nid)
+                lbl = local.get(nid)
+                if lbl is None:
+                    try:
+                        lbl = self.node_by_id(nid).name
+                    except Exception:
+                        lbl = f"<id:{nid}>"
+                path.append(lbl)
+            decoded = f"{head} ({', '.join(path[1:])})" if len(path) > 1 else head
+            out.append(DecodedRefinement(
+                id=r.id, name=r.name, decoded=decoded,
+                path=path, path_ids=path_ids, weight=r.w,
+            ))
+        return out
 
     # ---------- Relations ----------
 

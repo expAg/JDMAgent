@@ -77,6 +77,21 @@ class RelationsResult(BaseModel):
         return {n.id: n for n in self.nodes}
 
 
+class DecodedRefinement(BaseModel):
+    """Un raffinement avec son nom interne JDM décodé en clair.
+
+    Le `name` brut suit le schéma `term>cat[>subcat[>...]]` où chaque entier
+    est un node_id JDM. `decoded` est la version lisible humain
+    (ex.: "avocat (personne, juriste)").
+    """
+    id: int
+    name: str
+    decoded: str
+    path: List[str]              # ex.: ["avocat", "personne", "juriste"]
+    path_ids: List[int]          # ex.: [116477, 66699]
+    weight: float = 0.0
+
+
 class RefinementsResult(BaseModel):
     """Réponse de /v0/refinements/{name}."""
     model_config = ConfigDict(extra="allow")

@@ -11,6 +11,10 @@ from jdm_agent.tools.jdm_tools import (
     ALL_TOOLS,
     build_jdm_tools,
     disambiguate,
+    get_agents,
+    get_consequences,
+    get_instruments,
+    get_patients,
     get_relations_between,
     get_relations_of_type,
     get_synonyms,
@@ -25,7 +29,12 @@ BASE = "https://jdm-api.demo.lirmm.fr"
 REL_TYPES = [
     {"id": 5, "name": "r_syn", "help": "synonymes"},
     {"id": 6, "name": "r_isa", "help": "hyperonymes"},
+    {"id": 13, "name": "r_agent", "help": "sujet"},
+    {"id": 14, "name": "r_patient", "help": "objet"},
     {"id": 15, "name": "r_lieu", "help": "lieux typiques"},
+    {"id": 16, "name": "r_instr", "help": "instrument"},
+    {"id": 41, "name": "r_has_conseq", "help": "consequence"},
+    {"id": 42, "name": "r_has_causatif", "help": "cause"},
 ]
 NODE_TYPES = [{"id": 1, "name": "n_generic", "help": ""}]
 
@@ -169,8 +178,66 @@ def test_build_jdm_tools_enriches_docstrings(patched_client):
 def test_all_tools_have_unique_names():
     names = [t.name for t in ALL_TOOLS]
     assert len(names) == len(set(names))
-    assert "get_synonyms" in names
-    assert "lookup_term" in names
+    # Sanity sur quelques outils-clés (couvre les ajouts prédicatifs).
+    for n in ("get_synonyms", "lookup_term", "get_agents", "get_patients",
+              "get_instruments", "get_consequences", "get_purpose"):
+        assert n in names, f"{n} missing"
+
+
+@respx.mock
+def test_get_agents_calls_r_agent(patched_client):
+    """get_agents doit filtrer sur r_agent (id=13) côté HTTP."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    route = respx.get(f"{BASE}/v0/relations/from/manger").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 1, "name": "manger", "type": 1, "w": 10},
+            {"id": 2, "name": "chat", "type": 1, "w": 5},
+        ],
+        "relations": [{"id": 1, "node1": 1, "node2": 2, "type": 13, "w": 200.0}],
+    }))
+    out = get_agents.invoke({"verb": "manger", "min_weight": 0, "limit": 10})
+    assert route.called
+    assert dict(route.calls.last.request.url.params)["types_ids"] == "13"
+    assert out[0] == {"source": "manger", "relation": "r_agent", "target": "chat", "w": 200.0}
+
+
+@respx.mock
+def test_get_consequences_uses_correct_relation_id(patched_client):
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    route = respx.get(f"{BASE}/v0/relations/from/pluie").mock(return_value=httpx.Response(200, json={
+        "nodes": [], "relations": [],
+    }))
+    get_consequences.invoke({"term": "pluie"})
+    assert dict(route.calls.last.request.url.params)["types_ids"] == "41"
+
+
+@respx.mock
+def test_disambiguate_returns_decoded(patched_client):
+    """disambiguate doit renvoyer 'decoded' lisible, plus 'name' brut."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    respx.get(f"{BASE}/v0/refinements/avocat").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 1, "name": "avocat", "type": 1, "w": 100},
+            {"id": 116477, "name": "personne", "type": 1, "w": 1000},
+            {"id": 87286, "name": "fruit", "type": 1, "w": 50},
+        ],
+        "refinements": [
+            {"id": 100, "name": "avocat>116477>66699", "type": 1, "w": 356.0},
+            {"id": 101, "name": "avocat>87286", "type": 1, "w": 98.0},
+        ],
+    }))
+    respx.get(f"{BASE}/v0/node_by_id/66699").mock(return_value=httpx.Response(200, json={
+        "id": 66699, "name": "juriste", "type": 1, "w": 911,
+    }))
+    out = disambiguate.invoke({"term": "avocat"})
+    by_name = {d["name"]: d for d in out}
+    assert by_name["avocat>116477>66699"]["decoded"] == "avocat (personne, juriste)"
+    assert by_name["avocat>87286"]["decoded"] == "avocat (fruit)"
+    # Trié par poids décroissant.
+    assert out[0]["weight"] >= out[-1]["weight"]
 
 
 def test_all_tools_have_valid_schemas():

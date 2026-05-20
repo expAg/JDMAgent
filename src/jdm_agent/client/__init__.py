@@ -1,5 +1,13 @@
 from jdm_agent.client.client import JDMClient
-from jdm_agent.client.models import Node, Relation, RelationType, NodeType, RelationsResult, RefinementsResult
+from jdm_agent.client.models import (
+    DecodedRefinement,
+    Node,
+    NodeType,
+    RefinementsResult,
+    Relation,
+    RelationType,
+    RelationsResult,
+)
 
 __all__ = [
     "JDMClient",
@@ -9,4 +17,5 @@ __all__ = [
     "NodeType",
     "RelationsResult",
     "RefinementsResult",
+    "DecodedRefinement",
 ]

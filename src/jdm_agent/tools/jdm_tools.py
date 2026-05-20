@@ -240,16 +240,157 @@ def get_relations_between(term1: str, term2: str, min_weight: Optional[float] = 
 
 @tool
 def disambiguate(term: str) -> list[dict]:
-    """Renvoie les raffinements sémantiques d'un terme polysémique.
+    """Renvoie les sens (raffinements sémantiques) d'un terme polysémique, décodés en clair.
 
     Utilise ceci quand un mot a plusieurs sens (avocat = fruit | juriste,
-    souris = animal | informatique, etc.). Renvoie la liste des sens
-    spécifiques disponibles dans JDM.
+    souris = animal | informatique, police = force de l'ordre | typographie, etc.).
+    Les IDs internes JDM sont automatiquement résolus en labels humains.
+
+    Renvoie [{name, decoded, path, weight}, ...] où :
+      - `decoded` est la forme lisible (ex. "avocat (personne, juriste)")
+      - `path` est la chaîne hiérarchique (["avocat", "personne", "juriste"])
+      - `name` est l'identifiant brut JDM (ex. "avocat>116477>66699")
+    Tu DOIS utiliser `decoded` pour citer les sens à l'utilisateur, jamais `name`.
     """
     c = _client()
-    ref = c.refinements(term)
-    return [{"name": n.name, "id": n.id, "weight": n.w} for n in ref.refinements]
+    decoded = c.refinements_decoded(term)
+    decoded.sort(key=lambda d: -d.weight)
+    return [
+        {
+            "decoded": d.decoded,
+            "path": d.path,
+            "weight": d.weight,
+            "name": d.name,        # gardé pour traçabilité éventuelle
+        }
+        for d in decoded
+    ]
 
+
+# ---------- Outils prédicatifs (actanciels / causaux / téliques) ----------
+
+def _predicative_lookup(
+    term: str, relation: str, direction: str,
+    min_weight: Optional[float], limit: Optional[int],
+    default_mw: float = 25.0, default_limit: int = 20,
+) -> list[dict]:
+    """Helper factor pour tous les outils prédicatifs."""
+    c = _client()
+    rid = c.relation_type_id(relation)
+    if rid is None:
+        return [{"error": f"relation {relation!r} introuvable dans JDM"}]
+    mw, lm = _mw(min_weight, default_mw), _lim(limit, default_limit)
+    incoming = direction == "to"
+    if incoming:
+        res = c.relations_to(term, types_ids=[rid], min_weight=mw, limit=lm)
+    else:
+        res = c.relations_from(term, types_ids=[rid], min_weight=mw, limit=lm)
+    return _resolve_targets(c, term, relation, res, incoming=incoming)
+
+
+@tool
+def get_agents(verb: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les SUJETS typiques d'un verbe (`r_agent`).
+
+    Agent (`r_agent`) — entité qui effectue l'action (sujet du verbe).
+    Le terme source DOIT être un verbe à l'infinitif.
+    (ex.: manger | r_agent | chat ; voler | r_agent | oiseau ; courir | r_agent | sportif).
+    """
+    return _predicative_lookup(verb, "r_agent", "from", min_weight, limit)
+
+
+@tool
+def get_patients(verb: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les OBJETS typiques d'un verbe (`r_patient`).
+
+    Patient (`r_patient`) — entité qui subit l'action (COD du verbe).
+    Le terme source DOIT être un verbe à l'infinitif.
+    (ex.: manger | r_patient | viande ; lire | r_patient | livre ; réparer | r_patient | voiture).
+    """
+    return _predicative_lookup(verb, "r_patient", "from", min_weight, limit)
+
+
+@tool
+def get_instruments(verb: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les INSTRUMENTS typiques d'un verbe (`r_instr`).
+
+    Instrument (`r_instr`) — objet utilisé pour réaliser l'action.
+    Le terme source DOIT être un verbe à l'infinitif.
+    (ex.: couper | r_instr | couteau ; écrire | r_instr | stylo ; peindre | r_instr | pinceau).
+    """
+    return _predicative_lookup(verb, "r_instr", "from", min_weight, limit)
+
+
+@tool
+def get_locations(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les LIEUX typiques associés à un terme (`r_lieu`).
+
+    Lieu (`r_lieu`) — où se trouve l'objet ou se déroule l'action.
+    Marche pour nom (carotte | r_lieu | potager) ou verbe (étudier | r_lieu | école).
+    """
+    return _predicative_lookup(term, "r_lieu", "from", min_weight, limit)
+
+
+@tool
+def get_causes(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les CAUSES possibles d'un état ou d'une action (`r_has_causatif`).
+
+    Cause (`r_has_causatif`) — origine ou cause de A.
+    (ex.: blessure | r_has_causatif | chute ; fatigue | r_has_causatif | travail ; fumée | r_has_causatif | feu).
+    """
+    return _predicative_lookup(term, "r_has_causatif", "from", min_weight, limit)
+
+
+@tool
+def get_consequences(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les CONSÉQUENCES typiques d'un état ou d'une action (`r_has_conseq`).
+
+    Conséquence (`r_has_conseq`) — effet ou suite directe de A.
+    (ex.: tomber | r_has_conseq | se blesser ; pluie | r_has_conseq | inondation).
+    """
+    return _predicative_lookup(term, "r_has_conseq", "from", min_weight, limit)
+
+
+@tool
+def get_purpose(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie le BUT d'une action ou d'un objet (`r_but`).
+
+    Purpose (`r_but`) — objectif visé par l'action.
+    (ex.: courir | r_but | santé ; travailler | r_but | argent ; dormir | r_but | récupérer).
+    """
+    return _predicative_lookup(term, "r_but", "from", min_weight, limit)
+
+
+@tool
+def get_manner(verb: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les MANIÈRES typiques dont une action s'effectue (`r_manner`).
+
+    Manner (`r_manner`) — adverbe ou locution adverbiale décrivant comment.
+    (ex.: manger | r_manner | goulûment ; courir | r_manner | rapidement).
+    """
+    return _predicative_lookup(verb, "r_manner", "from", min_weight, limit)
+
+
+@tool
+def get_telic_role(noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie la FONCTION (rôle télique) d'un objet (`r_telic_role`).
+
+    Telic-role (`r_telic_role`) — fonction primaire pour laquelle un objet a été conçu.
+    (ex.: couteau | r_telic_role | couper ; chaise | r_telic_role | s'asseoir ; lunettes | r_telic_role | voir).
+    """
+    return _predicative_lookup(noun, "r_telic_role", "from", min_weight, limit)
+
+
+@tool
+def get_agentive_role(noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les verbes qui CRÉENT un objet (rôle agentif) (`r_agentif_role`).
+
+    Agentif-role (`r_agentif_role`) — verbes transitifs donnant naissance à l'entité.
+    (ex.: maison | r_agentif_role | construire ; livre | r_agentif_role | rédiger).
+    """
+    return _predicative_lookup(noun, "r_agentif_role", "from", min_weight, limit)
+
+
+# ---------- Découverte ----------
 
 @tool
 def list_relation_types(prefix: Optional[str] = None) -> list[dict]:
@@ -278,6 +419,18 @@ ALL_TOOLS: list[StructuredTool] = [
     get_hyponyms,
     get_parts,
     get_characteristics,
+    # Prédicatifs
+    get_agents,
+    get_patients,
+    get_instruments,
+    get_locations,
+    get_causes,
+    get_consequences,
+    get_purpose,
+    get_manner,
+    get_telic_role,
+    get_agentive_role,
+    # Génériques
     get_relations_of_type,
     get_relations_between,
     disambiguate,
@@ -305,6 +458,16 @@ def build_jdm_tools(
         "get_hyponyms": "r_hypo",
         "get_parts": "r_has_part",
         "get_characteristics": "r_carac",
+        "get_agents": "r_agent",
+        "get_patients": "r_patient",
+        "get_instruments": "r_instr",
+        "get_locations": "r_lieu",
+        "get_causes": "r_has_causatif",
+        "get_consequences": "r_has_conseq",
+        "get_purpose": "r_but",
+        "get_manner": "r_manner",
+        "get_telic_role": "r_telic_role",
+        "get_agentive_role": "r_agentif_role",
     }
     for t in ALL_TOOLS:
         rel = suffix_map.get(t.name)
