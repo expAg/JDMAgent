@@ -131,9 +131,13 @@ pytest
 - [x] Phase 1 — Client JDM typé + cache disque
 - [x] Phase 2 — Couche LangChain (tools + agent)
 - [x] Phase 3 — App Q&A NL → JDM (+ raffinements décodés, outils prédicatifs)
-- [x] Phase 4 — Serveur MCP
-- [ ] Phase 5 — Fact-checker
-- [ ] Phase 6 — Enrichissement actif
+- [x] Phase 4 — Serveur MCP (24 outils)
+- [x] Phase 5 — Fact-checker (déterministe + LLM extractor)
+- [x] Phase 6 — Enrichissement actif (gap detection + LLM propose + validation)
 - [ ] Phase 7 — Spike graphe local (DuckDB/NetworkX)
+
+**Guide d'utilisation complet : [USAGE.md](USAGE.md)** — couvre les 3 canaux
+(Claude Code MCP / CLI / Python API), tous les outils, les workflows-types et
+la lecture des sorties.
 
 Voir `relation_definitions.md` pour la taxonomie complète des relations JDM (180+).

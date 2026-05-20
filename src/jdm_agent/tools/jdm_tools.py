@@ -449,6 +449,80 @@ def get_agentive_role(noun: str, min_weight: Optional[float] = None, limit: Opti
     return _predicative_lookup(noun, "r_agentif_role", "from", min_weight, limit)
 
 
+# ---------- Enrichissement actif ----------
+
+@tool
+def detect_gaps(
+    term: str,
+    relations: Optional[list[str]] = None,
+    check_asymmetries: bool = True,
+) -> list[dict]:
+    """Détecte les trous de couverture de JDM pour un terme donné.
+
+    Trois types de gaps :
+      - MISSING       : aucun triplet (term, relation, ?) — relation jugée pertinente mais vide
+      - LOW_COVERAGE  : très peu de triplets (< 3 avec w≥25)
+      - ASYMMETRY     : un triplet A r_xxx B existe MAIS l'inverse B r_inv A manque
+                        (utilise 11 paires connues: r_has_part/r_holo, r_isa/r_hypo,
+                        r_agent/r_agent-1, r_make/r_product_of, etc.)
+
+    PAS d'appel LLM — déterministe, ~5-15 secondes par terme selon couverture.
+
+    Workflow typique d'enrichissement :
+      1. detect_gaps("smartphone") → liste de gaps
+      2. (toi, le LLM) → propose des cibles plausibles pour chaque gap, en
+         utilisant ta connaissance du français
+      3. validate_candidate(term, relation, target) pour chaque proposition →
+         garde uniquement celles qui sont "ok" (pas dupliquées, cible existe, non
+         contradictoires)
+
+    Args:
+        term: terme à analyser.
+        relations: relations à inspecter (défaut: jeu standard noun+verb).
+                   Exemples: ["r_has_part", "r_carac", "r_telic_role"].
+        check_asymmetries: active la détection des inverses manquants (plus coûteux).
+
+    Renvoie [{term, relation, gap_type, severity, detail, related_triples}, ...].
+    """
+    from jdm_agent.enrich import detect_gaps as _detect
+
+    c = _client()
+    gaps = _detect(c, term, target_relations=relations, check_asymmetries=check_asymmetries)
+    return [g.model_dump(mode="json") for g in gaps]
+
+
+@tool
+def validate_candidate(term: str, relation: str, target: str) -> dict:
+    """Vérifie si un triplet candidat peut/doit être ajouté à JDM.
+
+    Quatre statuts possibles :
+      - "ok"           : prêt à soumettre (cible connue, pas duplicate, pas contradictoire)
+      - "duplicate"    : le triplet existe déjà dans JDM (rien à ajouter)
+      - "unknown_term" : la cible n'existe pas comme nœud JDM (LLM a halluciné un mot
+                         absent du graphe ; ne pas soumettre tel quel)
+      - "inconsistent" : contradicted par r_isa-incompatible ou similaire
+
+    Utilise cet outil APRÈS avoir proposé toi-même un candidat (à partir de
+    `detect_gaps` + ta connaissance), pour éviter de soumettre du bruit ou
+    des doublons.
+
+    Args:
+        term:     terme source.
+        relation: relation JDM (r_xxx).
+        target:   terme cible proposé.
+
+    Renvoie un Candidate avec validation_status + validation_note + confidence.
+    """
+    from jdm_agent.enrich import Candidate
+    from jdm_agent.enrich.validators import validate_candidate as _validate
+
+    c = _client()
+    cand = Candidate(term=term, relation=relation, target=target,
+                     confidence=0.5, source="agent")
+    out = _validate(c, cand)
+    return out.model_dump(mode="json")
+
+
 # ---------- Vérification de claims (fact-checking) ----------
 
 @tool
@@ -536,6 +610,9 @@ ALL_TOOLS: list[StructuredTool] = [
     disambiguate,
     # Fact-checking
     verify_claim,
+    # Enrichissement
+    detect_gaps,
+    validate_candidate,
     list_relation_types,
 ]
 

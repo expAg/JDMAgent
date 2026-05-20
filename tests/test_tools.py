@@ -279,6 +279,42 @@ def test_relations_decode_refinement_target(patched_client):
 
 
 @respx.mock
+def test_detect_gaps_tool(patched_client):
+    """detect_gaps doit renvoyer des Gap dicts pour un terme sans triplets."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    respx.get(f"{BASE}/v0/relations/from/smartphone").mock(return_value=httpx.Response(200, json={
+        "nodes": [], "relations": [],
+    }))
+    from jdm_agent.tools.jdm_tools import detect_gaps as detect_gaps_tool
+    out = detect_gaps_tool.invoke({
+        "term": "smartphone",
+        "relations": ["r_isa"],   # une relation présente dans REL_TYPES (id=6)
+        "check_asymmetries": False,
+    })
+    assert isinstance(out, list)
+    assert any(g["term"] == "smartphone" for g in out)
+
+
+@respx.mock
+def test_validate_candidate_tool(patched_client):
+    """validate_candidate doit retourner un dict avec validation_status."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    respx.get(f"{BASE}/v0/node_by_name/processeur").mock(return_value=httpx.Response(200, json={
+        "id": 200, "name": "processeur", "type": 1, "w": 800,
+    }))
+    respx.get(f"{BASE}/v0/relations/from/smartphone").mock(return_value=httpx.Response(200, json={
+        "nodes": [], "relations": [],
+    }))
+    from jdm_agent.tools.jdm_tools import validate_candidate as validate_tool
+    out = validate_tool.invoke({
+        "term": "smartphone", "relation": "r_isa", "target": "processeur",
+    })
+    assert out["validation_status"] in ("ok", "duplicate", "unknown_term", "inconsistent")
+
+
+@respx.mock
 def test_lookup_term_includes_decoded(patched_client):
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
