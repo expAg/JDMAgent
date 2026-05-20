@@ -35,6 +35,7 @@ dev = [
 
 [project.scripts]
 jdm-qa = "jdm_agent.apps.qa_cli:main"
+jdm-eval = "jdm_agent.apps.qa_eval:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jdm_agent"]

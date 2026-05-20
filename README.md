@@ -24,7 +24,9 @@ pip install -e ".[dev,langchain,anthropic,mcp]"
 cp .env.example .env
 ```
 
-## Phase actuelle : 1 (client JDM)
+## Démarrage rapide
+
+### Client bas niveau
 
 ```python
 from jdm_agent.client import JDMClient
@@ -37,6 +39,27 @@ for r in syns.relations:
     print(target.name, "w=", r.w)
 ```
 
+### Agent Q&A (CLI)
+
+```bash
+# Avec Anthropic (clé requise)
+export ANTHROPIC_API_KEY=...
+python -m jdm_agent.apps.qa_cli
+
+# Avec Ollama local (modèle compatible tool-calling)
+ollama pull llama3.2:3b
+python -m jdm_agent.apps.qa_cli --provider ollama --model llama3.2:3b
+
+# Question unique
+python -m jdm_agent.apps.qa_cli -q "synonymes de voiture"
+```
+
+### Banc d'évaluation
+
+```bash
+python -m jdm_agent.apps.qa_eval --provider ollama --model llama3.2:3b --show-tools
+```
+
 ## Tests
 
 ```bash
@@ -47,8 +70,8 @@ pytest
 
 - [x] Phase 0 — Bootstrap
 - [x] Phase 1 — Client JDM typé + cache disque
-- [ ] Phase 2 — Couche LangChain (tools + agent)
-- [ ] Phase 3 — App Q&A NL → JDM
+- [x] Phase 2 — Couche LangChain (tools + agent)
+- [x] Phase 3 — App Q&A NL → JDM
 - [ ] Phase 4 — Serveur MCP
 - [ ] Phase 5 — Fact-checker
 - [ ] Phase 6 — Enrichissement actif

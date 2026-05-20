@@ -39,7 +39,7 @@ def _client() -> JDMClient:
         return _default_client
 
 
-# ---------- Helpers de présentation pour l'agent ----------
+# ---------- Helpers ----------
 
 def _triplet(source: str, relation: str, target_name: str, w: float) -> dict:
     return {"source": source, "relation": relation, "target": target_name, "w": w}
@@ -69,6 +69,16 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
     return triplets
 
 
+def _mw(v: Optional[float], default: float) -> float:
+    """Résout min_weight (accepte None venant du LLM)."""
+    return default if v is None else float(v)
+
+
+def _lim(v: Optional[int], default: int) -> int:
+    """Résout limit (accepte None venant du LLM)."""
+    return default if v is None else int(v)
+
+
 # ---------- Tools ----------
 
 @tool
@@ -87,7 +97,7 @@ def lookup_term(term: str) -> dict:
 
 
 @tool
-def get_synonyms(term: str, min_weight: float = 25.0, limit: int = 20) -> list[dict]:
+def get_synonyms(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les synonymes (`r_syn`) d'un terme.
 
     Synonym (`r_syn`) — termes ayant un sens identique ou très proche
@@ -95,20 +105,20 @@ def get_synonyms(term: str, min_weight: float = 25.0, limit: int = 20) -> list[d
 
     Args:
         term: le terme source (en minuscules, accentué si besoin).
-        min_weight: poids minimum pour filtrer le bruit (25 par défaut).
-        limit: nombre maximum de résultats.
+        min_weight: poids minimum pour filtrer le bruit (25 par défaut). Peut être omis.
+        limit: nombre maximum de résultats (20 par défaut). Peut être omis.
 
     Renvoie une liste de triplets [{source, relation, target, w}, ...] triés par poids.
     """
     c = _client()
     rid = c.relation_type_id("r_syn")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=min_weight, limit=limit)
+                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 20))
     return _resolve_targets(c, term, "r_syn", res)
 
 
 @tool
-def get_antonyms(term: str, min_weight: float = 25.0, limit: int = 20) -> list[dict]:
+def get_antonyms(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les antonymes (`r_anto`) d'un terme.
 
     Antonym (`r_anto`) — termes de sens opposés (ex.: chaud | r_anto | froid).
@@ -116,12 +126,12 @@ def get_antonyms(term: str, min_weight: float = 25.0, limit: int = 20) -> list[d
     c = _client()
     rid = c.relation_type_id("r_anto")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=min_weight, limit=limit)
+                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 20))
     return _resolve_targets(c, term, "r_anto", res)
 
 
 @tool
-def get_hypernyms(term: str, min_weight: float = 25.0, limit: int = 20) -> list[dict]:
+def get_hypernyms(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les génériques / hyperonymes (`r_isa`) d'un terme.
 
     Is-A (`r_isa`) — lien de généralisation : le terme cible est une catégorie
@@ -131,12 +141,12 @@ def get_hypernyms(term: str, min_weight: float = 25.0, limit: int = 20) -> list[
     c = _client()
     rid = c.relation_type_id("r_isa")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=min_weight, limit=limit)
+                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 20))
     return _resolve_targets(c, term, "r_isa", res)
 
 
 @tool
-def get_hyponyms(term: str, min_weight: float = 25.0, limit: int = 30) -> list[dict]:
+def get_hyponyms(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les spécifiques / hyponymes (`r_hypo`) d'un terme.
 
     Hyponym (`r_hypo`) — le terme cible est une sous-catégorie ou un exemple
@@ -146,12 +156,12 @@ def get_hyponyms(term: str, min_weight: float = 25.0, limit: int = 30) -> list[d
     c = _client()
     rid = c.relation_type_id("r_hypo")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=min_weight, limit=limit)
+                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 30))
     return _resolve_targets(c, term, "r_hypo", res)
 
 
 @tool
-def get_parts(term: str, min_weight: float = 25.0, limit: int = 30) -> list[dict]:
+def get_parts(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les parties / composants (`r_has_part`) d'un terme.
 
     Has-Part (`r_has_part`) — la cible est une partie, un constituant ou un
@@ -160,12 +170,12 @@ def get_parts(term: str, min_weight: float = 25.0, limit: int = 30) -> list[dict
     c = _client()
     rid = c.relation_type_id("r_has_part")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=min_weight, limit=limit)
+                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 30))
     return _resolve_targets(c, term, "r_has_part", res)
 
 
 @tool
-def get_characteristics(term: str, min_weight: float = 25.0, limit: int = 30) -> list[dict]:
+def get_characteristics(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les caractéristiques (`r_carac`) d'un terme.
 
     Characteristic (`r_carac`) — attributs ou adjectifs qualificatifs typiques
@@ -174,7 +184,7 @@ def get_characteristics(term: str, min_weight: float = 25.0, limit: int = 30) ->
     c = _client()
     rid = c.relation_type_id("r_carac")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=min_weight, limit=limit)
+                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 30))
     return _resolve_targets(c, term, "r_carac", res)
 
 
@@ -183,8 +193,8 @@ def get_relations_of_type(
     term: str,
     relation_name: str,
     direction: str = "from",
-    min_weight: float = 25.0,
-    limit: int = 30,
+    min_weight: Optional[float] = None,
+    limit: Optional[int] = None,
 ) -> list[dict]:
     """Renvoie les relations d'un type donné pour un terme, dans une direction.
 
@@ -197,29 +207,30 @@ def get_relations_of_type(
         term: le terme source ou cible.
         relation_name: nom technique de la relation (commence par "r_", ex. "r_lieu").
         direction: "from" (relations sortantes du terme) ou "to" (entrantes vers lui).
-        min_weight: filtrage.
-        limit: max résultats.
+        min_weight: filtrage (25 par défaut).
+        limit: max résultats (30 par défaut).
     """
     c = _client()
     rid = c.relation_type_id(relation_name)
     if rid is None:
         return [{"error": f"relation inconnue: {relation_name!r}"}]
     incoming = direction == "to"
+    mw, lm = _mw(min_weight, 25.0), _lim(limit, 30)
     if incoming:
-        res = c.relations_to(term, types_ids=[rid], min_weight=min_weight, limit=limit)
+        res = c.relations_to(term, types_ids=[rid], min_weight=mw, limit=lm)
     else:
-        res = c.relations_from(term, types_ids=[rid], min_weight=min_weight, limit=limit)
+        res = c.relations_from(term, types_ids=[rid], min_weight=mw, limit=lm)
     return _resolve_targets(c, term, relation_name, res, incoming=incoming)
 
 
 @tool
-def get_relations_between(term1: str, term2: str, min_weight: float = 5.0) -> list[dict]:
+def get_relations_between(term1: str, term2: str, min_weight: Optional[float] = None) -> list[dict]:
     """Renvoie toutes les relations entre deux termes (term1 → term2).
 
     Utile pour répondre "quel est le rapport entre A et B ?".
     """
     c = _client()
-    res = c.relations_between(term1, term2, min_weight=min_weight)
+    res = c.relations_between(term1, term2, min_weight=_mw(min_weight, 5.0))
     out: list[dict] = []
     for r in sorted(res.relations, key=lambda x: -x.w):
         rname = c.relation_type_name(r.type) or f"type_{r.type}"
@@ -241,7 +252,7 @@ def disambiguate(term: str) -> list[dict]:
 
 
 @tool
-def list_relation_types(prefix: str = "") -> list[dict]:
+def list_relation_types(prefix: Optional[str] = None) -> list[dict]:
     """Liste les types de relations JDM disponibles (filtrage optionnel par préfixe).
 
     Permet à l'agent de découvrir quelles relations existent quand il n'est pas
@@ -249,8 +260,9 @@ def list_relation_types(prefix: str = "") -> list[dict]:
     """
     c = _client()
     out = []
+    pfx = prefix or ""
     for rt in c.relation_types():
-        if prefix and not rt.name.startswith(prefix):
+        if pfx and not rt.name.startswith(pfx):
             continue
         out.append({"name": rt.name, "id": rt.id, "help": (rt.help or "")[:120]})
     return sorted(out, key=lambda d: d["name"])
@@ -286,9 +298,6 @@ def build_jdm_tools(
         return list(ALL_TOOLS)
 
     docs = parse_relation_definitions()
-    # Annotation discrète : on ajoute une ligne en fin de description des tools
-    # qui pointent sur une relation précise. Les tools StructuredTool sont
-    # immutables côté schema, mais leur `description` est modifiable.
     suffix_map = {
         "get_synonyms": "r_syn",
         "get_antonyms": "r_anto",
