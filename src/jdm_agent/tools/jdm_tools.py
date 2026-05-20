@@ -384,7 +384,10 @@ def get_locations(term: str, min_weight: Optional[float] = None, limit: Optional
     """Renvoie les LIEUX typiques associés à un terme (`r_lieu`).
 
     Lieu (`r_lieu`) — où se trouve l'objet ou se déroule l'action.
-    Marche pour nom (carotte | r_lieu | potager) ou verbe (étudier | r_lieu | école).
+    Le terme source peut être un NOM ou un VERBE à l'infinitif (les deux sont
+    valides côté JDM).
+    (ex.: carotte | r_lieu | potager ; poisson | r_lieu | mer ;
+     étudier | r_lieu | école).
     """
     return _predicative_lookup(term, "r_lieu", "from", min_weight, limit)
 
@@ -394,7 +397,9 @@ def get_causes(term: str, min_weight: Optional[float] = None, limit: Optional[in
     """Renvoie les CAUSES possibles d'un état ou d'une action (`r_has_causatif`).
 
     Cause (`r_has_causatif`) — origine ou cause de A.
-    (ex.: blessure | r_has_causatif | chute ; fatigue | r_has_causatif | travail ; fumée | r_has_causatif | feu).
+    Le terme source peut être un NOM (état, événement) ou un VERBE à l'infinitif.
+    (ex.: blessure | r_has_causatif | chute ; fatigue | r_has_causatif | travail ;
+     fumée | r_has_causatif | feu ; tomber | r_has_causatif | glisser).
     """
     return _predicative_lookup(term, "r_has_causatif", "from", min_weight, limit)
 
@@ -404,7 +409,9 @@ def get_consequences(term: str, min_weight: Optional[float] = None, limit: Optio
     """Renvoie les CONSÉQUENCES typiques d'un état ou d'une action (`r_has_conseq`).
 
     Conséquence (`r_has_conseq`) — effet ou suite directe de A.
-    (ex.: tomber | r_has_conseq | se blesser ; pluie | r_has_conseq | inondation).
+    Le terme source peut être un NOM (événement, état) ou un VERBE à l'infinitif.
+    (ex.: tomber | r_has_conseq | se blesser ; pluie | r_has_conseq | inondation ;
+     étudier | r_has_conseq | réussir).
     """
     return _predicative_lookup(term, "r_has_conseq", "from", min_weight, limit)
 
@@ -413,8 +420,12 @@ def get_consequences(term: str, min_weight: Optional[float] = None, limit: Optio
 def get_purpose(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie le BUT d'une action ou d'un objet (`r_but`).
 
-    Purpose (`r_but`) — objectif visé par l'action.
-    (ex.: courir | r_but | santé ; travailler | r_but | argent ; dormir | r_but | récupérer).
+    Purpose (`r_but`) — objectif visé.
+    Le terme source est TYPIQUEMENT un VERBE à l'infinitif (l'action dont on
+    cherche le but), parfois un nom (l'objet ou processus dont on cherche
+    la finalité).
+    (ex.: courir | r_but | santé ; travailler | r_but | argent ;
+     dormir | r_but | récupérer).
     """
     return _predicative_lookup(term, "r_but", "from", min_weight, limit)
 
@@ -424,7 +435,10 @@ def get_manner(verb: str, min_weight: Optional[float] = None, limit: Optional[in
     """Renvoie les MANIÈRES typiques dont une action s'effectue (`r_manner`).
 
     Manner (`r_manner`) — adverbe ou locution adverbiale décrivant comment.
-    (ex.: manger | r_manner | goulûment ; courir | r_manner | rapidement).
+    Le terme source DOIT être un verbe à l'infinitif (action). Pour décrire
+    un nom commun, utilise plutôt get_characteristics.
+    (ex.: manger | r_manner | goulûment ; courir | r_manner | rapidement ;
+     parler | r_manner | doucement).
     """
     return _predicative_lookup(verb, "r_manner", "from", min_weight, limit)
 
@@ -434,7 +448,10 @@ def get_telic_role(noun: str, min_weight: Optional[float] = None, limit: Optiona
     """Renvoie la FONCTION (rôle télique) d'un objet (`r_telic_role`).
 
     Telic-role (`r_telic_role`) — fonction primaire pour laquelle un objet a été conçu.
-    (ex.: couteau | r_telic_role | couper ; chaise | r_telic_role | s'asseoir ; lunettes | r_telic_role | voir).
+    Le terme source DOIT être un NOM (artefact, objet, parfois objet naturel).
+    Renvoie des VERBES à l'infinitif (la fonction de l'objet).
+    (ex.: couteau | r_telic_role | couper ; chaise | r_telic_role | s'asseoir ;
+     lunettes | r_telic_role | voir ; soleil | r_telic_role | éclairer).
     """
     return _predicative_lookup(noun, "r_telic_role", "from", min_weight, limit)
 
@@ -444,7 +461,10 @@ def get_agentive_role(noun: str, min_weight: Optional[float] = None, limit: Opti
     """Renvoie les verbes qui CRÉENT un objet (rôle agentif) (`r_agentif_role`).
 
     Agentif-role (`r_agentif_role`) — verbes transitifs donnant naissance à l'entité.
-    (ex.: maison | r_agentif_role | construire ; livre | r_agentif_role | rédiger).
+    Le terme source DOIT être un NOM (objet, artefact, entité créée).
+    Renvoie des VERBES à l'infinitif (les actions qui produisent cet objet).
+    (ex.: maison | r_agentif_role | construire ; livre | r_agentif_role | rédiger ;
+     tableau | r_agentif_role | peindre).
     """
     return _predicative_lookup(noun, "r_agentif_role", "from", min_weight, limit)
 
