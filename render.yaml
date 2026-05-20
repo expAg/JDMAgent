@@ -1,0 +1,21 @@
+# Render.com Blueprint pour le serveur MCP JDMAgent.
+# Pour déployer :
+#   1. Push ce repo sur GitHub (déjà fait : enhagu01-png/JDMAgent)
+#   2. Sur Render : New → Blueprint → connecte ce repo
+#   3. Render détecte ce fichier et provisionne le service automatiquement
+#
+# Free tier : 750 h/mois, sleep après 15 min d'inactivité, cold start ~30-60 s.
+services:
+  - type: web
+    name: jdmagent-mcp
+    runtime: docker
+    region: frankfurt           # Europe pour minimiser la latence vers jdm-api.demo.lirmm.fr
+    plan: free
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /mcp
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: JDM_CACHE_DIR
+        value: /tmp/jdm-cache   # éphémère sur free tier (acceptable)

@@ -5,6 +5,14 @@
 > collaboratif au LIRMM) — en une ressource directement exploitable par les
 > LLM modernes, via le protocole standard **MCP** et le framework **LangChain**.
 
+## 🚀 Essayer sans installation
+
+| Canal | Pour qui | Lien |
+|---|---|---|
+| 🌐 **Démo web** (Hugging Face Spaces) | Tout le monde — explorer le graphe, fact-checker, agent BYOK | *à publier — voir [DEVELOPMENT.md](DEVELOPMENT.md#déploiement-public-phase-8)* |
+| 🤖 **Serveur MCP hébergé** | Utilisateurs Claude Code/Desktop | *à publier — voir [USAGE.md](USAGE.md#mcp-héberg%C3%A9-distant)* |
+| 📓 **Notebook Google Colab** | Pédagogie, exploration interactive | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/enhagu01-png/JDMAgent/blob/main/notebooks/demo.ipynb) |
+
 ---
 
 ## Objectif

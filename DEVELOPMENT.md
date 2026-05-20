@@ -25,6 +25,61 @@ finale, voir [USAGE.md](USAGE.md). Pour la vision projet, voir
 
 ### À venir
 
+#### Phase 8 — Déploiement public
+
+Trois canaux livrés (artefacts en place dans le repo, déploiement à finaliser
+côté plateformes) :
+
+**Canal A — Web demo Gradio sur Hugging Face Spaces**
+- Fichier : [`app.py`](app.py) — 3 onglets (Explorer / Fact-checker / Agent BYOK)
+- Deps : [`requirements.txt`](requirements.txt) (gradio + langchain-anthropic + core)
+- Métadonnées YAML pour HF : [`README_HF.md`](README_HF.md)
+- Déploiement (à faire **une fois** depuis ton terminal) :
+  ```bash
+  # 1. Sur huggingface.co, crée un nouveau Space "jdmagent" (SDK Gradio)
+  # 2. Côté local :
+  cp README_HF.md README.md.bak    # backup du README de recherche
+  cp README_HF.md README.md         # remplace temporairement par le README HF
+  git remote add hf https://huggingface.co/spaces/<TON_USER>/jdmagent
+  git push hf main
+  cp README.md.bak README.md        # restaure
+  ```
+  Ou alternative propre : pousse seulement les fichiers HF (`app.py`,
+  `requirements.txt`, `README_HF.md`→`README.md`, `src/`, `relation_definitions.md`)
+  via un sous-arbre git ou un workflow GitHub Actions.
+
+**Canal B — Serveur MCP hébergé (Render free tier)**
+- Image Docker : [`Dockerfile`](Dockerfile) (CMD = `streamable-http` sur PORT=$PORT)
+- Blueprint Render : [`render.yaml`](render.yaml)
+- Ignore : [`.dockerignore`](.dockerignore) (omet tests/docs/Gradio)
+- Déploiement :
+  1. Sur [render.com](https://dashboard.render.com), `New → Blueprint`
+  2. Connecte le repo GitHub
+  3. Render détecte `render.yaml` et provisionne `jdmagent-mcp` automatiquement
+  4. URL finale type `https://jdmagent-mcp.onrender.com`, endpoint MCP `/mcp`
+- Test local :
+  ```bash
+  docker build -t jdmagent-mcp .
+  docker run -p 8080:8080 jdmagent-mcp
+  # autre terminal :
+  claude mcp add jdm-local --transport http --url http://localhost:8080/mcp
+  ```
+
+**Canal C — Notebook Google Colab**
+- Fichier : [`notebooks/demo.ipynb`](notebooks/demo.ipynb) (17 cellules, 4 sections)
+- Badge déjà dans le README → renvoie sur Colab via l'URL
+  `https://colab.research.google.com/github/enhagu01-png/JDMAgent/blob/main/notebooks/demo.ipynb`
+- Le notebook installe le package via `pip install git+https://github.com/...`
+  (le repo doit être public)
+
+**Points d'attention** :
+- MCP HTTP transport est récent — vérifier la compatibilité du client Claude
+  Code (`claude --version` ≥ la version qui supporte `--transport http`)
+- Render free tier : sleep après 15 min, cold start ~30-60 s
+- HF Spaces CPU basic : sleep après ~48 h, cold start ~30 s
+- BYOK Gradio : la clé reste en mémoire de session uniquement (pas de log)
+- Licence à fixer avant publication (MIT recommandé)
+
 #### Phase 7 — Spike graphe local (DuckDB / NetworkX)
 Évaluer l'intérêt d'un dump partiel du sous-graphe JDM en local pour les
 requêtes multi-saut (path-finding, transitivité r_isa, fermeture

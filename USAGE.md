@@ -264,7 +264,32 @@ print(f"{len(ok)} candidats à soumettre")
 ok.to_csv("a_soumettre.csv", index=False)
 ```
 
-## `jdm-mcp` — Serveur MCP (n'est pas un CLI à lancer manuellement)
+## MCP hébergé (distant) — sans rien installer
+
+Si tu ne veux pas lancer le serveur en local, une instance hébergée publiquement
+sera disponible (voir [DEVELOPMENT.md](DEVELOPMENT.md) section Phase 8 pour
+les détails de déploiement). Une fois en ligne :
+
+```bash
+# Claude Code — transport HTTP
+claude mcp add jdm-remote --transport http --url https://jdmagent.onrender.com/mcp
+
+# Claude Desktop — claude_desktop_config.json
+# {
+#   "mcpServers": {
+#     "jdm-remote": {
+#       "url": "https://jdmagent.onrender.com/mcp",
+#       "transport": "streamable-http"
+#     }
+#   }
+# }
+```
+
+→ Avantage : zéro install côté toi. Inconvénient : cold start ~30-60 s sur
+free tier après inactivité (les 2 premières requêtes lentes, le reste rapide
+grâce au cache disque côté serveur).
+
+## `jdm-mcp` — Serveur MCP local (n'est pas un CLI à lancer manuellement)
 
 Démarré automatiquement par Claude Code. Pour debug :
 ```powershell

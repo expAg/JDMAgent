@@ -1,0 +1,30 @@
+# Réduit la taille du contexte Docker → builds plus rapides.
+.git/
+.github/
+.venv/
+.cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+
+# Tests + docs : pas nécessaires pour le runtime du serveur MCP.
+tests/
+notebooks/
+*.md
+!relation_definitions.md     # exception : indispensable au runtime
+USAGE.md
+DEVELOPMENT.md
+README.md
+README_HF.md
+
+# Gradio app (non utilisée par le MCP server).
+app.py
+requirements.txt
+
+# Plans / docs Claude
+.claude/
