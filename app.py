@@ -312,6 +312,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     ["Que peut faire un chat ?", "", "claude-haiku-4-5"],
                     ["Quelles sont les composantes typiques d'un smartphone ?", "", "claude-haiku-4-5"],
                 ],
+                cache_examples=False,
                 type="messages",
             )
 
