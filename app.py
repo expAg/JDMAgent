@@ -203,11 +203,40 @@ def _build_llm(model: str, api_key: str):
     raise ValueError(f"Modèle inconnu : {model!r}")
 
 
+def _history_to_lc(history: list[dict], current_user_message: str) -> list:
+    """Convertit l'historique Gradio (format messages) en messages LangChain.
+
+    Filtre les traces de tools / messages vides / erreurs des tours précédents
+    pour ne garder que les vraies bulles user/assistant utiles au contexte.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    lc: list = []
+    for h in history or []:
+        role = h.get("role")
+        content = (h.get("content") or "").strip()
+        if not content or content.startswith("⚠️") or content.startswith("❌"):
+            continue
+        if role == "user":
+            lc.append(HumanMessage(content=content))
+        elif role == "assistant":
+            # On nettoie les "Outils JDM appelés" en fin de message pour
+            # garder un historique conversationnel propre.
+            answer_only = content.split("\n\n---\n*Outils JDM appelés*")[0].strip()
+            if answer_only:
+                lc.append(AIMessage(content=answer_only))
+    lc.append(HumanMessage(content=current_user_message))
+    return lc
+
+
 def chat_with_agent(message: str, history: list[dict], api_key: str, model: str):
     """Générateur de streaming pour ChatInterface.
 
     Yields la trace progressive (appels d'outils + résultats) puis le message
     final. Chaque yield écrase complètement la dernière bulle assistant.
+
+    Le paramètre `history` est passé à l'agent pour conserver le contexte
+    conversationnel (multi-tours).
     """
     if not message.strip():
         yield "Pose une question sur la langue française."
@@ -219,7 +248,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         return
 
     from jdm_agent.tools.jdm_agent import build_jdm_agent
-    from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+    from langchain_core.messages import AIMessage, ToolMessage
 
     progress_lines: list[str] = ["*🧠 Réflexion en cours…*"]
     tool_traces: list[str] = []
@@ -230,7 +259,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     try:
         agent = build_jdm_agent(client=get_client(), llm=llm)
         for chunk in agent.stream(
-            {"messages": [HumanMessage(content=message)]},
+            {"messages": _history_to_lc(history, message)},
             stream_mode="updates",
         ):
             # chunk = dict {node_name: {"messages": [msg, ...]}}
@@ -401,12 +430,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
                 additional_inputs=[key_in, model_in],
+                # Chatbot agrandi : 600 px de haut au lieu du défaut (~360 px).
+                # Les exemples sous l'input deviennent visibles en scrollant.
+                chatbot=gr.Chatbot(
+                    height=600,
+                    type="messages",
+                    show_label=False,
+                    avatar_images=(None, None),
+                ),
                 # Avec additional_inputs, chaque exemple = liste alignée sur
-                # [message, key, model]. La clé reste vide ; clique sur un
-                # exemple sans clé renverra le message "colle ta clé".
-                # Exemples avec Claude Haiku par défaut (l'utilisateur devra
-                # coller sa clé Anthropic ; sans clé, il aura le message d'erreur
-                # informatif renvoyé par _build_llm).
+                # [message, key, model]. La clé reste vide pour les exemples ;
+                # sans clé, l'utilisateur aura le message d'erreur informatif.
                 examples=[
                     ["Quels sont les synonymes de voiture ?", "", "claude-haiku-4-5"],
                     ["Le saumon est-il un mammifère selon JDM ?", "", "claude-haiku-4-5"],
