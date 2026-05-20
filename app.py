@@ -302,12 +302,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
                 additional_inputs=[key_in, model_in],
+                # Avec additional_inputs, chaque exemple = liste alignée sur
+                # [message, key, model]. La clé reste vide ; clique sur un
+                # exemple sans clé renverra le message "colle ta clé".
                 examples=[
-                    "Quels sont les synonymes de voiture ?",
-                    "Le saumon est-il un mammifère selon JDM ?",
-                    "Pour le sens juridique de 'avocat', donne-moi 5 synonymes.",
-                    "Que peut faire un chat ?",
-                    "Quelles sont les composantes typiques d'un smartphone ?",
+                    ["Quels sont les synonymes de voiture ?", "", "claude-haiku-4-5"],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "claude-haiku-4-5"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "claude-haiku-4-5"],
+                    ["Que peut faire un chat ?", "", "claude-haiku-4-5"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "claude-haiku-4-5"],
                 ],
                 type="messages",
             )
