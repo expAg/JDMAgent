@@ -22,9 +22,12 @@ DEVELOPMENT.md
 README.md
 README_HF.md
 
-# Gradio app (non utilisée par le MCP server).
-app.py
-requirements.txt
+# NE PAS exclure app.py / requirements.txt : ils sont utilisés par
+# Hugging Face Spaces (qui respecte ce .dockerignore lors du build).
+# Le Dockerfile Render n'en dépend pas, leur présence dans son contexte
+# est inoffensive.
+# app.py
+# requirements.txt
 
 # Plans / docs Claude
 .claude/
