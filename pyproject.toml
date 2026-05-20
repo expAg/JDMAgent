@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jdm-agent"
+version = "0.1.0"
+description = "Agentification de JeuxDeMots (LangChain + MCP)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    "diskcache>=5.6",
+    "pydantic>=2.6",
+    "python-dotenv>=1.0",
+    "tenacity>=8.2",
+]
+
+[project.optional-dependencies]
+langchain = [
+    "langchain>=0.3",
+    "langchain-core>=0.3",
+    "langgraph>=0.2",
+]
+anthropic = ["langchain-anthropic>=0.2"]
+openai = ["langchain-openai>=0.2"]
+ollama = ["langchain-ollama>=0.2"]
+mcp = ["mcp>=1.0", "fastmcp>=0.4"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+jdm-qa = "jdm_agent.apps.qa_cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jdm_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
