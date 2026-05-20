@@ -16,19 +16,7 @@ langgraph>=0.2
 # Provider LLM activé pour BYOK
 langchain-anthropic>=0.2
 
-# UI
-gradio>=4.44,<5
+# UI — Gradio 5.x (résout: pas de pydub/audioop, pas de HfFolder removed,
+# pas du bug jinja2 dict cache, et meilleurs defaults pour HF Spaces)
+gradio>=5,<6
 pandas>=2.0
-
-# Gradio 4.44 importe HfFolder, retiré dans huggingface_hub 1.0.
-# On pin hf_hub < 1.0 sinon ImportError au démarrage.
-huggingface_hub>=0.30,<1.0
-
-# Bug "unhashable type: dict" dans le cache de templates starlette/jinja2 :
-# introduit dans jinja2 3.1.6+ avec gradio 4.44. On pin jinja2 < 3.1.6.
-jinja2<3.1.6
-
-# Back-port de `audioop` (retiré de la stdlib Python 3.13).
-# pydub (dep transitive de gradio < 5) en a besoin. Si HF respecte
-# python_version: "3.12" dans le README, c'est inutile mais inoffensif.
-audioop-lts; python_version >= "3.13"
