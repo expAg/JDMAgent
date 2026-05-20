@@ -165,6 +165,69 @@ class JDMClient:
         data = self._cached_get(f"/v0/refinements/{quote(name, safe='')}", ttl=self._ttl_data)
         return RefinementsResult.model_validate(data)
 
+    # -- décodage générique d'un nom (refinement OU terme simple) --
+    def decode_node_name(
+        self,
+        name: str,
+        local_nodes: Optional[dict[int, Node]] = None,
+    ) -> dict:
+        """Décode un nom de nœud JDM (`term>ID[>ID...]`) en forme lisible.
+
+        Idempotent : si le nom n'est PAS un refinement (pas de `>` avec entiers),
+        renvoie le nom tel quel. Aucun appel HTTP dans ce cas.
+
+        Si `local_nodes` est fourni (typiquement le dict node_index() d'un
+        RelationsResult), les IDs déjà connus localement sont résolus sans
+        nouvel appel HTTP — économie cruciale dans les boucles.
+
+        Renvoie :
+            {"decoded": str,           # forme lisible humain
+             "is_refinement": bool,    # True si le nom contient des IDs JDM
+             "path": list[str],        # ["avocat", "personne", "juriste"]
+             "path_ids": list[int]}    # [116477, 66699]
+        """
+        if ">" not in name:
+            return {"decoded": name, "is_refinement": False,
+                    "path": [name], "path_ids": []}
+
+        parts = name.split(">")
+        head = parts[0]
+        id_tokens = parts[1:]
+        path: list[str] = [head]
+        path_ids: list[int] = []
+        looks_like_refinement = False
+
+        for tok in id_tokens:
+            try:
+                nid = int(tok)
+            except ValueError:
+                # Pas un entier — token textuel, on le garde tel quel,
+                # mais ce n'est pas un refinement "standard".
+                path.append(tok)
+                continue
+            looks_like_refinement = True
+            path_ids.append(nid)
+            lbl: Optional[str] = None
+            if local_nodes is not None:
+                n = local_nodes.get(nid)
+                if n is not None:
+                    lbl = n.name
+            if lbl is None:
+                try:
+                    lbl = self.node_by_id(nid).name
+                except Exception:
+                    lbl = f"<id:{nid}>"
+            path.append(lbl)
+
+        if not looks_like_refinement:
+            # `>` présent mais aucun ID résolu → on ne décore pas.
+            return {"decoded": name, "is_refinement": False,
+                    "path": [name], "path_ids": []}
+
+        decoded = f"{head} ({', '.join(path[1:])})" if len(path) > 1 else head
+        return {"decoded": decoded, "is_refinement": True,
+                "path": path, "path_ids": path_ids}
+
     def refinements_decoded(self, name: str) -> list[DecodedRefinement]:
         """Renvoie les raffinements en décodant les IDs internes (`>40056>171870`)
         en labels humains via des lookups `node_by_id`.

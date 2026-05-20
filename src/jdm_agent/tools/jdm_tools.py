@@ -41,18 +41,42 @@ def _client() -> JDMClient:
 
 # ---------- Helpers ----------
 
-def _triplet(source: str, relation: str, target_name: str, w: float) -> dict:
-    return {"source": source, "relation": relation, "target": target_name, "w": w}
+def _make_triplet(
+    src_display: str, src_id: Optional[str],
+    rel: str,
+    tgt_display: str, tgt_id: Optional[str],
+    w: float,
+) -> dict:
+    """Construit un triplet exposé au LLM.
+
+    Les `*_id` ne sont inclus QUE si le nom est un refinement JDM
+    (= valeur informative à passer pour requêter ce sens précis).
+    Pour les termes simples, on garde le payload minimal.
+    """
+    out: dict = {"source": src_display, "relation": rel, "target": tgt_display, "w": w}
+    if src_id is not None:
+        out["source_id"] = src_id
+    if tgt_id is not None:
+        out["target_id"] = tgt_id
+    return out
 
 
 def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
                      incoming: bool = False) -> list[dict]:
-    """Construit la liste de triplets en résolvant les noms d'autres bouts.
+    """Construit la liste de triplets en résolvant les noms d'autres bouts
+    ET en décodant tout refinement opaque (`avocat>116477>66699`) en clair.
 
-    Si incoming=True (direction "to"), le terme source est node2 et l'autre bout
-    à résoudre est node1.
+    Si incoming=True (direction "to"), le terme `source_name` correspond au
+    node2 des relations renvoyées, et l'autre bout à exposer est node1.
     """
     idx = result.node_index()
+
+    # Décode le terme racine une fois pour toutes (utilisé en source ou target
+    # selon `incoming`).
+    src_dec = client.decode_node_name(source_name, local_nodes=idx)
+    src_display = src_dec["decoded"]
+    src_id_root = source_name if src_dec["is_refinement"] else None
+
     triplets: list[dict] = []
     for r in sorted(result.relations, key=lambda x: -x.w):
         other_id = r.node1 if incoming else r.node2
@@ -62,10 +86,21 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
                 node = client.node_by_id(other_id)
             except Exception:
                 continue
+        other_dec = client.decode_node_name(node.name, local_nodes=idx)
+        other_display = other_dec["decoded"]
+        other_id_str = node.name if other_dec["is_refinement"] else None
+
         if incoming:
-            triplets.append(_triplet(node.name, rel_name, source_name, r.w))
+            # Le terme racine est la CIBLE ; l'autre bout est la source.
+            triplets.append(_make_triplet(
+                other_display, other_id_str, rel_name,
+                src_display, src_id_root, r.w,
+            ))
         else:
-            triplets.append(_triplet(source_name, rel_name, node.name, r.w))
+            triplets.append(_make_triplet(
+                src_display, src_id_root, rel_name,
+                other_display, other_id_str, r.w,
+            ))
     return triplets
 
 
@@ -85,15 +120,21 @@ def _lim(v: Optional[int], default: int) -> int:
 def lookup_term(term: str) -> dict:
     """Cherche un terme dans JeuxDeMots et renvoie ses informations de base.
 
-    Renvoie {id, name, type, weight} ou {error} si le terme n'existe pas.
-    Utile pour vérifier qu'un mot est connu du graphe avant de l'interroger plus
-    en profondeur. `weight` est le poids global du nœud (popularité dans JDM).
+    Renvoie {id, name, decoded, type, weight} ou {error} si le terme n'existe pas.
+    Si le terme est un refinement (ex: "avocat>116477>66699"), `name` reste
+    l'identifiant brut et `decoded` est la forme lisible ("avocat (personne, juriste)").
+    `weight` est le poids global du nœud (popularité dans JDM).
     """
+    c = _client()
     try:
-        n = _client().node_by_name(term)
+        n = c.node_by_name(term)
     except Exception as e:
         return {"error": f"terme inconnu : {term!r} ({e})"}
-    return {"id": n.id, "name": n.name, "type": n.type, "weight": n.w}
+    dec = c.decode_node_name(n.name)
+    return {
+        "id": n.id, "name": n.name, "decoded": dec["decoded"],
+        "type": n.type, "weight": n.w,
+    }
 
 
 @tool
@@ -228,13 +269,24 @@ def get_relations_between(term1: str, term2: str, min_weight: Optional[float] = 
     """Renvoie toutes les relations entre deux termes (term1 → term2).
 
     Utile pour répondre "quel est le rapport entre A et B ?".
+    Les éventuels refinements (ex: "avocat>116477>66699") sont décodés
+    en clair ("avocat (personne, juriste)") avec leur ID préservé dans
+    `source_id`/`target_id`.
     """
     c = _client()
     res = c.relations_between(term1, term2, min_weight=_mw(min_weight, 5.0))
+    idx = res.node_index()
+    src_dec = c.decode_node_name(term1, local_nodes=idx)
+    tgt_dec = c.decode_node_name(term2, local_nodes=idx)
+    src_id = term1 if src_dec["is_refinement"] else None
+    tgt_id = term2 if tgt_dec["is_refinement"] else None
     out: list[dict] = []
     for r in sorted(res.relations, key=lambda x: -x.w):
         rname = c.relation_type_name(r.type) or f"type_{r.type}"
-        out.append({"source": term1, "relation": rname, "target": term2, "w": r.w})
+        out.append(_make_triplet(
+            src_dec["decoded"], src_id, rname,
+            tgt_dec["decoded"], tgt_id, r.w,
+        ))
     return out
 
 
@@ -246,21 +298,28 @@ def disambiguate(term: str) -> list[dict]:
     souris = animal | informatique, police = force de l'ordre | typographie, etc.).
     Les IDs internes JDM sont automatiquement résolus en labels humains.
 
-    Renvoie [{name, decoded, path, weight}, ...] où :
-      - `decoded` est la forme lisible (ex. "avocat (personne, juriste)")
-      - `path` est la chaîne hiérarchique (["avocat", "personne", "juriste"])
-      - `name` est l'identifiant brut JDM (ex. "avocat>116477>66699")
-    Tu DOIS utiliser `decoded` pour citer les sens à l'utilisateur, jamais `name`.
+    Renvoie [{sense, sense_id, path, weight}, ...] triés par poids décroissant :
+      - `sense`    : forme lisible (ex. "avocat (personne, juriste)") — À CITER À L'UTILISATEUR
+      - `sense_id` : identifiant brut JDM (ex. "avocat>116477>66699") —
+        à RÉ-UTILISER comme `term` dans les outils suivants pour requêter ce sens précis
+      - `path`     : chaîne hiérarchique (["avocat", "personne", "juriste"])
+      - `weight`   : pertinence du sens dans JDM
+
+    Workflow typique :
+      1. disambiguate("avocat") → tu vois le sens dominant "avocat (personne, juriste)"
+         avec sense_id "avocat>116477>66699"
+      2. get_synonyms(term="avocat>116477>66699") pour les synonymes du juriste
+         (et non du fruit).
     """
     c = _client()
     decoded = c.refinements_decoded(term)
     decoded.sort(key=lambda d: -d.weight)
     return [
         {
-            "decoded": d.decoded,
+            "sense": d.decoded,
+            "sense_id": d.name,
             "path": d.path,
             "weight": d.weight,
-            "name": d.name,        # gardé pour traçabilité éventuelle
         }
         for d in decoded
     ]

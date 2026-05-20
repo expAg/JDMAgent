@@ -95,7 +95,13 @@ def test_get_synonyms_returns_triplets(patched_client):
 
     out = get_synonyms.invoke({"term": "chat", "min_weight": 0, "limit": 10})
     assert isinstance(out, list)
-    assert out[0] == {"source": "chat", "relation": "r_syn", "target": "matou", "w": 80.0}
+    # Termes simples : pas de source_id / target_id (champ omis).
+    assert out[0]["source"] == "chat"
+    assert out[0]["target"] == "matou"
+    assert out[0]["relation"] == "r_syn"
+    assert out[0]["w"] == 80.0
+    assert "source_id" not in out[0]
+    assert "target_id" not in out[0]
 
 
 @respx.mock
@@ -149,8 +155,8 @@ def test_disambiguate(patched_client):
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
     respx.get(f"{BASE}/v0/refinements/avocat").mock(return_value=httpx.Response(200, json=REFINEMENTS_RESP))
     out = disambiguate.invoke({"term": "avocat"})
-    names = [d["name"] for d in out]
-    assert "avocat>fruit" in names and "avocat>juriste" in names
+    ids = [d["sense_id"] for d in out]
+    assert "avocat>fruit" in ids and "avocat>juriste" in ids
 
 
 @respx.mock
@@ -199,7 +205,11 @@ def test_get_agents_calls_r_agent(patched_client):
     out = get_agents.invoke({"verb": "manger", "min_weight": 0, "limit": 10})
     assert route.called
     assert dict(route.calls.last.request.url.params)["types_ids"] == "13"
-    assert out[0] == {"source": "manger", "relation": "r_agent", "target": "chat", "w": 200.0}
+    assert out[0]["source"] == "manger"
+    assert out[0]["target"] == "chat"
+    assert out[0]["relation"] == "r_agent"
+    assert out[0]["w"] == 200.0
+    assert "source_id" not in out[0] and "target_id" not in out[0]
 
 
 @respx.mock
@@ -214,8 +224,8 @@ def test_get_consequences_uses_correct_relation_id(patched_client):
 
 
 @respx.mock
-def test_disambiguate_returns_decoded(patched_client):
-    """disambiguate doit renvoyer 'decoded' lisible, plus 'name' brut."""
+def test_disambiguate_returns_sense_and_id(patched_client):
+    """disambiguate doit renvoyer 'sense' (décodé) et 'sense_id' (brut)."""
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
     respx.get(f"{BASE}/v0/refinements/avocat").mock(return_value=httpx.Response(200, json={
@@ -233,11 +243,57 @@ def test_disambiguate_returns_decoded(patched_client):
         "id": 66699, "name": "juriste", "type": 1, "w": 911,
     }))
     out = disambiguate.invoke({"term": "avocat"})
-    by_name = {d["name"]: d for d in out}
-    assert by_name["avocat>116477>66699"]["decoded"] == "avocat (personne, juriste)"
-    assert by_name["avocat>87286"]["decoded"] == "avocat (fruit)"
+    by_id = {d["sense_id"]: d for d in out}
+    assert by_id["avocat>116477>66699"]["sense"] == "avocat (personne, juriste)"
+    assert by_id["avocat>87286"]["sense"] == "avocat (fruit)"
     # Trié par poids décroissant.
     assert out[0]["weight"] >= out[-1]["weight"]
+
+
+@respx.mock
+def test_relations_decode_refinement_target(patched_client):
+    """Un target qui EST un refinement doit apparaître décodé + target_id préservé."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    # avocat → r_raff_sem → avocat>116477>66699 (le sens "juriste")
+    respx.get(f"{BASE}/v0/relations/from/avocat").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 1, "name": "avocat", "type": 1, "w": 100},
+            {"id": 116477, "name": "personne", "type": 1, "w": 1000},
+            {"id": 565903, "name": "avocat>116477>66699", "type": 1, "w": 50},
+        ],
+        "relations": [
+            {"id": 1, "node1": 1, "node2": 565903, "type": 5, "w": 200.0},
+        ],
+    }))
+    # r_syn id=5 dans REL_TYPES, peu importe la sémantique pour ce test.
+    respx.get(f"{BASE}/v0/node_by_id/66699").mock(return_value=httpx.Response(200, json={
+        "id": 66699, "name": "juriste", "type": 1, "w": 911,
+    }))
+
+    out = get_synonyms.invoke({"term": "avocat", "min_weight": 0, "limit": 5})
+    assert out[0]["source"] == "avocat"
+    assert out[0]["target"] == "avocat (personne, juriste)"
+    assert out[0]["target_id"] == "avocat>116477>66699"
+    assert "source_id" not in out[0]  # source = terme simple
+
+
+@respx.mock
+def test_lookup_term_includes_decoded(patched_client):
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    respx.get(f"{BASE}/v0/node_by_name/avocat%3E116477%3E66699").mock(return_value=httpx.Response(200, json={
+        "id": 565903, "name": "avocat>116477>66699", "type": 1, "w": 50,
+    }))
+    respx.get(f"{BASE}/v0/node_by_id/116477").mock(return_value=httpx.Response(200, json={
+        "id": 116477, "name": "personne", "type": 1, "w": 1000,
+    }))
+    respx.get(f"{BASE}/v0/node_by_id/66699").mock(return_value=httpx.Response(200, json={
+        "id": 66699, "name": "juriste", "type": 1, "w": 911,
+    }))
+    out = lookup_term.invoke({"term": "avocat>116477>66699"})
+    assert out["name"] == "avocat>116477>66699"
+    assert out["decoded"] == "avocat (personne, juriste)"
 
 
 def test_all_tools_have_valid_schemas():
