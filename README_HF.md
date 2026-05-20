@@ -28,7 +28,19 @@ pour les LLM modernes via LangChain + MCP.
 
 - 🔎 **Explorer JDM** — sans LLM : interroge le graphe (synonymes, hyperonymes, parties, caractéristiques, agents, lieux, etc.) + désambiguïsation des polysémiques (avocat → fruit / juriste / couleur)
 - ⚖️ **Fact-checker** — vérification déterministe d'un triplet : `supported` / `contradicted` / `unknown` avec triplets justificatifs
-- 🤖 **Agent (BYOK)** — conversationnel avec un LLM Claude qui n'utilise QUE JDM pour répondre. **Apporte ta propre clé Anthropic**, elle reste dans ta session.
+- 🤖 **Agent** — conversationnel, deux options de modèle :
+  - **HF Inference** (gratuit) : Llama 3.3 70B ou Qwen 2.5 72B via le quota du Space. Aucune clé visiteur requise.
+  - **Anthropic Claude** (BYOK) : qualité/rapidité supérieures, ta clé reste en session.
+
+## Configuration (pour le propriétaire du Space)
+
+L'onglet Agent utilise `HF_TOKEN` côté serveur pour appeler l'Inference API HF.
+Va dans **Settings → Variables and secrets** et ajoute :
+- Nom : `HF_TOKEN`
+- Valeur : un token HF Read (gratuit, sur https://huggingface.co/settings/tokens)
+
+Sans ce secret, seul le mode BYOK Anthropic fonctionnera dans l'onglet Agent.
+Les onglets Explorer et Fact-checker fonctionnent sans aucune config.
 
 ## Crédits
 

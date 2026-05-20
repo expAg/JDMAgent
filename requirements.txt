@@ -13,8 +13,11 @@ langchain>=0.3
 langchain-core>=0.3
 langgraph>=0.2
 
-# Provider LLM activé pour BYOK
+# Providers LLM activés
+# - langchain-anthropic : BYOK (utilisateur fournit sa clé)
+# - langchain-huggingface : Inference API HF (utilise HF_TOKEN du Space, gratuit)
 langchain-anthropic>=0.2
+langchain-huggingface>=0.1
 
 # UI — Gradio 5.x (résout: pas de pydub/audioop, pas de HfFolder removed,
 # pas du bug jinja2 dict cache, et meilleurs defaults pour HF Spaces)

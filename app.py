@@ -155,26 +155,74 @@ def factcheck_one(subject: str, relation: str, object_: str) -> tuple[str, str]:
     return status_md, "\n".join(lines) if lines else "*(aucun triplet cité)*"
 
 
-# ---------- Tab 3: Agent (BYOK) ----------
+# ---------- Tab 3: Agent (HF Inference gratuit OU Anthropic BYOK) ----------
+
+# Modèles HF gratuits (utilisent HF_TOKEN du Space — visiteur n'a rien à fournir).
+# Prefix "hf:" pour router dans chat_with_agent. Tool-calling supporté.
+HF_MODELS = {
+    "hf:meta-llama/Llama-3.3-70B-Instruct":
+        "Llama 3.3 70B (HF, gratuit, ~5-15s/tour)",
+    "hf:Qwen/Qwen2.5-72B-Instruct":
+        "Qwen 2.5 72B (HF, gratuit, ~5-15s/tour)",
+}
+ANTHROPIC_MODELS = {
+    "claude-haiku-4-5":   "Claude Haiku 4.5 (BYOK, ~2-4s/tour)",
+    "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK, top qualité)",
+}
+ALL_MODELS = {**HF_MODELS, **ANTHROPIC_MODELS}
+
+
+def _build_llm(model: str, anthropic_key: str):
+    """Instancie le ChatModel selon le modèle choisi.
+
+    - hf:* → HuggingFace Inference API via HF_TOKEN (env var du Space)
+    - claude-* → Anthropic via clé visiteur (BYOK)
+    Lève ValueError avec message utilisateur explicite si pré-requis manquant.
+    """
+    if model.startswith("hf:"):
+        if not os.environ.get("HF_TOKEN"):
+            raise ValueError(
+                "Le secret `HF_TOKEN` n'est pas configuré côté Space. "
+                "L'option HF gratuite n'est pas disponible. "
+                "Utilise une clé Anthropic, ou demande au propriétaire du "
+                "Space d'ajouter un HF_TOKEN dans Settings → Variables and secrets."
+            )
+        repo_id = model.split(":", 1)[1]
+        from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
+        endpoint = HuggingFaceEndpoint(
+            repo_id=repo_id,
+            task="text-generation",
+            huggingfacehub_api_token=os.environ["HF_TOKEN"],
+            max_new_tokens=1024,
+            temperature=0.0,
+        )
+        return ChatHuggingFace(llm=endpoint)
+
+    # Sinon : Anthropic BYOK
+    if not anthropic_key.strip():
+        raise ValueError(
+            "Pour utiliser un modèle Claude, colle ta clé Anthropic ci-dessus. "
+            "Tu peux en créer une (gratuit à créer, paiement à l'usage) sur "
+            "https://console.anthropic.com/settings/keys — la clé reste dans "
+            "ta session, n'est ni sauvegardée ni loggée."
+        )
+    os.environ["ANTHROPIC_API_KEY"] = anthropic_key.strip()
+    from jdm_agent.tools.llm_factory import get_llm
+    return get_llm(provider="anthropic", model=model)
+
 
 def chat_with_agent(message: str, history: list[dict], api_key: str, model: str) -> str:
-    if not api_key.strip():
-        return ("⚠️ Colle une clé API Anthropic ci-dessus pour activer l'agent.\n\n"
-                "Tu peux en créer une sur https://console.anthropic.com/settings/keys "
-                "(facturation séparée de Claude.ai). La clé reste dans ta session.")
     if not message.strip():
         return "Pose une question sur la langue française."
-
-    os.environ["ANTHROPIC_API_KEY"] = api_key.strip()
-
+    try:
+        llm = _build_llm(model, api_key)
+    except ValueError as e:
+        return f"⚠️ {e}"
     try:
         from jdm_agent.tools.jdm_agent import build_jdm_agent, ask
-        from jdm_agent.tools.llm_factory import get_llm
-        llm = get_llm(provider="anthropic", model=model)
         agent = build_jdm_agent(client=get_client(), llm=llm)
         out = ask(agent, message)
         answer = out["answer"]
-        # Append tool call trace
         tool_calls = out.get("tool_calls") or []
         if tool_calls:
             trace = "\n\n---\n*Outils JDM appelés* :"
@@ -282,22 +330,33 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 inputs=[fc_subject, fc_relation, fc_object],
             )
 
-        # ----- Tab 3: Agent (BYOK) -----
-        with gr.Tab("🤖 Agent (BYOK)"):
+        # ----- Tab 3: Agent (HF gratuit OU Anthropic BYOK) -----
+        with gr.Tab("🤖 Agent"):
             gr.Markdown(
-                "Discute avec un agent Claude qui n'utilise QUE les outils JDM "
+                "Discute avec un agent qui n'utilise QUE les outils JDM "
                 "pour répondre. Chaque réponse cite ses triplets sources.\n\n"
-                "**⚠️ Bring Your Own Key (BYOK)** : colle ta clé Anthropic ci-dessous. "
-                "Elle reste dans ta session, n'est ni sauvegardée ni loggée. "
-                "Tu paies ton propre usage. Crée une clé sur "
-                "[console.anthropic.com](https://console.anthropic.com/settings/keys)."
+                "**Deux options de modèle** :\n"
+                "- 🆓 **HF Inference** (Llama 3.3, Qwen 2.5) — *gratuit*, "
+                "utilise le quota d'inférence du Space (aucune clé visiteur). "
+                "Légèrement plus lent (~5-15 s/tour).\n"
+                "- 💳 **Anthropic Claude** — *BYOK* (Bring Your Own Key). "
+                "Crée une clé sur "
+                "[console.anthropic.com](https://console.anthropic.com/settings/keys) "
+                "et colle-la ci-dessous. Plus rapide / meilleure qualité. "
+                "La clé reste en session, n'est ni sauvegardée ni loggée."
             )
             with gr.Row():
-                key_in = gr.Textbox(label="Clé API Anthropic", type="password",
-                                    placeholder="sk-ant-...", scale=3)
+                key_in = gr.Textbox(
+                    label="Clé API Anthropic (requise seulement pour les modèles Claude)",
+                    type="password", placeholder="sk-ant-... (optionnel si tu choisis HF)",
+                    scale=3,
+                )
                 model_in = gr.Dropdown(
-                    ["claude-haiku-4-5", "claude-sonnet-4-5"],
-                    value="claude-haiku-4-5", label="Modèle", scale=1,
+                    choices=[(label, key) for key, label in ALL_MODELS.items()],
+                    value="hf:meta-llama/Llama-3.3-70B-Instruct",
+                    label="Modèle",
+                    info="hf:* = gratuit ; claude-* = BYOK Anthropic",
+                    scale=2,
                 )
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
@@ -305,12 +364,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 # Avec additional_inputs, chaque exemple = liste alignée sur
                 # [message, key, model]. La clé reste vide ; clique sur un
                 # exemple sans clé renverra le message "colle ta clé".
+                # Exemples avec modèle HF gratuit par défaut (clé vide OK)
                 examples=[
-                    ["Quels sont les synonymes de voiture ?", "", "claude-haiku-4-5"],
-                    ["Le saumon est-il un mammifère selon JDM ?", "", "claude-haiku-4-5"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "claude-haiku-4-5"],
-                    ["Que peut faire un chat ?", "", "claude-haiku-4-5"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "claude-haiku-4-5"],
+                    ["Quels sont les synonymes de voiture ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
+                    ["Que peut faire un chat ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
                 ],
                 cache_examples=False,
                 type="messages",
