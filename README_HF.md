@@ -28,22 +28,14 @@ pour les LLM modernes via LangChain + MCP.
 
 - 🔎 **Explorer JDM** — sans LLM : interroge le graphe (synonymes, hyperonymes, parties, caractéristiques, agents, lieux, etc.) + désambiguïsation des polysémiques (avocat → fruit / juriste / couleur)
 - ⚖️ **Fact-checker** — vérification déterministe d'un triplet : `supported` / `contradicted` / `unknown` avec triplets justificatifs
-- 🤖 **Agent** — conversationnel, trois options de modèle :
-  - **HF Inference** (gratuit) : Llama 3.3 70B ou Qwen 2.5 72B via le quota du Space. Aucune clé visiteur requise.
-  - **Anthropic Claude** (BYOK) : qualité/rapidité supérieures.
-  - **OpenAI GPT** (BYOK) : function-calling très mature.
+- 🤖 **Agent** — conversationnel (BYOK — Bring Your Own Key) :
+  - **Anthropic Claude** (Haiku ou Sonnet) — clé sur [console.anthropic.com](https://console.anthropic.com/settings/keys)
+  - **OpenAI GPT** (4o ou 4o mini) — clé sur [platform.openai.com](https://platform.openai.com/api-keys)
 
-  Pour les options BYOK, la clé reste en session, n'est ni sauvegardée ni loggée.
+  La clé reste en session, n'est ni sauvegardée ni loggée. Tu paies uniquement ton propre usage.
 
-## Configuration (pour le propriétaire du Space)
-
-L'onglet Agent utilise `HF_TOKEN` côté serveur pour appeler l'Inference API HF.
-Va dans **Settings → Variables and secrets** et ajoute :
-- Nom : `HF_TOKEN`
-- Valeur : un token HF Read (gratuit, sur https://huggingface.co/settings/tokens)
-
-Sans ce secret, seul le mode BYOK Anthropic fonctionnera dans l'onglet Agent.
-Les onglets Explorer et Fact-checker fonctionnent sans aucune config.
+Les onglets **Explorer** et **Fact-checker** fonctionnent **sans aucune clé** —
+ils n'utilisent aucun LLM, juste l'API publique de JeuxDeMots.
 
 ## Crédits
 

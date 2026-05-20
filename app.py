@@ -157,53 +157,25 @@ def factcheck_one(subject: str, relation: str, object_: str) -> tuple[str, str]:
 
 # ---------- Tab 3: Agent (HF Inference gratuit OU Anthropic BYOK) ----------
 
-# Modèles HF gratuits (utilisent HF_TOKEN du Space — visiteur n'a rien à fournir).
-# Prefix "hf:" pour router dans chat_with_agent. Tool-calling supporté.
-HF_MODELS = {
-    "hf:meta-llama/Llama-3.3-70B-Instruct":
-        "Llama 3.3 70B (HF, gratuit, ~5-15s/tour)",
-    "hf:Qwen/Qwen2.5-72B-Instruct":
-        "Qwen 2.5 72B (HF, gratuit, ~5-15s/tour)",
-}
 ANTHROPIC_MODELS = {
-    "claude-haiku-4-5":   "Claude Haiku 4.5 (BYOK Anthropic, ~2-4s/tour)",
+    "claude-haiku-4-5":   "Claude Haiku 4.5 (BYOK Anthropic, rapide, peu cher)",
     "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK Anthropic, top qualité)",
 }
 OPENAI_MODELS = {
     "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI, rapide, peu cher)",
     "gpt-4o":      "GPT-4o (BYOK OpenAI, meilleure qualité)",
 }
-ALL_MODELS = {**HF_MODELS, **ANTHROPIC_MODELS, **OPENAI_MODELS}
+ALL_MODELS = {**ANTHROPIC_MODELS, **OPENAI_MODELS}
 
 
 def _build_llm(model: str, api_key: str):
     """Instancie le ChatModel selon le modèle choisi.
 
-    - hf:*       → HuggingFace Inference API via HF_TOKEN (env var du Space)
     - claude-*   → Anthropic via clé visiteur (BYOK, sk-ant-...)
     - gpt-*      → OpenAI via clé visiteur (BYOK, sk-...)
 
-    Lève ValueError avec message utilisateur explicite si pré-requis manquant.
+    Lève ValueError avec message utilisateur explicite si la clé manque.
     """
-    if model.startswith("hf:"):
-        if not os.environ.get("HF_TOKEN"):
-            raise ValueError(
-                "Le secret `HF_TOKEN` n'est pas configuré côté Space. "
-                "L'option HF gratuite n'est pas disponible. "
-                "Utilise une clé Anthropic ou OpenAI, ou demande au propriétaire du "
-                "Space d'ajouter un HF_TOKEN dans Settings → Variables and secrets."
-            )
-        repo_id = model.split(":", 1)[1]
-        from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-        endpoint = HuggingFaceEndpoint(
-            repo_id=repo_id,
-            task="text-generation",
-            huggingfacehub_api_token=os.environ["HF_TOKEN"],
-            max_new_tokens=1024,
-            temperature=0.0,
-        )
-        return ChatHuggingFace(llm=endpoint)
-
     if model.startswith("claude-"):
         if not api_key.strip():
             raise ValueError(
@@ -350,35 +322,35 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 inputs=[fc_subject, fc_relation, fc_object],
             )
 
-        # ----- Tab 3: Agent (HF gratuit OU Anthropic / OpenAI BYOK) -----
+        # ----- Tab 3: Agent (BYOK Anthropic / OpenAI) -----
         with gr.Tab("🤖 Agent"):
             gr.Markdown(
                 "Discute avec un agent qui n'utilise QUE les outils JDM "
                 "pour répondre. Chaque réponse cite ses triplets sources.\n\n"
-                "**Trois options de modèle** :\n"
-                "- 🆓 **HF Inference** (Llama 3.3, Qwen 2.5) — *gratuit*, "
-                "utilise le quota d'inférence du Space (aucune clé visiteur). "
-                "Légèrement plus lent (~5-15 s/tour).\n"
-                "- 💳 **Anthropic Claude** — *BYOK*. Crée une clé sur "
+                "**Apporte ta propre clé** (BYOK — Bring Your Own Key) :\n"
+                "- 💳 **Anthropic Claude** — clé sur "
                 "[console.anthropic.com](https://console.anthropic.com/settings/keys). "
-                "Rapide, top qualité.\n"
-                "- 💳 **OpenAI GPT** — *BYOK*. Crée une clé sur "
+                "Rapide, top qualité, ~0.05–0.30 $ par session.\n"
+                "- 💳 **OpenAI GPT** — clé sur "
                 "[platform.openai.com](https://platform.openai.com/api-keys). "
-                "Rapide, function-calling très mature.\n\n"
-                "*La clé reste en session, n'est ni sauvegardée ni loggée.*"
+                "Function-calling très mature, ~0.01–0.10 $ par session avec gpt-4o-mini.\n\n"
+                "*La clé reste en session, n'est ni sauvegardée ni loggée. "
+                "Tu paies uniquement ton propre usage chez le provider choisi.*\n\n"
+                "💡 *Tu peux aussi explorer JDM sans clé dans les onglets "
+                "**Explorer** et **Fact-checker** — ils n'utilisent aucun LLM.*"
             )
             with gr.Row():
                 key_in = gr.Textbox(
                     label="Clé API (Anthropic sk-ant-... ou OpenAI sk-...)",
                     type="password",
-                    placeholder="laisse vide si tu choisis un modèle HF",
+                    placeholder="sk-ant-... ou sk-...",
                     scale=3,
                 )
                 model_in = gr.Dropdown(
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
-                    value="hf:meta-llama/Llama-3.3-70B-Instruct",
+                    value="claude-haiku-4-5",
                     label="Modèle",
-                    info="hf:* = gratuit · claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI",
+                    info="claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI",
                     scale=2,
                 )
             chat = gr.ChatInterface(
@@ -387,13 +359,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 # Avec additional_inputs, chaque exemple = liste alignée sur
                 # [message, key, model]. La clé reste vide ; clique sur un
                 # exemple sans clé renverra le message "colle ta clé".
-                # Exemples avec modèle HF gratuit par défaut (clé vide OK)
+                # Exemples avec Claude Haiku par défaut (l'utilisateur devra
+                # coller sa clé Anthropic ; sans clé, il aura le message d'erreur
+                # informatif renvoyé par _build_llm).
                 examples=[
-                    ["Quels sont les synonymes de voiture ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
-                    ["Le saumon est-il un mammifère selon JDM ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
-                    ["Que peut faire un chat ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "hf:meta-llama/Llama-3.3-70B-Instruct"],
+                    ["Quels sont les synonymes de voiture ?", "", "claude-haiku-4-5"],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "claude-haiku-4-5"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "claude-haiku-4-5"],
+                    ["Que peut faire un chat ?", "", "claude-haiku-4-5"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "claude-haiku-4-5"],
                 ],
                 cache_examples=False,
                 type="messages",
