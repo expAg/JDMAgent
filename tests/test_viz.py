@@ -132,10 +132,17 @@ def test_build_subgraph_html_writes_file(tmp_path: Path):
     assert "r_isa" in content
 
 
-def test_defaults_match_howto():
-    # Les défauts doivent rester alignés sur la recette du howto.
+def test_defaults_match_calibrated_set():
+    # Les défauts sont la sélection calibrée empiriquement : 8 relations au
+    # niveau 1, 4 au niveau 2 — patient-1/agent-1/associated EXCLUS par
+    # défaut (trop bruyants en exploration générale).
     assert "r_isa" in DEFAULT_RELATIONS
     assert "r_hypo" in DEFAULT_RELATIONS
     assert "r_has_part" in DEFAULT_RELATIONS
-    assert "r_patient-1" in DEFAULT_RELATIONS
+    assert "r_domain" in DEFAULT_RELATIONS
+    assert "r_patient-1" not in DEFAULT_RELATIONS
+    assert "r_agent-1" not in DEFAULT_RELATIONS
+    assert "r_associated" not in DEFAULT_RELATIONS
+    # Niveau 2 : r_isa pour la remontée catégorielle.
+    assert "r_isa" in DEFAULT_DEPTH2_RELATIONS
     assert set(DEFAULT_DEPTH2_RELATIONS).issubset(set(DEFAULT_RELATIONS))

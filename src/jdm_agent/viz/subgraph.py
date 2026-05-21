@@ -18,16 +18,19 @@ from jdm_agent.viz.template import HTML_TEMPLATE
 # ---------- Paramètres par défaut (recette du howto) ----------
 
 #: Jeu standard de relations explorées à la profondeur 1.
+#: Sélection calibrée pour des sous-graphes lisibles (8 relations) — exclut
+#: par défaut les inverses verbo-nominaux (patient-1, agent-1) et r_associated,
+#: trop bruyants en exploration générale. Le LLM/utilisateur peut les
+#: rajouter explicitement quand pertinent.
 DEFAULT_RELATIONS: list[str] = [
     "r_isa", "r_hypo", "r_syn", "r_anto",
-    "r_carac", "r_has_part", "r_lieu",
-    "r_patient-1", "r_agent-1",
-    "r_domain", "r_associated",
+    "r_carac", "r_has_part", "r_lieu", "r_domain",
 ]
 
 #: Sous-ensemble exploré à la profondeur 2 (limite l'explosion combinatoire).
+#: Garde r_isa pour permettre la remontée catégorielle au 2nd niveau.
 DEFAULT_DEPTH2_RELATIONS: list[str] = [
-    "r_has_part", "r_lieu", "r_carac", "r_hypo",
+    "r_isa", "r_carac", "r_has_part", "r_lieu",
 ]
 
 
@@ -193,7 +196,7 @@ def build_subgraph(
     *,
     client: Optional[JDMClient] = None,
     depth: int = 2,
-    top_k_per_relation: int = 6,
+    top_k_per_relation: int = 3,
     min_weight: Optional[float] = None,
     relations: Optional[list[str]] = None,
     depth2_relations: Optional[list[str]] = None,

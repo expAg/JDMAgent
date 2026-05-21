@@ -37,8 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("term", help="terme racine (ex. \"plat asiatique\", \"polyphonie\")")
     p.add_argument("--depth", type=int, default=2,
                    help="profondeur (1, 2 ou 3 ; défaut = 2)")
-    p.add_argument("--top-k", type=int, default=6,
-                   help="nb max de cibles par relation et par nœud (défaut = 6)")
+    p.add_argument("--top-k", type=int, default=3,
+                   help="nb max de cibles par relation et par nœud (défaut = 3)")
     p.add_argument("--min-weight", type=float, default=None,
                    help="poids minimum (défaut : aucun, JDM décide)")
     p.add_argument("--relations", type=str, default=None,

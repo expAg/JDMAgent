@@ -776,7 +776,7 @@ def list_relation_types(prefix: Optional[str] = None) -> list[dict]:
 def build_subgraph_visualization(
     term: str,
     depth: int = 2,
-    top_k_per_relation: int = 6,
+    top_k_per_relation: int = 3,
     min_weight: Optional[float] = None,
     relations: Optional[list[str]] = None,
     depth2_relations: Optional[list[str]] = None,

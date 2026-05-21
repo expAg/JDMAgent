@@ -480,7 +480,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                                       scale=3)
                 viz_depth = gr.Slider(1, 3, value=2, step=1, label="Profondeur",
                                       scale=1)
-                viz_topk = gr.Slider(3, 12, value=6, step=1,
+                viz_topk = gr.Slider(3, 12, value=3, step=1,
                                      label="Top-K par relation", scale=1)
             viz_relations = gr.CheckboxGroup(
                 choices=DEFAULT_RELATIONS,
@@ -505,10 +505,10 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             )
             gr.Examples(
                 examples=[
-                    ["plat asiatique", 2, 6],
-                    ["polyphonie", 2, 6],
-                    ["chat", 1, 8],
-                    ["voiture", 2, 5],
+                    ["plat asiatique", 2, 3],
+                    ["polyphonie", 2, 3],
+                    ["chat", 1, 6],
+                    ["voiture", 2, 4],
                 ],
                 inputs=[viz_term, viz_depth, viz_topk],
             )
