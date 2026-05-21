@@ -770,6 +770,70 @@ def list_relation_types(prefix: Optional[str] = None) -> list[dict]:
     return sorted(out, key=lambda d: d["name"])
 
 
+# ---------- Visualisation de sous-graphe ----------
+
+@tool
+def build_subgraph_visualization(
+    term: str,
+    depth: int = 2,
+    top_k_per_relation: int = 6,
+    min_weight: Optional[float] = None,
+    relations: Optional[list[str]] = None,
+    depth2_relations: Optional[list[str]] = None,
+    output: str = "html",
+    output_path: Optional[str] = None,
+) -> dict:
+    """Construit un sous-graphe JDM autour d'un terme et le sérialise.
+
+    Très utile pour explorer visuellement l'entourage sémantique d'un concept :
+    catégories (r_isa), exemples (r_hypo), parties (r_has_part), lieux,
+    caractéristiques, verbes appliqués, etc., sur 1 ou 2 niveaux de profondeur.
+
+    Par défaut, explore les 11 relations standards à la profondeur 1, puis
+    un sous-ensemble (has_part, lieu, carac, hypo) à la profondeur 2. Les
+    négations (poids négatifs) sont rendues en rouge et préfixées « NON ».
+
+    Args:
+        term: le terme racine (ex. "plat asiatique").
+        depth: 1 ou 2 (3 max, mais déconseillé — graphe illisible).
+        top_k_per_relation: nb max de cibles retenues par relation et par nœud.
+        min_weight: poids minimum, None = pas de filtre (JDM décide).
+        relations: relations explorées à la profondeur 1. Défaut = jeu standard
+                   (r_isa, r_hypo, r_syn, r_anto, r_carac, r_has_part, r_lieu,
+                    r_patient-1, r_agent-1, r_domain, r_associated).
+        depth2_relations: relations explorées à la profondeur 2.
+                          Défaut = (r_has_part, r_lieu, r_carac, r_hypo).
+        output: "html" → écrit un fichier HTML autonome (vis-network) et
+                renvoie {root, stats, html_path}.
+                "json" → renvoie {root, stats, nodes, edges} prêt à embarquer
+                dans un rendu côté client.
+        output_path: chemin du fichier HTML (défaut = `<slug>_subgraph.html`
+                     dans le répertoire courant).
+
+    Renvoie un dict avec :
+        - root: terme racine
+        - stats: {n_nodes, n_edges, n_negative, relations_used, depth}
+        - html_path (output="html") ou nodes/edges (output="json")
+    """
+    from jdm_agent.viz.subgraph import build_subgraph as _build
+    if output not in ("html", "json"):
+        return {"error": f"output doit valoir 'html' ou 'json', reçu {output!r}"}
+    try:
+        return _build(
+            term,
+            client=_client(),
+            depth=depth,
+            top_k_per_relation=top_k_per_relation,
+            min_weight=min_weight,
+            relations=relations,
+            depth2_relations=depth2_relations,
+            output=output,  # type: ignore[arg-type]
+            output_path=output_path,
+        )
+    except Exception as e:
+        return {"error": f"echec construction sous-graphe pour {term!r} : {e}"}
+
+
 # ---------- Registry ----------
 
 ALL_TOOLS: list[StructuredTool] = [
@@ -808,6 +872,8 @@ ALL_TOOLS: list[StructuredTool] = [
     detect_gaps,
     validate_candidate,
     list_relation_types,
+    # Visualisation
+    build_subgraph_visualization,
 ]
 
 
