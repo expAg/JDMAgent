@@ -325,23 +325,27 @@ Documentation : [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md)
 import base64 as _b64
 import tempfile
 
+# Répertoire des sous-graphes produits — autorisé en lecture par Gradio
+# (cf. demo.launch(allowed_paths=[VIZ_DIR])).
+VIZ_DIR = Path(tempfile.gettempdir()) / "jdm_viz"
+VIZ_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def viz_subgraph(term: str, depth: float, top_k: float, selected_relations: list[str]):
-    """Construit un sous-graphe et renvoie un iframe HTML + des stats.
+    """Construit un sous-graphe et renvoie (status, html_inline, file_for_download).
 
-    Le rendu vis-network passe par une iframe **data: URI base64** plutôt
-    que `srcdoc` — c'est plus robuste face à la sanitization de Gradio et
-    aux gros payloads (notre HTML fait facilement 50–100 ko en profondeur 2).
+    Stratégie multi-fallback :
+    - **HTML inline** via iframe data:base64 (marche si DOMPurify autorise data:)
+    - **Téléchargement** du même fichier via gr.File (toujours dispo, plan B sûr)
+    - Logs côté serveur (visibles dans HF Spaces) pour diagnostic en cas d'écran blanc.
     """
     term = (term or "").strip()
     if not term:
-        return "", "⚠️ Saisis un terme."
+        return "⚠️ Saisis un terme.", "", None
     rels = selected_relations if selected_relations else None
     try:
-        with tempfile.NamedTemporaryFile(
-            suffix=".html", delete=False, mode="w", encoding="utf-8"
-        ) as tmp:
-            out_path = tmp.name
+        out_path = VIZ_DIR / f"viz_{abs(hash((term, depth, top_k, tuple(rels or ())))) % 10**8}.html"
+        print(f"[viz] term={term!r} depth={depth} top_k={top_k} rels={rels}", flush=True)
         res = build_subgraph(
             term,
             client=get_client(),
@@ -349,25 +353,31 @@ def viz_subgraph(term: str, depth: float, top_k: float, selected_relations: list
             top_k_per_relation=int(top_k),
             relations=rels,
             output="html",
-            output_path=out_path,
+            output_path=str(out_path),
         )
-        html_text = Path(res["html_path"]).read_text(encoding="utf-8")
+        s = res["stats"]
+        print(f"[viz] generated {s['n_nodes']} nodes / {s['n_edges']} edges -> {out_path}",
+              flush=True)
+        html_text = out_path.read_text(encoding="utf-8")
         b64 = _b64.b64encode(html_text.encode("utf-8")).decode("ascii")
         iframe = (
             f'<iframe src="data:text/html;base64,{b64}" '
             f'style="width:100%;height:700px;border:1px solid #ddd;'
-            f'border-radius:8px;background:#fff;" '
+            f'border-radius:8px;background:#fff;display:block;" '
             f'sandbox="allow-scripts allow-same-origin"></iframe>'
         )
-        s = res["stats"]
         status = (
             f"✅ **{s['n_nodes']} nœuds**, **{s['n_edges']} arêtes** "
-            f"(dont **{s['n_negative']} négations** en rouge) — profondeur {s['depth']}"
+            f"(dont **{s['n_negative']} négations** en rouge) — profondeur {s['depth']}.\n\n"
+            f"*Si le graphe ne s'affiche pas inline ci-dessous, "
+            f"télécharge le fichier HTML et ouvre-le dans ton navigateur.*"
         )
-        return iframe, status
+        return status, iframe, str(out_path)
     except Exception as e:
         import traceback
-        return "", f"❌ Erreur : {e}\n\n```\n{traceback.format_exc()}\n```"
+        tb = traceback.format_exc()
+        print(f"[viz] ERROR: {e}\n{tb}", flush=True)
+        return f"❌ Erreur : {e}\n\n```\n{tb}\n```", "", None
 
 
 with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
@@ -472,11 +482,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             )
             viz_btn = gr.Button("Construire le sous-graphe", variant="primary")
             viz_status = gr.Markdown()
-            viz_out = gr.HTML(label="Visualisation")
+            viz_file = gr.File(label="Télécharger le HTML interactif",
+                               interactive=False)
+            viz_out = gr.HTML(label="Visualisation (inline)")
             viz_btn.click(
                 viz_subgraph,
                 inputs=[viz_term, viz_depth, viz_topk, viz_relations],
-                outputs=[viz_out, viz_status],
+                outputs=[viz_status, viz_out, viz_file],
             )
             gr.Examples(
                 examples=[
@@ -554,4 +566,5 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
 if __name__ == "__main__":
     # HF Spaces : bind explicite sur 0.0.0.0 (sinon Gradio essaye localhost
     # qui n'est pas joignable dans le conteneur) et port standard 7860.
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860,
+                allowed_paths=[str(VIZ_DIR)])
