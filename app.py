@@ -17,6 +17,13 @@ from pathlib import Path
 _root = Path(__file__).parent
 sys.path.insert(0, str(_root / "src"))
 
+# Force le cache disque dans /tmp/jdm_cache : sur HF Spaces le CWD (/app)
+# est monté en read-only ou avec un overlay qui fait silencieusement échouer
+# les écritures diskcache → chaque requête refait l'aller-retour HTTP.
+# /tmp est toujours writable et persistant pendant toute la durée de vie
+# du conteneur (les requêtes successives partagent donc le cache).
+os.environ.setdefault("JDM_CACHE_DIR", "/tmp/jdm_cache")
+
 import gradio as gr
 import pandas as pd
 
