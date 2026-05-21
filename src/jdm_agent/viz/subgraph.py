@@ -73,7 +73,7 @@ PALETTE: dict[str, dict[str, str]] = {
     "syn":    {"background": "#f1f8e9", "border": "#558b2f"},
     "anto":   {"background": "#ffebee", "border": "#c62828"},
     "carac":  {"background": "#f3e5f5", "border": "#7b1fa2"},
-    "part":   {"background": "#fff3e0", "border": "#ef6c00"},
+    "part":   {"background": "#ffe1c2", "border": "#a04500"},  # terracotta sombre — orange neon retiré (illisible sur fond clair)
     "lieu":   {"background": "#e0f7fa", "border": "#00838f"},
     "verb":   {"background": "#fce4ec", "border": "#ad1457"},
     "domain": {"background": "#ede7f6", "border": "#4527a0"},
@@ -90,7 +90,7 @@ PALETTE_D2: dict[str, dict[str, str]] = {
     "syn":    {"background": "#fcfdf7", "border": "#dcedc8"},
     "anto":   {"background": "#fffafb", "border": "#ffcdd2"},
     "carac":  {"background": "#fcf8fc", "border": "#e1bee7"},
-    "part":   {"background": "#fffbf3", "border": "#ffe0b2"},
+    "part":   {"background": "#fef1de", "border": "#d99a6c"},  # terracotta pastel — assorti à la nouvelle couleur niveau 1
     "lieu":   {"background": "#f8fcfd", "border": "#b2ebf2"},
     "verb":   {"background": "#fef7fa", "border": "#f8bbd0"},
     "domain": {"background": "#faf7fc", "border": "#d1c4e9"},
@@ -272,7 +272,7 @@ def _build_edge(
         "font": {
             "size": 13 if is_d2 else 14,
             "color": font_color,
-            "background": "#e8eaedee",
+            "background": "#bcbfc2ee",
             "strokeWidth": 0,
         },
         # vis-network supporte color: { color, opacity }
