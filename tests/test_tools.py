@@ -184,9 +184,10 @@ def test_build_jdm_tools_enriches_docstrings(patched_client):
 def test_all_tools_have_unique_names():
     names = [t.name for t in ALL_TOOLS]
     assert len(names) == len(set(names))
-    # Sanity sur quelques outils-clés (couvre les ajouts prédicatifs).
+    # Sanity sur quelques outils-clés.
     for n in ("get_synonyms", "lookup_term", "get_agents", "get_patients",
-              "get_instruments", "get_consequences", "get_purpose"):
+              "get_instruments", "get_consequences", "get_actions_of",
+              "get_uses_with", "get_domain_members"):
         assert n in names, f"{n} missing"
 
 

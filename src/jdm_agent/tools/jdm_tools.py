@@ -441,18 +441,6 @@ def get_locations(term: str, min_weight: Optional[float] = None, limit: Optional
 
 
 @tool
-def get_causes(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
-    """Renvoie les CAUSES possibles d'un état ou d'une action (`r_has_causatif`).
-
-    Cause (`r_has_causatif`) — origine ou cause de A.
-    Le terme source peut être un NOM (état, événement) ou un VERBE à l'infinitif.
-    (ex.: blessure | r_has_causatif | chute ; fatigue | r_has_causatif | travail ;
-     fumée | r_has_causatif | feu ; tomber | r_has_causatif | glisser).
-    """
-    return _predicative_lookup(term, "r_has_causatif", "from", min_weight, limit)
-
-
-@tool
 def get_consequences(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les CONSÉQUENCES typiques d'un état ou d'une action (`r_has_conseq`).
 
@@ -462,20 +450,6 @@ def get_consequences(term: str, min_weight: Optional[float] = None, limit: Optio
      étudier | r_has_conseq | réussir).
     """
     return _predicative_lookup(term, "r_has_conseq", "from", min_weight, limit)
-
-
-@tool
-def get_purpose(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
-    """Renvoie le BUT d'une action ou d'un objet (`r_but`).
-
-    Purpose (`r_but`) — objectif visé.
-    Le terme source est TYPIQUEMENT un VERBE à l'infinitif (l'action dont on
-    cherche le but), parfois un nom (l'objet ou processus dont on cherche
-    la finalité).
-    (ex.: courir | r_but | santé ; travailler | r_but | argent ;
-     dormir | r_but | récupérer).
-    """
-    return _predicative_lookup(term, "r_but", "from", min_weight, limit)
 
 
 @tool
@@ -506,19 +480,6 @@ def get_telic_role(noun: str, min_weight: Optional[float] = None, limit: Optiona
      lunettes | r_telic_role | voir ; soleil | r_telic_role | éclairer).
     """
     return _predicative_lookup(noun, "r_telic_role", "from", min_weight, limit)
-
-
-@tool
-def get_agentive_role(noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
-    """Renvoie les verbes qui CRÉENT un objet (rôle agentif) (`r_agentif_role`).
-
-    Agentif-role (`r_agentif_role`) — verbes transitifs donnant naissance à l'entité.
-    Le terme source DOIT être un NOM (objet, artefact, entité créée).
-    Renvoie des VERBES à l'infinitif (les actions qui produisent cet objet).
-    (ex.: maison | r_agentif_role | construire ; livre | r_agentif_role | rédiger ;
-     tableau | r_agentif_role | peindre).
-    """
-    return _predicative_lookup(noun, "r_agentif_role", "from", min_weight, limit)
 
 
 # ---------- Variantes "processus" pour les prédicats nominaux ----------
@@ -608,6 +569,18 @@ def get_uses_with(noun: str, min_weight: Optional[float] = None, limit: Optional
      stylo | r_instr-1 | écrire).
     """
     return _predicative_lookup(noun, "r_instr-1", "from", min_weight, limit)
+
+
+@tool
+def get_domain_members(domain: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les TERMES qui relèvent d'un DOMAINE donné (`r_domain-1`).
+
+    Domain-To-Term (`r_domain-1`) — inverse de r_domain. À partir d'un domaine
+    de connaissance ou d'activité, liste les termes spécifiques qui en relèvent.
+    (ex.: football | r_domain-1 | corner ; chirurgie | r_domain-1 | scalpel ;
+     musique | r_domain-1 | octave).
+    """
+    return _predicative_lookup(domain, "r_domain-1", "from", min_weight, limit)
 
 
 # ---------- Enrichissement actif ----------
@@ -759,12 +732,9 @@ ALL_TOOLS: list[StructuredTool] = [
     get_patients,
     get_instruments,
     get_locations,
-    get_causes,
     get_consequences,
-    get_purpose,
     get_manner,
     get_telic_role,
-    get_agentive_role,
     # Prédicatifs nominaux (processus)
     get_process_agents,
     get_process_patients,
@@ -773,6 +743,7 @@ ALL_TOOLS: list[StructuredTool] = [
     get_actions_of,
     get_actions_on,
     get_uses_with,
+    get_domain_members,
     # Génériques
     get_relations_of_type,
     get_relations_between,
@@ -810,18 +781,16 @@ def build_jdm_tools(
         "get_patients": "r_patient",
         "get_instruments": "r_instr",
         "get_locations": "r_lieu",
-        "get_causes": "r_has_causatif",
         "get_consequences": "r_has_conseq",
-        "get_purpose": "r_but",
         "get_manner": "r_manner",
         "get_telic_role": "r_telic_role",
-        "get_agentive_role": "r_agentif_role",
         "get_process_agents": "r_processus>agent",
         "get_process_patients": "r_processus>patient",
         "get_process_instruments": "r_processus>instr",
-        "get_actions_of":   "r_agent-1",
-        "get_actions_on":   "r_patient-1",
-        "get_uses_with":    "r_instr-1",
+        "get_actions_of":     "r_agent-1",
+        "get_actions_on":     "r_patient-1",
+        "get_uses_with":      "r_instr-1",
+        "get_domain_members": "r_domain-1",
     }
     for t in ALL_TOOLS:
         rel = suffix_map.get(t.name)
