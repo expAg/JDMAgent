@@ -67,22 +67,27 @@ PALETTE: dict[str, dict[str, str]] = {
     "d2":     {"background": "#fafafa", "border": "#bdbdbd"},  # fallback générique
 }
 
-#: Palette niveau 2 — même teinte que le niveau 1 mais visiblement plus claire.
-#: Le background reste teinté (pas neutre) pour conserver l'identité visuelle
-#: de la famille de relation, et la bordure pastel renforce la distinction
-#: avec le niveau 1 sans confusion.
+#: Palette niveau 2 — fond quasi-blanc avec un soupçon de teinte, bordure
+#: pastel claire. Contraste nettement renforcé vs niveau 1 tout en gardant
+#: l'identité visuelle de la famille de relation.
 PALETTE_D2: dict[str, dict[str, str]] = {
-    "isa":    {"background": "#f5fafe", "border": "#90caf9"},
-    "hypo":   {"background": "#f4faf4", "border": "#a5d6a7"},
-    "syn":    {"background": "#f8fcf2", "border": "#c5e1a5"},
-    "anto":   {"background": "#fff5f7", "border": "#ef9a9a"},
-    "carac":  {"background": "#faf2fb", "border": "#ce93d8"},
-    "part":   {"background": "#fff9f0", "border": "#ffcc80"},
-    "lieu":   {"background": "#f0fbfc", "border": "#80deea"},
-    "verb":   {"background": "#fdf2f6", "border": "#f48fb1"},
-    "domain": {"background": "#f6f3fa", "border": "#b39ddb"},
-    "assoc":  {"background": "#f6f8f9", "border": "#b0bec5"},
+    "isa":    {"background": "#fbfdff", "border": "#bbdefb"},
+    "hypo":   {"background": "#fbfdfa", "border": "#c8e6c9"},
+    "syn":    {"background": "#fcfdf7", "border": "#dcedc8"},
+    "anto":   {"background": "#fffafb", "border": "#ffcdd2"},
+    "carac":  {"background": "#fcf8fc", "border": "#e1bee7"},
+    "part":   {"background": "#fffbf3", "border": "#ffe0b2"},
+    "lieu":   {"background": "#f8fcfd", "border": "#b2ebf2"},
+    "verb":   {"background": "#fef7fa", "border": "#f8bbd0"},
+    "domain": {"background": "#faf7fc", "border": "#d1c4e9"},
+    "assoc":  {"background": "#fafbfc", "border": "#cfd8dc"},
 }
+
+#: Couleur d'arête niveau 1 par kind (= bordure niveau 1 mais sans wrapping dict).
+EDGE_COLOR: dict[str, str] = {k: PALETTE[k]["border"] for k in PALETTE if k not in ("center", "d2")}
+
+#: Couleur d'arête niveau 2 par kind (= bordure niveau 2).
+EDGE_COLOR_D2: dict[str, str] = {k: PALETTE_D2[k]["border"] for k in PALETTE_D2}
 
 
 def _palette_for(kind: str, depth: int) -> dict[str, str]:
@@ -90,6 +95,16 @@ def _palette_for(kind: str, depth: int) -> dict[str, str]:
     if depth >= 2:
         return PALETTE_D2.get(kind, PALETTE["d2"])
     return PALETTE.get(kind, PALETTE["assoc"])
+
+
+def _edge_color(kind: str, depth: int, negative: bool) -> str:
+    """Couleur d'arête : rouge pour négation, teinte de la famille sinon ;
+    fortement diluée au niveau 2."""
+    if negative:
+        return "#c62828" if depth < 2 else "#ef9a9a"
+    if depth >= 2:
+        return EDGE_COLOR_D2.get(kind, "#cfcfcf")
+    return EDGE_COLOR.get(kind, "#9e9e9e")
 
 
 # ---------- Slug pour nom de fichier ----------
@@ -197,22 +212,43 @@ def _build_edge(
     polarity: str,
     depth: int,
 ) -> dict[str, Any]:
-    """Construit une arête vis-network. d2 = pointillés, négation = rouge + NON."""
+    """Construit une arête vis-network.
+
+    - Couleur du trait ET de l'étiquette = teinte de la famille de relation
+      (r_isa → bleu, r_hypo → vert, ...), avec une variante plus claire au
+      niveau 2.
+    - Opacité dépend du niveau : 1.0 au niveau 1, 0.55 au niveau 2 — d'où
+      un effet "voisinage immédiat saturé / extensions estompées".
+    - Négation = rouge (saturé au niveau 1, pâle au niveau 2), label
+      préfixé « NON ».
+    - Niveau 2 = pointillés (en plus de la teinte adoucie).
+    """
     is_neg = polarity == "négation"
     is_d2 = depth >= 2
+    kind = KIND_OF_REL.get(relation, "assoc")
     label = f"NON {relation} {int(round(w))}" if is_neg else f"{relation} {int(round(w))}"
-    color = "#c62828" if is_neg else ("#cfcfcf" if is_d2 else "#9e9e9e")
+    color = _edge_color(kind, depth, is_neg)
+    opacity = 0.55 if is_d2 else 1.0
+    # Couleur du label : même teinte que le trait pour lier visuellement,
+    # avec un léger fond blanc pour rester lisible par-dessus les nœuds.
+    font_color = color
     return {
         "from": from_id,
         "to": to_id,
         "label": label,
         "arrows": "to",
-        "font": {"size": 14, "color": "#b71c1c" if is_neg else "#555",
-                 "background": "#ffffffcc", "strokeWidth": 0},
-        "color": {"color": color},
+        "font": {
+            "size": 13 if is_d2 else 14,
+            "color": font_color,
+            "background": "#ffffffd9",
+            "strokeWidth": 0,
+        },
+        # vis-network supporte color: { color, opacity }
+        "color": {"color": color, "opacity": opacity},
         "dashes": is_d2,
         "smooth": {"type": "dynamic"},
         "_relation": relation,
+        "_kind": kind,
         "_weight": w,
         "_polarity": polarity,
         "_negative": is_neg,

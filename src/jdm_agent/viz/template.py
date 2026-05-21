@@ -86,8 +86,18 @@ function zoomBy(factor) {
 }
 
 // Hover : met en évidence le nœud survolé et ses voisins, estompe le reste.
+// Les couleurs originales des arêtes (teintées par famille de relation + opacité
+// dépendant du niveau) sont snapshottées une fois pour pouvoir être restaurées
+// proprement au blur.
 const allNodeIds = nodes.getIds();
 const allEdgeIds = edges.getIds();
+const _edgeBase = {};
+edges.forEach(e => {
+  _edgeBase[e.id] = {
+    color: e.color ? { ...e.color } : { color: '#9e9e9e', opacity: 1 },
+    font: e.font ? { ...e.font } : { color: '#555', size: 14, background: '#ffffffd9' }
+  };
+});
 
 function highlight(focusId) {
   const connected = new Set(network.getConnectedNodes(focusId));
@@ -95,25 +105,28 @@ function highlight(focusId) {
   const connectedEdges = new Set(network.getConnectedEdges(focusId));
   nodes.update(allNodeIds.map(id => ({
     id,
-    opacity: connected.has(id) ? 1 : 0.2,
+    opacity: connected.has(id) ? 1 : 0.15,
     font: { color: connected.has(id) ? (id === 'ROOT' ? '#fff' : '#222') : '#bbb' }
   })));
   edges.update(allEdgeIds.map(id => {
-    const e = edges.get(id);
-    const baseColor = e._negative ? '#c62828' : (e.dashes ? '#cfcfcf' : '#9e9e9e');
+    const base = _edgeBase[id];
+    if (connectedEdges.has(id)) {
+      // Mettre en avant : couleur originale, opacité pleine (même au niveau 2).
+      return { id, color: { ...base.color, opacity: 1 }, font: base.font };
+    }
+    // Estomper fortement les arêtes hors voisinage.
     return {
       id,
-      color: { color: connectedEdges.has(id) ? (e._negative ? '#b71c1c' : '#444') : '#eee' },
-      font: { color: connectedEdges.has(id) ? '#222' : '#ddd', size: 14, background: '#ffffffcc' }
+      color: { color: '#e0e0e0', opacity: 0.25 },
+      font: { color: '#ddd', size: 13, background: '#ffffffcc' }
     };
   }));
 }
 function resetHighlight() {
   nodes.update(allNodeIds.map(id => ({ id, opacity: 1, font: { color: id === 'ROOT' ? '#fff' : '#222' } })));
   edges.update(allEdgeIds.map(id => {
-    const e = edges.get(id);
-    const baseColor = e._negative ? '#c62828' : (e.dashes ? '#cfcfcf' : '#9e9e9e');
-    return { id, color: { color: baseColor }, font: { color: '#555', size: 14, background: '#ffffffcc' } };
+    const base = _edgeBase[id];
+    return { id, color: base.color, font: base.font };
   }));
 }
 network.on('hoverNode', p => highlight(p.node));
