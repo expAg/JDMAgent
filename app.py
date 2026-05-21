@@ -540,8 +540,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             ]
             _DEFAULT_TOPK = 3
             # Sélection de relations + top-K par niveau — repliée par défaut.
+            # Les rangées des niveaux 2/3/4 ne sont visibles que si la
+            # profondeur sélectionnée les atteint (cf. viz_depth.change).
             with gr.Accordion("⚙️ Réglages par niveau (top-K + relations)",
                               open=False):
+                # Niveau 1 — toujours visible (min depth = 1).
                 with gr.Row():
                     viz_topk = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
                                          label="Top-K niveau 1")
@@ -550,30 +553,51 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     value=DEFAULT_RELATIONS,
                     label="Niveau 1 — voisins directs du terme",
                 )
-                with gr.Row():
-                    viz_topk_d2 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
-                                            label="Top-K niveau 2")
-                viz_depth2_relations = gr.CheckboxGroup(
-                    choices=_ALL_REL_CHOICES,
-                    value=DEFAULT_DEPTH2_RELATIONS,
-                    label="Niveau 2 (actif si Profondeur ≥ 2)",
+                # Niveau 2 — visible si profondeur ≥ 2.
+                with gr.Group(visible=False) as viz_level2_group:
+                    with gr.Row():
+                        viz_topk_d2 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
+                                                label="Top-K niveau 2")
+                    viz_depth2_relations = gr.CheckboxGroup(
+                        choices=_ALL_REL_CHOICES,
+                        value=DEFAULT_DEPTH2_RELATIONS,
+                        label="Niveau 2 — voisins de voisins",
+                    )
+                # Niveau 3 — visible si profondeur ≥ 3.
+                with gr.Group(visible=False) as viz_level3_group:
+                    with gr.Row():
+                        viz_topk_d3 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
+                                                label="Top-K niveau 3")
+                    viz_depth3_relations = gr.CheckboxGroup(
+                        choices=_ALL_REL_CHOICES,
+                        value=DEFAULT_DEPTH3_RELATIONS,
+                        label="Niveau 3",
+                    )
+                # Niveau 4 — visible si profondeur = 4.
+                with gr.Group(visible=False) as viz_level4_group:
+                    with gr.Row():
+                        viz_topk_d4 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
+                                                label="Top-K niveau 4")
+                    viz_depth4_relations = gr.CheckboxGroup(
+                        choices=_ALL_REL_CHOICES,
+                        value=DEFAULT_DEPTH4_RELATIONS,
+                        label="Niveau 4 (déconseillé sauf cas ciblé)",
+                    )
+
+            # Wire visibility : afficher seulement les niveaux ≤ profondeur.
+            def _update_levels_visibility(d):
+                d = int(d)
+                return (
+                    gr.update(visible=d >= 2),
+                    gr.update(visible=d >= 3),
+                    gr.update(visible=d >= 4),
                 )
-                with gr.Row():
-                    viz_topk_d3 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
-                                            label="Top-K niveau 3")
-                viz_depth3_relations = gr.CheckboxGroup(
-                    choices=_ALL_REL_CHOICES,
-                    value=DEFAULT_DEPTH3_RELATIONS,
-                    label="Niveau 3 (actif si Profondeur ≥ 3)",
-                )
-                with gr.Row():
-                    viz_topk_d4 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
-                                            label="Top-K niveau 4")
-                viz_depth4_relations = gr.CheckboxGroup(
-                    choices=_ALL_REL_CHOICES,
-                    value=DEFAULT_DEPTH4_RELATIONS,
-                    label="Niveau 4 (actif si Profondeur = 4 — déconseillé sauf cas ciblé)",
-                )
+
+            viz_depth.change(
+                _update_levels_visibility,
+                inputs=[viz_depth],
+                outputs=[viz_level2_group, viz_level3_group, viz_level4_group],
+            )
             viz_btn = gr.Button("Construire le sous-graphe", variant="primary")
             viz_status = gr.Markdown()
             viz_file = gr.File(label="Télécharger le HTML interactif",
