@@ -534,37 +534,46 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 r for r in ("r_syn", "r_anto", "r_patient-1", "r_agent-1", "r_associated")
                 if r not in DEFAULT_RELATIONS
             ]
-            viz_relations = gr.CheckboxGroup(
-                choices=_ALL_REL_CHOICES,
-                value=DEFAULT_RELATIONS,
-                label="Niveau 1 — voisins directs du terme",
-            )
-            viz_depth2_relations = gr.CheckboxGroup(
-                choices=_ALL_REL_CHOICES,
-                value=DEFAULT_DEPTH2_RELATIONS,
-                label="Niveau 2 (actif si Profondeur ≥ 2)",
-            )
-            viz_depth3_relations = gr.CheckboxGroup(
-                choices=_ALL_REL_CHOICES,
-                value=DEFAULT_DEPTH3_RELATIONS,
-                label="Niveau 3 (actif si Profondeur ≥ 3)",
-            )
-            viz_depth4_relations = gr.CheckboxGroup(
-                choices=_ALL_REL_CHOICES,
-                value=DEFAULT_DEPTH4_RELATIONS,
-                label="Niveau 4 (actif si Profondeur = 4 — déconseillé sauf cas ciblé)",
-            )
+            # Sélection de relations par niveau — repliée par défaut pour
+            # économiser de la place verticale, dépliable d'un clic.
+            with gr.Accordion("⚙️ Relations par niveau (cliquer pour déplier)",
+                              open=False):
+                viz_relations = gr.CheckboxGroup(
+                    choices=_ALL_REL_CHOICES,
+                    value=DEFAULT_RELATIONS,
+                    label="Niveau 1 — voisins directs du terme",
+                )
+                viz_depth2_relations = gr.CheckboxGroup(
+                    choices=_ALL_REL_CHOICES,
+                    value=DEFAULT_DEPTH2_RELATIONS,
+                    label="Niveau 2 (actif si Profondeur ≥ 2)",
+                )
+                viz_depth3_relations = gr.CheckboxGroup(
+                    choices=_ALL_REL_CHOICES,
+                    value=DEFAULT_DEPTH3_RELATIONS,
+                    label="Niveau 3 (actif si Profondeur ≥ 3)",
+                )
+                viz_depth4_relations = gr.CheckboxGroup(
+                    choices=_ALL_REL_CHOICES,
+                    value=DEFAULT_DEPTH4_RELATIONS,
+                    label="Niveau 4 (actif si Profondeur = 4 — déconseillé sauf cas ciblé)",
+                )
             viz_btn = gr.Button("Construire le sous-graphe", variant="primary")
             viz_status = gr.Markdown()
             viz_file = gr.File(label="Télécharger le HTML interactif",
                                interactive=False)
-            viz_out = gr.HTML(label="Visualisation (inline)")
+            # elem_id pour pouvoir scroller vers cette zone après génération.
+            viz_out = gr.HTML(label="Visualisation (inline)", elem_id="viz-output")
             viz_btn.click(
                 viz_subgraph,
                 inputs=[viz_term, viz_depth, viz_topk,
                         viz_relations, viz_depth2_relations,
                         viz_depth3_relations, viz_depth4_relations],
                 outputs=[viz_status, viz_out, viz_file],
+                # Une fois le HTML inséré, fait défiler la page jusqu'à
+                # l'iframe pour que l'utilisateur voie le résultat sans
+                # avoir à scroller à la main.
+                js="() => { setTimeout(() => { const el = document.getElementById('viz-output'); if (el) el.scrollIntoView({behavior:'smooth', block:'start'}); }, 100); }",
             )
 
         # ----- Tab 4: Agent (BYOK Anthropic / OpenAI) -----
