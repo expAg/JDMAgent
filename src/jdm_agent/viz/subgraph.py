@@ -65,61 +65,47 @@ KIND_OF_REL: dict[str, str] = {
     "r_associated": "assoc",
 }
 
-#: Palette niveau 1 (voisins directs — couleurs saturées identifiables).
+#: Palette UNIQUE par kind — couleurs mi-saturées (Material Design 200/700)
+#: choisies pour rester lisibles sur le fond gris foncé (#bcbfc2) du
+#: visualiseur. La profondeur n'influence plus la teinte : seule
+#: l'opacité (OPACITY_BY_DEPTH) distingue les niveaux. Conséquence : un
+#: r_isa du niveau 4 reste reconnaissable comme « bleu r_isa », juste
+#: plus diaphane.
 PALETTE: dict[str, dict[str, str]] = {
-    "center": {"background": "#212121", "border": "#000"},
-    "isa":    {"background": "#e3f2fd", "border": "#1976d2"},
-    "hypo":   {"background": "#e8f5e9", "border": "#388e3c"},
-    "syn":    {"background": "#f1f8e9", "border": "#558b2f"},
-    "anto":   {"background": "#ffebee", "border": "#c62828"},
-    "carac":  {"background": "#f3e5f5", "border": "#7b1fa2"},
-    "part":   {"background": "#ffe1c2", "border": "#a04500"},  # terracotta sombre — orange neon retiré (illisible sur fond clair)
-    "lieu":   {"background": "#e0f7fa", "border": "#00838f"},
-    "verb":   {"background": "#fce4ec", "border": "#ad1457"},
-    "domain": {"background": "#ede7f6", "border": "#4527a0"},
-    "assoc":  {"background": "#eceff1", "border": "#455a64"},
-    "d2":     {"background": "#fafafa", "border": "#bdbdbd"},  # fallback générique
+    "center": {"background": "#1a1a1a", "border": "#000"},
+    "isa":    {"background": "#90caf9", "border": "#1565c0"},  # bleu
+    "hypo":   {"background": "#a5d6a7", "border": "#2e7d32"},  # vert
+    "syn":    {"background": "#c5e1a5", "border": "#558b2f"},  # vert-jaune
+    "anto":   {"background": "#ef9a9a", "border": "#c62828"},  # rouge
+    "carac":  {"background": "#ce93d8", "border": "#6a1b9a"},  # violet
+    "part":   {"background": "#ffb74d", "border": "#a04500"},  # terracotta
+    "lieu":   {"background": "#80cbc4", "border": "#00695c"},  # teal
+    "verb":   {"background": "#f48fb1", "border": "#ad1457"},  # rose
+    "domain": {"background": "#b39ddb", "border": "#4527a0"},  # indigo
+    "assoc":  {"background": "#b0bec5", "border": "#455a64"},  # blue-grey
+    "d2":     {"background": "#cfd2d6", "border": "#9aa0a6"},  # fallback générique
 }
 
-#: Palette niveau 2 — fond quasi-blanc avec un soupçon de teinte, bordure
-#: pastel claire. Contraste nettement renforcé vs niveau 1 tout en gardant
-#: l'identité visuelle de la famille de relation.
-PALETTE_D2: dict[str, dict[str, str]] = {
-    "isa":    {"background": "#fbfdff", "border": "#bbdefb"},
-    "hypo":   {"background": "#fbfdfa", "border": "#c8e6c9"},
-    "syn":    {"background": "#fcfdf7", "border": "#dcedc8"},
-    "anto":   {"background": "#fffafb", "border": "#ffcdd2"},
-    "carac":  {"background": "#fcf8fc", "border": "#e1bee7"},
-    "part":   {"background": "#fef1de", "border": "#d99a6c"},  # terracotta pastel — assorti à la nouvelle couleur niveau 1
-    "lieu":   {"background": "#f8fcfd", "border": "#b2ebf2"},
-    "verb":   {"background": "#fef7fa", "border": "#f8bbd0"},
-    "domain": {"background": "#faf7fc", "border": "#d1c4e9"},
-    "assoc":  {"background": "#fafbfc", "border": "#cfd8dc"},
+#: Couleur d'arête par kind = bordure de la palette (assortie au nœud).
+EDGE_COLOR: dict[str, str] = {
+    k: v["border"] for k, v in PALETTE.items() if k != "center"
 }
-
-#: Couleur d'arête niveau 1 par kind (= bordure niveau 1 mais sans wrapping dict).
-EDGE_COLOR: dict[str, str] = {k: PALETTE[k]["border"] for k in PALETTE if k not in ("center", "d2")}
-
-#: Couleur d'arête niveau 2 par kind (= bordure niveau 2).
-EDGE_COLOR_D2: dict[str, str] = {k: PALETTE_D2[k]["border"] for k in PALETTE_D2}
 
 
 def _palette_for(kind: str, depth: int) -> dict[str, str]:
-    """Renvoie la couleur de fond/bordure adaptée au kind et à la profondeur."""
-    if depth >= 2:
-        return PALETTE_D2.get(kind, PALETTE["d2"])
+    """Renvoie la palette du kind. La profondeur n'altère plus la teinte
+    (gérée via l'opacité du nœud) — on garde l'argument pour compat API."""
+    _ = depth  # unused, kept for backward signature
     return PALETTE.get(kind, PALETTE["assoc"])
 
 
 def _edge_color(kind: str, depth: int, negative: bool) -> str:
-    """Couleur d'arête : rouge pour négation, teinte de la famille sinon.
-    Le niveau 1 utilise la teinte saturée, tout niveau ≥ 2 la version pastel
-    (l'opacité progressive distingue ensuite d2/d3/d4)."""
+    """Couleur d'arête : rouge saturé pour négation, teinte de la famille
+    sinon. La profondeur ne change pas la teinte — l'opacité s'en charge."""
+    _ = depth  # unused
     if negative:
-        return "#c62828" if depth < 2 else "#ef9a9a"
-    if depth >= 2:
-        return EDGE_COLOR_D2.get(kind, "#cfcfcf")
-    return EDGE_COLOR.get(kind, "#9e9e9e")
+        return "#c62828"
+    return EDGE_COLOR.get(kind, "#9aa0a6")
 
 
 def _opacity_for(depth: int) -> float:
