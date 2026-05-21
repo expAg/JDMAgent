@@ -965,3 +965,98 @@ Informations diverses d'ordre lexical attachées au terme.
 * chat | r_data | fréquence=élevée
 * prendre | r_data | irrégulier
 * hier | r_data | invariable
+
+
+## 19. Sémantique des poids signés
+
+Le poids `w` d'un triplet JDM résulte des votes collectifs des joueurs. Il porte
+une information de **POLARITÉ** en plus de son amplitude :
+
+| Plage de `w` | Polarité     | Interprétation                                   |
+|---|---|---|
+| `w > 0`      | affirmation  | Le triplet est voté comme tenant                 |
+| `w = 0`      | (neutre)     | Cas marginal (jamais voté ou exactement nul)     |
+| `w < 0`      | **négation** | Le triplet est voté comme explicitement FAUX     |
+
+L'amplitude `|w|` reflète l'intensité du consensus, jamais sa direction.
+Le projet JDMAgent expose `polarity` comme champ explicite dans chaque triplet
+pour que les modèles LLM lisent la sémantique sans avoir à inférer le signe.
+
+Un triplet à `w < 0` n'est **pas** une absence de donnée (UNKNOWN) : c'est une
+assertion négative consensuelle, distincte de l'absence de relation. C'est un
+signal fort pour le fact-checker.
+
+Le projet est **agnostique sur l'amplitude** : pas de seuil minimal pour décider
+qu'un triplet est une affirmation ou une négation. Le LLM filtre selon le contexte.
+
+### Exemples observés
+* baleine | r_isa | mammifère (w=265)  ? affirmation forte
+* autruche | r_agent-1 | voler (w=-173) ? négation explicite
+* femme | r_has_part | pénis (w=-262)  ? négation explicite (consensus contrastif)
+* chat | r_telic_role | manger (w=-25) ? négation modérée
+
+---
+
+## 20. Annotations sémantiques sur les triplets
+
+### Mécanisme
+
+Quand un triplet JDM a l'identifiant `rel_id` (champ `Relation.id`), JDM expose
+un **nœud d'ancrage** dont le nom suit le pattern :
+
+    name = ":r{rel_id}"     (exemple : ":r650620")
+
+Ce nœud est de **type 10** dans le modèle JDM (à ne PAS confondre avec les
+chunks de type 8 qui sont des agrégats syntaxiques distincts du mécanisme
+d'annotation). Trois types de relations d'annotation peuvent partir de ce nœud
+vers une cible (le contenu de l'annotation) :
+
+| Type                       | Id  | Sémantique                                          |
+|---|---|---|
+| `r_annotation_context`     | 996 | Contexte dans lequel le triplet tient               |
+| `r_annotation_exception`   | 997 | Exception au triplet (« sauf dans X »)              |
+| `r_annotation`             | 998 | Annotation libre / qualification générale           |
+
+En pratique, **998 est de loin le plus fréquent** ; 996/997 plus rares.
+
+### Récupération depuis l'API
+
+    GET /v0/relations/from/:r{rel_id}?types_ids=996,997,998
+
+Filtrer les targets sur `node.type == 1` (terme lexical) — JDM renvoie aussi
+un `r_pos` structurel `Relation:` de type 4 qu'on ignore.
+
+Si le nœud `:r{rel_id}` n'existe pas (triplet non annoté), JDM renvoie
+**HTTP 500** (et non 404). À traiter gracefully côté client.
+
+### Valeurs sémantiques courantes (cibles d'annotation)
+
+Vocabulaire émergent — non normatif, observé sur cas réels JDM, à étoffer
+au fil du temps :
+
+| Label             | Sémantique                                                                                | Observé sur                                              |
+|---|---|---|
+| **constitutif**   | Trait définitionnel, essentiel à l'entité                                                 | typiquement triplets positifs forts                      |
+| **contrastif**    | Trait différenciateur entre catégories — peut être positif (ce qui distingue d'autres) ou négatif (ce qui distingue par exclusion) | `autruche r_agent-1 voler` (w=-173), `chat r_agent-1 manger` (w=168), `femme r_has_part pénis` (w=-262) |
+| **pertinent**     | Confirmation que le triplet est utile/significatif                                        | toutes polarités                                         |
+| **non pertinent** | Le triplet existe techniquement mais peu utile en pratique                                | toutes polarités                                         |
+| **peu pertinent** | Variante de « non pertinent »                                                             | toutes polarités                                         |
+| **non spécifique** | Trait qui ne caractérise pas particulièrement l'entité (vrai de beaucoup d'autres)      | typiquement triplets positifs banals                     |
+| **probable**      | Trait fréquent mais non garanti                                                           | positif                                                  |
+| **improbable**    | Trait rare mais possible                                                                  | positif faible                                           |
+| **incertain**     | Valeur variable selon contexte / individus                                                | positif moyen                                            |
+| *(à compléter)*   | …                                                                                         | …                                                        |
+
+Important : **`contrastif` n'est pas synonyme de négatif**. Il marque un trait
+différenciateur, indépendamment de la polarité. Un trait constitutif est
+définitionnel ; un trait contrastif distingue de catégories voisines.
+
+### Distinction chunks vs annotations
+
+Les chunks (type 8, nom `::>type:id>type:id`) sont des **agrégats syntaxiques**
+indépendants du mécanisme d'annotation. Ils représentent des unités
+linguistiques composées (syntagmes, expressions). Ils seront exposés dans une
+phase ultérieure comme outil séparé.
+
+Le système d'annotation décrit ici (`:r{id}` + relations 996/997/998) est
+**l'unique mécanisme** pour attacher de la sémantique meta à un triplet JDM.

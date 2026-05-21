@@ -24,6 +24,7 @@ from tenacity import (
 
 from jdm_agent.client.cache import DiskJSONCache
 from jdm_agent.client.models import (
+    Annotation,
     DecodedRefinement,
     Node,
     NodeType,
@@ -266,6 +267,51 @@ class JDMClient:
                 id=r.id, name=r.name, decoded=decoded,
                 path=path, path_ids=path_ids, weight=r.w,
             ))
+        return out
+
+    # ---------- Annotations (Phase 9) ----------
+
+    # Mapping id de relation d'annotation → 'kind' lisible exposé au LLM
+    _ANNOTATION_KINDS = {
+        996: "context",     # r_annotation_context
+        997: "exception",   # r_annotation_exception
+        998: "annotation",  # r_annotation (général)
+    }
+
+    def get_annotations_for_triplet(self, rel_id: int) -> list[Annotation]:
+        """Récupère les annotations sémantiques attachées au triplet d'id `rel_id`.
+
+        Mécanisme JDM (cf. relation_definitions.md §20) :
+            Un nœud d'ancrage existe avec name = f":r{rel_id}". Les annotations
+            sortantes sont les relations de type 996/997/998 vers une cible
+            lexicale (type 1).
+
+        Renvoie [] si le triplet n'a aucune annotation (JDM répond HTTP 500 dans
+        ce cas, qu'on traite gracefully).
+        """
+        annot_node_name = f":r{rel_id}"
+        try:
+            # NOTE: JDM a un bug — passer types_ids avec plusieurs valeurs sur un
+            # nœud `:r{id}` retourne 500. On récupère TOUT et on filtre Python.
+            res = self.relations_from(annot_node_name)
+        except Exception:
+            # Soit le nœud d'ancrage n'existe pas (triplet jamais annoté → 500),
+            # soit réseau. Dans tous les cas : pas d'annotations exploitables.
+            return []
+        idx = res.node_index()
+        out: list[Annotation] = []
+        for r in res.relations:
+            kind = self._ANNOTATION_KINDS.get(r.type)
+            if kind is None:
+                continue   # skip r_pos (type 4 "Relation:") et autres
+            target = idx.get(r.node2)
+            # On ne garde que les annotations dont la cible est un terme lexical
+            # (n.type == 1). Skip les structures internes (type 4 etc.).
+            if target is None or target.type != 1:
+                continue
+            out.append(Annotation(kind=kind, value=target.name, w=r.w))
+        # Tri par |w| décroissant : annotations les plus consensuelles d'abord
+        out.sort(key=lambda a: -abs(a.w))
         return out
 
     # ---------- Relations ----------

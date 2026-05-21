@@ -102,6 +102,54 @@ def test_retry_on_5xx(client):
 
 
 @respx.mock
+def test_get_annotations_for_triplet(client):
+    """Phase 9 : récupération des annotations via :r{id}.
+
+    Vérifie que :
+    - on appelle bien /v0/relations/from/:r{id} sans types_ids (bug JDM)
+    - on filtre les targets sur node.type==1 (skip r_pos type 4)
+    - on mappe les types 996/997/998 vers les bons 'kind'
+    """
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    # Le node :r12345 a 3 outgoing :
+    #   type=4 (r_pos) "Relation:" type=4 → à ignorer
+    #   type=998 (r_annotation) "contrastif" type=1 → conservé
+    #   type=996 (r_annotation_context) "constitutif" type=1 → conservé
+    respx.get(f"{BASE}/v0/relations/from/:r12345").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 999, "name": ":r12345", "type": 10, "w": 0},
+            {"id": 100, "name": "Relation:", "type": 4, "w": 100},
+            {"id": 101, "name": "contrastif", "type": 1, "w": 200},
+            {"id": 102, "name": "constitutif", "type": 1, "w": 80},
+        ],
+        "relations": [
+            {"id": 1, "node1": 999, "node2": 100, "type": 4,   "w": 100},  # r_pos - skip
+            {"id": 2, "node1": 999, "node2": 101, "type": 998, "w": 200},
+            {"id": 3, "node1": 999, "node2": 102, "type": 996, "w": 80},
+        ],
+    }))
+    annots = client.get_annotations_for_triplet(12345)
+    assert len(annots) == 2
+    # Tri par |w| desc : contrastif (200) puis constitutif (80)
+    assert annots[0].kind == "annotation"
+    assert annots[0].value == "contrastif"
+    assert annots[0].w == 200
+    assert annots[1].kind == "context"
+    assert annots[1].value == "constitutif"
+
+
+@respx.mock
+def test_get_annotations_returns_empty_on_500(client):
+    """Le pattern :r{id} 500-fail gracieusement si le triplet n'est pas annoté."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    respx.get(f"{BASE}/v0/relations/from/:r999999").mock(return_value=httpx.Response(500, json={}))
+    annots = client.get_annotations_for_triplet(999999)
+    assert annots == []
+
+
+@respx.mock
 def test_refinements_decoded(client):
     """Décode `avocat>116477>66699` → "avocat (personne, juriste)" via lookups node_by_id."""
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))

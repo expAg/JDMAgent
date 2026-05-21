@@ -98,3 +98,15 @@ class RefinementsResult(BaseModel):
 
     nodes: List[Node] = Field(default_factory=list)
     refinements: List[Node] = Field(default_factory=list)
+
+
+class Annotation(BaseModel):
+    """Une annotation sémantique attachée à un triplet JDM.
+
+    Voir §20 de relation_definitions.md pour le mécanisme complet.
+    Le triplet annoté est référencé via son rel_id ; ce modèle représente UNE
+    annotation parmi N qui peuvent lui être attachées.
+    """
+    kind: str = Field(..., description="'context' (996) | 'exception' (997) | 'annotation' (998)")
+    value: str = Field(..., description="Contenu de l'annotation (ex: 'contrastif', 'non spécifique')")
+    w: float = Field(0.0, description="Poids du vote sur cette annotation spécifique")

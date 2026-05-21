@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 
 
 class GapType(str, Enum):
-    MISSING       = "missing"        # aucune triplet pour (term, relation)
-    LOW_COVERAGE  = "low_coverage"   # < N triplets alors que des paires similaires en ont beaucoup
-    ASYMMETRY     = "asymmetry"      # A r_X B existe, mais B r_inverse(X) A manque
+    MISSING         = "missing"          # aucune triplet pour (term, relation)
+    LOW_COVERAGE    = "low_coverage"     # < N triplets alors que des paires similaires en ont beaucoup
+    ASYMMETRY       = "asymmetry"        # A r_X B existe, mais B r_inverse(X) A manque
+    NEGATIVE_FILLED = "negative_filled"  # triplet existe mais avec w<0 (négation explicite, pas un gap au sens strict)
 
 
 class Gap(BaseModel):

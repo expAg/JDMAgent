@@ -41,30 +41,57 @@ def _client() -> JDMClient:
 
 # ---------- Helpers ----------
 
+def _polarity(w: float) -> str:
+    """Dérive la polarité du signe du poids (cf. relation_definitions.md §19)."""
+    if w < 0:
+        return "négation"
+    return "affirmation"
+
+
 def _make_triplet(
     src_display: str, src_id: Optional[str],
     rel: str,
     tgt_display: str, tgt_id: Optional[str],
     w: float,
+    annotations: Optional[list[dict]] = None,
 ) -> dict:
     """Construit un triplet exposé au LLM.
 
-    Les `*_id` ne sont inclus QUE si le nom est un refinement JDM
-    (= valeur informative à passer pour requêter ce sens précis).
-    Pour les termes simples, on garde le payload minimal.
+    Phase 9 — ajoute `polarity` (affirmation/négation) et `annotations`.
+
+    Les `*_id` ne sont inclus QUE si le nom est un refinement JDM (= valeur
+    informative à passer pour requêter ce sens précis). Pour les termes
+    simples, on garde le payload minimal.
     """
-    out: dict = {"source": src_display, "relation": rel, "target": tgt_display, "w": w}
+    out: dict = {
+        "source": src_display,
+        "relation": rel,
+        "target": tgt_display,
+        "w": w,
+        "polarity": _polarity(w),
+    }
     if src_id is not None:
         out["source_id"] = src_id
     if tgt_id is not None:
         out["target_id"] = tgt_id
+    if annotations:
+        out["annotations"] = annotations
     return out
 
 
 def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
-                     incoming: bool = False) -> list[dict]:
+                     incoming: bool = False,
+                     with_annotations: bool = True) -> list[dict]:
     """Construit la liste de triplets en résolvant les noms d'autres bouts
     ET en décodant tout refinement opaque (`avocat>116477>66699`) en clair.
+
+    Phase 9 — ajoute :
+        - tri par |w| décroissant (au lieu de w décroissant) pour faire remonter
+          les signaux forts négatifs en même temps que les positifs
+        - filtre des chunks (type 8) comme targets : ils ne sont pas exposés
+          en Phase 9, cf. plan d'évolution
+        - lookup des annotations par triplet via get_annotations_for_triplet
+          (N+1 HTTP cached) si with_annotations=True
 
     Si incoming=True (direction "to"), le terme `source_name` correspond au
     node2 des relations renvoyées, et l'autre bout à exposer est node1.
@@ -78,7 +105,8 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
     src_id_root = source_name if src_dec["is_refinement"] else None
 
     triplets: list[dict] = []
-    for r in sorted(result.relations, key=lambda x: -x.w):
+    # Tri |w| décroissant : positifs forts ET négatifs forts en tête de liste
+    for r in sorted(result.relations, key=lambda x: -abs(x.w)):
         other_id = r.node1 if incoming else r.node2
         node = idx.get(other_id)
         if node is None:
@@ -86,20 +114,28 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
                 node = client.node_by_id(other_id)
             except Exception:
                 continue
+        # Skip les chunks (type 8) — agrégats syntaxiques non exposés en Phase 9.
+        if node.type == 8:
+            continue
         other_dec = client.decode_node_name(node.name, local_nodes=idx)
         other_display = other_dec["decoded"]
         other_id_str = node.name if other_dec["is_refinement"] else None
 
+        # Lookup annotations (N+1 HTTP, cached)
+        annotations: list[dict] = []
+        if with_annotations:
+            for a in client.get_annotations_for_triplet(r.id):
+                annotations.append({"kind": a.kind, "value": a.value, "w": a.w})
+
         if incoming:
-            # Le terme racine est la CIBLE ; l'autre bout est la source.
             triplets.append(_make_triplet(
                 other_display, other_id_str, rel_name,
-                src_display, src_id_root, r.w,
+                src_display, src_id_root, r.w, annotations,
             ))
         else:
             triplets.append(_make_triplet(
                 src_display, src_id_root, rel_name,
-                other_display, other_id_str, r.w,
+                other_display, other_id_str, r.w, annotations,
             ))
     return triplets
 
@@ -154,7 +190,7 @@ def get_synonyms(term: str, min_weight: Optional[float] = None, limit: Optional[
     c = _client()
     rid = c.relation_type_id("r_syn")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 20))
+                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 20))
     return _resolve_targets(c, term, "r_syn", res)
 
 
@@ -167,7 +203,7 @@ def get_antonyms(term: str, min_weight: Optional[float] = None, limit: Optional[
     c = _client()
     rid = c.relation_type_id("r_anto")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 20))
+                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 20))
     return _resolve_targets(c, term, "r_anto", res)
 
 
@@ -182,7 +218,7 @@ def get_hypernyms(term: str, min_weight: Optional[float] = None, limit: Optional
     c = _client()
     rid = c.relation_type_id("r_isa")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 20))
+                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 20))
     return _resolve_targets(c, term, "r_isa", res)
 
 
@@ -197,7 +233,7 @@ def get_hyponyms(term: str, min_weight: Optional[float] = None, limit: Optional[
     c = _client()
     rid = c.relation_type_id("r_hypo")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 30))
+                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 30))
     return _resolve_targets(c, term, "r_hypo", res)
 
 
@@ -211,7 +247,7 @@ def get_parts(term: str, min_weight: Optional[float] = None, limit: Optional[int
     c = _client()
     rid = c.relation_type_id("r_has_part")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 30))
+                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 30))
     return _resolve_targets(c, term, "r_has_part", res)
 
 
@@ -225,7 +261,7 @@ def get_characteristics(term: str, min_weight: Optional[float] = None, limit: Op
     c = _client()
     rid = c.relation_type_id("r_carac")
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 25.0), limit=_lim(limit, 30))
+                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 30))
     return _resolve_targets(c, term, "r_carac", res)
 
 
@@ -256,7 +292,7 @@ def get_relations_of_type(
     if rid is None:
         return [{"error": f"relation inconnue: {relation_name!r}"}]
     incoming = direction == "to"
-    mw, lm = _mw(min_weight, 25.0), _lim(limit, 30)
+    mw, lm = _mw(min_weight, 0.0), _lim(limit, 30)
     if incoming:
         res = c.relations_to(term, types_ids=[rid], min_weight=mw, limit=lm)
     else:
@@ -274,7 +310,7 @@ def get_relations_between(term1: str, term2: str, min_weight: Optional[float] = 
     `source_id`/`target_id`.
     """
     c = _client()
-    res = c.relations_between(term1, term2, min_weight=_mw(min_weight, 5.0))
+    res = c.relations_between(term1, term2, min_weight=_mw(min_weight, 0.0))
     idx = res.node_index()
     src_dec = c.decode_node_name(term1, local_nodes=idx)
     tgt_dec = c.decode_node_name(term2, local_nodes=idx)
@@ -330,7 +366,7 @@ def disambiguate(term: str) -> list[dict]:
 def _predicative_lookup(
     term: str, relation: str, direction: str,
     min_weight: Optional[float], limit: Optional[int],
-    default_mw: float = 25.0, default_limit: int = 20,
+    default_mw: float = 0.0, default_limit: int = 20,
 ) -> list[dict]:
     """Helper factor pour tous les outils prédicatifs."""
     c = _client()

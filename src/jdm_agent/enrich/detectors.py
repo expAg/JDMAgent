@@ -60,23 +60,66 @@ def _count_relations(client: JDMClient, term: str, relation: str,
     return len(res.relations)
 
 
+def _get_relations_signed(client: JDMClient, term: str, relation: str,
+                          limit: int = 50) -> list[tuple[str, float]]:
+    """Récupère les triplets avec leur poids (signé), pour Phase 9.
+
+    Renvoie [(target_name, w), ...] incluant les négatifs.
+    """
+    rid = client.relation_type_id(relation)
+    if rid is None:
+        return []
+    try:
+        res = client.relations_from(term, types_ids=[rid],
+                                     min_weight=-1e6, limit=limit)
+    except Exception:
+        return []
+    idx = res.node_index()
+    out = []
+    for r in res.relations:
+        n = idx.get(r.node2)
+        if n is not None:
+            out.append((n.name, r.w))
+    return out
+
+
 def _detect_missing(client: JDMClient, term: str,
                     relations: Iterable[str], min_to_consider: int = 1) -> list[Gap]:
-    """Pour chaque relation cible, signale celle qui a < min_to_consider triplets."""
+    """Pour chaque relation cible, signale celle qui a < min_to_consider triplets.
+
+    Phase 9 — distingue maintenant :
+      - MISSING strict : aucun triplet (positif NI négatif)
+      - NEGATIVE_FILLED : que des triplets négatifs (JDM a regardé et dit non)
+      - LOW_COVERAGE : peu de triplets positifs
+    """
     gaps: list[Gap] = []
     for rel in relations:
-        n = _count_relations(client, term, rel, min_weight=25, limit=50)
-        if n == 0:
+        signed = _get_relations_signed(client, term, rel)
+        positives = [w for _, w in signed if w >= 25]
+        negatives = [(n, w) for n, w in signed if w < 0]
+        n_pos = len(positives)
+        if n_pos == 0 and len(negatives) > 0:
+            # Pas de positif mais des négatifs existent → c'est rempli en négatif
+            top_neg = sorted(negatives, key=lambda x: x[1])[:3]
+            detail_extras = "; ".join(f"{n} (w={w:.0f})" for n, w in top_neg)
+            gaps.append(Gap(
+                term=term, relation=rel, gap_type=GapType.NEGATIVE_FILLED,
+                severity=0.3,
+                detail=(f"JDM contient {len(negatives)} triplet(s) NÉGATIFS pour "
+                        f"`{term} | {rel} | ?` : {detail_extras}. Pas un gap au "
+                        f"sens strict — déjà rempli avec des assertions négatives."),
+            ))
+        elif n_pos == 0:
             gaps.append(Gap(
                 term=term, relation=rel, gap_type=GapType.MISSING,
                 severity=1.0,
-                detail=f"Aucun triplet `{term} | {rel} | ?` (avec w≥25) dans JDM.",
+                detail=f"Aucun triplet `{term} | {rel} | ?` (w≥25) dans JDM.",
             ))
-        elif n < min_to_consider:
+        elif n_pos < min_to_consider:
             gaps.append(Gap(
                 term=term, relation=rel, gap_type=GapType.LOW_COVERAGE,
                 severity=0.6,
-                detail=f"Seulement {n} triplets `{term} | {rel} | ?` (w≥25).",
+                detail=f"Seulement {n_pos} triplets `{term} | {rel} | ?` positifs (w≥25).",
             ))
     return gaps
 

@@ -11,3 +11,4 @@ venv/
 dist/
 build/
 *.log
+erreurs_a_corriger.md

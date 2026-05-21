@@ -116,6 +116,62 @@ def test_unknown_relation_name(client):
 
 
 @respx.mock
+def test_phase9_direct_negative_match_contradicted(client):
+    """Phase 9 : un triplet présent dans JDM avec w<0 doit donner CONTRADICTED
+    pour une claim positive (et non plus UNKNOWN comme avant)."""
+    _meta_mocks()
+    # baleine r_isa poisson existe à w=-35 dans JDM
+    respx.get(f"{BASE}/v0/relations/from/baleine").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 10, "name": "baleine", "type": 1, "w": 100},
+            {"id": 20, "name": "poisson", "type": 1, "w": 800},
+        ],
+        "relations": [{"id": 9001, "node1": 10, "node2": 20, "type": 6, "w": -35.0}],
+    }))
+    # Pas d'annotation
+    respx.get(f"{BASE}/v0/relations/from/:r9001").mock(return_value=httpx.Response(500, json={}))
+    v = verify_claim(client, Claim(
+        text="baleine est un poisson",
+        subject="baleine", relation="r_isa", object="poisson",
+    ))
+    assert v.status == Status.CONTRADICTED
+    assert "négation consensuelle" in v.explanation
+    assert v.evidence_against
+    assert v.evidence_against[0].w == -35.0
+
+
+@respx.mock
+def test_phase9_factcheck_includes_annotations_in_explanation(client):
+    """Si le triplet trouvé est annoté, l'explication mentionne les annotations."""
+    _meta_mocks()
+    respx.get(f"{BASE}/v0/relations/from/chat").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 1, "name": "chat", "type": 1, "w": 100},
+            {"id": 2, "name": "mammifère", "type": 1, "w": 1000},
+        ],
+        "relations": [{"id": 4242, "node1": 1, "node2": 2, "type": 6, "w": 1000.0}],
+    }))
+    # Annotations attachées au triplet 4242
+    respx.get(f"{BASE}/v0/relations/from/:r4242").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 901, "name": "contrastif",     "type": 1, "w": 1003},
+            {"id": 902, "name": "non spécifique", "type": 1, "w": 3},
+        ],
+        "relations": [
+            {"id": 91, "node1": 99, "node2": 901, "type": 998, "w": 1003},
+            {"id": 92, "node1": 99, "node2": 902, "type": 998, "w": 3},
+        ],
+    }))
+    v = verify_claim(client, Claim(
+        text="le chat est un mammifère",
+        subject="chat", relation="r_isa", object="mammifère",
+    ))
+    assert v.status == Status.SUPPORTED
+    assert "contrastif" in v.explanation
+    assert "Annotations JDM" in v.explanation
+
+
+@respx.mock
 def test_factcheck_claims_batch(client):
     """Mode batch : plusieurs claims, un report consolidé."""
     _meta_mocks()

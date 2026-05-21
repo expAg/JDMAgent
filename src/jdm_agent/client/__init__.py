@@ -1,5 +1,6 @@
 from jdm_agent.client.client import JDMClient
 from jdm_agent.client.models import (
+    Annotation,
     DecodedRefinement,
     Node,
     NodeType,
@@ -18,4 +19,5 @@ __all__ = [
     "RelationsResult",
     "RefinementsResult",
     "DecodedRefinement",
+    "Annotation",
 ]

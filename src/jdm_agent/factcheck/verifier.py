@@ -48,79 +48,119 @@ def _matches(target_name: str, expected: str) -> bool:
 
 
 def _relations_from_by_type(client: JDMClient, subject: str, relation_name: str,
-                            min_weight: float = 1.0, limit: int = 100) -> list:
+                            min_weight: Optional[float] = None,
+                            limit: int = 500) -> list[tuple[str, float, int]]:
     """Helper : liste les triplets sortants de subject pour ce type de relation.
 
-    Renvoie [] silencieusement si le subject n'existe pas dans JDM (l'API renvoie 500).
+    Phase 9 : renvoie maintenant des tuples (name, w, rel_id) — l'id est
+    nécessaire pour lookup d'annotations. min_weight=None par défaut → on
+    récupère TOUT, y compris les négatifs (cf. relation_definitions.md §19).
+
+    Renvoie [] silencieusement si le subject n'existe pas dans JDM (500).
     """
     rid = client.relation_type_id(relation_name)
     if rid is None:
         return []
     try:
-        res = client.relations_from(subject, types_ids=[rid],
-                                    min_weight=min_weight, limit=limit)
+        # min_weight très bas pour avoir aussi les négatifs ; JDM tolère.
+        res = client.relations_from(
+            subject, types_ids=[rid],
+            min_weight=-1e6 if min_weight is None else min_weight,
+            limit=limit,
+        )
     except Exception:
-        # Nœud inexistant (500), réseau, etc. — on traite comme absence de données.
         return []
     idx = res.node_index()
     out = []
     for r in res.relations:
         n = idx.get(r.node2)
         if n is not None:
-            out.append((n.name, r.w))
+            out.append((n.name, r.w, r.id))
     return out
 
 
 def verify_claim(client: JDMClient, claim: Claim,
                  support_min_w: float = DEFAULT_SUPPORT_MIN_W) -> Verdict:
-    """Vérifie une claim atomique contre JDM. Pas d'appel LLM."""
-    # 1) Triplet direct
-    triples = _relations_from_by_type(client, claim.subject, claim.relation, min_weight=1.0)
+    """Vérifie une claim atomique contre JDM. Pas d'appel LLM.
+
+    Cascade enrichie (Phase 9) :
+      1. Match direct positif (w > 0) → SUPPORTED ou CONTRADICTED selon polarity
+      2. Match direct NÉGATIF (w < 0) → polarité INVERSE (JDM dit explicitement non)
+      3. Pour r_isa : check r_isa-incompatible via top hyperonymes
+      4. Match via synonymes de l'object (positifs uniquement)
+      5. UNKNOWN
+
+    Pour les matches directs, les annotations du triplet (r_annotation_exception
+    notamment) sont remontées dans l'explication pour nuance.
+    """
+    import math
+
+    triples = _relations_from_by_type(client, claim.subject, claim.relation)
     if not triples and not client.relation_type_id(claim.relation):
         return Verdict(
             claim=claim, status=Status.UNKNOWN, confidence=0.0,
             explanation=f"Relation inconnue dans JDM : {claim.relation!r}.",
         )
 
-    # 1a) Match exact (ou via décodage du nom JDM côté target)
-    direct_hit = None
-    for name, w in triples:
+    # 1) + 2) Match exact (signe positif OU négatif)
+    direct_hit = None  # tuple (name, w, rel_id)
+    for name, w, rid in triples:
         if _matches(name, claim.object):
-            direct_hit = (name, w)
+            direct_hit = (name, w, rid)
             break
-        # Vérifie aussi la forme décodée d'un refinement.
         dec = client.decode_node_name(name)
         if dec["is_refinement"] and _matches(dec["decoded"], claim.object):
-            direct_hit = (name, w)
+            direct_hit = (name, w, rid)
             break
 
     if direct_hit is not None:
-        name, w = direct_hit
-        # Confiance ~ tanh(w / STRONG_SUPPORT_W)
-        import math
-        conf = round(math.tanh(w / STRONG_SUPPORT_W), 3)
+        name, w, rid = direct_hit
+        # JDM dit OUI (w>0) ou NON (w<0) sur ce triplet.
+        jdm_says_yes = w > 0
+        claim_says_yes = claim.polarity
+
+        # SUPPORTED ssi JDM et la claim sont d'accord (oui-oui ou non-non)
+        status = Status.SUPPORTED if (jdm_says_yes == claim_says_yes) else Status.CONTRADICTED
+        conf = round(math.tanh(abs(w) / STRONG_SUPPORT_W), 3)
+
+        # Cherche les annotations (notamment r_annotation_exception)
+        try:
+            annotations = client.get_annotations_for_triplet(rid)
+        except Exception:
+            annotations = []
+        annot_str = ""
+        if annotations:
+            tops = ", ".join(f"{a.value} (w={a.w:.0f})" for a in annotations[:3])
+            annot_str = f" Annotations JDM : {tops}."
+        # Exceptions explicites : signal supplémentaire à mentionner
+        exceptions = [a for a in annotations if a.kind == "exception"]
+        if exceptions:
+            exc_str = ", ".join(a.value for a in exceptions[:3])
+            annot_str += f" Exception(s) annotée(s) : {exc_str}."
+
         ev = _to_evidence(client, claim.subject, claim.relation, name, w)
-        verdict_status = Status.SUPPORTED if claim.polarity else Status.CONTRADICTED
+        explanation = (
+            f"JDM contient directement le triplet "
+            f"`{claim.subject} | {claim.relation} | {ev.target}` avec poids "
+            f"{w:.0f} ({'affirmation' if jdm_says_yes else 'négation'} consensuelle).{annot_str}"
+        )
         return Verdict(
-            claim=claim, status=verdict_status, confidence=conf,
-            evidence_for=[ev] if claim.polarity else [],
-            evidence_against=[] if claim.polarity else [ev],
-            explanation=(
-                f"JDM contient directement le triplet "
-                f"`{claim.subject} | {claim.relation} | {ev.target}` "
-                f"avec poids {w:.0f}."
-            ),
+            claim=claim, status=status, confidence=conf,
+            evidence_for=[ev] if status == Status.SUPPORTED else [],
+            evidence_against=[ev] if status == Status.CONTRADICTED else [],
+            explanation=explanation,
         )
 
-    # 2) Pour r_isa : vérification d'incompatibilité AVANT la fallback synonymes.
-    #    Évite les faux positifs du type "animal aquatique ~ poisson" qui
-    #    conduiraient à valider à tort "baleine r_isa poisson".
+    # 3) Pour r_isa : vérification d'incompatibilité AVANT la fallback synonymes.
     if claim.relation == "r_isa":
-        contradicted_evidence = _check_isa_contradiction(client, claim, triples)
+        # On filtre les triples sur w>0 pour le calcul d'incompatibilité
+        # (les hyperonymes négatifs ne servent pas à dériver incompatibilité)
+        positive_triples = [(n, w) for n, w, _ in triples if w > 0]
+        contradicted_evidence = _check_isa_contradiction(client, claim, positive_triples)
         if contradicted_evidence:
             return contradicted_evidence
 
-    # 3) Match via synonymes de l'object (folk-taxonomy fallback)
+    # 4) Match via synonymes de l'object (folk-taxonomy fallback, positifs uniquement)
     syn_id = client.relation_type_id("r_syn")
     if syn_id is not None:
         try:
@@ -129,7 +169,7 @@ def verify_claim(client: JDMClient, claim: Claim,
             syn_names = {n.name for n in syns_res.nodes}
         except Exception:
             syn_names = set()
-        for name, w in triples:
+        for name, w, _rid in triples:
             if name in syn_names and w >= support_min_w:
                 ev = _to_evidence(client, claim.subject, claim.relation, name, w)
                 import math
@@ -152,7 +192,7 @@ def verify_claim(client: JDMClient, claim: Claim,
         # Le top des génériques peut servir d'evidence_against indicative.
         top_against = [
             _to_evidence(client, claim.subject, claim.relation, n, w)
-            for n, w in sorted(triples, key=lambda x: -x[1])[:5]
+            for n, w, _rid in sorted(triples, key=lambda x: -abs(x[1]))[:5]
         ]
         return Verdict(
             claim=claim, status=Status.UNKNOWN, confidence=0.3,
