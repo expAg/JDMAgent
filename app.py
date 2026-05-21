@@ -322,19 +322,22 @@ Documentation : [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md)
 
 # ---------- Tab 4: Sous-graphe (visualisation) ----------
 
-import html as _html_mod
+import base64 as _b64
 import tempfile
 
 
 def viz_subgraph(term: str, depth: float, top_k: float, selected_relations: list[str]):
-    """Construit un sous-graphe et renvoie un iframe HTML + des stats."""
+    """Construit un sous-graphe et renvoie un iframe HTML + des stats.
+
+    Le rendu vis-network passe par une iframe **data: URI base64** plutôt
+    que `srcdoc` — c'est plus robuste face à la sanitization de Gradio et
+    aux gros payloads (notre HTML fait facilement 50–100 ko en profondeur 2).
+    """
     term = (term or "").strip()
     if not term:
         return "", "⚠️ Saisis un terme."
     rels = selected_relations if selected_relations else None
     try:
-        # Écrit dans /tmp (HF Spaces) puis lit le fichier pour le réintégrer
-        # dans une iframe srcdoc (rendu autonome, scripts vis-network OK).
         with tempfile.NamedTemporaryFile(
             suffix=".html", delete=False, mode="w", encoding="utf-8"
         ) as tmp:
@@ -349,19 +352,22 @@ def viz_subgraph(term: str, depth: float, top_k: float, selected_relations: list
             output_path=out_path,
         )
         html_text = Path(res["html_path"]).read_text(encoding="utf-8")
-        esc = _html_mod.escape(html_text, quote=True)
+        b64 = _b64.b64encode(html_text.encode("utf-8")).decode("ascii")
         iframe = (
-            f'<iframe srcdoc="{esc}" '
-            f'style="width:100%;height:700px;border:1px solid #ddd;border-radius:8px;"></iframe>'
+            f'<iframe src="data:text/html;base64,{b64}" '
+            f'style="width:100%;height:700px;border:1px solid #ddd;'
+            f'border-radius:8px;background:#fff;" '
+            f'sandbox="allow-scripts allow-same-origin"></iframe>'
         )
         s = res["stats"]
         status = (
-            f"✓ **{s['n_nodes']} nœuds**, **{s['n_edges']} arêtes** "
+            f"✅ **{s['n_nodes']} nœuds**, **{s['n_edges']} arêtes** "
             f"(dont **{s['n_negative']} négations** en rouge) — profondeur {s['depth']}"
         )
         return iframe, status
     except Exception as e:
-        return "", f"❌ Erreur : {e}"
+        import traceback
+        return "", f"❌ Erreur : {e}\n\n```\n{traceback.format_exc()}\n```"
 
 
 with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
