@@ -19,15 +19,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <title>{{TITLE}}</title>
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
-  html, body { margin:0; padding:0; height:100%; background:#fafafa; font-family: system-ui, sans-serif; }
-  header { padding:14px 20px; border-bottom:1px solid #eee; background:#fff; }
+  /* Fond chaud et atténué pour ne pas éblouir lors de longues sessions
+     d'exploration, tout en restant assez clair pour les couleurs pastel
+     des nœuds de profondeur ≥ 2. */
+  html, body { margin:0; padding:0; height:100%; background:#dadce0; font-family: system-ui, sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid #c8ccd0; background:#e8eaed; color:#222; }
   h1 { margin:0; font-size:18px; }
-  .sub { color:#666; font-size:13px; margin-top:2px; }
-  #net { width:100%; height: calc(100vh - 110px); background:#fff; }
+  .sub { color:#5f6368; font-size:13px; margin-top:2px; }
+  #net { width:100%; height: calc(100vh - 110px); background:#e8eaed; }
   #controls { position:absolute; top:70px; right:24px; z-index:10; display:flex; gap:6px; }
-  #controls button { padding:6px 10px; border:1px solid #ccc; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }
-  #controls button:hover { background:#f0f0f0; }
-  .legend { padding:8px 20px; font-size:12px; color:#333; background:#fff; border-top:1px solid #eee; }
+  #controls button { padding:6px 10px; border:1px solid #b0b3b8; background:#f1f3f4; border-radius:6px; cursor:pointer; font-size:13px; color:#222; }
+  #controls button:hover { background:#dadce0; }
+  .legend { padding:8px 20px; font-size:12px; color:#3c4043; background:#e8eaed; border-top:1px solid #c8ccd0; }
   .legend span { display:inline-block; padding:2px 8px; border-radius:4px; margin-right:8px; }
 </style>
 </head>
@@ -95,7 +98,7 @@ const _edgeBase = {};
 edges.forEach(e => {
   _edgeBase[e.id] = {
     color: e.color ? { ...e.color } : { color: '#9e9e9e', opacity: 1 },
-    font: e.font ? { ...e.font } : { color: '#555', size: 14, background: '#ffffffd9' }
+    font: e.font ? { ...e.font } : { color: '#555', size: 14, background: '#e8eaedee' }
   };
 });
 
@@ -118,7 +121,7 @@ function highlight(focusId) {
     return {
       id,
       color: { color: '#e0e0e0', opacity: 0.25 },
-      font: { color: '#ddd', size: 13, background: '#ffffffcc' }
+      font: { color: '#ddd', size: 13, background: '#e8eaedcc' }
     };
   }));
 }

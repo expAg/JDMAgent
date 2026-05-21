@@ -272,7 +272,7 @@ def _build_edge(
         "font": {
             "size": 13 if is_d2 else 14,
             "color": font_color,
-            "background": "#ffffffd9",
+            "background": "#e8eaedee",
             "strokeWidth": 0,
         },
         # vis-network supporte color: { color, opacity }
