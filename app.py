@@ -66,7 +66,8 @@ EXPLORE_RELATIONS = {
 }
 
 
-def explore(term: str, relation_label: str, min_weight: float, limit: int) -> tuple[pd.DataFrame, str]:
+def explore(term: str, relation_label: str, min_weight: float,
+            limit: int, with_annotations: bool) -> tuple[pd.DataFrame, str]:
     if not term.strip():
         return pd.DataFrame(), "Renseigne un terme."
     c = get_client()
@@ -91,11 +92,25 @@ def explore(term: str, relation_label: str, min_weight: float, limit: int) -> tu
             except Exception:
                 continue
         dec = c.decode_node_name(node.name, local_nodes=idx)
+        # Annotations sémantiques (constitutif, contrastif, exception, ...)
+        # fetchées à la demande — N+1 HTTP par relation, mais elles sont
+        # cachées par diskcache.
+        annot_str = ""
+        if with_annotations:
+            try:
+                anns = c.get_annotations_for_triplet(r.id)
+                if anns:
+                    annot_str = " ; ".join(
+                        f"{a.value} (w={int(round(a.w))})" for a in anns
+                    )
+            except Exception:
+                annot_str = ""
         rows.append({
             "source": term,
             "relation": rel_name,
             "target": dec["decoded"],
             "w": round(r.w, 1),
+            "annotations": annot_str,
             "target_id (si raffinement)": node.name if dec["is_refinement"] else "",
         })
     if not rows:
@@ -312,17 +327,44 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
 
 THEME = gr.themes.Soft(primary_hue="violet", secondary_hue="amber")
 
-INTRO_MD = """# JDMAgent — Démo interactive
+PROJET_MD = """# JDMAgent — Démo interactive
 
-Explore, vérifie et enrichis le graphe lexical **JeuxDeMots** (~2 M nœuds, 180+ relations)
-sans rien installer.
+Explore, vérifie, visualise et enrichis le graphe lexico-sémantique
+**JeuxDeMots** (LIRMM/CNRS, ~2 M nœuds, 180+ relations) sans rien installer.
 
-- **Onglet 1** : explorer le graphe (synonymes, hyperonymes, caractéristiques, etc.)
-- **Onglet 2** : vérifier une affirmation factuelle contre JDM (déterministe, sans LLM)
-- **Onglet 3** : converser avec un agent Claude qui n'utilise QUE JDM (apporte ta clé Anthropic)
+## Que peux-tu faire dans cette démo ?
 
-Code source : [expAg/JDMAgent](https://github.com/expAg/JDMAgent) ·
-Documentation : [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md)
+- **🔎 Explorer JDM** — choisis un terme et une relation, vois les triplets
+  correspondants triés par poids consensuel. Annotations sémantiques
+  (constitutif, contrastif, exception, …) optionnelles. Désambiguïsation
+  des termes polysémiques (avocat, souris, police…).
+- **⚖️ Claim checker** — vérifie une affirmation factuelle contre JDM de
+  façon **déterministe** (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN
+  avec citations des triplets utilisés.
+- **🕸️ Sous-graphe** — visualisation interactive (vis-network) du
+  voisinage sémantique d'un terme, jusqu'à profondeur 4, sélection de
+  relations indépendante par niveau, négations en rouge.
+- **🤖 Agent** — conversation avec un agent (Claude ou GPT, BYOK) qui
+  n'utilise QUE les outils JDM et cite ses sources.
+
+## Le projet en bref
+
+- Couche client typée (`JDMClient`) sur l'[API JeuxDeMots](https://jdm-api.demo.lirmm.fr)
+  + cache disque + retry exponentiel.
+- 30 outils MCP exposés à n'importe quel client (Claude Code/Desktop,
+  Cursor, etc.) via [FastMCP](https://github.com/jlowin/fastmcp).
+- Pipeline fact-check déterministe + détection de gaps + proposition
+  LLM de triplets candidats (toujours en lecture seule sur JDM).
+- Visualisation sous-graphe HTML autonome (vis-network) avec sélection
+  de relations par niveau, palette par famille de relation et opacité
+  progressive.
+
+**Données** : JeuxDeMots — Mathieu Lafourcade, équipe TEXTE, LIRMM/CNRS.
+
+**Liens** :
+[Code source](https://github.com/expAg/JDMAgent) ·
+[USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md) ·
+[Notebook Colab](https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb)
 """
 
 
@@ -381,7 +423,7 @@ def viz_subgraph(term: str, depth: float, top_k: float,
         b64 = _b64.b64encode(html_text.encode("utf-8")).decode("ascii")
         iframe = (
             f'<iframe src="data:text/html;base64,{b64}" '
-            f'style="width:100%;height:700px;border:1px solid #ddd;'
+            f'style="width:100%;height:910px;border:1px solid #ddd;'
             f'border-radius:8px;background:#fff;display:block;" '
             f'sandbox="allow-scripts allow-same-origin"></iframe>'
         )
@@ -400,16 +442,15 @@ def viz_subgraph(term: str, depth: float, top_k: float,
 
 
 with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
-    gr.Markdown(INTRO_MD)
 
     with gr.Tabs():
 
+        # ----- Tab 0: Projet (description et liens) -----
+        with gr.Tab("📋 Projet"):
+            gr.Markdown(PROJET_MD)
+
         # ----- Tab 1: Explorer -----
         with gr.Tab("🔎 Explorer JDM"):
-            gr.Markdown(
-                "Choisis un **terme** et une **relation**. JDM répond avec les "
-                "triplets correspondants, triés par poids `w` (consensus)."
-            )
             with gr.Row():
                 term_in = gr.Textbox(label="Terme", value="chat",
                                      placeholder="ex: voiture, chat, manger…")
@@ -419,21 +460,19 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             with gr.Row():
                 mw_in = gr.Slider(0, 500, value=25, step=5, label="Poids min (w ≥)")
                 lim_in = gr.Slider(5, 100, value=20, step=5, label="Limite de résultats")
+                annot_in = gr.Checkbox(value=True, label="Inclure les annotations")
             explore_btn = gr.Button("Explorer", variant="primary")
             explore_status = gr.Markdown()
-            explore_df = gr.Dataframe(label="Triplets trouvés",
-                                       headers=["source", "relation", "target", "w", "target_id (si raffinement)"],
-                                       interactive=False)
+            explore_df = gr.Dataframe(
+                label="Triplets trouvés",
+                headers=["source", "relation", "target", "w", "annotations", "target_id (si raffinement)"],
+                interactive=False,
+            )
             explore_btn.click(explore,
-                               inputs=[term_in, rel_in, mw_in, lim_in],
+                               inputs=[term_in, rel_in, mw_in, lim_in, annot_in],
                                outputs=[explore_df, explore_status])
 
             gr.Markdown("---\n### Désambiguïsation des termes polysémiques")
-            gr.Markdown(
-                "Pour un mot ayant plusieurs sens (avocat, souris, police…), "
-                "JDM stocke des **raffinements** : on les décode automatiquement "
-                "en français lisible."
-            )
             with gr.Row():
                 dis_in = gr.Textbox(label="Terme polysémique", value="avocat",
                                     placeholder="ex: avocat, souris, police, chat…")
@@ -445,13 +484,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             dis_btn.click(disambiguate_term, inputs=[dis_in],
                           outputs=[dis_df, dis_status])
 
-        # ----- Tab 2: Fact-checker -----
-        with gr.Tab("⚖️ Fact-checker"):
-            gr.Markdown(
-                "Vérifie une affirmation factuelle contre JDM. La vérification est "
-                "**déterministe** (pas de LLM) — basée sur les triplets réellement "
-                "présents dans le graphe + détection des incompatibilités explicites."
-            )
+        # ----- Tab 2: Claim checker -----
+        with gr.Tab("⚖️ Claim checker"):
             with gr.Row():
                 fc_subject = gr.Textbox(label="Sujet", value="baleine",
                                         placeholder="ex: baleine, sang, voiture…")
@@ -478,14 +512,6 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
 
         # ----- Tab 3: Sous-graphe (visualisation interactive) -----
         with gr.Tab("🕸️ Sous-graphe"):
-            gr.Markdown(
-                "Visualise le voisinage sémantique d'un terme dans JDM en graphe "
-                "interactif (vis-network). Le nœud central est fixé ; les voisins "
-                "directs sont colorés par type de relation, ceux de profondeur 2 "
-                "en gris pointillés. **Les négations (poids négatif) apparaissent "
-                "en rouge** et préfixées « NON » — JDM affirme explicitement que "
-                "ce triplet est faux."
-            )
             with gr.Row():
                 viz_term = gr.Textbox(label="Terme racine", value="plat asiatique",
                                       placeholder="ex: chat, polyphonie, voiture…",
@@ -533,33 +559,9 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                         viz_depth3_relations, viz_depth4_relations],
                 outputs=[viz_status, viz_out, viz_file],
             )
-            gr.Examples(
-                examples=[
-                    ["plat asiatique", 2, 3],
-                    ["polyphonie", 2, 3],
-                    ["chat", 1, 6],
-                    ["voiture", 2, 4],
-                ],
-                inputs=[viz_term, viz_depth, viz_topk],
-            )
 
         # ----- Tab 4: Agent (BYOK Anthropic / OpenAI) -----
         with gr.Tab("🤖 Agent"):
-            gr.Markdown(
-                "Discute avec un agent qui n'utilise QUE les outils JDM "
-                "pour répondre. Chaque réponse cite ses triplets sources.\n\n"
-                "**Apporte ta propre clé** (BYOK — Bring Your Own Key) :\n"
-                "- 💳 **Anthropic Claude** — clé sur "
-                "[console.anthropic.com](https://console.anthropic.com/settings/keys). "
-                "Rapide, top qualité, ~0.05–0.30 $ par session.\n"
-                "- 💳 **OpenAI GPT** — clé sur "
-                "[platform.openai.com](https://platform.openai.com/api-keys). "
-                "Function-calling très mature, ~0.01–0.10 $ par session avec gpt-4o-mini.\n\n"
-                "*La clé reste en session, n'est ni sauvegardée ni loggée. "
-                "Tu paies uniquement ton propre usage chez le provider choisi.*\n\n"
-                "💡 *Tu peux aussi explorer JDM sans clé dans les onglets "
-                "**Explorer** et **Fact-checker** — ils n'utilisent aucun LLM.*"
-            )
             with gr.Row():
                 key_in = gr.Textbox(
                     label="Clé API (Anthropic sk-ant-... ou OpenAI sk-...)",
