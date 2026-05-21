@@ -26,9 +26,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   h1 { margin:0; font-size:18px; }
   .sub { color:#3c4043; font-size:13px; margin-top:2px; }
   #net { width:100%; height: calc(100vh - 110px); background:#d4d7da; }
-  #controls { position:absolute; top:70px; right:24px; z-index:10; display:flex; gap:6px; }
+  #controls { position:absolute; top:70px; right:24px; z-index:10; display:flex; gap:6px; align-items:center; }
   #controls button { padding:6px 10px; border:1px solid #9aa0a6; background:#e8eaed; border-radius:6px; cursor:pointer; font-size:13px; color:#1a1a1a; font-weight:500; }
   #controls button:hover { background:#f1f3f4; }
+  #controls select { padding:6px 8px; border:1px solid #9aa0a6; background:#e8eaed; border-radius:6px; cursor:pointer; font-size:13px; color:#1a1a1a; font-weight:500; }
   #btn-reset { background:#fff3e0; border-color:#a04500; }
   #btn-reset .rot { display:inline-block; }
   #btn-reset:hover .rot { animation: jdm-spin 0.7s linear; }
@@ -47,8 +48,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           title="Revenir à l'état de départ">
     <span class="rot">&#x21bb;</span> Réinitialiser
   </button>
+  <select id="degree-threshold"
+          title="Seuil : « Masquer isolés » cachera les nœuds ayant moins d'arêtes que cette valeur"
+          onchange="onThresholdChange()"></select>
   <button id="btn-degree" onclick="toggleLowDegree()"
-          title="Masquer les nœuds ayant moins de 2 arêtes">Masquer isolés</button>
+          title="Masquer les nœuds en dessous du seuil d'arêtes choisi">Masquer isolés</button>
   <button onclick="network.fit({animation:true})">Recentrer</button>
   <button onclick="zoomBy(1.3)">Zoom +</button>
   <button onclick="zoomBy(0.77)">Zoom -</button>
@@ -112,19 +116,60 @@ const INITIAL_CENTER = 'ROOT';   // nœud central d'origine
 let currentCenter = 'ROOT';      // centre de gravité courant
 let hideLowDegree = false;       // filtre "masquer isolés" actif ?
 
-// ---------- Masquer les nœuds à moins de 2 arêtes ----------
-function toggleLowDegree() {
-  hideLowDegree = !hideLowDegree;
+// ---------- Masquer les nœuds peu connectés ----------
+// Le degré = nb total d'arêtes (entrantes + sortantes) sur le graphe complet.
+function nodeDegree(id) { return network.getConnectedEdges(id).length; }
+
+function graphMaxDegree() {
+  let m = 0;
+  nodes.getIds().forEach(id => { const d = nodeDegree(id); if (d > m) m = d; });
+  return m;
+}
+
+// Remplit la liste déroulante du seuil : 2 .. degré max du graphe.
+function initThresholdDropdown() {
+  const sel = document.getElementById('degree-threshold');
+  sel.innerHTML = '';
+  const max = Math.max(2, graphMaxDegree());
+  for (let i = 2; i <= max; i++) {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = '< ' + i + ' arêtes';
+    sel.appendChild(opt);
+  }
+  sel.value = '2';
+}
+
+function currentThreshold() {
+  const sel = document.getElementById('degree-threshold');
+  return parseInt(sel.value, 10) || 2;
+}
+
+// Applique (ou retire) le masquage selon l'état + le seuil courant.
+function applyDegreeFilter() {
+  const threshold = currentThreshold();
   const updates = nodes.getIds().map(id => {
-    // Degré = nb total d'arêtes (entrantes + sortantes) sur le graphe.
-    const deg = network.getConnectedEdges(id).length;
-    const hide = hideLowDegree && id !== currentCenter && id !== INITIAL_CENTER && deg < 2;
+    const hide = hideLowDegree
+      && id !== currentCenter && id !== INITIAL_CENTER
+      && nodeDegree(id) < threshold;
     return { id, hidden: hide };
   });
   nodes.update(updates);
+}
+
+function toggleLowDegree() {
+  hideLowDegree = !hideLowDegree;
+  applyDegreeFilter();
   document.getElementById('btn-degree').textContent =
     hideLowDegree ? 'Tout afficher' : 'Masquer isolés';
 }
+
+// Changement du seuil : si le filtre est déjà actif, on le réapplique.
+function onThresholdChange() {
+  if (hideLowDegree) applyDegreeFilter();
+}
+
+initThresholdDropdown();
 
 // ---------- Clic simple : centrer le nœud + cadrer ses connexions ----------
 network.on('click', params => {
@@ -164,6 +209,7 @@ function resetGraph() {
   nodes.add(JSON.parse(JSON.stringify(PRISTINE_NODES)));
   edges.add(JSON.parse(JSON.stringify(PRISTINE_EDGES)));
   rebuildEdgeBase();
+  initThresholdDropdown();  // remet le seuil à 2
   document.getElementById('btn-degree').textContent = 'Masquer isolés';
   document.getElementById('btn-reset').style.display = 'none';
   network.setOptions({ physics: { enabled: true } });
