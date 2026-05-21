@@ -51,7 +51,7 @@ KIND_OF_REL: dict[str, str] = {
     "r_associated": "assoc",
 }
 
-#: Palette de couleurs par kind (étend la palette du fichier de référence).
+#: Palette niveau 1 (voisins directs — couleurs saturées identifiables).
 PALETTE: dict[str, dict[str, str]] = {
     "center": {"background": "#212121", "border": "#000"},
     "isa":    {"background": "#e3f2fd", "border": "#1976d2"},
@@ -64,8 +64,32 @@ PALETTE: dict[str, dict[str, str]] = {
     "verb":   {"background": "#fce4ec", "border": "#ad1457"},
     "domain": {"background": "#ede7f6", "border": "#4527a0"},
     "assoc":  {"background": "#eceff1", "border": "#455a64"},
-    "d2":     {"background": "#fafafa", "border": "#bdbdbd"},
+    "d2":     {"background": "#fafafa", "border": "#bdbdbd"},  # fallback générique
 }
+
+#: Palette niveau 2 — même teinte que le niveau 1 mais visiblement plus claire.
+#: Le background reste teinté (pas neutre) pour conserver l'identité visuelle
+#: de la famille de relation, et la bordure pastel renforce la distinction
+#: avec le niveau 1 sans confusion.
+PALETTE_D2: dict[str, dict[str, str]] = {
+    "isa":    {"background": "#f5fafe", "border": "#90caf9"},
+    "hypo":   {"background": "#f4faf4", "border": "#a5d6a7"},
+    "syn":    {"background": "#f8fcf2", "border": "#c5e1a5"},
+    "anto":   {"background": "#fff5f7", "border": "#ef9a9a"},
+    "carac":  {"background": "#faf2fb", "border": "#ce93d8"},
+    "part":   {"background": "#fff9f0", "border": "#ffcc80"},
+    "lieu":   {"background": "#f0fbfc", "border": "#80deea"},
+    "verb":   {"background": "#fdf2f6", "border": "#f48fb1"},
+    "domain": {"background": "#f6f3fa", "border": "#b39ddb"},
+    "assoc":  {"background": "#f6f8f9", "border": "#b0bec5"},
+}
+
+
+def _palette_for(kind: str, depth: int) -> dict[str, str]:
+    """Renvoie la couleur de fond/bordure adaptée au kind et à la profondeur."""
+    if depth >= 2:
+        return PALETTE_D2.get(kind, PALETTE["d2"])
+    return PALETTE.get(kind, PALETTE["assoc"])
 
 
 # ---------- Slug pour nom de fichier ----------
@@ -135,8 +159,13 @@ def _build_node(
     depth: int,
     fixed_center: bool = False,
 ) -> dict[str, Any]:
-    """Construit un nœud vis-network."""
-    color = PALETTE.get(kind, PALETTE["assoc"])
+    """Construit un nœud vis-network. Le centre garde sa couleur dédiée ;
+    les autres nœuds prennent une palette plus claire à partir du niveau 2
+    (même teinte que le niveau 1, mais visiblement adoucie)."""
+    if fixed_center:
+        color = PALETTE["center"]
+    else:
+        color = _palette_for(kind, depth)
     node: dict[str, Any] = {
         "id": node_id,
         "label": label,
@@ -245,7 +274,7 @@ def build_subgraph(
         label_to_id[label] = nid
         nodes.append(_build_node(
             nid, label,
-            kind if depth_lv < 2 else "d2",
+            kind,  # garde la teinte de la famille ; _palette_for éclaircit au niveau 2
             depth=depth_lv,
         ))
         return nid
