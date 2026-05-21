@@ -19,6 +19,8 @@ from pathlib import Path
 from jdm_agent.client import JDMClient
 from jdm_agent.viz import (
     DEFAULT_DEPTH2_RELATIONS,
+    DEFAULT_DEPTH3_RELATIONS,
+    DEFAULT_DEPTH4_RELATIONS,
     DEFAULT_RELATIONS,
     build_subgraph,
 )
@@ -36,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("term", help="terme racine (ex. \"plat asiatique\", \"polyphonie\")")
     p.add_argument("--depth", type=int, default=2,
-                   help="profondeur (1, 2 ou 3 ; défaut = 2)")
+                   help="profondeur (1 à 4 ; défaut = 2)")
     p.add_argument("--top-k", type=int, default=3,
                    help="nb max de cibles par relation et par nœud (défaut = 3)")
     p.add_argument("--min-weight", type=float, default=None,
@@ -47,6 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--depth2-relations", type=str, default=None,
                    help="liste CSV pour la profondeur 2 (défaut : "
                         + ",".join(DEFAULT_DEPTH2_RELATIONS) + ")")
+    p.add_argument("--depth3-relations", type=str, default=None,
+                   help="liste CSV pour la profondeur 3 (défaut : "
+                        + ",".join(DEFAULT_DEPTH3_RELATIONS) + ")")
+    p.add_argument("--depth4-relations", type=str, default=None,
+                   help="liste CSV pour la profondeur 4 (défaut : "
+                        + ",".join(DEFAULT_DEPTH4_RELATIONS) + ")")
     p.add_argument("--output-path", type=str, default=None,
                    help="fichier HTML de sortie (défaut = <slug>_subgraph.html)")
     p.add_argument("--no-open", action="store_true",
@@ -62,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         min_weight=args.min_weight,
         relations=_csv(args.relations),
         depth2_relations=_csv(args.depth2_relations),
+        depth3_relations=_csv(args.depth3_relations),
+        depth4_relations=_csv(args.depth4_relations),
         output="html",
         output_path=args.output_path,
     )

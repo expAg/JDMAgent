@@ -33,6 +33,20 @@ DEFAULT_DEPTH2_RELATIONS: list[str] = [
     "r_isa", "r_carac", "r_has_part", "r_lieu",
 ]
 
+#: Profondeur 3 — encore plus étroit pour éviter le bruit.
+DEFAULT_DEPTH3_RELATIONS: list[str] = [
+    "r_isa", "r_has_part", "r_carac",
+]
+
+#: Profondeur 4 — uniquement la remontée catégorielle + caractérisation.
+DEFAULT_DEPTH4_RELATIONS: list[str] = [
+    "r_isa", "r_carac",
+]
+
+#: Opacité appliquée aux nœuds et aux arêtes par profondeur. Decroissance
+#: linéaire bornée pour garder le niveau 4 encore visible.
+OPACITY_BY_DEPTH: dict[int, float] = {0: 1.0, 1: 1.0, 2: 0.65, 3: 0.42, 4: 0.28}
+
 
 # ---------- Mapping relation → couleur / "kind" CSS ----------
 
@@ -98,13 +112,18 @@ def _palette_for(kind: str, depth: int) -> dict[str, str]:
 
 
 def _edge_color(kind: str, depth: int, negative: bool) -> str:
-    """Couleur d'arête : rouge pour négation, teinte de la famille sinon ;
-    fortement diluée au niveau 2."""
+    """Couleur d'arête : rouge pour négation, teinte de la famille sinon.
+    Le niveau 1 utilise la teinte saturée, tout niveau ≥ 2 la version pastel
+    (l'opacité progressive distingue ensuite d2/d3/d4)."""
     if negative:
         return "#c62828" if depth < 2 else "#ef9a9a"
     if depth >= 2:
         return EDGE_COLOR_D2.get(kind, "#cfcfcf")
     return EDGE_COLOR.get(kind, "#9e9e9e")
+
+
+def _opacity_for(depth: int) -> float:
+    return OPACITY_BY_DEPTH.get(depth, OPACITY_BY_DEPTH[4])
 
 
 # ---------- Slug pour nom de fichier ----------
@@ -176,18 +195,31 @@ def _build_node(
 ) -> dict[str, Any]:
     """Construit un nœud vis-network. Le centre garde sa couleur dédiée ;
     les autres nœuds prennent une palette plus claire à partir du niveau 2
-    (même teinte que le niveau 1, mais visiblement adoucie)."""
+    (même teinte que le niveau 1, mais visiblement adoucie). L'opacité du
+    nœud décroît avec la profondeur (cf. OPACITY_BY_DEPTH)."""
     if fixed_center:
         color = PALETTE["center"]
     else:
         color = _palette_for(kind, depth)
+    opacity = _opacity_for(depth)
+    # Taille de police : 28 au centre, 22 au niveau 1, 17 ensuite ;
+    # +1 pour le niveau 2 pour ne pas trop pénaliser le 1er anneau d2.
+    if fixed_center:
+        font_size = 28
+    elif depth >= 3:
+        font_size = 16
+    elif depth == 2:
+        font_size = 18
+    else:
+        font_size = 22
     node: dict[str, Any] = {
         "id": node_id,
         "label": label,
         "color": color,
+        "opacity": opacity,
         "shape": "ellipse" if fixed_center else "box",
         "font": {
-            "size": 28 if fixed_center else (18 if depth >= 2 else 22),
+            "size": font_size,
             "color": "#fff" if fixed_center else "#222",
             "face": "system-ui",
         },
@@ -228,7 +260,7 @@ def _build_edge(
     kind = KIND_OF_REL.get(relation, "assoc")
     label = f"NON {relation} {int(round(w))}" if is_neg else f"{relation} {int(round(w))}"
     color = _edge_color(kind, depth, is_neg)
-    opacity = 0.55 if is_d2 else 1.0
+    opacity = _opacity_for(depth)
     # Couleur du label : même teinte que le trait pour lier visuellement,
     # avec un léger fond blanc pour rester lisible par-dessus les nœuds.
     font_color = color
@@ -265,6 +297,8 @@ def build_subgraph(
     min_weight: Optional[float] = None,
     relations: Optional[list[str]] = None,
     depth2_relations: Optional[list[str]] = None,
+    depth3_relations: Optional[list[str]] = None,
+    depth4_relations: Optional[list[str]] = None,
     output: Literal["json", "html"] = "html",
     output_path: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -273,11 +307,13 @@ def build_subgraph(
     Args:
         term: terme racine (en français, accentué si besoin).
         client: JDMClient injecté ; un client par défaut sera créé sinon.
-        depth: profondeur d'exploration (1 = voisins directs, 2 = voisins de voisins).
+        depth: profondeur d'exploration (1..4 ; au-delà = illisible).
         top_k_per_relation: nombre max de cibles retenues par relation et par nœud.
         min_weight: poids minimum (None = pas de filtre, JDM décide).
         relations: relations explorées à la profondeur 1 (défaut = `DEFAULT_RELATIONS`).
-        depth2_relations: relations explorées à la profondeur 2 (défaut = `DEFAULT_DEPTH2_RELATIONS`).
+        depth2_relations: relations à la profondeur 2 (défaut = `DEFAULT_DEPTH2_RELATIONS`).
+        depth3_relations: relations à la profondeur 3 (défaut = `DEFAULT_DEPTH3_RELATIONS`).
+        depth4_relations: relations à la profondeur 4 (défaut = `DEFAULT_DEPTH4_RELATIONS`).
         output: "json" → dict `{nodes, edges, ...}` ; "html" → écrit un fichier autonome.
         output_path: chemin d'écriture (si None et output="html", utilise `<slug>_subgraph.html` dans le CWD).
 
@@ -286,13 +322,19 @@ def build_subgraph(
         - `root`: terme racine
         - `nodes`: liste de nœuds vis-network (présent si output="json")
         - `edges`: liste d'arêtes vis-network (présent si output="json")
-        - `stats`: {n_nodes, n_edges, n_negative, relations_used}
+        - `stats`: {n_nodes, n_edges, n_negative, relations_used, depth}
         - `html_path`: chemin du fichier écrit (si output="html")
     """
     c = client or JDMClient()
-    rels = list(relations) if relations is not None else list(DEFAULT_RELATIONS)
-    d2_rels = list(depth2_relations) if depth2_relations is not None else list(DEFAULT_DEPTH2_RELATIONS)
-    depth = max(1, min(int(depth), 3))  # garde-fou : 1..3
+    depth = max(1, min(int(depth), 4))  # garde-fou : 1..4
+
+    # Sélection effective par profondeur.
+    rels_by_depth: dict[int, list[str]] = {
+        1: list(relations) if relations is not None else list(DEFAULT_RELATIONS),
+        2: list(depth2_relations) if depth2_relations is not None else list(DEFAULT_DEPTH2_RELATIONS),
+        3: list(depth3_relations) if depth3_relations is not None else list(DEFAULT_DEPTH3_RELATIONS),
+        4: list(depth4_relations) if depth4_relations is not None else list(DEFAULT_DEPTH4_RELATIONS),
+    }
 
     # 1) Nœud central
     root_node = _build_node("ROOT", term, "center", depth=0, fixed_center=True)
@@ -315,55 +357,54 @@ def build_subgraph(
         ))
         return nid
 
-    # 2) Profondeur 1 : voisins directs de root, une relation à la fois.
-    depth1_neighbors: list[tuple[str, str]] = []  # (node_label, kind)
-    for rel in rels:
-        kind = KIND_OF_REL.get(rel, "assoc")
-        for row in _fetch_relation(c, term, rel, top_k_per_relation, min_weight):
-            tgt = row["target_display"]
-            if tgt == term:
-                continue
-            nid = _ensure_node(tgt, kind, depth_lv=1)
-            edges.append(_build_edge(
-                "ROOT", nid, rel, row["w"], row["polarity"], depth=1,
-            ))
-            depth1_neighbors.append((tgt, kind))
-
-    # 3) Profondeur 2 (optionnelle).
-    if depth >= 2:
-        # Pour chaque voisin de niveau 1, explorer le sous-ensemble d2_rels.
-        for n_label, _kind in depth1_neighbors:
-            for rel in d2_rels:
+    # Boucle généralisée sur les profondeurs 1..depth. À chaque tour on
+    # garde la liste des nœuds tout juste ajoutés pour itérer dessus au
+    # tour suivant.
+    current_layer: list[tuple[str, str]] = [(term, "center")]
+    for d in range(1, depth + 1):
+        rels_for_d = rels_by_depth.get(d, [])
+        # Limiter doucement la cardinalité au-delà du niveau 2 pour contenir
+        # l'explosion combinatoire — mais pas trop, l'utilisateur a déjà
+        # choisi top_k_per_relation et la sélection de relations à ce niveau.
+        top_k_d = top_k_per_relation if d <= 2 else max(1, top_k_per_relation // 2)
+        next_layer: list[tuple[str, str]] = []
+        for parent_label, _parent_kind in current_layer:
+            parent_id = label_to_id.get(parent_label, "ROOT")
+            for rel in rels_for_d:
                 kind = KIND_OF_REL.get(rel, "assoc")
-                rows = _fetch_relation(c, n_label, rel,
-                                       max(1, top_k_per_relation // 2),
-                                       min_weight)
+                rows = _fetch_relation(c, parent_label, rel, top_k_d, min_weight)
                 for row in rows:
                     tgt = row["target_display"]
                     if tgt == term:
-                        # Lien vers la racine : on le matérialise, mais on ne
-                        # ré-ajoute pas le noeud.
-                        from_id = label_to_id[n_label]
+                        # Lien retour vers la racine : on matérialise l'arête
+                        # mais on ne ré-ajoute pas le nœud.
                         edges.append(_build_edge(
-                            from_id, "ROOT", rel, row["w"], row["polarity"], depth=2,
+                            parent_id, "ROOT", rel, row["w"], row["polarity"], depth=d,
                         ))
                         continue
-                    nid_to = _ensure_node(tgt, kind, depth_lv=2)
-                    from_id = label_to_id[n_label]
-                    if from_id == nid_to:
+                    is_new = tgt not in label_to_id
+                    nid_to = _ensure_node(tgt, kind, depth_lv=d)
+                    if parent_id == nid_to:
                         continue
                     edges.append(_build_edge(
-                        from_id, nid_to, rel, row["w"], row["polarity"], depth=2,
+                        parent_id, nid_to, rel, row["w"], row["polarity"], depth=d,
                     ))
+                    if is_new:
+                        next_layer.append((tgt, kind))
+        current_layer = next_layer
+        if not current_layer:
+            break
 
     n_negative = sum(1 for e in edges if e.get("_negative"))
     stats = {
         "n_nodes": len(nodes),
         "n_edges": len(edges),
         "n_negative": n_negative,
-        "relations_used": rels,
+        "relations_used": rels_by_depth[1],
+        "relations_by_depth": {d: rels_by_depth[d] for d in range(1, depth + 1)},
         "depth": depth,
     }
+    rels = rels_by_depth[1]  # legacy alias pour la légende ci-dessous
 
     result: dict[str, Any] = {"root": term, "stats": stats}
 
@@ -382,7 +423,7 @@ def build_subgraph(
         legend_chips.append(f'<span style="background:{bg};">{rel}</span>')
     if depth >= 2:
         legend_chips.append(
-            '<span style="background:#f5f5f5;border:1px dashed #9e9e9e;">profondeur 2</span>'
+            '<span style="background:#f5f5f5;border:1px dashed #9e9e9e;">profondeur ≥ 2 (pointillés, opacité décroissante)</span>'
         )
     legend_chips.append(
         '<span style="background:#ffebee;color:#c62828;border:1px solid #c62828;">négation</span>'

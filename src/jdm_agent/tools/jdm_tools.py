@@ -780,6 +780,8 @@ def build_subgraph_visualization(
     min_weight: Optional[float] = None,
     relations: Optional[list[str]] = None,
     depth2_relations: Optional[list[str]] = None,
+    depth3_relations: Optional[list[str]] = None,
+    depth4_relations: Optional[list[str]] = None,
     output: str = "html",
     output_path: Optional[str] = None,
 ) -> dict:
@@ -787,22 +789,25 @@ def build_subgraph_visualization(
 
     Très utile pour explorer visuellement l'entourage sémantique d'un concept :
     catégories (r_isa), exemples (r_hypo), parties (r_has_part), lieux,
-    caractéristiques, verbes appliqués, etc., sur 1 ou 2 niveaux de profondeur.
+    caractéristiques, verbes appliqués, etc., sur 1 à 4 niveaux de profondeur.
 
-    Par défaut, explore les 11 relations standards à la profondeur 1, puis
-    un sous-ensemble (has_part, lieu, carac, hypo) à la profondeur 2. Les
-    négations (poids négatifs) sont rendues en rouge et préfixées « NON ».
+    Sélection de relations indépendante PAR NIVEAU : à chaque profondeur tu
+    peux choisir un sous-ensemble différent. Par défaut, le scope se rétrécit
+    progressivement pour contenir l'explosion combinatoire.
 
     Args:
         term: le terme racine (ex. "plat asiatique").
-        depth: 1 ou 2 (3 max, mais déconseillé — graphe illisible).
+        depth: 1 à 4 (au-delà = illisible et lent).
         top_k_per_relation: nb max de cibles retenues par relation et par nœud.
         min_weight: poids minimum, None = pas de filtre (JDM décide).
-        relations: relations explorées à la profondeur 1. Défaut = jeu standard
-                   (r_isa, r_hypo, r_syn, r_anto, r_carac, r_has_part, r_lieu,
-                    r_patient-1, r_agent-1, r_domain, r_associated).
-        depth2_relations: relations explorées à la profondeur 2.
-                          Défaut = (r_has_part, r_lieu, r_carac, r_hypo).
+        relations: relations explorées à la profondeur 1. Défaut =
+                   r_isa, r_hypo, r_syn, r_anto, r_carac, r_has_part, r_lieu, r_domain.
+        depth2_relations: relations à la profondeur 2.
+                          Défaut = r_isa, r_carac, r_has_part, r_lieu.
+        depth3_relations: relations à la profondeur 3.
+                          Défaut = r_isa, r_has_part, r_carac.
+        depth4_relations: relations à la profondeur 4.
+                          Défaut = r_isa, r_carac.
         output: "html" → écrit un fichier HTML autonome (vis-network) et
                 renvoie {root, stats, html_path}.
                 "json" → renvoie {root, stats, nodes, edges} prêt à embarquer
@@ -827,6 +832,8 @@ def build_subgraph_visualization(
             min_weight=min_weight,
             relations=relations,
             depth2_relations=depth2_relations,
+            depth3_relations=depth3_relations,
+            depth4_relations=depth4_relations,
             output=output,  # type: ignore[arg-type]
             output_path=output_path,
         )
