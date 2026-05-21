@@ -564,6 +564,52 @@ def get_process_instruments(process_noun: str, min_weight: Optional[float] = Non
     return _predicative_lookup(process_noun, "r_processus>instr", "from", min_weight, limit)
 
 
+# ---------- Inverses verbo-nominaux (Phase 10a) ----------
+# Pour les questions du type "que peut faire X" / "que peut-on faire à X" / etc.,
+# où X est un NOM. Sans ces outils dédiés, le LLM tombe sur get_relations_of_type
+# qui est générique et moins lisible.
+
+@tool
+def get_actions_of(noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les ACTIONS qu'un sujet peut typiquement effectuer (`r_agent-1`).
+
+    Action-of-agent (`r_agent-1`) — inverse de r_agent. À partir d'un sujet
+    (un NOM), liste les verbes que ce sujet peut typiquement faire.
+    Le terme source DOIT être un nom commun ou propre désignant un agent
+    potentiel. Cible des verbes à l'infinitif.
+    (ex.: chat | r_agent-1 | miauler ; oiseau | r_agent-1 | voler ;
+     sportif | r_agent-1 | courir).
+    """
+    return _predicative_lookup(noun, "r_agent-1", "from", min_weight, limit)
+
+
+@tool
+def get_actions_on(noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les ACTIONS que l'on peut typiquement effectuer SUR un objet (`r_patient-1`).
+
+    Action-on-patient (`r_patient-1`) — inverse de r_patient. À partir d'un objet
+    (un NOM), liste les verbes dont ce nom peut être le COD typique.
+    Le terme source DOIT être un nom (objet, patient potentiel).
+    (ex.: pomme | r_patient-1 | manger ; livre | r_patient-1 | lire ;
+     voiture | r_patient-1 | réparer).
+    """
+    return _predicative_lookup(noun, "r_patient-1", "from", min_weight, limit)
+
+
+@tool
+def get_uses_with(noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
+    """Renvoie les ACTIONS que l'on peut typiquement effectuer AVEC un instrument (`r_instr-1`).
+
+    Use-of-instrument (`r_instr-1`) — inverse de r_instr. À partir d'un instrument
+    (un NOM), liste les verbes dont ce nom peut être l'instrument typique.
+    Complète get_telic_role pour les usages non-définitionnels (un objet peut
+    avoir un rôle télique unique mais plusieurs usages instrumentaux variés).
+    (ex.: couteau | r_instr-1 | couper ; pierre | r_instr-1 | lapider ;
+     stylo | r_instr-1 | écrire).
+    """
+    return _predicative_lookup(noun, "r_instr-1", "from", min_weight, limit)
+
+
 # ---------- Enrichissement actif ----------
 
 @tool
@@ -723,6 +769,10 @@ ALL_TOOLS: list[StructuredTool] = [
     get_process_agents,
     get_process_patients,
     get_process_instruments,
+    # Inverses verbo-nominaux (« que peut faire X »)
+    get_actions_of,
+    get_actions_on,
+    get_uses_with,
     # Génériques
     get_relations_of_type,
     get_relations_between,
@@ -769,6 +819,9 @@ def build_jdm_tools(
         "get_process_agents": "r_processus>agent",
         "get_process_patients": "r_processus>patient",
         "get_process_instruments": "r_processus>instr",
+        "get_actions_of":   "r_agent-1",
+        "get_actions_on":   "r_patient-1",
+        "get_uses_with":    "r_instr-1",
     }
     for t in ALL_TOOLS:
         rel = suffix_map.get(t.name)
