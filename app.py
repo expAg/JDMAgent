@@ -23,6 +23,7 @@ import pandas as pd
 from jdm_agent.client import JDMClient
 from jdm_agent.factcheck import Claim, verify_claim
 from jdm_agent.factcheck.models import Status
+from jdm_agent.viz import DEFAULT_RELATIONS, build_subgraph
 
 
 # ---------- Shared client (cached, lazy) ----------
@@ -319,6 +320,50 @@ Documentation : [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md)
 """
 
 
+# ---------- Tab 4: Sous-graphe (visualisation) ----------
+
+import html as _html_mod
+import tempfile
+
+
+def viz_subgraph(term: str, depth: float, top_k: float, selected_relations: list[str]):
+    """Construit un sous-graphe et renvoie un iframe HTML + des stats."""
+    term = (term or "").strip()
+    if not term:
+        return "", "⚠️ Saisis un terme."
+    rels = selected_relations if selected_relations else None
+    try:
+        # Écrit dans /tmp (HF Spaces) puis lit le fichier pour le réintégrer
+        # dans une iframe srcdoc (rendu autonome, scripts vis-network OK).
+        with tempfile.NamedTemporaryFile(
+            suffix=".html", delete=False, mode="w", encoding="utf-8"
+        ) as tmp:
+            out_path = tmp.name
+        res = build_subgraph(
+            term,
+            client=get_client(),
+            depth=int(depth),
+            top_k_per_relation=int(top_k),
+            relations=rels,
+            output="html",
+            output_path=out_path,
+        )
+        html_text = Path(res["html_path"]).read_text(encoding="utf-8")
+        esc = _html_mod.escape(html_text, quote=True)
+        iframe = (
+            f'<iframe srcdoc="{esc}" '
+            f'style="width:100%;height:700px;border:1px solid #ddd;border-radius:8px;"></iframe>'
+        )
+        s = res["stats"]
+        status = (
+            f"✓ **{s['n_nodes']} nœuds**, **{s['n_edges']} arêtes** "
+            f"(dont **{s['n_negative']} négations** en rouge) — profondeur {s['depth']}"
+        )
+        return iframe, status
+    except Exception as e:
+        return "", f"❌ Erreur : {e}"
+
+
 with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
     gr.Markdown(INTRO_MD)
 
@@ -396,7 +441,48 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 inputs=[fc_subject, fc_relation, fc_object],
             )
 
-        # ----- Tab 3: Agent (BYOK Anthropic / OpenAI) -----
+        # ----- Tab 3: Sous-graphe (visualisation interactive) -----
+        with gr.Tab("🕸️ Sous-graphe"):
+            gr.Markdown(
+                "Visualise le voisinage sémantique d'un terme dans JDM en graphe "
+                "interactif (vis-network). Le nœud central est fixé ; les voisins "
+                "directs sont colorés par type de relation, ceux de profondeur 2 "
+                "en gris pointillés. **Les négations (poids négatif) apparaissent "
+                "en rouge** et préfixées « NON » — JDM affirme explicitement que "
+                "ce triplet est faux."
+            )
+            with gr.Row():
+                viz_term = gr.Textbox(label="Terme racine", value="plat asiatique",
+                                      placeholder="ex: chat, polyphonie, voiture…",
+                                      scale=3)
+                viz_depth = gr.Slider(1, 3, value=2, step=1, label="Profondeur",
+                                      scale=1)
+                viz_topk = gr.Slider(3, 12, value=6, step=1,
+                                     label="Top-K par relation", scale=1)
+            viz_relations = gr.CheckboxGroup(
+                choices=DEFAULT_RELATIONS,
+                value=DEFAULT_RELATIONS,
+                label="Relations explorées (profondeur 1)",
+            )
+            viz_btn = gr.Button("Construire le sous-graphe", variant="primary")
+            viz_status = gr.Markdown()
+            viz_out = gr.HTML(label="Visualisation")
+            viz_btn.click(
+                viz_subgraph,
+                inputs=[viz_term, viz_depth, viz_topk, viz_relations],
+                outputs=[viz_out, viz_status],
+            )
+            gr.Examples(
+                examples=[
+                    ["plat asiatique", 2, 6],
+                    ["polyphonie", 2, 6],
+                    ["chat", 1, 8],
+                    ["voiture", 2, 5],
+                ],
+                inputs=[viz_term, viz_depth, viz_topk],
+            )
+
+        # ----- Tab 4: Agent (BYOK Anthropic / OpenAI) -----
         with gr.Tab("🤖 Agent"):
             gr.Markdown(
                 "Discute avec un agent qui n'utilise QUE les outils JDM "
