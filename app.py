@@ -611,5 +611,10 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
 if __name__ == "__main__":
     # HF Spaces : bind explicite sur 0.0.0.0 (sinon Gradio essaye localhost
     # qui n'est pas joignable dans le conteneur) et port standard 7860.
+    # ssr_mode=False : désactive le rendu côté serveur de Gradio 5. Sinon
+    # Gradio tente un health-check sur localhost qui échoue dans le conteneur
+    # HF Spaces ("When localhost is not accessible, a shareable link must be
+    # created"). On garde le rendu client classique, ça marche partout.
     demo.launch(server_name="0.0.0.0", server_port=7860,
-                allowed_paths=[str(VIZ_DIR)])
+                allowed_paths=[str(VIZ_DIR)],
+                ssr_mode=False)
