@@ -23,7 +23,7 @@ import pandas as pd
 from jdm_agent.client import JDMClient
 from jdm_agent.factcheck import Claim, verify_claim
 from jdm_agent.factcheck.models import Status
-from jdm_agent.viz import DEFAULT_RELATIONS, build_subgraph
+from jdm_agent.viz import DEFAULT_DEPTH2_RELATIONS, DEFAULT_RELATIONS, build_subgraph
 
 
 # ---------- Shared client (cached, lazy) ----------
@@ -331,7 +331,9 @@ VIZ_DIR = Path(tempfile.gettempdir()) / "jdm_viz"
 VIZ_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def viz_subgraph(term: str, depth: float, top_k: float, selected_relations: list[str]):
+def viz_subgraph(term: str, depth: float, top_k: float,
+                 selected_relations: list[str],
+                 selected_depth2_relations: list[str]):
     """Construit un sous-graphe et renvoie (status, html_inline, file_for_download).
 
     Stratégie multi-fallback :
@@ -343,15 +345,20 @@ def viz_subgraph(term: str, depth: float, top_k: float, selected_relations: list
     if not term:
         return "⚠️ Saisis un terme.", "", None
     rels = selected_relations if selected_relations else None
+    d2_rels = selected_depth2_relations if selected_depth2_relations else None
     try:
-        out_path = VIZ_DIR / f"viz_{abs(hash((term, depth, top_k, tuple(rels or ())))) % 10**8}.html"
-        print(f"[viz] term={term!r} depth={depth} top_k={top_k} rels={rels}", flush=True)
+        out_path = VIZ_DIR / (
+            f"viz_{abs(hash((term, depth, top_k, tuple(rels or ()), tuple(d2_rels or ())))) % 10**8}.html"
+        )
+        print(f"[viz] term={term!r} depth={depth} top_k={top_k} "
+              f"rels={rels} d2={d2_rels}", flush=True)
         res = build_subgraph(
             term,
             client=get_client(),
             depth=int(depth),
             top_k_per_relation=int(top_k),
             relations=rels,
+            depth2_relations=d2_rels,
             output="html",
             output_path=str(out_path),
         )
@@ -478,7 +485,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             viz_relations = gr.CheckboxGroup(
                 choices=DEFAULT_RELATIONS,
                 value=DEFAULT_RELATIONS,
-                label="Relations explorées (profondeur 1)",
+                label="Relations explorées au niveau 1 (voisins directs du terme)",
+            )
+            viz_depth2_relations = gr.CheckboxGroup(
+                choices=DEFAULT_RELATIONS,  # même palette à cocher
+                value=DEFAULT_DEPTH2_RELATIONS,
+                label="Relations explorées au niveau 2 (voisins de voisins — actif uniquement si Profondeur ≥ 2)",
             )
             viz_btn = gr.Button("Construire le sous-graphe", variant="primary")
             viz_status = gr.Markdown()
@@ -487,7 +499,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             viz_out = gr.HTML(label="Visualisation (inline)")
             viz_btn.click(
                 viz_subgraph,
-                inputs=[viz_term, viz_depth, viz_topk, viz_relations],
+                inputs=[viz_term, viz_depth, viz_topk,
+                        viz_relations, viz_depth2_relations],
                 outputs=[viz_status, viz_out, viz_file],
             )
             gr.Examples(
