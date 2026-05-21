@@ -428,8 +428,10 @@ def build_subgraph(
         .replace("{{TITLE}}", f"« {term} » — sous-graphe JDM (profondeur {depth})")
         .replace(
             "{{SUBTITLE}}",
-            "Nœud central fixé. Voisins niveau 1 en couleur (par type de relation), "
-            "niveau 2 en gris clair pointillé, négations en rouge. Molette = zoom, glisser = déplacer.",
+            "Couleur par type de relation, opacité décroissante avec la profondeur, "
+            "négations en rouge. Molette = zoom · glisser = déplacer · "
+            "clic sur un nœud = le cadrer avec ses connexions · "
+            "double-clic = en faire le centre de gravité.",
         )
         .replace("{{LEGEND}}", "".join(legend_chips))
         .replace("{{NODES_JSON}}", json.dumps(nodes, ensure_ascii=False))

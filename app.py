@@ -471,7 +471,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                                      value="Hyperonymes — 'est un' (r_isa)",
                                      label="Relation à explorer")
             with gr.Row():
-                mw_in = gr.Slider(0, 500, value=25, step=5, label="Poids min (w ≥)")
+                mw_in = gr.Slider(0, 1000, value=25, step=5, label="Poids min (w ≥)")
                 lim_in = gr.Slider(5, 100, value=20, step=5, label="Limite de résultats")
                 annot_in = gr.Checkbox(value=True, label="Inclure les annotations")
             explore_btn = gr.Button("Explorer", variant="primary")
