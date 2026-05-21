@@ -775,8 +775,11 @@ def list_relation_types(prefix: Optional[str] = None) -> list[dict]:
 @tool
 def build_subgraph_visualization(
     term: str,
-    depth: int = 2,
+    depth: int = 1,
     top_k_per_relation: int = 3,
+    top_k_depth2: Optional[int] = None,
+    top_k_depth3: Optional[int] = None,
+    top_k_depth4: Optional[int] = None,
     min_weight: Optional[float] = None,
     relations: Optional[list[str]] = None,
     depth2_relations: Optional[list[str]] = None,
@@ -834,6 +837,9 @@ def build_subgraph_visualization(
             depth2_relations=depth2_relations,
             depth3_relations=depth3_relations,
             depth4_relations=depth4_relations,
+            top_k_depth2=top_k_depth2,
+            top_k_depth3=top_k_depth3,
+            top_k_depth4=top_k_depth4,
             output=output,  # type: ignore[arg-type]
             output_path=output_path,
         )

@@ -37,10 +37,16 @@ def main(argv: list[str] | None = None) -> int:
         description="Construit un sous-graphe JDM autour d'un terme (HTML interactif).",
     )
     p.add_argument("term", help="terme racine (ex. \"plat asiatique\", \"polyphonie\")")
-    p.add_argument("--depth", type=int, default=2,
-                   help="profondeur (1 à 4 ; défaut = 2)")
+    p.add_argument("--depth", type=int, default=1,
+                   help="profondeur (1 à 4 ; défaut = 1)")
     p.add_argument("--top-k", type=int, default=3,
-                   help="nb max de cibles par relation et par nœud (défaut = 3)")
+                   help="top-K niveau 1 (défaut = 3) — applique aussi aux niveaux 2..4 si non précisés")
+    p.add_argument("--top-k-depth2", type=int, default=None,
+                   help="top-K niveau 2 (défaut = même que --top-k)")
+    p.add_argument("--top-k-depth3", type=int, default=None,
+                   help="top-K niveau 3 (défaut = même que --top-k)")
+    p.add_argument("--top-k-depth4", type=int, default=None,
+                   help="top-K niveau 4 (défaut = même que --top-k)")
     p.add_argument("--min-weight", type=float, default=None,
                    help="poids minimum (défaut : aucun, JDM décide)")
     p.add_argument("--relations", type=str, default=None,
@@ -72,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
         depth2_relations=_csv(args.depth2_relations),
         depth3_relations=_csv(args.depth3_relations),
         depth4_relations=_csv(args.depth4_relations),
+        top_k_depth2=args.top_k_depth2,
+        top_k_depth3=args.top_k_depth3,
+        top_k_depth4=args.top_k_depth4,
         output="html",
         output_path=args.output_path,
     )

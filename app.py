@@ -386,7 +386,8 @@ VIZ_DIR = Path(tempfile.gettempdir()) / "jdm_viz"
 VIZ_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def viz_subgraph(term: str, depth: float, top_k: float,
+def viz_subgraph(term: str, depth: float,
+                 top_k: float, top_k_d2: float, top_k_d3: float, top_k_d4: float,
                  selected_relations: list[str],
                  selected_depth2_relations: list[str],
                  selected_depth3_relations: list[str],
@@ -406,16 +407,21 @@ def viz_subgraph(term: str, depth: float, top_k: float,
     d3_rels = selected_depth3_relations if selected_depth3_relations else None
     d4_rels = selected_depth4_relations if selected_depth4_relations else None
     try:
-        out_path = VIZ_DIR / (
-            f"viz_{abs(hash((term, depth, top_k, tuple(rels or ()), tuple(d2_rels or ()), tuple(d3_rels or ()), tuple(d4_rels or ())))) % 10**8}.html"
-        )
-        print(f"[viz] term={term!r} depth={depth} top_k={top_k} "
+        cache_key = (term, depth, top_k, top_k_d2, top_k_d3, top_k_d4,
+                     tuple(rels or ()), tuple(d2_rels or ()),
+                     tuple(d3_rels or ()), tuple(d4_rels or ()))
+        out_path = VIZ_DIR / f"viz_{abs(hash(cache_key)) % 10**8}.html"
+        print(f"[viz] term={term!r} depth={depth} "
+              f"top_k=[{top_k},{top_k_d2},{top_k_d3},{top_k_d4}] "
               f"rels={rels} d2={d2_rels} d3={d3_rels} d4={d4_rels}", flush=True)
         res = build_subgraph(
             term,
             client=get_client(),
             depth=int(depth),
             top_k_per_relation=int(top_k),
+            top_k_depth2=int(top_k_d2),
+            top_k_depth3=int(top_k_d3),
+            top_k_depth4=int(top_k_d4),
             relations=rels,
             depth2_relations=d2_rels,
             depth3_relations=d3_rels,
@@ -523,36 +529,46 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 viz_term = gr.Textbox(label="Terme racine", value="plat asiatique",
                                       placeholder="ex: chat, polyphonie, voiture…",
                                       scale=3)
-                viz_depth = gr.Slider(1, 4, value=2, step=1, label="Profondeur",
+                viz_depth = gr.Slider(1, 4, value=1, step=1, label="Profondeur",
                                       scale=1)
-                viz_topk = gr.Slider(3, 12, value=3, step=1,
-                                     label="Top-K par relation", scale=1)
-            # Palette commune à cocher pour les 4 niveaux. La sélection par
-            # défaut se rétrécit progressivement pour contenir l'explosion
-            # combinatoire ; tu peux toujours l'élargir manuellement.
+            # Palette commune à cocher pour les 4 niveaux. Par défaut le
+            # même top-K (3) partout ; l'utilisateur peut le tordre par
+            # niveau (utile pour ne pas exploser au-delà du 1er anneau).
             _ALL_REL_CHOICES = DEFAULT_RELATIONS + [
                 r for r in ("r_syn", "r_anto", "r_patient-1", "r_agent-1", "r_associated")
                 if r not in DEFAULT_RELATIONS
             ]
-            # Sélection de relations par niveau — repliée par défaut pour
-            # économiser de la place verticale, dépliable d'un clic.
-            with gr.Accordion("⚙️ Relations par niveau (cliquer pour déplier)",
+            _DEFAULT_TOPK = 3
+            # Sélection de relations + top-K par niveau — repliée par défaut.
+            with gr.Accordion("⚙️ Réglages par niveau (top-K + relations)",
                               open=False):
+                with gr.Row():
+                    viz_topk = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
+                                         label="Top-K niveau 1")
                 viz_relations = gr.CheckboxGroup(
                     choices=_ALL_REL_CHOICES,
                     value=DEFAULT_RELATIONS,
                     label="Niveau 1 — voisins directs du terme",
                 )
+                with gr.Row():
+                    viz_topk_d2 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
+                                            label="Top-K niveau 2")
                 viz_depth2_relations = gr.CheckboxGroup(
                     choices=_ALL_REL_CHOICES,
                     value=DEFAULT_DEPTH2_RELATIONS,
                     label="Niveau 2 (actif si Profondeur ≥ 2)",
                 )
+                with gr.Row():
+                    viz_topk_d3 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
+                                            label="Top-K niveau 3")
                 viz_depth3_relations = gr.CheckboxGroup(
                     choices=_ALL_REL_CHOICES,
                     value=DEFAULT_DEPTH3_RELATIONS,
                     label="Niveau 3 (actif si Profondeur ≥ 3)",
                 )
+                with gr.Row():
+                    viz_topk_d4 = gr.Slider(1, 15, value=_DEFAULT_TOPK, step=1,
+                                            label="Top-K niveau 4")
                 viz_depth4_relations = gr.CheckboxGroup(
                     choices=_ALL_REL_CHOICES,
                     value=DEFAULT_DEPTH4_RELATIONS,
@@ -575,7 +591,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             )
             viz_btn.click(
                 viz_subgraph,
-                inputs=[viz_term, viz_depth, viz_topk,
+                inputs=[viz_term, viz_depth,
+                        viz_topk, viz_topk_d2, viz_topk_d3, viz_topk_d4,
                         viz_relations, viz_depth2_relations,
                         viz_depth3_relations, viz_depth4_relations],
                 outputs=[viz_status, viz_out, viz_file],

@@ -277,8 +277,11 @@ def build_subgraph(
     term: str,
     *,
     client: Optional[JDMClient] = None,
-    depth: int = 2,
+    depth: int = 1,
     top_k_per_relation: int = 3,
+    top_k_depth2: Optional[int] = None,
+    top_k_depth3: Optional[int] = None,
+    top_k_depth4: Optional[int] = None,
     min_weight: Optional[float] = None,
     relations: Optional[list[str]] = None,
     depth2_relations: Optional[list[str]] = None,
@@ -320,6 +323,14 @@ def build_subgraph(
         3: list(depth3_relations) if depth3_relations is not None else list(DEFAULT_DEPTH3_RELATIONS),
         4: list(depth4_relations) if depth4_relations is not None else list(DEFAULT_DEPTH4_RELATIONS),
     }
+    # Top-K effectif par profondeur : si non précisé, on retombe sur le
+    # top_k_per_relation global (compat ascendante).
+    top_k_by_depth: dict[int, int] = {
+        1: int(top_k_per_relation),
+        2: int(top_k_depth2) if top_k_depth2 is not None else int(top_k_per_relation),
+        3: int(top_k_depth3) if top_k_depth3 is not None else int(top_k_per_relation),
+        4: int(top_k_depth4) if top_k_depth4 is not None else int(top_k_per_relation),
+    }
 
     # 1) Nœud central
     root_node = _build_node("ROOT", term, "center", depth=0, fixed_center=True)
@@ -348,10 +359,8 @@ def build_subgraph(
     current_layer: list[tuple[str, str]] = [(term, "center")]
     for d in range(1, depth + 1):
         rels_for_d = rels_by_depth.get(d, [])
-        # Limiter doucement la cardinalité au-delà du niveau 2 pour contenir
-        # l'explosion combinatoire — mais pas trop, l'utilisateur a déjà
-        # choisi top_k_per_relation et la sélection de relations à ce niveau.
-        top_k_d = top_k_per_relation if d <= 2 else max(1, top_k_per_relation // 2)
+        # Top-K par niveau choisi par l'utilisateur (défaut = top_k_per_relation).
+        top_k_d = max(1, top_k_by_depth.get(d, top_k_per_relation))
         next_layer: list[tuple[str, str]] = []
         for parent_label, _parent_kind in current_layer:
             parent_id = label_to_id.get(parent_label, "ROOT")
