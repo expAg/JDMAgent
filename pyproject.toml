@@ -40,6 +40,7 @@ jdm-mcp = "jdm_agent.mcp.server:main"
 jdm-diag = "jdm_agent.apps.diagnose:main"
 jdm-factcheck = "jdm_agent.apps.factcheck:main"
 jdm-enrich = "jdm_agent.apps.enrich:main"
+jdm-viz = "jdm_agent.apps.viz_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jdm_agent"]
