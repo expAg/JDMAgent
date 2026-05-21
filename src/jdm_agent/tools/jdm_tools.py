@@ -140,13 +140,17 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
     return triplets
 
 
-def _mw(v: Optional[float], default: float) -> float:
-    """Résout min_weight (accepte None venant du LLM)."""
-    return default if v is None else float(v)
+def _mw(v: Optional[float], _unused_default: Optional[float] = None) -> Optional[float]:
+    """Résout min_weight. Si le LLM ne fournit rien (None), on transmet None
+    à JDM — pas de filtre côté serveur, JDM applique son propre défaut.
+
+    Phase 9b — aucun seuil hardcodé : seul le LLM (ou l'utilisateur via les
+    CLIs) peut imposer un filtre de poids."""
+    return None if v is None else float(v)
 
 
 def _lim(v: Optional[int], default: int) -> int:
-    """Résout limit (accepte None venant du LLM)."""
+    """Résout limit (cardinalité, distinct du poids)."""
     return default if v is None else int(v)
 
 

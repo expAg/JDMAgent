@@ -46,32 +46,18 @@ INVERSE_PAIRS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _count_relations(client: JDMClient, term: str, relation: str,
-                     min_weight: float = 1.0, limit: int = 50) -> int:
-    """Compte (avec un cap = limit) le nombre de triplets sortants."""
-    rid = client.relation_type_id(relation)
-    if rid is None:
-        return 0
-    try:
-        res = client.relations_from(term, types_ids=[rid],
-                                     min_weight=min_weight, limit=limit)
-    except Exception:
-        return 0
-    return len(res.relations)
-
-
 def _get_relations_signed(client: JDMClient, term: str, relation: str,
                           limit: int = 50) -> list[tuple[str, float]]:
-    """Récupère les triplets avec leur poids (signé), pour Phase 9.
+    """Récupère les triplets avec leur poids (signé), Phase 9b sans seuil.
 
-    Renvoie [(target_name, w), ...] incluant les négatifs.
+    Renvoie [(target_name, w), ...]. Inclut tout ce que JDM renvoie par
+    défaut (négatifs et faibles inclus).
     """
     rid = client.relation_type_id(relation)
     if rid is None:
         return []
     try:
-        res = client.relations_from(term, types_ids=[rid],
-                                     min_weight=-1e6, limit=limit)
+        res = client.relations_from(term, types_ids=[rid], limit=limit)
     except Exception:
         return []
     idx = res.node_index()
@@ -85,21 +71,20 @@ def _get_relations_signed(client: JDMClient, term: str, relation: str,
 
 def _detect_missing(client: JDMClient, term: str,
                     relations: Iterable[str], min_to_consider: int = 1) -> list[Gap]:
-    """Pour chaque relation cible, signale celle qui a < min_to_consider triplets.
+    """Pour chaque relation cible, classifie en MISSING / NEGATIVE_FILLED / LOW_COVERAGE.
 
-    Phase 9 — distingue maintenant :
-      - MISSING strict : aucun triplet (positif NI négatif)
+    Phase 9b : aucun seuil de poids hardcodé.
+      - MISSING strict : aucun triplet (ni positif NI négatif)
       - NEGATIVE_FILLED : que des triplets négatifs (JDM a regardé et dit non)
-      - LOW_COVERAGE : peu de triplets positifs
+      - LOW_COVERAGE : < min_to_consider triplets positifs
     """
     gaps: list[Gap] = []
     for rel in relations:
         signed = _get_relations_signed(client, term, rel)
-        positives = [w for _, w in signed if w >= 25]
+        positives = [w for _, w in signed if w > 0]
         negatives = [(n, w) for n, w in signed if w < 0]
         n_pos = len(positives)
         if n_pos == 0 and len(negatives) > 0:
-            # Pas de positif mais des négatifs existent → c'est rempli en négatif
             top_neg = sorted(negatives, key=lambda x: x[1])[:3]
             detail_extras = "; ".join(f"{n} (w={w:.0f})" for n, w in top_neg)
             gaps.append(Gap(
@@ -113,25 +98,24 @@ def _detect_missing(client: JDMClient, term: str,
             gaps.append(Gap(
                 term=term, relation=rel, gap_type=GapType.MISSING,
                 severity=1.0,
-                detail=f"Aucun triplet `{term} | {rel} | ?` (w≥25) dans JDM.",
+                detail=f"Aucun triplet positif `{term} | {rel} | ?` dans JDM.",
             ))
         elif n_pos < min_to_consider:
             gaps.append(Gap(
                 term=term, relation=rel, gap_type=GapType.LOW_COVERAGE,
                 severity=0.6,
-                detail=f"Seulement {n_pos} triplets `{term} | {rel} | ?` positifs (w≥25).",
+                detail=f"Seulement {n_pos} triplet(s) positif(s) `{term} | {rel} | ?`.",
             ))
     return gaps
 
 
 def _detect_asymmetries(client: JDMClient, term: str,
                         pairs: Iterable[tuple[str, str]] = INVERSE_PAIRS,
-                        sample_size: int = 5,
-                        min_weight: float = 50.0) -> list[Gap]:
+                        sample_size: int = 5) -> list[Gap]:
     """Pour chaque triplet (term, R, target), vérifie si (target, R_inv, term) existe.
 
-    On échantillonne les `sample_size` triplets de plus haut poids pour limiter
-    les appels HTTP.
+    Phase 9b : aucun seuil hardcodé. On échantillonne les `sample_size` premiers
+    triplets renvoyés par JDM (limit de cardinalité, pas de poids).
     """
     gaps: list[Gap] = []
     for rel, rel_inv in pairs:
@@ -140,8 +124,7 @@ def _detect_asymmetries(client: JDMClient, term: str,
         if rid is None or rid_inv is None:
             continue
         try:
-            res = client.relations_from(term, types_ids=[rid],
-                                         min_weight=min_weight, limit=sample_size)
+            res = client.relations_from(term, types_ids=[rid], limit=sample_size)
         except Exception:
             continue
         idx = res.node_index()
@@ -149,10 +132,10 @@ def _detect_asymmetries(client: JDMClient, term: str,
             target = idx.get(r.node2)
             if target is None or ">" in target.name:
                 continue
-            # Cherche (target, R_inv, term)
+            # Cherche (target, R_inv, term) — Phase 9b sans seuil
             try:
                 back = client.relations_from(target.name, types_ids=[rid_inv],
-                                              min_weight=1.0, limit=100)
+                                              limit=100)
             except Exception:
                 continue
             idx_back = back.node_index()

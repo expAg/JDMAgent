@@ -97,8 +97,6 @@ def main() -> int:
     p.add_argument("--provider", default=None, help="LLM provider (pour --text)")
     p.add_argument("--model", default=None, help="LLM model (pour --text)")
     p.add_argument("--json", action="store_true", help="Sortie en JSON brut.")
-    p.add_argument("--min-weight", type=float, default=25.0,
-                   help="Seuil de support via synonyme (défaut 25).")
     args = p.parse_args()
 
     if not (args.text or args.claim or args.stdin):
@@ -115,8 +113,7 @@ def main() -> int:
             print(f"[erreur] init LLM : {e}", file=sys.stderr)
             return 2
         print(f"[extraction] {args.text!r} → claims via LLM…", file=sys.stderr)
-        report = factcheck(args.text, client=client, llm=llm,
-                           support_min_w=args.min_weight)
+        report = factcheck(args.text, client=client, llm=llm)
     else:
         claims_lines: list[str] = []
         if args.claim:
@@ -128,7 +125,7 @@ def main() -> int:
         except ValueError as e:
             print(f"[erreur] {e}", file=sys.stderr)
             return 1
-        report = factcheck_claims(claims, client=client, support_min_w=args.min_weight)
+        report = factcheck_claims(claims, client=client)
 
     print_report(report, as_json=args.json)
     client.close()
