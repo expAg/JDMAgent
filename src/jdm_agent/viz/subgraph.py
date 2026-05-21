@@ -65,25 +65,24 @@ KIND_OF_REL: dict[str, str] = {
     "r_associated": "assoc",
 }
 
-#: Palette UNIQUE par kind — couleurs mi-saturées (Material Design 200/700)
-#: choisies pour rester lisibles sur le fond gris foncé (#bcbfc2) du
-#: visualiseur. La profondeur n'influence plus la teinte : seule
-#: l'opacité (OPACITY_BY_DEPTH) distingue les niveaux. Conséquence : un
-#: r_isa du niveau 4 reste reconnaissable comme « bleu r_isa », juste
-#: plus diaphane.
+#: Palette UNIQUE par kind. Fonds clairs (Material 100, ~10 % de teinte)
+#: pour que les labels lisent facilement, bordures saturées (Material 700-800)
+#: pour l'identité de la famille et la cohérence avec les arêtes (= même
+#: couleur que la bordure). La profondeur n'influence plus la teinte :
+#: seule l'opacité (OPACITY_BY_DEPTH) distingue les niveaux.
 PALETTE: dict[str, dict[str, str]] = {
     "center": {"background": "#1a1a1a", "border": "#000"},
-    "isa":    {"background": "#90caf9", "border": "#1565c0"},  # bleu
-    "hypo":   {"background": "#a5d6a7", "border": "#2e7d32"},  # vert
-    "syn":    {"background": "#c5e1a5", "border": "#558b2f"},  # vert-jaune
-    "anto":   {"background": "#ef9a9a", "border": "#c62828"},  # rouge
-    "carac":  {"background": "#ce93d8", "border": "#6a1b9a"},  # violet
-    "part":   {"background": "#ffb74d", "border": "#a04500"},  # terracotta
-    "lieu":   {"background": "#80cbc4", "border": "#00695c"},  # teal
-    "verb":   {"background": "#f48fb1", "border": "#ad1457"},  # rose
-    "domain": {"background": "#b39ddb", "border": "#4527a0"},  # indigo
-    "assoc":  {"background": "#b0bec5", "border": "#455a64"},  # blue-grey
-    "d2":     {"background": "#cfd2d6", "border": "#9aa0a6"},  # fallback générique
+    "isa":    {"background": "#bbdefb", "border": "#1565c0"},  # bleu
+    "hypo":   {"background": "#c8e6c9", "border": "#2e7d32"},  # vert
+    "syn":    {"background": "#dcedc8", "border": "#558b2f"},  # vert-jaune
+    "anto":   {"background": "#ffcdd2", "border": "#c62828"},  # rouge
+    "carac":  {"background": "#e1bee7", "border": "#6a1b9a"},  # violet
+    "part":   {"background": "#ffe0b2", "border": "#a04500"},  # terracotta
+    "lieu":   {"background": "#b2dfdb", "border": "#00695c"},  # teal
+    "verb":   {"background": "#f8bbd0", "border": "#ad1457"},  # rose
+    "domain": {"background": "#d1c4e9", "border": "#4527a0"},  # indigo
+    "assoc":  {"background": "#cfd8dc", "border": "#455a64"},  # blue-grey
+    "d2":     {"background": "#e0e2e5", "border": "#9aa0a6"},  # fallback générique
 }
 
 #: Couleur d'arête par kind = bordure de la palette (assortie au nœud).
@@ -258,7 +257,7 @@ def _build_edge(
         "font": {
             "size": 13 if is_d2 else 14,
             "color": font_color,
-            "background": "#bcbfc2ee",
+            "background": "#d4d7daee",
             "strokeWidth": 0,
         },
         # vis-network supporte color: { color, opacity }

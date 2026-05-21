@@ -19,17 +19,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <title>{{TITLE}}</title>
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
-  /* Fond gris franc — assez sombre pour reposer l'œil mais sans tirer
-     vers le noir : les nœuds pastel du niveau 2+ contrastent quand même. */
-  html, body { margin:0; padding:0; height:100%; background:#a8abae; font-family: system-ui, sans-serif; color:#1a1a1a; }
-  header { padding:14px 20px; border-bottom:1px solid #8d9094; background:#bcbfc2; color:#1a1a1a; }
+  /* Fond gris doux — un cran au-dessus du sombre précédent, pour ne pas
+     écraser les couleurs des nœuds tout en restant reposant pour l'œil. */
+  html, body { margin:0; padding:0; height:100%; background:#c8ccd0; font-family: system-ui, sans-serif; color:#1a1a1a; }
+  header { padding:14px 20px; border-bottom:1px solid #a8acb0; background:#d4d7da; color:#1a1a1a; }
   h1 { margin:0; font-size:18px; }
   .sub { color:#3c4043; font-size:13px; margin-top:2px; }
-  #net { width:100%; height: calc(100vh - 110px); background:#bcbfc2; }
+  #net { width:100%; height: calc(100vh - 110px); background:#d4d7da; }
   #controls { position:absolute; top:70px; right:24px; z-index:10; display:flex; gap:6px; }
-  #controls button { padding:6px 10px; border:1px solid #9aa0a6; background:#dadce0; border-radius:6px; cursor:pointer; font-size:13px; color:#1a1a1a; font-weight:500; }
+  #controls button { padding:6px 10px; border:1px solid #9aa0a6; background:#e8eaed; border-radius:6px; cursor:pointer; font-size:13px; color:#1a1a1a; font-weight:500; }
   #controls button:hover { background:#f1f3f4; }
-  .legend { padding:8px 20px; font-size:12px; color:#202124; background:#bcbfc2; border-top:1px solid #8d9094; }
+  .legend { padding:8px 20px; font-size:12px; color:#202124; background:#d4d7da; border-top:1px solid #a8acb0; }
   .legend span { display:inline-block; padding:2px 8px; border-radius:4px; margin-right:8px; }
 </style>
 </head>
@@ -97,7 +97,7 @@ const _edgeBase = {};
 edges.forEach(e => {
   _edgeBase[e.id] = {
     color: e.color ? { ...e.color } : { color: '#9e9e9e', opacity: 1 },
-    font: e.font ? { ...e.font } : { color: '#555', size: 14, background: '#bcbfc2ee' }
+    font: e.font ? { ...e.font } : { color: '#555', size: 14, background: '#d4d7daee' }
   };
 });
 
@@ -120,7 +120,7 @@ function highlight(focusId) {
     return {
       id,
       color: { color: '#e0e0e0', opacity: 0.25 },
-      font: { color: '#ddd', size: 13, background: '#bcbfc2cc' }
+      font: { color: '#ddd', size: 13, background: '#d4d7dacc' }
     };
   }));
 }
