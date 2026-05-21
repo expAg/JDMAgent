@@ -81,17 +81,13 @@ def _make_triplet(
 
 def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
                      incoming: bool = False,
-                     with_annotations: bool = True) -> list[dict]:
+                     with_annotations: bool = False) -> list[dict]:
     """Construit la liste de triplets en résolvant les noms d'autres bouts
     ET en décodant tout refinement opaque (`avocat>116477>66699`) en clair.
 
-    Phase 9 — ajoute :
-        - tri par |w| décroissant (au lieu de w décroissant) pour faire remonter
-          les signaux forts négatifs en même temps que les positifs
-        - filtre des chunks (type 8) comme targets : ils ne sont pas exposés
-          en Phase 9, cf. plan d'évolution
-        - lookup des annotations par triplet via get_annotations_for_triplet
-          (N+1 HTTP cached) si with_annotations=True
+    Phase 10c — annotations désactivées par défaut (gain de latence ~10×).
+    Le LLM peut récupérer les annotations d'un triplet précis via l'outil
+    dédié get_triplet_annotations(subject, relation, target).
 
     Si incoming=True (direction "to"), le terme `source_name` correspond au
     node2 des relations renvoyées, et l'autre bout à exposer est node1.
@@ -583,6 +579,63 @@ def get_domain_members(domain: str, min_weight: Optional[float] = None, limit: O
     return _predicative_lookup(domain, "r_domain-1", "from", min_weight, limit)
 
 
+# ---------- Annotations sémantiques (opt-in) ----------
+
+@tool
+def get_triplet_annotations(subject: str, relation: str, target: str) -> list[dict]:
+    """Renvoie les annotations sémantiques attachées à un triplet précis.
+
+    À appeler quand tu veux comprendre les nuances d'un triplet particulier :
+    nature contrastive, exception, qualification (constitutif, probable, etc.).
+    Les outils d'exploration de base ne récupèrent PAS les annotations (raison
+    de performance) — cet outil dédié les charge à la demande.
+
+    Mécanisme : à partir du triplet (subject, relation, target), retrouve son
+    identifiant interne, puis interroge le nœud d'ancrage `:r{id}` pour
+    extraire les annotations (cf. relation_definitions.md §20).
+
+    Args:
+        subject:  le terme source du triplet (ex. "chat")
+        relation: la relation JDM (ex. "r_isa", "r_has_part")
+        target:   le terme cible (ex. "mammifère")
+
+    Renvoie [] si le triplet n'existe pas dans JDM ou n'a aucune annotation.
+    Sinon liste de {kind, value, w} :
+        - kind  ∈ {"annotation", "context", "exception"}
+        - value : le contenu de l'annotation (ex. "contrastif", "constitutif")
+        - w     : poids consensuel de cette annotation (signé)
+    """
+    c = _client()
+    # Résoud le triplet pour obtenir son rel_id
+    try:
+        rid_type = c.relation_type_id(relation)
+        if rid_type is None:
+            return [{"error": f"relation inconnue : {relation!r}"}]
+        res = c.relations_between(subject, target, types_ids=[rid_type], limit=10)
+    except Exception:
+        return []
+    idx = res.node_index()
+    # On cherche le triplet dont node2 matche target (ou son décodage)
+    matching = None
+    target_norm = target.strip().lower()
+    for r in res.relations:
+        n2 = idx.get(r.node2)
+        if n2 is None:
+            continue
+        if n2.name.strip().lower() == target_norm:
+            matching = r
+            break
+        dec = c.decode_node_name(n2.name, local_nodes=idx)
+        if dec["is_refinement"] and dec["decoded"].strip().lower() == target_norm:
+            matching = r
+            break
+    if matching is None:
+        return [{"error": f"triplet {subject!r} | {relation} | {target!r} non trouvé"}]
+    # Lookup des annotations
+    annots = c.get_annotations_for_triplet(matching.id)
+    return [{"kind": a.kind, "value": a.value, "w": a.w} for a in annots]
+
+
 # ---------- Enrichissement actif ----------
 
 @tool
@@ -748,8 +801,9 @@ ALL_TOOLS: list[StructuredTool] = [
     get_relations_of_type,
     get_relations_between,
     disambiguate,
-    # Fact-checking
+    # Fact-checking + annotations
     verify_claim,
+    get_triplet_annotations,
     # Enrichissement
     detect_gaps,
     validate_candidate,
