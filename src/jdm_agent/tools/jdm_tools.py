@@ -679,35 +679,73 @@ def detect_gaps(
 
 
 @tool
-def validate_candidate(term: str, relation: str, target: str) -> dict:
-    """Vérifie si un triplet candidat peut/doit être ajouté à JDM.
+def validate_candidate(term: str, relation: str, target: str,
+                       inference_effort: int = 1) -> dict:
+    """Vérifie COMPLÈTEMENT un triplet candidat proposé pour enrichir JDM.
 
-    Quatre statuts possibles :
-      - "ok"           : prêt à soumettre (cible connue, pas duplicate, pas contradictoire)
-      - "duplicate"    : le triplet existe déjà dans JDM (rien à ajouter)
-      - "unknown_term" : la cible n'existe pas comme nœud JDM (LLM a halluciné un mot
-                         absent du graphe ; ne pas soumettre tel quel)
-      - "inconsistent" : contradicted par r_isa-incompatible ou similaire
+    Fait TOUT le contrôle en UN seul appel — ne t'arrête jamais à mi-chemin :
 
-    Utilise cet outil APRÈS avoir proposé toi-même un candidat (à partir de
-    `detect_gaps` + ta connaissance), pour éviter de soumettre du bruit ou
-    des doublons.
+      ÉTAPE 1 — validation structurelle (déterministe) :
+        * "unknown_term" : la cible n'existe pas comme nœud JDM → à rejeter
+        * "duplicate"    : le triplet est déjà dans JDM → rien à ajouter
+        * "inconsistent" : JDM nie directement le triplet → à rejeter
+        * "ok"           : structurellement recevable → on passe à l'étape 2
+
+      ÉTAPE 2 — CONSOLIDATION par inférence (si l'étape 1 donne "ok") :
+        le réseau JDM permet-il de DÉDUIRE ce triplet ?
+        * "consolidated"     : déduit → PRÊT POUR SOUMISSION
+        * "rejected"         : réfuté par inférence → à rejeter
+        * "not_consolidated" : non démontré (pas forcément faux, mais
+                               PAS prêt pour soumission en l'état)
+
+    RÈGLE ABSOLUE : un triplet n'est soumettable QUE si
+    `ready_for_submission` vaut true (c.-à-d. consolidation_status ==
+    "consolidated"). La seule validation structurelle « ok » NE SUFFIT PAS —
+    ne déclare jamais un candidat « prêt » sans consolidation.
 
     Args:
         term:     terme source.
         relation: relation JDM (r_xxx).
         target:   terme cible proposé.
+        inference_effort: effort du moteur d'inférence pour la consolidation
+                          (1 = noyau, 2 = complet).
 
-    Renvoie un Candidate avec validation_status + validation_note + confidence.
+    Renvoie {validation_status, validation_note, consolidation_status,
+    consolidation_schema, consolidation_explanation, ready_for_submission,
+    next_step, confidence}. `next_step` indique explicitement quoi faire.
     """
     from jdm_agent.enrich import Candidate
-    from jdm_agent.enrich.validators import validate_candidate as _validate
+    from jdm_agent.enrich.validators import (
+        consolidate_candidate as _consolidate,
+        validate_candidate as _validate,
+    )
 
     c = _client()
     cand = Candidate(term=term, relation=relation, target=target,
                      confidence=0.5, source="agent")
-    out = _validate(c, cand)
-    return out.model_dump(mode="json")
+    cand = _validate(c, cand)
+    if cand.is_valid():
+        cand = _consolidate(c, cand, effort=int(inference_effort))
+
+    out = cand.model_dump(mode="json")
+    ready = cand.is_valid() and cand.is_consolidated()
+    out["ready_for_submission"] = ready
+    if ready:
+        out["next_step"] = (
+            "PRÊT — inclure dans le fichier de soumission au format "
+            "`terme|relation|cible|annotation < explication >` en reprenant "
+            "`consolidation_explanation` comme explication."
+        )
+    elif cand.validation_status in ("duplicate", "unknown_term", "inconsistent"):
+        out["next_step"] = f"À REJETER ({cand.validation_status}) : {cand.validation_note}"
+    elif cand.consolidation_status == "rejected":
+        out["next_step"] = f"À REJETER (réfuté par inférence) : {cand.consolidation_explanation}"
+    else:
+        out["next_step"] = (
+            "NON CONSOLIDÉ — l'inférence n'a pas pu démontrer ce triplet. "
+            "Pas prêt pour soumission (ne pas l'inclure)."
+        )
+    return out
 
 
 # ---------- Vérification de claims (fact-checking) ----------
