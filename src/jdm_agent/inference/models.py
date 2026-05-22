@@ -29,7 +29,9 @@ class FiredSchema(str, Enum):
     PREFIX           = "prefix"              # préfixe lexical (saucisse de Toulouse)
     HYPONYM_PROP     = "hyponym_propagation" # A R H, H r_isa B ⟹ A R B
     ASSOC_BRIDGE     = "assoc_bridge"        # A R T, T ≈ B (synonyme / associé)
-    COHYPONYM        = "cohyponym"           # cohyponymes (réservé, effort 2)
+    ANTONYM_CONTRAST = "antonym_contrast"    # réfutation : A R X, X r_anto B
+    COHYPONYM        = "cohyponym"           # réfutation : A et B cohyponymes
+    GEO_PROPAGATION  = "geo_propagation"     # A r_lieu L, L r_holo B ⟹ A r_lieu B
 
 
 class ProofStep(BaseModel):

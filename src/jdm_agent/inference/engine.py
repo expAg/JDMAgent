@@ -84,8 +84,11 @@ SCHEMA_CONFIDENCE: dict[FiredSchema, float] = {
     FiredSchema.IMPLICATION:      0.95,
     FiredSchema.ISA_INCOMPATIBLE: 0.95,
     FiredSchema.CLASS_ELIM:       0.90,
+    FiredSchema.ANTONYM_CONTRAST: 0.88,
+    FiredSchema.COHYPONYM:        0.85,
     FiredSchema.DEDUCTION_ISA:    0.90,
     FiredSchema.TRANSITIVITY:     0.90,
+    FiredSchema.GEO_PROPAGATION:  0.88,
     FiredSchema.HYPONYM_PROP:     0.85,
     FiredSchema.PREFIX:           0.85,
     FiredSchema.COMPOSITION:      0.80,
@@ -102,27 +105,30 @@ def _fmt_step(s: ProofStep) -> str:
 
 
 def _make_result(ctx: _Ctx, weight: float, schema: FiredSchema,
-                 proof: list[ProofStep], explanation: str | None = None
-                 ) -> InferenceResult:
+                 proof: list[ProofStep], explanation: str | None = None,
+                 consensus: int = 1) -> InferenceResult:
     """Assemble l'InferenceResult : confiance normalisée + explication FR.
 
     Confiance = tanh(|w|/W) · décote longueur de chaîne · facteur de soundness
-    du schéma. Un schéma lâche (synonymie, association) donne donc une
-    confiance honnêtement plus basse qu'un schéma sain à poids égal.
+    du schéma · bonus de consensus. Un schéma lâche donne une confiance
+    honnêtement plus basse ; à l'inverse, `consensus` > 1 (plusieurs chemins
+    indépendants concordants — cf. agrégation multi-chemins) la rehausse.
     """
     factor = SCHEMA_CONFIDENCE.get(schema, 0.70)
-    conf = round(
+    consensus_factor = min(1.30, 1.0 + 0.12 * max(0, consensus - 1))
+    conf = round(min(1.0,
         math.tanh(abs(weight) / STRONG_SUPPORT_W)
         * (0.9 ** max(0, len(proof) - 1))
-        * factor,
-        3,
-    )
+        * factor
+        * consensus_factor,
+    ), 3)
     if explanation is None:
         chain = " ; ".join(_fmt_step(s) for s in proof)
         verdict = "Oui" if weight > 0 else "Non"
         kind = "déduit" if weight > 0 else "réfuté"
+        extra = f" — {consensus} chemins concordants" if consensus > 1 else ""
         explanation = (
-            f"{verdict} — {kind} par inférence (schéma {schema.value}) : {chain}"
+            f"{verdict} — {kind} par inférence (schéma {schema.value}) : {chain}{extra}"
         )
     return InferenceResult(
         subject=ctx.subject, relation=ctx.relation, object=ctx.object,
@@ -191,6 +197,66 @@ def _schema_implication(ctx: _Ctx) -> InferenceResult | None:
     return None
 
 
+def _schema_antonym_contrast(ctx: _Ctx) -> InferenceResult | None:
+    """Réfutation par contraste antonymique : `A R X` ∧ `X r_anto B` ⟹ A R B faux.
+
+    Si A possède déjà une propriété X et que la cible B est l'antonyme de X,
+    le triplet est réfuté. Ex. `feu r_carac chaud` (présent) + `chaud r_anto
+    froid` ⟹ `feu r_carac froid` = non. Pertinent pour les relations de
+    propriété (r_carac, r_has_prop). Coût : 2 lookups (intersection en mémoire).
+    """
+    if ctx.relation not in ("r_carac", "r_has_prop"):
+        return None
+    a_vals = {norm(n): (n, w) for n, w, _ in
+              topk_positive(_out(ctx, ctx.subject, ctx.relation), ctx.top_k)}
+    if not a_vals:
+        return None
+    for aname, aw, _rid in _out(ctx, ctx.object, "r_anto"):
+        if aw > 0 and norm(aname) in a_vals and norm(aname) != norm(ctx.object):
+            xn, xw = a_vals[norm(aname)]
+            proof = [
+                ProofStep(source=_disp(ctx, ctx.subject), relation=ctx.relation,
+                          target=_disp(ctx, xn), w=xw),
+                ProofStep(source=_disp(ctx, ctx.object), relation="r_anto",
+                          target=_disp(ctx, xn), w=aw, note="antonyme"),
+            ]
+            return _make_result(ctx, -min(xw, aw), FiredSchema.ANTONYM_CONTRAST, proof)
+    return None
+
+
+def _schema_cohyponym(ctx: _Ctx) -> InferenceResult | None:
+    """Réfutation par cohyponymie : A et B partagent un hyperonyme ⟹ A r_isa B faux.
+
+    Ne concerne que `r_isa`. Si A et B ont un hyperonyme commun et qu'aucun
+    n'est l'hyperonyme de l'autre, ce sont des FRÈRES — `A r_isa B` est faux.
+    Ex. `chat r_isa mammifère`, `chien r_isa mammifère` ⟹ `chat r_isa chien`
+    = non. Placé APRÈS les schémas ISA positifs : si B était un hyperonyme
+    (même transitif) de A, la transitivité l'aurait déjà confirmé.
+    """
+    if ctx.relation != "r_isa":
+        return None
+    sub_h = {norm(h): (h, w) for h, w, _ in
+             topk_positive(_out(ctx, ctx.subject, "r_isa"), ctx.top_k)}
+    obj_h = {norm(h): (h, w) for h, w, _ in
+             topk_positive(_out(ctx, ctx.object, "r_isa"), ctx.top_k)}
+    # Si l'un subsume l'autre, ce ne sont pas des cohyponymes.
+    if norm(ctx.object) in sub_h or norm(ctx.subject) in obj_h:
+        return None
+    common = sorted(set(sub_h) & set(obj_h))
+    if common:
+        g = common[0]
+        gh, gw = sub_h[g]
+        proof = [
+            ProofStep(source=_disp(ctx, ctx.subject), relation="r_isa",
+                      target=_disp(ctx, gh), w=gw),
+            ProofStep(source=_disp(ctx, ctx.object), relation="r_isa",
+                      target=_disp(ctx, gh), w=obj_h[g][1],
+                      note="hyperonyme commun — A et B sont frères"),
+        ]
+        return _make_result(ctx, -30.0, FiredSchema.COHYPONYM, proof)
+    return None
+
+
 def _schema_synonym_equiv(ctx: _Ctx) -> InferenceResult | None:
     """Via un synonyme de l'object : `object r_syn S` ∧ `subject R S`."""
     syns = topk_positive(_out(ctx, ctx.object, "r_syn"), ctx.top_k)
@@ -213,40 +279,88 @@ def _schema_deduction_isa(ctx: _Ctx) -> InferenceResult | None:
     """Déduction par généralisation : `A r_isa/r_syn G` ∧ `G R B` ⟹ `A R B`.
 
     Le schéma le plus rentable — un trait porté par un générique se transfère.
+    AGRÉGATION MULTI-CHEMINS : on n'arrête PAS au 1er générique concluant, on
+    parcourt tous ceux déjà récupérés (même coût d'appels, ils sont en cache).
+    Une négation héritée prime sur une affirmation concurrente ; plusieurs
+    chemins concordants rehaussent la confiance (consensus).
     """
+    hits: list[tuple[str, float, str, float]] = []  # (gname, gw, via, w)
     for gname, gw, via in _gens(ctx, ctx.subject):
         if norm(gname) == norm(ctx.object):
             continue
         w = _ew(ctx, gname, ctx.relation, ctx.object)
         if w != 0:
+            hits.append((gname, gw, via, w))
+    if not hits:
+        return None
+    negs = [h for h in hits if h[3] < 0]
+    poss = [h for h in hits if h[3] > 0]
+    # La négation curée prime sur une affirmation générique concurrente.
+    pool = negs if negs else poss
+    gname, gw, via, w = max(pool, key=lambda h: abs(h[3]))
+    proof = [
+        ProofStep(source=_disp(ctx, ctx.subject), relation=via,
+                  target=_disp(ctx, gname), w=gw),
+        ProofStep(source=_disp(ctx, gname), relation=ctx.relation,
+                  target=_disp(ctx, ctx.object), w=w),
+    ]
+    return _make_result(ctx, w, FiredSchema.DEDUCTION_ISA, proof,
+                        consensus=len(pool))
+
+
+def _schema_geo_propagation(ctx: _Ctx) -> InferenceResult | None:
+    """Propagation géographique : `A r_lieu L` ∧ `L r_holo B` ⟹ `A r_lieu B`.
+
+    Complète la transitivité de r_lieu en suivant la chaîne de CONTENANCE
+    géographique (un lieu fait partie d'un lieu plus grand). Ex.
+    `X r_lieu Paris` ∧ `Paris r_holo France` ⟹ `X r_lieu France`.
+    """
+    if ctx.relation != "r_lieu":
+        return None
+    places = topk_positive(_out(ctx, ctx.subject, "r_lieu"), ctx.top_k)
+    for lname, lw, _rid in places:
+        if norm(lname) in (norm(ctx.subject), norm(ctx.object)):
+            continue
+        w = _ew(ctx, lname, "r_holo", ctx.object)
+        if w > 0:
             proof = [
-                ProofStep(source=_disp(ctx, ctx.subject), relation=via,
-                          target=_disp(ctx, gname), w=gw),
-                ProofStep(source=_disp(ctx, gname), relation=ctx.relation,
-                          target=_disp(ctx, ctx.object), w=w),
+                ProofStep(source=_disp(ctx, ctx.subject), relation="r_lieu",
+                          target=_disp(ctx, lname), w=lw),
+                ProofStep(source=_disp(ctx, lname), relation="r_holo",
+                          target=_disp(ctx, ctx.object), w=w,
+                          note="contenu géographiquement"),
             ]
-            return _make_result(ctx, w, FiredSchema.DEDUCTION_ISA, proof)
+            return _make_result(ctx, w, FiredSchema.GEO_PROPAGATION, proof)
     return None
 
 
 def _schema_transitivity(ctx: _Ctx) -> InferenceResult | None:
-    """Transitivité (relations transitives) : `A R X` ∧ `X R B` ⟹ `A R B`."""
+    """Transitivité (relations transitives) : `A R X` ∧ `X R B` ⟹ `A R B`.
+
+    AGRÉGATION MULTI-CHEMINS : on parcourt tous les intermédiaires (déjà en
+    cache) ; plusieurs chemins concordants rehaussent la confiance.
+    """
     if ctx.relation not in TRANSITIVE_RELATIONS:
         return None
     mids = topk_positive(_out(ctx, ctx.subject, ctx.relation), ctx.top_k)
+    hits: list[tuple[str, float, float]] = []  # (mname, mw, w)
     for mname, mw, _rid in mids:
         if norm(mname) in (norm(ctx.subject), norm(ctx.object)):
             continue
         w = _ew(ctx, mname, ctx.relation, ctx.object)
         if w > 0:
-            proof = [
-                ProofStep(source=_disp(ctx, ctx.subject), relation=ctx.relation,
-                          target=_disp(ctx, mname), w=mw),
-                ProofStep(source=_disp(ctx, mname), relation=ctx.relation,
-                          target=_disp(ctx, ctx.object), w=w),
-            ]
-            return _make_result(ctx, w, FiredSchema.TRANSITIVITY, proof)
-    return None
+            hits.append((mname, mw, w))
+    if not hits:
+        return None
+    mname, mw, w = max(hits, key=lambda h: h[2])
+    proof = [
+        ProofStep(source=_disp(ctx, ctx.subject), relation=ctx.relation,
+                  target=_disp(ctx, mname), w=mw),
+        ProofStep(source=_disp(ctx, mname), relation=ctx.relation,
+                  target=_disp(ctx, ctx.object), w=w),
+    ]
+    return _make_result(ctx, w, FiredSchema.TRANSITIVITY, proof,
+                        consensus=len(hits))
 
 
 def _schema_isa_incompatible(ctx: _Ctx) -> InferenceResult | None:
@@ -449,11 +563,19 @@ _EFFORT1_SCHEMAS = (
     _schema_prefix,
     _schema_inverse,
     _schema_implication,
+    # Réfutations spécialisées (avant les déductions).
     _schema_isa_incompatible,
     _schema_class_elim,
+    _schema_antonym_contrast,
+    # Déductions saines.
     _schema_deduction_isa,
     _schema_transitivity,
+    _schema_geo_propagation,
     _schema_hyponym_propagation,
+    # Réfutation tardive : cohyponymie — uniquement si aucun chemin ISA
+    # positif n'a abouti (sinon la transitivité aurait confirmé).
+    _schema_cohyponym,
+    # Synonymie en tout dernier (priorité basse, substitution non stricte).
     _schema_synonym_equiv,
 )
 # Effort 2 : composition (curée, saine) d'abord, puis les schémas LÂCHES en

@@ -14,6 +14,7 @@ _REL_IDS: dict[str, int] = {
         "r_isa", "r_hypo", "r_syn", "r_anto", "r_carac", "r_carac-1",
         "r_has_part", "r_holo", "r_lieu", "r_lieu-1", "r_isa-incompatible",
         "r_can_eat", "r_can_eat-1", "r_has_conseq", "r_associated",
+        "r_has_prop",
     ])
 }
 
@@ -144,6 +145,58 @@ def test_assoc_bridge():
     assert res.fired_schema == FiredSchema.ASSOC_BRIDGE
     # Schéma lâche → confiance honnêtement décotée.
     assert res.confidence < 0.5
+
+
+def test_antonym_contrast_refutation():
+    # feu r_carac chaud ; froid r_anto chaud ⟹ feu r_carac froid réfuté
+    c = _make_client({
+        ("feu", "r_carac"): [("chaud", 300)],
+        ("froid", "r_anto"): [("chaud", 90)],
+    })
+    res = infer(c, "feu", "r_carac", "froid", effort=1)
+    assert res.is_false
+    assert res.fired_schema == FiredSchema.ANTONYM_CONTRAST
+
+
+def test_cohyponym_refutation():
+    # chat et chien partagent l'hyperonyme mammifère ⟹ chat r_isa chien réfuté
+    c = _make_client({
+        ("chat", "r_isa"): [("mammifère", 500)],
+        ("chien", "r_isa"): [("mammifère", 500)],
+    })
+    res = infer(c, "chat", "r_isa", "chien", effort=1)
+    assert res.is_false
+    assert res.fired_schema == FiredSchema.COHYPONYM
+
+
+def test_geo_propagation():
+    # tour Eiffel r_lieu Paris ; Paris r_holo France ⟹ tour Eiffel r_lieu France
+    c = _make_client({
+        ("tour eiffel", "r_lieu"): [("Paris", 200)],
+        ("Paris", "r_holo"): [("France", 300)],
+    })
+    res = infer(c, "tour eiffel", "r_lieu", "France", effort=1)
+    assert res.is_true
+    assert res.fired_schema == FiredSchema.GEO_PROPAGATION
+
+
+def test_multipath_consensus_boosts_confidence():
+    # Deux génériques confirment → confiance rehaussée + mention « concordants ».
+    two = _make_client({
+        ("moineau", "r_isa"): [("oiseau", 200), ("animal", 100)],
+        ("oiseau", "r_carac"): [("petit", 50)],
+        ("animal", "r_carac"): [("petit", 50)],
+    })
+    one = _make_client({
+        ("moineau", "r_isa"): [("oiseau", 200)],
+        ("oiseau", "r_carac"): [("petit", 50)],
+    })
+    r2 = infer(two, "moineau", "r_carac", "petit", effort=1)
+    r1 = infer(one, "moineau", "r_carac", "petit", effort=1)
+    assert r2.is_true and r1.is_true
+    assert r2.fired_schema == FiredSchema.DEDUCTION_ISA
+    assert r2.confidence > r1.confidence            # consensus → plus confiant
+    assert "concordant" in r2.explanation
 
 
 def test_silent_when_no_data():
