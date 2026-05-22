@@ -657,16 +657,19 @@ def detect_gaps(
     Si l'utilisateur a indiqué SEULEMENT une relation (ex. « détecte les
     trous pour r_holo », « r_telic_role »…) SANS donner de terme, NE LUI
     DEMANDE PAS de terme. NE LUI POSE PAS DE QUESTION. À la place :
-      1. tire toi-même un mot français au hasard (vraiment au hasard, varie
-         les domaines : objets, animaux, métiers, abstractions, lieux,
-         plantes, aliments, sentiments, parties du corps, instruments,
-         véhicules, vêtements…) ;
+      1. tire toi-même un mot français au hasard. ANTI-BIAIS : ton réflexe
+         par défaut est la zoologie (chat, loup, baleine…) — INTERDIT.
+         Fais tourner les 14 familles : outils, véhicules, vêtements,
+         aliments, plantes, parties du corps, métiers, lieux, objets du
+         quotidien, concepts abstraits, phénomènes naturels, arts, émotions,
+         activités. JAMAIS deux essais consécutifs dans la même famille.
+         Si tu allais choisir un animal, BLOQUE et change de famille ;
       2. vérifie qu'il existe dans JDM via `lookup_term` ;
       3. appelle `detect_gaps` dessus avec la relation demandée ;
       4. si le terme n'est pas dans JDM OU si tu ne trouves pas au moins
-         3 gaps intéressants, RECOMMENCE avec un autre mot — itère
-         silencieusement, max 6-8 essais, et ne montre que le résultat
-         final exploitable.
+         3 gaps intéressants, RECOMMENCE avec un autre mot d'une AUTRE
+         famille — itère silencieusement, max 6-8 essais, et ne montre
+         que le résultat final exploitable.
     Cette règle prime sur tout réflexe de « clarifier avec l'utilisateur ».
 
     Trois types de gaps :
