@@ -228,6 +228,7 @@ def _build_edge(
     w: float,
     polarity: str,
     depth: int,
+    from_negation: bool = False,
 ) -> dict[str, Any]:
     """Construit une arête vis-network.
 
@@ -239,6 +240,9 @@ def _build_edge(
     - Négation = rouge (saturé au niveau 1, pâle au niveau 2), label
       préfixé « NON ».
     - Niveau 2 = pointillés (en plus de la teinte adoucie).
+    - `from_negation` : l'arête part d'un nœud lui-même introduit par une
+      relation négative. Côté HTML, le bouton « Approfondir négations »
+      masque/affiche ces arêtes (OFF par défaut → nœud non approfondi).
     """
     is_neg = polarity == "négation"
     is_d2 = depth >= 2
@@ -270,6 +274,7 @@ def _build_edge(
         "_polarity": polarity,
         "_negative": is_neg,
         "_depth": depth,
+        "_from_negation": from_negation,
     }
 
 
@@ -353,6 +358,12 @@ def build_subgraph(
         ))
         return nid
 
+    # Ensemble des labels de nœuds INTRODUITS par une arête négative.
+    # Les arêtes qui PARTENT de ces nœuds (= leur approfondissement vers
+    # le niveau suivant) sont taguées `_from_negation` pour pouvoir être
+    # masquées côté HTML (bouton « Approfondir négations », OFF par défaut).
+    via_negation: set[str] = set()
+
     # Boucle généralisée sur les profondeurs 1..depth. À chaque tour on
     # garde la liste des nœuds tout juste ajoutés pour itérer dessus au
     # tour suivant.
@@ -364,16 +375,19 @@ def build_subgraph(
         next_layer: list[tuple[str, str]] = []
         for parent_label, _parent_kind in current_layer:
             parent_id = label_to_id.get(parent_label, "ROOT")
+            parent_is_neg = parent_label in via_negation
             for rel in rels_for_d:
                 kind = KIND_OF_REL.get(rel, "assoc")
                 rows = _fetch_relation(c, parent_label, rel, top_k_d, min_weight)
                 for row in rows:
                     tgt = row["target_display"]
+                    is_neg_edge = row["polarity"] == "négation"
                     if tgt == term:
                         # Lien retour vers la racine : on matérialise l'arête
                         # mais on ne ré-ajoute pas le nœud.
                         edges.append(_build_edge(
-                            parent_id, "ROOT", rel, row["w"], row["polarity"], depth=d,
+                            parent_id, "ROOT", rel, row["w"], row["polarity"],
+                            depth=d, from_negation=parent_is_neg,
                         ))
                         continue
                     is_new = tgt not in label_to_id
@@ -381,19 +395,26 @@ def build_subgraph(
                     if parent_id == nid_to:
                         continue
                     edges.append(_build_edge(
-                        parent_id, nid_to, rel, row["w"], row["polarity"], depth=d,
+                        parent_id, nid_to, rel, row["w"], row["polarity"],
+                        depth=d, from_negation=parent_is_neg,
                     ))
                     if is_new:
                         next_layer.append((tgt, kind))
+                        # Nœud nouveau atteint par une arête négative → sa
+                        # descendance sera masquable via le bouton dédié.
+                        if is_neg_edge:
+                            via_negation.add(tgt)
         current_layer = next_layer
         if not current_layer:
             break
 
     n_negative = sum(1 for e in edges if e.get("_negative"))
+    n_from_negation = sum(1 for e in edges if e.get("_from_negation"))
     stats = {
         "n_nodes": len(nodes),
         "n_edges": len(edges),
         "n_negative": n_negative,
+        "n_from_negation": n_from_negation,
         "relations_used": rels_by_depth[1],
         "relations_by_depth": {d: rels_by_depth[d] for d in range(1, depth + 1)},
         "depth": depth,

@@ -53,6 +53,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           onchange="onThresholdChange()"></select>
   <button id="btn-degree" onclick="toggleLowDegree()"
           title="Masquer les nœuds en dessous du seuil d'arêtes choisi">Masquer isolés</button>
+  <button id="btn-negation" onclick="toggleNegation()"
+          title="Approfondir (ou non) les nœuds atteints par une relation négative">Approfondir négations : OFF</button>
   <button onclick="network.fit({animation:true})">Recentrer</button>
   <button onclick="zoomBy(1.3)">Zoom +</button>
   <button onclick="zoomBy(0.77)">Zoom -</button>
@@ -115,8 +117,8 @@ function zoomBy(factor) {
 const INITIAL_CENTER = 'ROOT';   // nœud central d'origine
 let currentCenter = 'ROOT';      // centre de gravité courant
 let hideLowDegree = false;       // filtre "masquer isolés" actif ?
+let deepenNegation = false;      // approfondir les nœuds atteints par négation ?
 
-// ---------- Masquer les nœuds peu connectés ----------
 // Le degré = nb total d'arêtes (entrantes + sortantes) sur le graphe complet.
 function nodeDegree(id) { return network.getConnectedEdges(id).length; }
 
@@ -145,31 +147,77 @@ function currentThreshold() {
   return parseInt(sel.value, 10) || 2;
 }
 
-// Applique (ou retire) le masquage selon l'état + le seuil courant.
-function applyDegreeFilter() {
+// ---------- Filtrage unifié ----------
+// computeHidden() recalcule les drapeaux `hidden` des nœuds ET des arêtes
+// à partir de l'état des deux boutons (négation + isolés). Trois étapes :
+//   1) arêtes : on masque les arêtes `_from_negation` si le bouton est OFF.
+//   2) nœuds  : filtre de degré (seuil de la liste déroulante).
+//   3) nettoyage itératif des orphelins : tout nœud qui n'a plus aucune
+//      arête visible vers un nœud visible est masqué (cascade gérée).
+function computeHidden() {
+  const showNeg = deepenNegation;
+  // (1) arêtes
+  edges.update(edges.getIds().map(id => {
+    const e = edges.get(id);
+    return { id, hidden: (!showNeg && !!e._from_negation) };
+  }));
+  // (2) nœuds : filtre de degré
   const threshold = currentThreshold();
-  const updates = nodes.getIds().map(id => {
-    const hide = hideLowDegree
-      && id !== currentCenter && id !== INITIAL_CENTER
-      && nodeDegree(id) < threshold;
-    return { id, hidden: hide };
+  const hidden = {};
+  nodes.getIds().forEach(id => {
+    if (id === currentCenter || id === INITIAL_CENTER) { hidden[id] = false; return; }
+    hidden[id] = hideLowDegree && nodeDegree(id) < threshold;
   });
-  nodes.update(updates);
+  // (3) orphelins : itère jusqu'à stabilité (gère les cascades en profondeur)
+  let changed = true;
+  while (changed) {
+    changed = false;
+    nodes.getIds().forEach(id => {
+      if (id === currentCenter || id === INITIAL_CENTER) return;
+      if (hidden[id]) return;
+      const conn = network.getConnectedEdges(id);
+      const hasVisible = conn.some(eid => {
+        const e = edges.get(eid);
+        if (e.hidden) return false;
+        const other = e.from === id ? e.to : e.from;
+        return !hidden[other];
+      });
+      if (!hasVisible) { hidden[id] = true; changed = true; }
+    });
+  }
+  nodes.update(nodes.getIds().map(id => ({ id, hidden: !!hidden[id] })));
+}
+
+// applyFilters() = recalcul des masques + RE-CALCUL DES POSITIONS (physique).
+function applyFilters() {
+  computeHidden();
+  network.setOptions({ physics: { enabled: true } });
+  network.stabilize();
 }
 
 function toggleLowDegree() {
   hideLowDegree = !hideLowDegree;
-  applyDegreeFilter();
   document.getElementById('btn-degree').textContent =
     hideLowDegree ? 'Tout afficher' : 'Masquer isolés';
+  applyFilters();
 }
 
-// Changement du seuil : si le filtre est déjà actif, on le réapplique.
+function toggleNegation() {
+  deepenNegation = !deepenNegation;
+  document.getElementById('btn-negation').textContent =
+    'Approfondir négations : ' + (deepenNegation ? 'ON' : 'OFF');
+  applyFilters();
+}
+
+// Changement du seuil : si le filtre de degré est actif, on réapplique.
 function onThresholdChange() {
-  if (hideLowDegree) applyDegreeFilter();
+  if (hideLowDegree) applyFilters();
 }
 
 initThresholdDropdown();
+// État initial : négations NON approfondies (bouton OFF) → masquage appliqué
+// avant la 1re stabilisation pour que la physique l'intègre directement.
+computeHidden();
 
 // ---------- Clic simple : centrer le nœud + cadrer ses connexions ----------
 network.on('click', params => {
@@ -202,6 +250,7 @@ function recenterGravity(newId) {
 // ---------- Réinitialiser à l'état de départ ----------
 function resetGraph() {
   hideLowDegree = false;
+  deepenNegation = false;
   currentCenter = INITIAL_CENTER;
   // Recharge les DataSets depuis les copies vierges.
   nodes.clear();
@@ -211,7 +260,9 @@ function resetGraph() {
   rebuildEdgeBase();
   initThresholdDropdown();  // remet le seuil à 2
   document.getElementById('btn-degree').textContent = 'Masquer isolés';
+  document.getElementById('btn-negation').textContent = 'Approfondir négations : OFF';
   document.getElementById('btn-reset').style.display = 'none';
+  computeHidden();  // ré-applique l'état initial (négations non approfondies)
   network.setOptions({ physics: { enabled: true } });
   network.stabilize();
 }
