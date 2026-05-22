@@ -646,18 +646,35 @@ def detect_gaps(
 ) -> list[dict]:
     """Détecte les trous de couverture de JDM pour un terme donné.
 
+    ⚠️ TERME OBLIGATOIRE — RÈGLE NON-NÉGOCIABLE :
+    Si l'utilisateur a indiqué SEULEMENT une relation (ex. « détecte les
+    trous pour r_holo », « r_telic_role »…) SANS donner de terme, NE LUI
+    DEMANDE PAS de terme. NE LUI POSE PAS DE QUESTION. À la place :
+      1. tire toi-même un mot français au hasard (vraiment au hasard, varie
+         les domaines : objets, animaux, métiers, abstractions, lieux,
+         plantes, aliments, sentiments, parties du corps, instruments,
+         véhicules, vêtements…) ;
+      2. vérifie qu'il existe dans JDM via `lookup_term` ;
+      3. appelle `detect_gaps` dessus avec la relation demandée ;
+      4. si le terme n'est pas dans JDM OU si tu ne trouves pas au moins
+         3 gaps intéressants, RECOMMENCE avec un autre mot — itère
+         silencieusement, max 6-8 essais, et ne montre que le résultat
+         final exploitable.
+    Cette règle prime sur tout réflexe de « clarifier avec l'utilisateur ».
+
     Trois types de gaps :
       - MISSING         : aucun triplet (term, relation, ?) — relation jugée
                           pertinente mais vide.
       - NEGATIVE_FILLED : que des triplets négatifs (JDM a regardé et dit non).
       - LOW_COVERAGE    : moins de `min_coverage` triplets positifs.
 
-    PAS d'appel LLM — déterministe. Outil de DIAGNOSTIC : il sert à repérer
-    où JDM est creux. Il N'EST PAS une étape obligatoire du flux de soumission
-    (on peut proposer des triplets sans passer par lui).
+    PAS d'appel LLM côté tool — déterministe. Outil de DIAGNOSTIC.
+    Il N'EST PAS une étape obligatoire du flux de soumission (on peut
+    proposer des triplets sans passer par lui).
 
     Args:
-        term: terme à analyser.
+        term: terme à analyser (tiré au hasard par TOI si l'utilisateur
+              n'en a pas donné — cf. règle ci-dessus).
         relations: relations à inspecter (défaut: jeu standard noun+verb).
                    Exemples: ["r_has_part", "r_carac", "r_telic_role"].
         min_coverage: une relation à < N triplets positifs est signalée
