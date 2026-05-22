@@ -20,7 +20,6 @@ from jdm_agent.inference.constants import (
     COMPOSITION_MAP,
     DEFAULT_MAX_DEPTH,
     DEFAULT_TOP_K,
-    GENERIC_HUBS,
     IMPLICATION_MAP,
     INVERSE_RELATIONS,
     REFUTATION_SCAN,
@@ -231,19 +230,13 @@ def _schema_deduction_isa(ctx: _Ctx) -> InferenceResult | None:
 
 
 def _schema_transitivity(ctx: _Ctx) -> InferenceResult | None:
-    """Transitivité (relations transitives) : `A R X` ∧ `X R B` ⟹ `A R B`.
-
-    On saute les intermédiaires « hubs » trop génériques (corps, organisme…) :
-    enchaîner via eux sur-génère (lionne r_has_part corps r_has_part prostate).
-    """
+    """Transitivité (relations transitives) : `A R X` ∧ `X R B` ⟹ `A R B`."""
     if ctx.relation not in TRANSITIVE_RELATIONS:
         return None
     mids = topk_positive(_out(ctx, ctx.subject, ctx.relation), ctx.top_k)
     for mname, mw, _rid in mids:
         if norm(mname) in (norm(ctx.subject), norm(ctx.object)):
             continue
-        if norm(mname) in GENERIC_HUBS:
-            continue  # hub universel — transitivité non fiable
         w = _ew(ctx, mname, ctx.relation, ctx.object)
         if w > 0:
             proof = [
@@ -418,8 +411,6 @@ def _schema_assoc_bridge(ctx: _Ctx) -> InferenceResult | None:
     for tname, tw, _rid in targets:
         if norm(tname) in (norm(ctx.subject), norm(ctx.object)):
             continue
-        if norm(tname) in GENERIC_HUBS:
-            continue  # hub universel — pont non fiable
         # T est-il synonyme ou fortement associé à la cible ?
         link_w = _ew(ctx, tname, "r_syn", ctx.object)
         link_rel = "r_syn"
