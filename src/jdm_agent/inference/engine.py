@@ -72,6 +72,31 @@ def _gens(ctx: _Ctx, term: str, k: int | None = None):
 
 # ---------- Construction du résultat ----------
 
+# Facteur de soundness par schéma : la confiance finale est pondérée par ce
+# facteur. Les schémas SAINS (transitivité, inverse, déduction-ISA) gardent
+# une confiance pleine ; les schémas LÂCHES (synonymie, association, double-ISA)
+# sont délibérément décotés — la substitution par synonyme/association n'est
+# pas une équivalence stricte (ex. « pénis r_syn sexe » est en réalité une
+# hyperonymie : on doit donc rester prudent sur ce type de déduction).
+SCHEMA_CONFIDENCE: dict[FiredSchema, float] = {
+    FiredSchema.TAUTOLOGY:        1.00,
+    FiredSchema.CONTRADICTION:    1.00,
+    FiredSchema.INVERSE:          1.00,
+    FiredSchema.IMPLICATION:      0.95,
+    FiredSchema.ISA_INCOMPATIBLE: 0.95,
+    FiredSchema.CLASS_ELIM:       0.90,
+    FiredSchema.DEDUCTION_ISA:    0.90,
+    FiredSchema.TRANSITIVITY:     0.90,
+    FiredSchema.HYPONYM_PROP:     0.85,
+    FiredSchema.PREFIX:           0.85,
+    FiredSchema.COMPOSITION:      0.80,
+    FiredSchema.SYNONYM_EQUIV:    0.70,
+    FiredSchema.TARGET_GENERIC:   0.60,
+    FiredSchema.ASSOC_BRIDGE:     0.55,
+    FiredSchema.DOUBLE_ISA:       0.55,
+}
+
+
 def _fmt_step(s: ProofStep) -> str:
     base = f"{s.source} {s.relation} {s.target} (w={s.w:.0f})"
     return f"{base} [{s.note}]" if s.note else base
@@ -80,9 +105,17 @@ def _fmt_step(s: ProofStep) -> str:
 def _make_result(ctx: _Ctx, weight: float, schema: FiredSchema,
                  proof: list[ProofStep], explanation: str | None = None
                  ) -> InferenceResult:
-    """Assemble l'InferenceResult : confiance normalisée + explication FR."""
+    """Assemble l'InferenceResult : confiance normalisée + explication FR.
+
+    Confiance = tanh(|w|/W) · décote longueur de chaîne · facteur de soundness
+    du schéma. Un schéma lâche (synonymie, association) donne donc une
+    confiance honnêtement plus basse qu'un schéma sain à poids égal.
+    """
+    factor = SCHEMA_CONFIDENCE.get(schema, 0.70)
     conf = round(
-        math.tanh(abs(weight) / STRONG_SUPPORT_W) * (0.9 ** max(0, len(proof) - 1)),
+        math.tanh(abs(weight) / STRONG_SUPPORT_W)
+        * (0.9 ** max(0, len(proof) - 1))
+        * factor,
         3,
     )
     if explanation is None:
@@ -258,6 +291,31 @@ def _schema_class_elim(ctx: _Ctx) -> InferenceResult | None:
     return None
 
 
+def _schema_hyponym_propagation(ctx: _Ctx) -> InferenceResult | None:
+    """Propagation par hyponymie : `A R H` ∧ `H r_isa B` ⟹ `A R B`.
+
+    Sain : si A entretient la relation avec un cas PARTICULIER de B, il
+    l'entretient avec B (plus général). Ex. `oiseau r_can_eat graine` +
+    `graine r_isa nourriture` ⟹ `oiseau r_can_eat nourriture`.
+    """
+    targets = topk_positive(_out(ctx, ctx.subject, ctx.relation), ctx.top_k)
+    for tname, tw, _rid in targets:
+        if norm(tname) in (norm(ctx.subject), norm(ctx.object)):
+            continue
+        isa_w = _ew(ctx, tname, "r_isa", ctx.object)
+        if isa_w > 0:
+            w = min(tw, isa_w)
+            proof = [
+                ProofStep(source=_disp(ctx, ctx.subject), relation=ctx.relation,
+                          target=_disp(ctx, tname), w=tw),
+                ProofStep(source=_disp(ctx, tname), relation="r_isa",
+                          target=_disp(ctx, ctx.object), w=isa_w,
+                          note="cas particulier de la cible"),
+            ]
+            return _make_result(ctx, w, FiredSchema.HYPONYM_PROP, proof)
+    return None
+
+
 # ---------- Schémas d'inférence (effort 2) ----------
 
 def _schema_composition(ctx: _Ctx) -> InferenceResult | None:
@@ -317,6 +375,39 @@ def _schema_target_generic(ctx: _Ctx) -> InferenceResult | None:
     return None
 
 
+def _schema_assoc_bridge(ctx: _Ctx) -> InferenceResult | None:
+    """Pont par association : `A R T` ∧ `T ≈ B` (synonyme ou associé fort).
+
+    Lâche par nature (l'association n'est pas une équivalence) — d'où une
+    confiance fortement décotée. Capture les déductions « molles » : le sujet
+    entretient la relation vers un terme proche de la cible.
+    """
+    targets = topk_positive(_out(ctx, ctx.subject, ctx.relation), ctx.top_k)
+    for tname, tw, _rid in targets:
+        if norm(tname) in (norm(ctx.subject), norm(ctx.object)):
+            continue
+        # T est-il synonyme ou fortement associé à la cible ?
+        link_w = _ew(ctx, tname, "r_syn", ctx.object)
+        link_rel = "r_syn"
+        if link_w <= 0:
+            link_w = _ew(ctx, tname, "r_associated", ctx.object)
+            link_rel = "r_associated"
+        if link_w <= 0:
+            link_w = _ew(ctx, ctx.object, "r_associated", tname)
+            link_rel = "r_associated"
+        if link_w > 0:
+            w = min(tw, link_w)
+            proof = [
+                ProofStep(source=_disp(ctx, ctx.subject), relation=ctx.relation,
+                          target=_disp(ctx, tname), w=tw),
+                ProofStep(source=_disp(ctx, tname), relation=link_rel,
+                          target=_disp(ctx, ctx.object), w=link_w,
+                          note="proche de la cible"),
+            ]
+            return _make_result(ctx, w, FiredSchema.ASSOC_BRIDGE, proof)
+    return None
+
+
 # Cascade effort 1. Ordre important : schémas gratuits d'abord (guards,
 # prefix, inverse, implication), puis les RÉFUTATIONS (isa_incompatible,
 # class_elim) AVANT les déductions — sinon une chaîne ISA bruitée de JDM
@@ -331,11 +422,16 @@ _EFFORT1_SCHEMAS = (
     _schema_synonym_equiv,
     _schema_deduction_isa,
     _schema_transitivity,
+    _schema_hyponym_propagation,
 )
+# Effort 2 : schémas plus larges / plus chers (composition, génériques de la
+# cible, double-ISA, pont par association). assoc_bridge en dernier — c'est
+# le plus lâche, on ne l'invoque qu'en dernier recours.
 _EFFORT2_SCHEMAS = (
     _schema_composition,
     _schema_target_generic,
     _schema_double_isa,
+    _schema_assoc_bridge,
 )
 
 

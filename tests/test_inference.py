@@ -22,14 +22,18 @@ def _make_client(data: dict[tuple[str, str], list[tuple[str, float]]]) -> MagicM
     """Mock JDMClient indexé par `(terme, relation)` → liste de `(cible, w)`.
 
     Reproduit `relation_type_id`, `relations_from`, `decode_node_name`,
-    `get_annotations_for_triplet`.
+    `get_annotations_for_triplet`. Toute relation apparaissant dans `data`
+    reçoit un id, même si elle n'est pas dans la liste standard `_REL_IDS`.
     """
     c = MagicMock()
-    c.relation_type_id.side_effect = lambda name: _REL_IDS.get(name)
+    rel_ids = dict(_REL_IDS)
+    for (_term, rel) in data:
+        rel_ids.setdefault(rel, 2000 + len(rel_ids))
+    c.relation_type_id.side_effect = lambda name: rel_ids.get(name)
 
     def fake_relations_from(term, types_ids=None, min_weight=None, limit=None):
         rid = (types_ids or [None])[0]
-        rel_name = next((n for n, i in _REL_IDS.items() if i == rid), None)
+        rel_name = next((n for n, i in rel_ids.items() if i == rid), None)
         rows = data.get((term, rel_name), []) if rel_name else []
         nodes, relations = [], []
         for j, (tgt, w) in enumerate(rows):
@@ -116,6 +120,30 @@ def test_class_elimination_refutation():
     res = infer(c, "baleine", "r_carac", "écaille", effort=1)
     assert res.is_false
     assert res.fired_schema == FiredSchema.CLASS_ELIM
+
+
+def test_hyponym_propagation():
+    # oiseau r_can_eat graine ; graine r_isa nourriture ⟹ oiseau r_can_eat nourriture
+    c = _make_client({
+        ("oiseau", "r_can_eat"): [("graine", 100)],
+        ("graine", "r_isa"): [("nourriture", 200)],
+    })
+    res = infer(c, "oiseau", "r_can_eat", "nourriture", effort=1)
+    assert res.is_true
+    assert res.fired_schema == FiredSchema.HYPONYM_PROP
+
+
+def test_assoc_bridge():
+    # cuisine r_but nourrir ; nourrir r_associated manger ⟹ cuisine r_but manger
+    c = _make_client({
+        ("cuisine", "r_but"): [("nourrir", 52)],
+        ("nourrir", "r_associated"): [("manger", 145)],
+    })
+    res = infer(c, "cuisine", "r_but", "manger", effort=2)
+    assert res.is_true
+    assert res.fired_schema == FiredSchema.ASSOC_BRIDGE
+    # Schéma lâche → confiance honnêtement décotée.
+    assert res.confidence < 0.5
 
 
 def test_silent_when_no_data():

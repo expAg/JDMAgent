@@ -27,6 +27,8 @@ class FiredSchema(str, Enum):
     DOUBLE_ISA       = "double_isa"          # A r_isa X, B r_isa Y, X R Y
     COMPOSITION      = "composition"         # A R2 C, C R3 B ⟹ A R B
     PREFIX           = "prefix"              # préfixe lexical (saucisse de Toulouse)
+    HYPONYM_PROP     = "hyponym_propagation" # A R H, H r_isa B ⟹ A R B
+    ASSOC_BRIDGE     = "assoc_bridge"        # A R T, T ≈ B (synonyme / associé)
     COHYPONYM        = "cohyponym"           # cohyponymes (réservé, effort 2)
 
 
