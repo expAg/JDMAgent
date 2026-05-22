@@ -642,39 +642,34 @@ def get_triplet_annotations(subject: str, relation: str, target: str) -> list[di
 def detect_gaps(
     term: str,
     relations: Optional[list[str]] = None,
-    check_asymmetries: bool = True,
+    min_coverage: int = 3,
 ) -> list[dict]:
     """Détecte les trous de couverture de JDM pour un terme donné.
 
     Trois types de gaps :
-      - MISSING       : aucun triplet (term, relation, ?) — relation jugée pertinente mais vide
-      - LOW_COVERAGE  : très peu de triplets (< 3 avec w≥25)
-      - ASYMMETRY     : un triplet A r_xxx B existe MAIS l'inverse B r_inv A manque
-                        (utilise 11 paires connues: r_has_part/r_holo, r_isa/r_hypo,
-                        r_agent/r_agent-1, r_make/r_product_of, etc.)
+      - MISSING         : aucun triplet (term, relation, ?) — relation jugée
+                          pertinente mais vide.
+      - NEGATIVE_FILLED : que des triplets négatifs (JDM a regardé et dit non).
+      - LOW_COVERAGE    : moins de `min_coverage` triplets positifs.
 
-    PAS d'appel LLM — déterministe, ~5-15 secondes par terme selon couverture.
-
-    Workflow typique d'enrichissement :
-      1. detect_gaps("smartphone") → liste de gaps
-      2. (toi, le LLM) → propose des cibles plausibles pour chaque gap, en
-         utilisant ta connaissance du français
-      3. validate_candidate(term, relation, target) pour chaque proposition →
-         garde uniquement celles qui sont "ok" (pas dupliquées, cible existe, non
-         contradictoires)
+    PAS d'appel LLM — déterministe. Outil de DIAGNOSTIC : il sert à repérer
+    où JDM est creux. Il N'EST PAS une étape obligatoire du flux de soumission
+    (on peut proposer des triplets sans passer par lui).
 
     Args:
         term: terme à analyser.
         relations: relations à inspecter (défaut: jeu standard noun+verb).
                    Exemples: ["r_has_part", "r_carac", "r_telic_role"].
-        check_asymmetries: active la détection des inverses manquants (plus coûteux).
+        min_coverage: une relation à < N triplets positifs est signalée
+                      (monter pour aussi remonter les relations bien fournies).
 
-    Renvoie [{term, relation, gap_type, severity, detail, related_triples}, ...].
+    Renvoie [{term, relation, gap_type, severity, detail}, ...].
     """
     from jdm_agent.enrich import detect_gaps as _detect
 
     c = _client()
-    gaps = _detect(c, term, target_relations=relations, check_asymmetries=check_asymmetries)
+    gaps = _detect(c, term, target_relations=relations,
+                   min_to_consider=int(min_coverage))
     return [g.model_dump(mode="json") for g in gaps]
 
 

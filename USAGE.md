@@ -346,7 +346,7 @@ from jdm_agent.enrich import detect_gaps, validate_candidate, Candidate
 from jdm_agent.client import JDMClient
 
 c = JDMClient()
-gaps = detect_gaps(c, "smartphone", check_asymmetries=True)
+gaps = detect_gaps(c, "smartphone")
 for g in gaps:
     print(g.gap_type, g.term, g.relation, g.detail)
 

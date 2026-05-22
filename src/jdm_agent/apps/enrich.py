@@ -38,8 +38,6 @@ def main() -> int:
                    help="Fichier texte (1 terme par ligne) à analyser.")
     p.add_argument("--relations", default=None,
                    help="Relations à inspecter, séparées par virgule. Défaut: jeu standard.")
-    p.add_argument("--no-asymmetry", action="store_true",
-                   help="Désactive la détection des relations inverses manquantes (plus rapide).")
     p.add_argument("--no-propose", action="store_true",
                    help="Détecte les gaps sans demander de candidats au LLM.")
     p.add_argument("--no-validate", action="store_true",
@@ -95,7 +93,6 @@ def main() -> int:
         client=client,
         llm=llm,
         target_relations=target_relations,
-        check_asymmetries=not args.no_asymmetry,
         propose=not args.no_propose,
         validate=not args.no_validate,
         consolidate=do_consolidate,

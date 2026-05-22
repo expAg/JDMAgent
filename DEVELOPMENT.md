@@ -97,8 +97,6 @@ comme cache de niveau 2 (au-dessus de diskcache HTTP).
   relation sur un corpus annoté
 
 #### Améliorations enrichissement
-- **Plus de paires inverses** : compléter `INVERSE_PAIRS` (actuellement 11)
-  avec toutes les paires `r_xxx` / `r_xxx-1` du dump complet
 - **Tolérance orthographique** dans la validation duplicate (accents,
   pluriels, casse étendue, variantes type "écran-tactile" vs "écran tactile")
 - **Enrichissement transitif** : déduire `A r_isa C` candidat si
@@ -168,7 +166,7 @@ src/jdm_agent/
 ├── enrich/                       # Enrichissement (Phase 6)
 │   ├── __init__.py
 │   ├── models.py                 # Gap, Candidate, GapType
-│   ├── detectors.py              # detect_gaps (MISSING/LOW_COV/ASYMMETRY)
+│   ├── detectors.py              # detect_gaps (MISSING/LOW_COVERAGE/NEGATIVE_FILLED)
 │   ├── proposers.py              # propose_candidates via LLM
 │   ├── validators.py             # validate_candidate (deterministic)
 │   └── pipeline.py               # enrich(), write_candidates_csv()

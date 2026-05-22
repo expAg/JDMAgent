@@ -18,7 +18,6 @@ def enrich(
     client: Optional[JDMClient] = None,
     llm: Optional[Any] = None,
     target_relations: Optional[Iterable[str]] = None,
-    check_asymmetries: bool = True,
     propose: bool = True,
     validate: bool = True,
     consolidate: bool = False,
@@ -33,7 +32,6 @@ def enrich(
         client: JDMClient (créé par défaut).
         llm: ChatModel pour la proposition. Inutile si propose=False.
         target_relations: relations à inspecter (défaut: jeu standard noun + verb).
-        check_asymmetries: lance la détection des relations inverses manquantes.
         propose: appelle le LLM pour proposer des candidats par gap.
         validate: validation structurelle de chaque candidat (cible existe ? duplicate ?).
         consolidate: consolidation par INFÉRENCE des candidats validés (coût HTTP).
@@ -55,7 +53,6 @@ def enrich(
     for term in terms:
         gaps.extend(detect_gaps(client, term,
                                 target_relations=target_relations,
-                                check_asymmetries=check_asymmetries,
                                 min_to_consider=min_coverage))
 
     candidates: list[Candidate] = []

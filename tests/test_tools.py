@@ -291,7 +291,6 @@ def test_detect_gaps_tool(patched_client):
     out = detect_gaps_tool.invoke({
         "term": "smartphone",
         "relations": ["r_isa"],   # une relation présente dans REL_TYPES (id=6)
-        "check_asymmetries": False,
     })
     assert isinstance(out, list)
     assert any(g["term"] == "smartphone" for g in out)

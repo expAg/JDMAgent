@@ -82,8 +82,7 @@ def test_detect_missing_relation(client):
         "nodes": [], "relations": [],
     }))
     gaps = detect_gaps(client, "smartphone",
-                       target_relations=["r_has_part", "r_carac"],
-                       check_asymmetries=False)
+                       target_relations=["r_has_part", "r_carac"])
     by_rel = {g.relation: g for g in gaps}
     assert by_rel["r_has_part"].gap_type == GapType.MISSING
     assert by_rel["r_carac"].gap_type == GapType.MISSING
