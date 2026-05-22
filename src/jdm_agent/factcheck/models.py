@@ -39,7 +39,13 @@ class Evidence(BaseModel):
 
 
 class Verdict(BaseModel):
-    """Le verdict de vérification pour une `Claim`."""
+    """Le verdict de vérification pour une `Claim`.
+
+    `inference_schema` est `None` pour un verdict obtenu par lookup DIRECT
+    (contenance JDM). Il porte le nom du schéma quand le verdict provient du
+    moteur d'inférence (Phase 11) — la `inference_proof` détaille alors la
+    chaîne de déduction.
+    """
     claim: Claim
     status: Status
     confidence: float = Field(0.0, ge=0.0, le=1.0,
@@ -47,6 +53,11 @@ class Verdict(BaseModel):
     evidence_for: List[Evidence] = Field(default_factory=list)
     evidence_against: List[Evidence] = Field(default_factory=list)
     explanation: str = ""
+    inference_schema: Optional[str] = Field(
+        None, description="Nom du schéma d'inférence (None = verdict direct)")
+    inference_proof: List[Evidence] = Field(
+        default_factory=list,
+        description="Chaîne de triplets justifiant un verdict inféré")
 
 
 class Report(BaseModel):

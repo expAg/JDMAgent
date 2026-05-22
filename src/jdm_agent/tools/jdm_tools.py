@@ -713,32 +713,41 @@ def validate_candidate(term: str, relation: str, target: str) -> dict:
 # ---------- Vérification de claims (fact-checking) ----------
 
 @tool
-def verify_claim(subject: str, relation: str, object: str, polarity: bool = True) -> dict:
-    """Vérifie un triplet factuel contre le graphe JDM (fact-check déterministe).
+def verify_claim(subject: str, relation: str, object: str,
+                 polarity: bool = True, effort: int = 0) -> dict:
+    """Vérifie un triplet factuel contre le graphe JDM (déterministe, sans LLM).
 
-    Renvoie un verdict structuré avec statut, confiance, évidence et explication.
-    PAS d'appel LLM — la décision est entièrement basée sur les données JDM.
+    DEUX RÉGIMES, choisis par `effort` — réfléchis bien à la question posée :
+
+    * **effort = 0 (CONTENANCE — défaut)** : « JDM CONTIENT-IL ce triplet ? ».
+      Lookup direct strict. Si le triplet exact n'est pas dans JDM → "unknown".
+      Utilise-le quand l'utilisateur demande si une information EST DANS JDM,
+      si JDM INCLUT / CONTIENT un fait. NE JAMAIS répondre « oui » à une telle
+      question parce qu'on a pu inférer le fait : contenir = l'avoir littéralement.
+
+    * **effort = 1** : « ce fait est-il VRAI / DÉDUCTIBLE selon JDM ? ».
+      Lookup direct d'abord ; si JDM est silencieux, le moteur d'inférence
+      (schémas noyau) tente de déduire ou réfuter le triplet. Utilise-le quand
+      la question est « est-ce vrai », « peut-on déduire », « fait émergent ».
+
+    * **effort = 2** : idem effort 1 avec la cascade d'inférence complète
+      (plus lent, plus de schémas).
+
+    Un verdict obtenu par inférence porte `inference_schema` (non nul) et son
+    `explanation` précise que JDM ne contient pas directement le triplet — la
+    déduction n'est jamais présentée comme de la contenance.
 
     Args:
-        subject:  terme source (ex. "baleine", "chat", "sang", verbe à l'infinitif).
-        relation: relation JDM (ex. "r_isa", "r_carac", "r_has_color", "r_has_part").
+        subject:  terme source (ex. "baleine", "chat", verbe à l'infinitif).
+        relation: relation JDM (ex. "r_isa", "r_carac", "r_has_part").
         object:   terme cible (ex. "poisson", "rouge", "roue").
         polarity: True pour affirmation, False pour négation ("ne ... pas").
+        effort:   0 contenance (défaut) · 1 + inférence noyau · 2 + inférence complète.
 
-    Statuts possibles :
-      - "supported"    : JDM contient le triplet (ou un proche via synonymie)
-      - "contradicted" : JDM contient une information incompatible
-                         (typiquement via r_isa-incompatible)
-      - "unknown"      : JDM ne dit rien → ne PAS interpréter comme faux
-
-    Renvoie {claim, status, confidence (0-1), explanation, evidence_for, evidence_against}.
-
-    Exemples :
-      verify_claim("baleine", "r_isa", "poisson")  → contradicted (mammifère incompatible)
-      verify_claim("sang", "r_has_color", "rouge") → supported (w=341)
-      verify_claim("xyzzy", "r_isa", "truc")       → unknown
+    Statuts : "supported" / "contradicted" / "unknown" (unknown ≠ faux).
+    Renvoie {claim, status, confidence, explanation, evidence_for,
+    evidence_against, inference_schema, inference_proof}.
     """
-    # Import local pour éviter une dépendance circulaire au chargement du module.
     from jdm_agent.factcheck import Claim
     from jdm_agent.factcheck.verifier import verify_claim as _verify
 
@@ -747,8 +756,36 @@ def verify_claim(subject: str, relation: str, object: str, polarity: bool = True
         text=f"{subject} | {relation} | {object}",
         subject=subject, relation=relation, object=object, polarity=polarity,
     )
-    verdict = _verify(c, claim)
+    verdict = _verify(c, claim, effort=int(effort))
     return verdict.model_dump(mode="json")
+
+
+@tool
+def infer(subject: str, relation: str, object: str, effort: int = 1) -> dict:
+    """Tente de DÉDUIRE un triplet par inférence dans le réseau JDM.
+
+    À utiliser quand on cherche explicitement à raisonner — « peut-on déduire
+    que… », « est-ce un fait émergent », inférence libre non couverte par une
+    vérification de claim factuelle. Pour vérifier une claim factuelle simple,
+    préfère `verify_claim` (qui regarde d'abord la contenance directe).
+
+    Cet outil NE consulte PAS le triplet direct : il enchaîne des schémas
+    d'inférence (relation inverse, implication, déduction par généralisation,
+    transitivité, élimination par classe, etc.) et renvoie la CHAÎNE DE PREUVE.
+
+    Args:
+        subject, relation, object: le triplet à inférer (relation = nom JDM r_xxx).
+        effort: 1 = schémas noyau (rapide) · 2 = cascade complète.
+
+    Renvoie {subject, relation, object, signed_weight (>0 vrai, <0 faux,
+    0 silence), fired_schema, proof [chaîne de triplets], confidence,
+    explanation, lookups_used}.
+    """
+    from jdm_agent.inference import infer as _infer
+
+    c = _client()
+    res = _infer(c, subject, relation, object, effort=int(effort))
+    return res.model_dump(mode="json")
 
 
 # ---------- Découverte ----------
@@ -878,8 +915,9 @@ ALL_TOOLS: list[StructuredTool] = [
     get_relations_of_type,
     get_relations_between,
     disambiguate,
-    # Fact-checking + annotations
+    # Fact-checking + inférence + annotations
     verify_claim,
+    infer,
     get_triplet_annotations,
     # Enrichissement
     detect_gaps,

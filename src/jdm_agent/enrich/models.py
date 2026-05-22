@@ -34,9 +34,22 @@ class Candidate(BaseModel):
     confidence: float = Field(0.0, ge=0.0, le=1.0)
     rationale: str = ""
     source: str = Field("unknown", description="LLM | inference | external")
-    # Suite à la validation :
+    annotation: str = Field(
+        "", description="Annotation sémantique suggérée (constitutif, "
+        "contrastif, ...) — vide si aucune")
+    # Validation STRUCTURELLE (déterministe, contenance) :
     validation_status: Optional[str] = None  # "ok" | "duplicate" | "unknown_term" | "inconsistent"
     validation_note: str = ""
+    # Consolidation SÉMANTIQUE par inférence (Phase 11) :
+    #   "consolidated"     — l'inférence confirme le triplet (→ soumission)
+    #   "not_consolidated" — silence de l'inférence (pas forcément faux)
+    #   "rejected"         — l'inférence réfute le triplet
+    consolidation_status: Optional[str] = None
+    consolidation_schema: Optional[str] = None
+    consolidation_explanation: str = ""
 
     def is_valid(self) -> bool:
         return self.validation_status in (None, "ok")
+
+    def is_consolidated(self) -> bool:
+        return self.consolidation_status == "consolidated"

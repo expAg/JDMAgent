@@ -1,23 +1,26 @@
-"""Vérifie une `Claim` contre le graphe JDM — déterministe, sans LLM.
+"""Vérifie une `Claim` contre le graphe JDM.
 
-Stratégie en cascade :
-  1. Cherche le triplet exact (subject, relation, object) via JDM.
-  2. Si présent avec poids ≥ seuil → SUPPORTED.
-  3. Sinon, cherche les synonymes de l'object — si l'un d'eux matche → SUPPORTED.
-  4. Sinon, pour r_isa spécifiquement : si le top hyperonyme de subject est
-     incompatible (via r_isa-incompatible) avec object → CONTRADICTED.
-  5. Sinon → UNKNOWN.
+Modèle « contenance vs inférence » (Phase 11), piloté par `effort` :
 
-La confiance est calibrée sur le poids du triplet trouvé (normalisé) ou
-sur la force de l'évidence contraire.
+  * **effort = 0** — CONTENANCE pure. On ne répond que sur ce que JDM
+    contient littéralement : le triplet exact `(subject, relation, object)`.
+    Absent = UNKNOWN. Aucune déduction. C'est la « vue du réseau ».
+  * **effort = 1** — direct d'abord ; si JDM est silencieux, repli sur le
+    moteur d'inférence (schémas noyau). « Le fait est-il vrai / déductible ? »
+  * **effort = 2** — idem avec la cascade d'inférence complète.
+
+Un verdict inféré est TOUJOURS marqué (`Verdict.inference_schema` non nul) et
+son explication précise que JDM ne contient pas directement le triplet — on
+ne confond jamais contenance et déduction.
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 from jdm_agent.client import JDMClient
 from jdm_agent.factcheck.models import Claim, Evidence, Status, Verdict
-
+from jdm_agent.inference import DEFAULT_MAX_DEPTH
 
 # Constante de calibration utilisée UNIQUEMENT pour normaliser la confiance via
 # `tanh(|w| / STRONG_SUPPORT_W)`. Pas un seuil de filtrage — un facteur d'échelle.
@@ -53,8 +56,7 @@ def _relations_from_by_type(client: JDMClient, subject: str, relation_name: str,
     """Helper : liste les triplets sortants de subject pour ce type de relation.
 
     Phase 9b : aucun seuil hardcodé. Si l'appelant ne précise pas min_weight,
-    on ne transmet pas le filtre à JDM (qui appliquera son défaut). Renvoie
-    tuples (name, w, rel_id).
+    on ne transmet pas le filtre à JDM. Renvoie tuples (name, w, rel_id).
     """
     rid = client.relation_type_id(relation_name)
     if rid is None:
@@ -76,21 +78,24 @@ def _relations_from_by_type(client: JDMClient, subject: str, relation_name: str,
     return out
 
 
-def verify_claim(client: JDMClient, claim: Claim) -> Verdict:
+def verify_claim(client: JDMClient, claim: Claim, *,
+                 effort: int = 0,
+                 budget: Optional[int] = None,
+                 max_depth: int = DEFAULT_MAX_DEPTH) -> Verdict:
     """Vérifie une claim atomique contre JDM. Pas d'appel LLM.
 
-    Cascade enrichie (Phase 9) :
-      1. Match direct positif (w > 0) → SUPPORTED ou CONTRADICTED selon polarity
-      2. Match direct NÉGATIF (w < 0) → polarité INVERSE (JDM dit explicitement non)
-      3. Pour r_isa : check r_isa-incompatible via top hyperonymes
-      4. Match via synonymes de l'object (positifs uniquement)
-      5. UNKNOWN
+    Args:
+        client: JDMClient.
+        claim: la claim à vérifier.
+        effort: 0 = contenance pure (triplet exact uniquement) ; 1 = repli
+            inférence noyau si JDM est silencieux ; 2 = inférence complète.
+        budget: plafond d'appels HTTP pour l'inférence (None = défaut par effort).
+        max_depth: profondeur max de l'inférence.
 
-    Pour les matches directs, les annotations du triplet (r_annotation_exception
-    notamment) sont remontées dans l'explication pour nuance.
+    Returns:
+        `Verdict`. Si le verdict vient de l'inférence, `inference_schema` est
+        renseigné et `inference_proof` détaille la chaîne de déduction.
     """
-    import math
-
     triples = _relations_from_by_type(client, claim.subject, claim.relation)
     if not triples and not client.relation_type_id(claim.relation):
         return Verdict(
@@ -98,7 +103,8 @@ def verify_claim(client: JDMClient, claim: Claim) -> Verdict:
             explanation=f"Relation inconnue dans JDM : {claim.relation!r}.",
         )
 
-    # 1) + 2) Match exact (signe positif OU négatif)
+    # --- 1) Lookup DIRECT : le triplet exact existe-t-il ? (signe ±) ----------
+    # C'est la « contenance » — la seule chose vraie à effort 0.
     direct_hit = None  # tuple (name, w, rel_id)
     for name, w, rid in triples:
         if _matches(name, claim.object):
@@ -111,15 +117,11 @@ def verify_claim(client: JDMClient, claim: Claim) -> Verdict:
 
     if direct_hit is not None:
         name, w, rid = direct_hit
-        # JDM dit OUI (w>0) ou NON (w<0) sur ce triplet.
         jdm_says_yes = w > 0
         claim_says_yes = claim.polarity
-
-        # SUPPORTED ssi JDM et la claim sont d'accord (oui-oui ou non-non)
         status = Status.SUPPORTED if (jdm_says_yes == claim_says_yes) else Status.CONTRADICTED
         conf = round(math.tanh(abs(w) / STRONG_SUPPORT_W), 3)
 
-        # Cherche les annotations (notamment r_annotation_exception)
         try:
             annotations = client.get_annotations_for_triplet(rid)
         except Exception:
@@ -128,7 +130,6 @@ def verify_claim(client: JDMClient, claim: Claim) -> Verdict:
         if annotations:
             tops = ", ".join(f"{a.value} (w={a.w:.0f})" for a in annotations[:3])
             annot_str = f" Annotations JDM : {tops}."
-        # Exceptions explicites : signal supplémentaire à mentionner
         exceptions = [a for a in annotations if a.kind == "exception"]
         if exceptions:
             exc_str = ", ".join(a.value for a in exceptions[:3])
@@ -147,45 +148,19 @@ def verify_claim(client: JDMClient, claim: Claim) -> Verdict:
             explanation=explanation,
         )
 
-    # 3) Pour r_isa : vérification d'incompatibilité AVANT la fallback synonymes.
-    if claim.relation == "r_isa":
-        # On filtre les triples sur w>0 pour le calcul d'incompatibilité
-        # (les hyperonymes négatifs ne servent pas à dériver incompatibilité)
-        positive_triples = [(n, w) for n, w, _ in triples if w > 0]
-        contradicted_evidence = _check_isa_contradiction(client, claim, positive_triples)
-        if contradicted_evidence:
-            return contradicted_evidence
+    # --- 2) Repli INFÉRENCE (effort >= 1) ------------------------------------
+    # Ne s'exécute QUE si le lookup direct est silencieux : l'inférence ne
+    # surcharge jamais une réponse de contenance.
+    if effort >= 1:
+        inferred = _verdict_from_inference(client, claim, effort, budget, max_depth)
+        if inferred is not None:
+            return inferred
 
-    # 4) Match via synonymes de l'object (folk-taxonomy fallback, positifs uniquement)
-    syn_id = client.relation_type_id("r_syn")
-    if syn_id is not None:
-        try:
-            # Phase 9b : pas de seuil, JDM décide.
-            syns_res = client.relations_from(claim.object, types_ids=[syn_id], limit=50)
-            syn_names = {n.name for n in syns_res.nodes}
-        except Exception:
-            syn_names = set()
-        for name, w, _rid in triples:
-            if name in syn_names and w > 0:
-                ev = _to_evidence(client, claim.subject, claim.relation, name, w)
-                import math
-                conf = round(math.tanh(w / STRONG_SUPPORT_W) * 0.85, 3)  # un peu décoté
-                verdict_status = Status.SUPPORTED if claim.polarity else Status.CONTRADICTED
-                return Verdict(
-                    claim=claim, status=verdict_status, confidence=conf,
-                    evidence_for=[ev] if claim.polarity else [],
-                    evidence_against=[] if claim.polarity else [ev],
-                    explanation=(
-                        f"JDM contient `{claim.subject} | {claim.relation} | {name}` "
-                        f"(w={w:.0f}), et {name!r} est synonyme de {claim.object!r}."
-                    ),
-                )
-
-    # 4) Inconnu — JDM ne contient ni le triplet ni de contradiction explicite
-    # Si on a vu des triplets pour ce type de relation mais pas notre object, c'est
-    # un signal faible de contradiction (ex: chat r_isa mammifère, pas chat r_isa poisson).
+    # --- 3) UNKNOWN ----------------------------------------------------------
+    # JDM ne contient pas le triplet et (effort 0) ou aucune inférence n'a
+    # conclu. Si beaucoup de triplets existent pour ce type, on les liste à
+    # titre INDICATIF (ne constitue pas une contradiction stricte).
     if triples and len(triples) >= 5:
-        # Le top des génériques peut servir d'evidence_against indicative.
         top_against = [
             _to_evidence(client, claim.subject, claim.relation, n, w)
             for n, w, _rid in sorted(triples, key=lambda x: -abs(x[1]))[:5]
@@ -206,54 +181,36 @@ def verify_claim(client: JDMClient, claim: Claim) -> Verdict:
     )
 
 
-def _check_isa_contradiction(client: JDMClient, claim: Claim,
-                              isa_triples: list) -> Optional[Verdict]:
-    """Pour une claim r_isa, cherche si JDM a une incompatibilité explicite.
+def _verdict_from_inference(client: JDMClient, claim: Claim, effort: int,
+                            budget: Optional[int], max_depth: int) -> Optional[Verdict]:
+    """Tente un verdict par inférence. Renvoie None si l'inférence est silencieuse.
 
-    Stratégie : pour chaque hyperonyme fort du subject (poids > 100), vérifie
-    s'il existe (top_hypernym, r_isa-incompatible, claim.object) — si oui,
-    contradiction forte.
+    Le verdict produit est toujours marqué (`inference_schema`) et son
+    explication précise que JDM ne contient pas directement le triplet.
     """
-    incomp_id = client.relation_type_id("r_isa-incompatible")
-    if incomp_id is None:
+    from jdm_agent.inference import infer
+
+    res = infer(client, claim.subject, claim.relation, claim.object,
+                effort=effort, budget=budget, max_depth=max_depth)
+    if res.is_silent:
         return None
 
-    # On scrute jusqu'à 30 hyperonymes (le bruit JDM type baleine→scie/homme
-    # peut noyer le vrai générique — mammifère est au rang 25 pour baleine).
-    # Chaque scan = 1 HTTP cached, donc ~30 appels max pour les cas durs ;
-    # une fois la contradiction trouvée, on arrête.
-    top_hypernyms = sorted(isa_triples, key=lambda x: -x[1])[:30]
-    for hyp_name, hyp_w in top_hypernyms:
-        # Phase 9b : pas de seuil hardcodé. On itère sur les top hyperonymes
-        # (positifs ; les négatifs sont déjà filtrés en amont par verify_claim
-        # qui passe `positive_triples` = w > 0 ici).
-        # Saute les noms refinement (avocat>X>Y) — ils n'auront pas de
-        # r_isa-incompatible directement attachée.
-        if ">" in hyp_name:
-            continue
-        try:
-            incomp = client.relations_from(hyp_name, types_ids=[incomp_id])
-            for r in incomp.relations:
-                # Le target d'une r_isa-incompatible doit matcher claim.object
-                idx = incomp.node_index()
-                node = idx.get(r.node2)
-                if node and _matches(node.name, claim.object):
-                    ev_for_other = _to_evidence(client, claim.subject, "r_isa", hyp_name, hyp_w)
-                    ev_incomp = _to_evidence(client, hyp_name, "r_isa-incompatible", node.name, r.w)
-                    import math
-                    conf = round(math.tanh((hyp_w + r.w) / (2 * STRONG_SUPPORT_W)), 3)
-                    return Verdict(
-                        claim=claim,
-                        status=Status.CONTRADICTED,
-                        confidence=conf,
-                        evidence_against=[ev_for_other, ev_incomp],
-                        explanation=(
-                            f"JDM contredit : `{claim.subject} | r_isa | {hyp_name}` "
-                            f"(w={hyp_w:.0f}) et `{hyp_name} | r_isa-incompatible | {claim.object}` "
-                            f"(w={r.w:.0f}). Donc `{claim.subject}` ne peut pas être un "
-                            f"`{claim.object}` (sauf polysémie)."
-                        ),
-                    )
-        except Exception:
-            continue
-    return None
+    proof_ev = [
+        Evidence(source=s.source, relation=s.relation, target=s.target, w=s.w)
+        for s in res.proof
+    ]
+    # res.is_true => JDM permet de déduire le triplet ; sinon il le réfute.
+    jdm_says_yes = res.is_true
+    status = Status.SUPPORTED if (jdm_says_yes == claim.polarity) else Status.CONTRADICTED
+    explanation = (
+        "JDM ne contient pas directement ce triplet — verdict obtenu par "
+        f"inférence. {res.explanation}"
+    )
+    return Verdict(
+        claim=claim, status=status, confidence=res.confidence,
+        evidence_for=proof_ev if status == Status.SUPPORTED else [],
+        evidence_against=proof_ev if status == Status.CONTRADICTED else [],
+        explanation=explanation,
+        inference_schema=res.fired_schema.value,
+        inference_proof=proof_ev,
+    )

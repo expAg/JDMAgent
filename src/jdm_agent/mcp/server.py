@@ -94,7 +94,17 @@ def build_server(client: JDMClient | None = None) -> FastMCP:
             "sens du mot », « je cherche les synonymes », etc. Les NOMS DE "
             "RELATIONS JDM (r_isa, r_anto, r_has_part, etc.) sont en revanche "
             "AUTORISÉS dans tes triplets — c'est de la terminologie "
-            "linguistique légitime."
+            "linguistique légitime.\n\n"
+            "7. CONTENANCE vs INFÉRENCE : distingue deux questions. "
+            "« JDM CONTIENT-IL / INCLUT-IL le fait X ? » → vérification en "
+            "contenance stricte (effort 0) : si le fait n'est pas littéralement "
+            "dans le graphe, réponds qu'il n'y est pas — NE JAMAIS dire « oui » "
+            "parce que tu as pu l'inférer. « Le fait X est-il VRAI / "
+            "DÉDUCTIBLE / émergent ? » → autorise l'inférence (effort 1 ou 2, "
+            "ou l'outil d'inférence dédié) : JDM cherche d'abord le fait, et "
+            "s'il est absent, tente de le déduire. Un résultat inféré doit "
+            "toujours être présenté comme une déduction (« on peut déduire "
+            "que… parce que… »), jamais comme un contenu direct de JDM."
         ),
     )
 

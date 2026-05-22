@@ -8,7 +8,7 @@ import respx
 from jdm_agent.client import JDMClient
 from jdm_agent.client.cache import DiskJSONCache
 from jdm_agent.enrich import Candidate, GapType, detect_gaps
-from jdm_agent.enrich.validators import validate_candidate
+from jdm_agent.enrich.validators import consolidate_candidate, validate_candidate
 
 
 BASE = "https://jdm-api.demo.lirmm.fr"
@@ -113,12 +113,36 @@ def test_validate_candidate_ok(client):
 
 
 @respx.mock
-def test_validate_candidate_inconsistent(client):
-    """r_isa contradicté par r_isa-incompatible → 'inconsistent', confidence réduite."""
+def test_validate_candidate_ok_without_direct_negation(client):
+    """Phase 11 : `validate_candidate` est en CONTENANCE pure (effort 0).
+
+    `baleine r_isa poisson` n'a PAS de triplet direct négatif dans ce mock
+    (l'incohérence n'apparaît que via inférence r_isa-incompatible) → la
+    validation structurelle conclut « ok » ; c'est la consolidation qui
+    réfutera (cf. test_consolidate_candidate_rejected).
+    """
     _meta_mocks()
     respx.get(f"{BASE}/v0/node_by_name/poisson").mock(return_value=httpx.Response(200, json={
         "id": 50, "name": "poisson", "type": 1, "w": 800,
     }))
+    # baleine r_isa → [mammifère] : aucun triplet direct baleine r_isa poisson.
+    respx.get(f"{BASE}/v0/relations/from/baleine").mock(return_value=httpx.Response(200, json={
+        "nodes": [
+            {"id": 10, "name": "baleine", "type": 1, "w": 100},
+            {"id": 20, "name": "mammifère", "type": 1, "w": 1000},
+        ],
+        "relations": [{"id": 1, "node1": 10, "node2": 20, "type": 6, "w": 300.0}],
+    }))
+    c = Candidate(term="baleine", relation="r_isa", target="poisson",
+                  confidence=0.9, source="llm")
+    out = validate_candidate(client, c)
+    assert out.validation_status == "ok"
+
+
+@respx.mock
+def test_consolidate_candidate_rejected(client):
+    """Phase 11 : `consolidate_candidate` réfute par inférence (r_isa-incompatible)."""
+    _meta_mocks()
     # baleine r_isa → [mammifère] avec w fort
     respx.get(f"{BASE}/v0/relations/from/baleine").mock(return_value=httpx.Response(200, json={
         "nodes": [
@@ -127,11 +151,7 @@ def test_validate_candidate_inconsistent(client):
         ],
         "relations": [{"id": 1, "node1": 10, "node2": 20, "type": 6, "w": 300.0}],
     }))
-    # Synonyme fallback de poisson vide
-    respx.get(f"{BASE}/v0/relations/from/poisson").mock(return_value=httpx.Response(200, json={
-        "nodes": [], "relations": [],
-    }))
-    # mammifère r_isa-incompatible poisson
+    # mammifère r_isa-incompatible poisson → réfutation
     respx.get(f"{BASE}/v0/relations/from/mammif%C3%A8re").mock(return_value=httpx.Response(200, json={
         "nodes": [
             {"id": 20, "name": "mammifère", "type": 1, "w": 1000},
@@ -141,6 +161,7 @@ def test_validate_candidate_inconsistent(client):
     }))
     c = Candidate(term="baleine", relation="r_isa", target="poisson",
                   confidence=0.9, source="llm")
-    out = validate_candidate(client, c)
-    assert out.validation_status == "inconsistent"
+    out = consolidate_candidate(client, c, effort=1)
+    assert out.consolidation_status == "rejected"
+    assert out.consolidation_schema == "isa_incompatible"
     assert out.confidence <= 0.1

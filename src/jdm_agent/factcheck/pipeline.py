@@ -15,16 +15,20 @@ def factcheck(
     client: Optional[JDMClient] = None,
     llm: Optional[Any] = None,
     claims: Optional[Iterable[Claim]] = None,
+    effort: int = 1,
 ) -> Report:
     """Vérifie les claims (extraites ou fournies) d'un texte contre JDM.
 
     Phase 9b : aucun seuil de filtrage exposé — JDM décide.
+    Phase 11 : `effort=1` par défaut — le fact-checking d'un texte cherche
+    d'abord si l'info est dans JDM, et si elle n'y est pas, l'infère.
 
     Args:
         text: le texte source (pour traçabilité dans le rapport).
         client: JDMClient. Créé par défaut.
         llm: LangChain ChatModel pour l'extraction. Inutile si `claims` est fourni.
         claims: claims pré-extraites (skip extraction). Si None, on appelle `llm`.
+        effort: 0 = contenance pure ; 1 = + inférence noyau ; 2 = inférence complète.
 
     Returns:
         `Report` avec un Verdict par claim.
@@ -36,7 +40,7 @@ def factcheck(
             raise ValueError("Fournis soit `claims` (claims pré-extraites), soit `llm` (extraction LLM).")
         claims = extract_claims(text, llm)
 
-    verdicts = [verify_claim(client, c) for c in claims]
+    verdicts = [verify_claim(client, c, effort=effort) for c in claims]
     return Report(text=text, verdicts=verdicts)
 
 
@@ -44,9 +48,10 @@ def factcheck_claims(
     claims: Iterable[Claim],
     *,
     client: Optional[JDMClient] = None,
+    effort: int = 1,
 ) -> Report:
     """Variante directe sans extraction : tu fournis déjà les claims."""
     if client is None:
         client = JDMClient()
-    verdicts = [verify_claim(client, c) for c in claims]
+    verdicts = [verify_claim(client, c, effort=effort) for c in claims]
     return Report(text="", verdicts=verdicts)

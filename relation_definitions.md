@@ -1060,3 +1060,35 @@ phase ultérieure comme outil séparé.
 
 Le système d'annotation décrit ici (`:r{id}` + relations 996/997/998) est
 **l'unique mécanisme** pour attacher de la sémantique meta à un triplet JDM.
+
+
+## 21. Moteur d'inference (Phase 11)
+
+Au-dela du lookup direct, jdm_agent embarque un moteur d'INFERENCE qui decide
+si un triplet (A, R, B) est vrai PAR DEDUCTION dans le graphe. Il renvoie un
+poids signe : > 0 vrai, < 0 faux/refute, 0 silence.
+
+Distinction fondamentale CONTENANCE vs INFERENCE :
+* CONTENANCE  -- "JDM contient-il A R B ?" : lookup direct strict. Absent = non.
+* INFERENCE   -- "A R B est-il vrai / deductible ?" : direct d'abord, puis
+  schemas de deduction si JDM est silencieux.
+
+Le parametre effort (verify_claim, infer) controle cela : 0 = contenance
+pure ; 1 = + inference noyau ; 2 = + inference complete. Un verdict infere est
+toujours marque comme tel et n'est jamais presente comme un contenu direct.
+
+Schemas d'inference (du moins cher au plus cher) :
+* guards            -- tautologie / contradiction (A == B)
+* prefix            -- composes prefixes (saucisse de Toulouse r_isa saucisse)
+* inverse           -- (B, R-1, A) repond pour (A, R, B)
+* implication       -- R impliquee par une relation plus specifique
+* isa_incompatible  -- REFUTATION via r_isa-incompatible
+* class_elim        -- REFUTATION : la classe de A nie R B
+* synonym_equiv     -- via un synonyme de l'objet
+* deduction_isa     -- A r_isa/r_syn G, G R B  (le plus rentable)
+* transitivity      -- A R X, X R B (relations transitives)
+* composition / double_isa / target_generic -- effort 2
+
+Le moteur est BORNE par un budget d'appels HTTP (silence propre si epuise).
+Les candidats d'enrichissement CONSOLIDES par inference sont exportes dans un
+fichier de soumission au format A|R|B|annotation.

@@ -56,7 +56,11 @@ def test_verify_supported_direct(client):
 
 @respx.mock
 def test_verify_contradicted_via_isa_incompatible(client):
-    """`baleine r_isa poisson` doit être CONTRADICTED via r_isa-incompatible."""
+    """`baleine r_isa poisson` → CONTRADICTED via r_isa-incompatible.
+
+    Phase 11 : l'incompatibilité est de l'INFÉRENCE — il faut effort >= 1
+    (à effort 0, contenance pure, ce serait UNKNOWN).
+    """
     _meta_mocks()
     respx.get(f"{BASE}/v0/relations/from/baleine").mock(return_value=httpx.Response(200, json={
         "nodes": [
@@ -84,8 +88,9 @@ def test_verify_contradicted_via_isa_incompatible(client):
     v = verify_claim(client, Claim(
         text="la baleine est un poisson",
         subject="baleine", relation="r_isa", object="poisson",
-    ))
+    ), effort=1)
     assert v.status == Status.CONTRADICTED
+    assert v.inference_schema == "isa_incompatible"
     assert any("mammifère" in e.target for e in v.evidence_against)
     assert v.confidence > 0.3
 

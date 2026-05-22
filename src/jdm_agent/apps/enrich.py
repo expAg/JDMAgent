@@ -20,7 +20,7 @@ from pathlib import Path
 
 from jdm_agent.client import JDMClient
 from jdm_agent.enrich import enrich
-from jdm_agent.enrich.pipeline import write_candidates_csv
+from jdm_agent.enrich.pipeline import write_candidates_csv, write_submission
 
 
 GREEN = "\033[92m"
@@ -44,11 +44,17 @@ def main() -> int:
                    help="Détecte les gaps sans demander de candidats au LLM.")
     p.add_argument("--no-validate", action="store_true",
                    help="Désactive la validation des candidats (plus rapide, moins fiable).")
+    p.add_argument("--consolidate", action="store_true",
+                   help="Consolide les candidats validés par INFÉRENCE dans le réseau JDM.")
+    p.add_argument("--inference-effort", type=int, default=1, choices=(1, 2),
+                   help="Effort du moteur d'inférence pour la consolidation (1 noyau, 2 complet).")
     p.add_argument("--provider", default=None)
     p.add_argument("--model", default=None)
     p.add_argument("--max-per-gap", type=int, default=10)
     p.add_argument("-o", "--output", default=None,
-                   help="Fichier CSV de sortie pour les candidats validés.")
+                   help="Fichier CSV de travail (tous les candidats annotés).")
+    p.add_argument("--submission-output", default=None,
+                   help="Fichier de soumission A|R|B|annotation (section consolidés d'abord).")
     args = p.parse_args()
 
     terms: list[str] = list(args.terms)
@@ -82,6 +88,8 @@ def main() -> int:
         check_asymmetries=not args.no_asymmetry,
         propose=not args.no_propose,
         validate=not args.no_validate,
+        consolidate=args.consolidate,
+        inference_effort=args.inference_effort,
         max_per_gap=args.max_per_gap,
     )
 
@@ -119,9 +127,27 @@ def main() -> int:
         if len(ok) > 30:
             print(f"  {GRAY}… {len(ok) - 30} autre(s){RESET}")
 
+        # Résumé consolidation (si demandée)
+        if args.consolidate:
+            cons = [c for c in candidates if c.is_consolidated()]
+            rej = [c for c in candidates if c.consolidation_status == "rejected"]
+            notc = [c for c in candidates if c.consolidation_status == "not_consolidated"]
+            print(f"\n=== Consolidation par inférence ===")
+            print(f"  {GREEN}consolidés      : {len(cons)}{RESET}")
+            print(f"  {YELLOW}non consolidés  : {len(notc)}{RESET}")
+            print(f"  {RED}réfutés         : {len(rej)}{RESET}")
+            for c in cons[:20]:
+                print(f"  {GREEN}✓ {c.term} | {c.relation} | {c.target}{RESET}")
+                print(f"     {GRAY}{c.consolidation_explanation[:140]}{RESET}")
+
     if args.output:
         write_candidates_csv(args.output, candidates)
         print(f"\n[csv] {len(candidates)} candidat(s) écrit(s) dans {args.output}",
+              file=sys.stderr)
+
+    if args.submission_output:
+        n = write_submission(args.submission_output, candidates)
+        print(f"[soumission] {n} candidat(s) consolidé(s) — fichier {args.submission_output}",
               file=sys.stderr)
 
     client.close()

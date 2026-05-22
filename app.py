@@ -155,29 +155,53 @@ CLAIM_RELATIONS = [
 ]
 
 
-def factcheck_one(subject: str, relation: str, object_: str) -> tuple[str, str]:
+# Régimes de vérification proposés à l'utilisateur (effort du moteur).
+EFFORT_CHOICES = {
+    "0 — Contenance (JDM contient-il ?)": 0,
+    "1 — + inférence (noyau)": 1,
+    "2 — + inférence (complète)": 2,
+}
+
+
+def factcheck_one(subject: str, relation: str, object_: str,
+                  effort_label: str) -> tuple[str, str]:
     if not (subject.strip() and object_.strip()):
         return "—", "Renseigne un sujet et un objet."
+    effort = EFFORT_CHOICES.get(effort_label, 0)
     c = get_client()
     claim = Claim(text=f"{subject} | {relation} | {object_}",
                   subject=subject.strip(), relation=relation, object=object_.strip())
     try:
-        v = verify_claim(c, claim)
+        v = verify_claim(c, claim, effort=effort)
     except Exception as e:
         return "—", f"Erreur : {e}"
 
     ICONS = {Status.SUPPORTED: "✅", Status.CONTRADICTED: "❌", Status.UNKNOWN: "❓"}
     icon = ICONS[v.status]
+    # Origine du verdict : contenance directe ou inférence.
+    if v.inference_schema:
+        origin = f"🧠 *Verdict obtenu par **inférence** (schéma `{v.inference_schema}`)*"
+    elif v.status != Status.UNKNOWN:
+        origin = "📦 *Verdict obtenu par **contenance directe** dans JDM*"
+    else:
+        origin = ""
     status_md = (f"## {icon} {v.status.value.upper()}\n\n"
+                 f"{origin}\n\n"
                  f"**Confiance** : {v.confidence:.2f}\n\n"
                  f"**Explication** : {v.explanation}")
 
     lines = []
-    if v.evidence_for:
+    # Chaîne de preuve de l'inférence (« oui/non parce que … »).
+    if v.inference_proof:
+        lines.append("**🔗 Chaîne de déduction**")
+        for e in v.inference_proof:
+            lines.append(f"- `{e.source} | {e.relation} | {e.target}` (w = {e.w:.0f})")
+        lines.append("")
+    if v.evidence_for and not v.inference_proof:
         lines.append("**✓ Évidences en faveur**")
         for e in v.evidence_for:
             lines.append(f"- `{e.source} | {e.relation} | {e.target}` (w = {e.w:.0f})")
-    if v.evidence_against:
+    if v.evidence_against and not v.inference_proof:
         lines.append("\n**✗ Évidences contraires**")
         for e in v.evidence_against:
             lines.append(f"- `{e.source} | {e.relation} | {e.target}` (w = {e.w:.0f})")
@@ -505,22 +529,29 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 fc_relation = gr.Dropdown(CLAIM_RELATIONS, value="r_isa", label="Relation")
                 fc_object = gr.Textbox(label="Objet / Cible", value="poisson",
                                        placeholder="ex: poisson, rouge, roue…")
+            fc_effort = gr.Radio(
+                choices=list(EFFORT_CHOICES.keys()),
+                value="0 — Contenance (JDM contient-il ?)",
+                label="Régime de vérification",
+                info="Contenance = JDM contient-il littéralement le triplet ? "
+                     "Inférence = peut-on le déduire du réseau si JDM est silencieux ?",
+            )
             fc_btn = gr.Button("Vérifier", variant="primary")
             fc_status = gr.Markdown()
             fc_evidence = gr.Markdown()
             fc_btn.click(factcheck_one,
-                         inputs=[fc_subject, fc_relation, fc_object],
+                         inputs=[fc_subject, fc_relation, fc_object, fc_effort],
                          outputs=[fc_status, fc_evidence])
             gr.Examples(
                 examples=[
-                    ["baleine", "r_isa", "poisson"],
-                    ["chat", "r_isa", "mammifère"],
-                    ["sang", "r_has_color", "rouge"],
-                    ["voiture", "r_has_part", "roue"],
-                    ["couteau", "r_telic_role", "couper"],
-                    ["saumon", "r_isa", "mammifère"],
+                    ["baleine", "r_isa", "poisson", "0 — Contenance (JDM contient-il ?)"],
+                    ["chat", "r_isa", "mammifère", "0 — Contenance (JDM contient-il ?)"],
+                    ["sang", "r_has_color", "rouge", "0 — Contenance (JDM contient-il ?)"],
+                    ["baleine", "r_isa", "poisson", "1 — + inférence (noyau)"],
+                    ["couteau", "r_telic_role", "couper", "1 — + inférence (noyau)"],
+                    ["saumon", "r_isa", "mammifère", "1 — + inférence (noyau)"],
                 ],
-                inputs=[fc_subject, fc_relation, fc_object],
+                inputs=[fc_subject, fc_relation, fc_object, fc_effort],
             )
 
         # ----- Tab 3: Sous-graphe (visualisation interactive) -----
