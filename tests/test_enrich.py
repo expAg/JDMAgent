@@ -30,10 +30,10 @@ def test_write_submission_only_consolidated(tmp_path):
     n = write_submission(fn, cands)
     assert n == 1
     content = fn.read_text(encoding="utf-8")
-    assert "a|r_isa|b" in content          # consolidé → écrit, avec explication
+    assert "a | r_isa | b" in content      # consolidé → écrit, format pipe espacé
     assert "< Oui" in content
-    assert "c|r_isa|d" not in content      # non consolidé → exclu
-    assert "e|r_isa|f" not in content      # réfuté → exclu
+    assert "c | r_isa | d" not in content  # non consolidé → exclu
+    assert "e | r_isa | f" not in content  # réfuté → exclu
     assert "REVOIR" not in content         # plus de section à-revoir
 
 

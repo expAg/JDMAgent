@@ -120,12 +120,12 @@ def write_submission(path: str | Path, candidates: Iterable[Candidate]) -> int:
     lines: list[str] = [
         f"# Soumission JeuxDeMots — {len(consolidated)} triplet(s) consolidé(s) "
         "par inférence dans le réseau.",
-        "# Format : terme|relation|cible|annotation < explication >",
+        "# Format : terme | relation | cible | annotation < explication >",
         "",
     ]
     for c in consolidated:
         expl = " ".join(c.consolidation_explanation.split())
-        lines.append(f"{c.term}|{c.relation}|{c.target}|{c.annotation} < {expl} >")
+        lines.append(f"{c.term} | {c.relation} | {c.target} | {c.annotation} < {expl} >")
 
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return len(consolidated)

@@ -765,8 +765,8 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
         (reprends `consolidation_explanation` renvoyé par la vérification).
         CE N'EST PAS l'annotation.
 
-    Chaque ligne écrite a EXACTEMENT ce format pipe :
-        term|relation|target|annotation < explanation >
+    Chaque ligne écrite a EXACTEMENT ce format pipe (espaces autour des `|`) :
+        term | relation | target | annotation < explanation >
 
     Args:
         triplets: liste de dicts {term, relation, target, annotation, explanation}.
@@ -792,7 +792,7 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
     return {
         "path": path, "count": n,
         "lines": [
-            f"{c.term}|{c.relation}|{c.target}|{c.annotation} < "
+            f"{c.term} | {c.relation} | {c.target} | {c.annotation} < "
             f"{' '.join(c.consolidation_explanation.split())} >"
             for c in cands
         ],
