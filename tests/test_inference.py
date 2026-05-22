@@ -48,6 +48,9 @@ def _make_client(data: dict[tuple[str, str], list[tuple[str, float]]]) -> MagicM
     c.decode_node_name.side_effect = lambda name, **kw: {
         "decoded": name, "is_refinement": False}
     c.get_annotations_for_triplet.side_effect = lambda rid: []
+    # Résolution de raffinement / existence — passe-plat pour le mock.
+    c.resolve_term.side_effect = lambda term: term
+    c.term_exists.side_effect = lambda name: True
     return c
 
 

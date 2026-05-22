@@ -136,6 +136,13 @@ def verify_claim(client: JDMClient, claim: Claim, *,
         `Verdict`. Si le verdict vient de l'inférence, `inference_schema` est
         renseigné et `inference_proof` détaille la chaîne de déduction.
     """
+    # Résout les formes « molles » de raffinement (avocat>juriste →
+    # avocat>116477>66699) pour que la requête tombe sur le bon nœud JDM.
+    rs = client.resolve_term(claim.subject)
+    ro = client.resolve_term(claim.object)
+    if rs != claim.subject or ro != claim.object:
+        claim = claim.model_copy(update={"subject": rs, "object": ro})
+
     triples = _relations_from_by_type(client, claim.subject, claim.relation)
     if not triples and not client.relation_type_id(claim.relation):
         return Verdict(

@@ -73,11 +73,28 @@ EXPLORE_RELATIONS = {
 }
 
 
+def _resolve_and_check(client, term: str) -> tuple[str, str]:
+    """Résout une forme molle de raffinement et vérifie l'existence du terme.
+
+    Renvoie (terme_résolu, message_erreur). `message_erreur` est non vide si
+    le terme est absent de JDM — l'UI affiche alors un message clair plutôt
+    que l'erreur serveur 500 brute renvoyée par l'API.
+    """
+    raw = (term or "").strip()
+    if not raw:
+        return raw, "Renseigne un terme."
+    resolved = client.resolve_term(raw)
+    if not client.term_exists(resolved):
+        return resolved, f"« {raw} » n'est pas connu de JeuxDeMots."
+    return resolved, ""
+
+
 def explore(term: str, relation_label: str, min_weight: float,
             limit: int, with_annotations: bool) -> tuple[pd.DataFrame, str]:
-    if not term.strip():
-        return pd.DataFrame(), "Renseigne un terme."
     c = get_client()
+    term, err = _resolve_and_check(c, term)
+    if err:
+        return pd.DataFrame(), err
     rel_name = EXPLORE_RELATIONS[relation_label]
     rid = c.relation_type_id(rel_name)
     if rid is None:
@@ -132,8 +149,10 @@ def disambiguate_term(term: str) -> tuple[pd.DataFrame, str]:
     if not term.strip():
         return pd.DataFrame(), "Renseigne un terme polysémique (avocat, souris, police, ...)."
     c = get_client()
+    if not c.term_exists(term.strip()):
+        return pd.DataFrame(), f"« {term.strip()} » n'est pas connu de JeuxDeMots."
     try:
-        senses = c.refinements_decoded(term)
+        senses = c.refinements_decoded(term.strip())
     except Exception as e:
         return pd.DataFrame(), f"Erreur : {e}"
     senses.sort(key=lambda s: -s.weight)
@@ -169,8 +188,15 @@ def factcheck_one(subject: str, relation: str, object_: str,
         return "—", "Renseigne un sujet et un objet."
     effort = EFFORT_CHOICES.get(effort_label, 0)
     c = get_client()
-    claim = Claim(text=f"{subject} | {relation} | {object_}",
-                  subject=subject.strip(), relation=relation, object=object_.strip())
+    # Résolution des raffinements + contrôle de présence dans JDM.
+    subj, err_s = _resolve_and_check(c, subject)
+    if err_s:
+        return "—", err_s
+    obj, err_o = _resolve_and_check(c, object_)
+    if err_o:
+        return "—", err_o
+    claim = Claim(text=f"{subj} | {relation} | {obj}",
+                  subject=subj, relation=relation, object=obj)
     try:
         v = verify_claim(c, claim, effort=effort, bypass_containment=bool(bypass))
     except Exception as e:
@@ -426,6 +452,10 @@ def viz_subgraph(term: str, depth: float,
     term = (term or "").strip()
     if not term:
         return "⚠️ Saisis un terme.", "", None
+    # Résolution raffinement + contrôle de présence dans JDM.
+    term, _err = _resolve_and_check(get_client(), term)
+    if _err:
+        return f"⚠️ {_err}", "", None
     rels = selected_relations if selected_relations else None
     d2_rels = selected_depth2_relations if selected_depth2_relations else None
     d3_rels = selected_depth3_relations if selected_depth3_relations else None

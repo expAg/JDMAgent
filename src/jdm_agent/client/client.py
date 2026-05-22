@@ -269,6 +269,77 @@ class JDMClient:
             ))
         return out
 
+    def term_exists(self, name: str) -> bool:
+        """True si le terme (ou raffinement) existe comme nœud JDM.
+
+        L'API JDM répond HTTP 500 pour un terme inconnu ; on convertit ça
+        en simple booléen pour ne pas exposer d'erreur serveur à l'UI.
+        """
+        try:
+            self.node_by_name(name)
+            return True
+        except Exception:
+            return False
+
+    def resolve_refinement(self, soft_name: str) -> Optional[str]:
+        """Traduit une forme « molle » de raffinement vers le nom brut JDM.
+
+        JDM nomme ses raffinements `terme>ID>ID` (IDs de nœuds). L'utilisateur,
+        lui, écrit la forme lisible — `avocat>juriste`, `avocat>personne>juriste`.
+        Cette méthode retrouve le nom brut correspondant en appariant les
+        indices textuels au chemin décodé de chaque raffinement.
+
+        Renvoie :
+            - le nom inchangé si `soft_name` est déjà brut (IDs numériques)
+              ou un terme simple sans `>` ;
+            - le nom brut JDM (`avocat>116477>66699`) si un raffinement
+              correspond ;
+            - None si le terme de base n'a aucun raffinement appariable.
+        """
+        if ">" not in soft_name:
+            return soft_name
+        parts = [p.strip() for p in soft_name.split(">")]
+        base = parts[0]
+        hints = [p for p in parts[1:] if p]
+        if not hints:
+            return base
+        # Déjà brut : tous les segments après le terme sont des IDs numériques.
+        if all(h.isdigit() for h in hints):
+            return soft_name
+        try:
+            refs = self.refinements_decoded(base)
+        except Exception:
+            return None
+
+        def _n(s: str) -> str:
+            return s.strip().lower()
+
+        hint_n = [_n(h) for h in hints]
+        best_name: Optional[str] = None
+        best_score = 0
+        for r in refs:
+            path_n = [_n(p) for p in r.path[1:]]   # segments hors terme de base
+            decoded_n = _n(r.decoded)
+            score = 0
+            for h in hint_n:
+                if any(h in p or p in h for p in path_n) or h in decoded_n:
+                    score += 1
+            if score > best_score:
+                best_score = score
+                best_name = r.name
+        return best_name if best_score > 0 else None
+
+    def resolve_term(self, term: str) -> str:
+        """Normalise un terme pour la requête : résout une forme molle de
+        raffinement si possible, sinon renvoie le terme tel quel.
+
+        Sans `>` dans le terme : aucun appel HTTP, renvoi immédiat.
+        """
+        if ">" not in term:
+            return term
+        resolved = self.resolve_refinement(term)
+        return resolved if resolved else term
+
     # ---------- Annotations (Phase 9) ----------
 
     # Mapping id de relation d'annotation → 'kind' lisible exposé au LLM
