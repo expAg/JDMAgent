@@ -698,10 +698,17 @@ def validate_candidate(term: str, relation: str, target: str,
     "consolidated"). La seule validation structurelle « ok » NE SUFFIT PAS —
     ne déclare jamais un candidat « prêt » sans consolidation.
 
+    POLYSÉMIE : si le terme OU la cible a plusieurs sens (avocat, souris,
+    police, chat, livre, sens, vol, glace, …), DÉSAMBIGUÏSE d'abord toi-même
+    (`disambiguate`) et passe ici le `sense_id` du raffinement que TU as
+    choisi (forme brute type `avocat>116477>66699`), pas la forme générique
+    « avocat ». La consolidation utilisera ce sens raffiné tel quel — c'est
+    TA décision sémantique, pas celle de l'outil.
+
     Args:
-        term:     terme source.
+        term:     terme source (ou son `sense_id` raffiné si polysémique).
         relation: relation JDM (r_xxx).
-        target:   terme cible proposé.
+        target:   terme cible (ou son `sense_id` raffiné si polysémique).
         inference_effort: effort du moteur d'inférence pour la consolidation
                           (1 = noyau, 2 = complet).
 
