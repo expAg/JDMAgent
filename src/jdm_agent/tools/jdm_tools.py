@@ -280,6 +280,13 @@ def get_relations_of_type(
     r_against, r_sentiment, r_has_conseq, r_has_causatif, r_can_eat, etc.
     (180+ types — voir relation_definitions.md).
 
+    🔑 USAGE OBLIGATOIRE EN FLUX D'ENRICHISSEMENT : avant de proposer des
+    triplets candidats pour un couple (term, relation), tu DOIS appeler
+    ce tool en PREMIER pour récupérer ce qui existe déjà — c'est ta liste
+    d'exclusion. Tu n'as alors plus qu'à proposer HORS de cette liste.
+    Sans ce pré-fetch, tu gaspilles des appels à `validate_candidate` sur
+    des triplets déjà présents (verdict "duplicate" = appel raté).
+
     Args:
         term: le terme source ou cible.
         relation_name: nom technique de la relation (commence par "r_", ex. "r_lieu").
@@ -694,6 +701,14 @@ def detect_gaps(
 def validate_candidate(term: str, relation: str, target: str,
                        inference_effort: int = 1) -> dict:
     """Vérifie COMPLÈTEMENT un triplet candidat proposé pour enrichir JDM.
+
+    ⚠️ PRÉREQUIS OBLIGATOIRE — AVANT d'appeler cet outil pour un (term,
+    relation), tu DOIS avoir déjà appelé `get_relations_of_type(term,
+    relation)` pour récupérer la liste DÉJÀ présente dans JDM, et tu ne
+    proposes ici que des cibles HORS de cette liste. Si tu obtiens un
+    statut "duplicate" à ce stade, c'est que tu as triché : tu as proposé
+    sans pré-fetcher. Pré-fetch d'abord, proposition ensuite — chaque
+    appel à cet outil sans pré-fetch préalable est un gaspillage.
 
     Fait TOUT le contrôle en UN seul appel — ne t'arrête jamais à mi-chemin :
 
