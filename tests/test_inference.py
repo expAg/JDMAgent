@@ -137,19 +137,6 @@ def test_hyponym_propagation():
     assert res.fired_schema == FiredSchema.HYPONYM_PROP
 
 
-def test_assoc_bridge():
-    # cuisine r_but nourrir ; nourrir r_associated manger ⟹ cuisine r_but manger
-    c = _make_client({
-        ("cuisine", "r_but"): [("nourrir", 52)],
-        ("nourrir", "r_associated"): [("manger", 145)],
-    })
-    res = infer(c, "cuisine", "r_but", "manger", effort=2)
-    assert res.is_true
-    assert res.fired_schema == FiredSchema.ASSOC_BRIDGE
-    # Schéma lâche → confiance honnêtement décotée.
-    assert res.confidence < 0.5
-
-
 def test_antonym_contrast_refutation():
     # feu r_carac chaud ; froid r_anto chaud ⟹ feu r_carac froid réfuté
     c = _make_client({

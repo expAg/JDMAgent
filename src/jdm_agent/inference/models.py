@@ -28,7 +28,6 @@ class FiredSchema(str, Enum):
     COMPOSITION      = "composition"         # A R2 C, C R3 B ⟹ A R B
     PREFIX           = "prefix"              # préfixe lexical (saucisse de Toulouse)
     HYPONYM_PROP     = "hyponym_propagation" # A R H, H r_isa B ⟹ A R B
-    ASSOC_BRIDGE     = "assoc_bridge"        # A R T, T ≈ B (synonyme / associé)
     ANTONYM_CONTRAST = "antonym_contrast"    # réfutation : A R X, X r_anto B
     COHYPONYM        = "cohyponym"           # réfutation : A et B cohyponymes
     GEO_PROPAGATION  = "geo_propagation"     # A r_lieu L, L r_holo B ⟹ A r_lieu B
