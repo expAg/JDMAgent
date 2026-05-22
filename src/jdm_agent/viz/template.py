@@ -188,11 +188,12 @@ function computeHidden() {
   nodes.update(nodes.getIds().map(id => ({ id, hidden: !!hidden[id] })));
 }
 
-// applyFilters() = recalcul des masques + RE-CALCUL DES POSITIONS (physique).
+// applyFilters() = recalcul des masques uniquement. On NE relance PAS la
+// physique : sur les gros graphes la re-stabilisation prenait plusieurs
+// secondes à chaque clic. Les nœuds gardent leur position ; seuls les
+// drapeaux `hidden` changent (affichage instantané).
 function applyFilters() {
   computeHidden();
-  network.setOptions({ physics: { enabled: true } });
-  network.stabilize();
 }
 
 function toggleLowDegree() {
