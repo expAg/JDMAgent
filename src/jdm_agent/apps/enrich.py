@@ -48,13 +48,18 @@ def main() -> int:
                    help="Consolide les candidats validés par INFÉRENCE dans le réseau JDM.")
     p.add_argument("--inference-effort", type=int, default=1, choices=(1, 2),
                    help="Effort du moteur d'inférence pour la consolidation (1 noyau, 2 complet).")
+    p.add_argument("--min-coverage", type=int, default=3,
+                   help="Une relation ayant < N triplets positifs est signalée comme "
+                        "gap. Monter pour enrichir aussi les relations bien fournies "
+                        "(défaut 3 → relations à 3+ entrées ignorées).")
     p.add_argument("--provider", default=None)
     p.add_argument("--model", default=None)
     p.add_argument("--max-per-gap", type=int, default=10)
     p.add_argument("-o", "--output", default=None,
                    help="Fichier CSV de travail (tous les candidats annotés).")
     p.add_argument("--submission-output", default=None,
-                   help="Fichier de soumission A|R|B|annotation (section consolidés d'abord).")
+                   help="Fichier de soumission : UNIQUEMENT les triplets consolidés "
+                        "par inférence (force --consolidate).")
     args = p.parse_args()
 
     terms: list[str] = list(args.terms)
@@ -79,7 +84,12 @@ def main() -> int:
             print(f"[erreur] init LLM : {e}", file=sys.stderr)
             return 2
 
-    print(f"[enrich] {len(terms)} terme(s), relations={target_relations or 'standard'}", file=sys.stderr)
+    # Une soumission n'a de sens que consolidée → --submission-output force
+    # la consolidation systématique de tous les candidats validés.
+    do_consolidate = args.consolidate or bool(args.submission_output)
+
+    print(f"[enrich] {len(terms)} terme(s), relations={target_relations or 'standard'}, "
+          f"min_coverage={args.min_coverage}, consolidate={do_consolidate}", file=sys.stderr)
     gaps, candidates = enrich(
         terms,
         client=client,
@@ -88,9 +98,10 @@ def main() -> int:
         check_asymmetries=not args.no_asymmetry,
         propose=not args.no_propose,
         validate=not args.no_validate,
-        consolidate=args.consolidate,
+        consolidate=do_consolidate,
         inference_effort=args.inference_effort,
         max_per_gap=args.max_per_gap,
+        min_coverage=args.min_coverage,
     )
 
     # Résumé gaps
@@ -128,7 +139,7 @@ def main() -> int:
             print(f"  {GRAY}… {len(ok) - 30} autre(s){RESET}")
 
         # Résumé consolidation (si demandée)
-        if args.consolidate:
+        if do_consolidate:
             cons = [c for c in candidates if c.is_consolidated()]
             rej = [c for c in candidates if c.consolidation_status == "rejected"]
             notc = [c for c in candidates if c.consolidation_status == "not_consolidated"]

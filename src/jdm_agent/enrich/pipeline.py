@@ -24,6 +24,7 @@ def enrich(
     consolidate: bool = False,
     inference_effort: int = 1,
     max_per_gap: int = 10,
+    min_coverage: int = 3,
 ) -> tuple[list[Gap], list[Candidate]]:
     """Détecte les gaps des termes et (optionnellement) propose des candidats.
 
@@ -38,6 +39,10 @@ def enrich(
         consolidate: consolidation par INFÉRENCE des candidats validés (coût HTTP).
         inference_effort: effort du moteur d'inférence pour la consolidation (1 ou 2).
         max_per_gap: nombre max de candidats demandés au LLM par gap.
+        min_coverage: une relation ayant STRICTEMENT MOINS de `min_coverage`
+            triplets positifs est signalée (MISSING si 0, LOW_COVERAGE sinon).
+            Au-delà, la relation est considérée couverte. Monter cette valeur
+            pour enrichir aussi des relations déjà bien fournies.
 
     Returns:
         (gaps, candidates) — chaque candidate est annotée (validation +
@@ -50,7 +55,8 @@ def enrich(
     for term in terms:
         gaps.extend(detect_gaps(client, term,
                                 target_relations=target_relations,
-                                check_asymmetries=check_asymmetries))
+                                check_asymmetries=check_asymmetries,
+                                min_to_consider=min_coverage))
 
     candidates: list[Candidate] = []
     if propose:
@@ -93,53 +99,33 @@ def write_candidates_csv(path: str | Path, candidates: Iterable[Candidate]) -> N
             })
 
 
-def write_submission(path: str | Path, candidates: Iterable[Candidate], *,
-                     only_consolidated: bool = False) -> int:
-    """Écrit le fichier de soumission JDM au format `A|R|B|annotation`.
+def write_submission(path: str | Path, candidates: Iterable[Candidate]) -> int:
+    """Écrit le fichier de soumission JDM — UNIQUEMENT les triplets consolidés.
 
-    Un seul fichier, deux sections :
-      * CONSOLIDÉS : candidats confirmés par inférence — chaque ligne porte
-        une explication ``term|relation|target|annotation < explication >``.
-      * À REVOIR : candidats proposés, structurellement valides, non réfutés
-        mais non consolidés (« pas forcément faux ») — ``term|relation|target|annotation``.
+    Le fichier ne contient QUE les candidats confirmés par inférence
+    (`consolidation_status == "consolidated"`) et structurellement valides.
+    Les candidats non consolidés (silence de l'inférence) ou réfutés ne sont
+    PAS écrits : un fichier de soumission doit être propre et directement
+    soumettable.
 
-    Args:
-        path: chemin du fichier de soumission.
-        candidates: candidats (idéalement passés par validate + consolidate).
-        only_consolidated: si True, n'écrit que la section CONSOLIDÉS.
+    Format d'une ligne : ``terme|relation|cible|annotation < explication >``
+    où l'explication est la chaîne d'inférence qui justifie le triplet.
 
     Returns:
-        Le nombre de candidats consolidés écrits.
+        Le nombre de triplets consolidés écrits.
     """
-    cands = list(candidates)
-    # Section soumission : on n'écrit QUE des candidats structurellement
-    # valides (ni doublon, ni terme inconnu, ni nié directement).
-    consolidated = [c for c in cands if c.is_consolidated() and c.is_valid()]
-    a_revoir = [
-        c for c in cands
-        if c.is_valid() and not c.is_consolidated()
-        and c.consolidation_status != "rejected"
+    consolidated = [
+        c for c in candidates if c.is_consolidated() and c.is_valid()
     ]
-
     lines: list[str] = [
-        "# Soumission JeuxDeMots — triplets candidats au format A|R|B|annotation",
-        "# Généré par jdm_agent.enrich. L'API JDM étant en lecture seule, ce",
-        "# fichier est un point d'entrée pour une contribution manuelle/modérée.",
+        f"# Soumission JeuxDeMots — {len(consolidated)} triplet(s) consolidé(s) "
+        "par inférence dans le réseau.",
+        "# Format : terme|relation|cible|annotation < explication >",
         "",
-        f"## CONSOLIDÉS ({len(consolidated)}) — confirmés par inférence dans le réseau",
     ]
     for c in consolidated:
         expl = " ".join(c.consolidation_explanation.split())
         lines.append(f"{c.term}|{c.relation}|{c.target}|{c.annotation} < {expl} >")
-
-    if not only_consolidated:
-        lines += [
-            "",
-            f"## À REVOIR ({len(a_revoir)}) — proposés, non réfutés, non consolidés "
-            "(pas forcément faux)",
-        ]
-        for c in a_revoir:
-            lines.append(f"{c.term}|{c.relation}|{c.target}|{c.annotation}")
 
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return len(consolidated)

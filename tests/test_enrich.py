@@ -7,8 +7,34 @@ import respx
 
 from jdm_agent.client import JDMClient
 from jdm_agent.client.cache import DiskJSONCache
-from jdm_agent.enrich import Candidate, GapType, detect_gaps
+from jdm_agent.enrich import Candidate, GapType, detect_gaps, write_submission
 from jdm_agent.enrich.validators import consolidate_candidate, validate_candidate
+
+
+def test_write_submission_only_consolidated(tmp_path):
+    """Le fichier de soumission ne contient QUE les triplets consolidés —
+    ni les non-consolidés, ni les réfutés, ni de section « À REVOIR »."""
+    cands = [
+        Candidate(term="a", relation="r_isa", target="b", confidence=0.8,
+                  source="llm", validation_status="ok",
+                  consolidation_status="consolidated",
+                  consolidation_explanation="Oui — déduit par inférence : a r_isa x ; x r_isa b"),
+        Candidate(term="c", relation="r_isa", target="d", confidence=0.5,
+                  source="llm", validation_status="ok",
+                  consolidation_status="not_consolidated"),
+        Candidate(term="e", relation="r_isa", target="f", confidence=0.1,
+                  source="llm", validation_status="ok",
+                  consolidation_status="rejected"),
+    ]
+    fn = tmp_path / "soumission.txt"
+    n = write_submission(fn, cands)
+    assert n == 1
+    content = fn.read_text(encoding="utf-8")
+    assert "a|r_isa|b" in content          # consolidé → écrit, avec explication
+    assert "< Oui" in content
+    assert "c|r_isa|d" not in content      # non consolidé → exclu
+    assert "e|r_isa|f" not in content      # réfuté → exclu
+    assert "REVOIR" not in content         # plus de section à-revoir
 
 
 BASE = "https://jdm-api.demo.lirmm.fr"
