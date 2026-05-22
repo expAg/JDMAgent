@@ -98,6 +98,64 @@ STRONG_SUPPORT_W: float = 100.0
 DEFAULT_MAX_DEPTH: int = 2
 DEFAULT_TOP_K: int = 8
 
+
+# --- Rendu en langage naturel ----------------------------------------------
+
+#: Traduction d'une relation JDM en locution française, pour rendre les
+#: chaînes d'inférence lisibles (« le moineau est un type d'oiseau ») plutôt
+#: que codées (« moineau r_isa oiseau »).
+RELATION_PHRASES: dict[str, str] = {
+    "r_isa": "est un type de",
+    "r_hypo": "a pour exemple",
+    "r_syn": "est synonyme de",
+    "r_anto": "est le contraire de",
+    "r_has_part": "a pour partie",
+    "r_holo": "fait partie de",
+    "r_carac": "a pour caractéristique",
+    "r_carac-1": "caractérise",
+    "r_lieu": "se situe dans",
+    "r_lieu-1": "est un lieu pour",
+    "r_can_eat": "peut manger",
+    "r_agent": "fait l'action de",
+    "r_agent-1": "est fait par",
+    "r_patient": "s'applique à",
+    "r_patient-1": "subit l'action de",
+    "r_instr": "utilise comme instrument",
+    "r_instr-1": "est l'instrument de",
+    "r_telic_role": "sert à",
+    "r_domain": "relève du domaine de",
+    "r_domain-1": "a pour terme du domaine",
+    "r_has_conseq": "a pour conséquence",
+    "r_has_causatif": "a pour cause",
+    "r_associated": "est associé à",
+    "r_isa-incompatible": "est incompatible avec",
+    "r_has_color": "a pour couleur",
+    "r_make": "produit",
+    "r_but": "a pour but",
+    "r_sentiment": "évoque le sentiment de",
+}
+
+#: Étiquette humaine du schéma d'inférence (au lieu du code interne).
+SCHEMA_LABELS: dict[str, str] = {
+    "tautology": "trivialement",
+    "contradiction": "par contradiction",
+    "inverse": "par la relation inverse",
+    "implication": "par implication",
+    "synonym_equiv": "via un synonyme",
+    "isa_incompatible": "par incompatibilité de catégorie",
+    "class_elimination": "par héritage de catégorie",
+    "deduction_isa": "par généralisation",
+    "transitivity": "par transitivité",
+    "geo_propagation": "par contenance géographique",
+    "hyponym_propagation": "par cas particulier",
+    "composition": "par composition de relations",
+    "target_generic": "via un générique de la cible",
+    "double_isa": "par double généralisation",
+    "prefix": "par préfixe lexical",
+    "antonym_contrast": "par contraste antonymique",
+    "cohyponym": "par cohyponymie",
+}
+
 #: Budget d'appels HTTP par inférence, selon l'effort. Généreux mais borné :
 #: tous les appels passent par le cache disque de JDMClient — la 1re inférence
 #: sur un terme froid prend quelques secondes, les suivantes sont instantanées.

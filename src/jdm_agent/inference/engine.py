@@ -23,6 +23,8 @@ from jdm_agent.inference.constants import (
     IMPLICATION_MAP,
     INVERSE_RELATIONS,
     REFUTATION_SCAN,
+    RELATION_PHRASES,
+    SCHEMA_LABELS,
     STRONG_SUPPORT_W,
     TRANSITIVE_RELATIONS,
 )
@@ -99,9 +101,36 @@ SCHEMA_CONFIDENCE: dict[FiredSchema, float] = {
 }
 
 
-def _fmt_step(s: ProofStep) -> str:
-    base = f"{s.source} {s.relation} {s.target} (w={s.w:.0f})"
-    return f"{base} [{s.note}]" if s.note else base
+# Mots de négation par premier mot de la locution (rendu naturel).
+_NEG_FIRST: dict[str, str] = {
+    "est": "n'est", "a": "n'a", "peut": "ne peut", "fait": "ne fait",
+    "sert": "ne sert", "se": "ne se", "subit": "ne subit",
+    "utilise": "n'utilise", "relève": "ne relève", "caractérise": "ne caractérise",
+    "produit": "ne produit", "évoque": "n'évoque",
+}
+
+
+def _negate_phrase(phrase: str) -> str:
+    """Met une locution relationnelle à la forme négative (rendu naturel)."""
+    words = phrase.split(" ", 1)
+    first, rest = words[0], (words[1] if len(words) > 1 else "")
+    neg = _NEG_FIRST.get(first, "ne " + first)
+    return f"{neg} pas {rest}".strip()
+
+
+def _natural_chain(proof: list[ProofStep]) -> str:
+    """Rend la chaîne de preuve en français lisible — pas de codes r_xxx.
+
+    Ex. [moineau r_isa oiseau ; oiseau r_can_eat graine] →
+        « moineau » est un type d'« oiseau », et « oiseau » peut manger « graine »
+    """
+    parts: list[str] = []
+    for s in proof:
+        phrase = RELATION_PHRASES.get(s.relation, f"est en relation ({s.relation}) avec")
+        if s.w < 0:
+            phrase = _negate_phrase(phrase)
+        parts.append(f"« {s.source} » {phrase} « {s.target} »")
+    return ", et ".join(parts)
 
 
 def _make_result(ctx: _Ctx, weight: float, schema: FiredSchema,
@@ -123,13 +152,13 @@ def _make_result(ctx: _Ctx, weight: float, schema: FiredSchema,
         * consensus_factor,
     ), 3)
     if explanation is None:
-        chain = " ; ".join(_fmt_step(s) for s in proof)
-        verdict = "Oui" if weight > 0 else "Non"
-        kind = "déduit" if weight > 0 else "réfuté"
-        extra = f" — {consensus} chemins concordants" if consensus > 1 else ""
-        explanation = (
-            f"{verdict} — {kind} par inférence (schéma {schema.value}) : {chain}{extra}"
-        )
+        # Explication en langage naturel : chaîne de raisonnement lisible,
+        # sans codes de relations (« r_syn »), avec le schéma en clair.
+        chain = _natural_chain(proof)
+        label = SCHEMA_LABELS.get(schema.value, schema.value)
+        verdict = "Oui, déductible" if weight > 0 else "Non, réfuté"
+        extra = f", {consensus} chemins concordants" if consensus > 1 else ""
+        explanation = f"{verdict} ({label}{extra}) : {chain}."
     return InferenceResult(
         subject=ctx.subject, relation=ctx.relation, object=ctx.object,
         signed_weight=float(weight), fired_schema=schema, proof=proof,

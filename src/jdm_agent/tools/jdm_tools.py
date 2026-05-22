@@ -748,6 +748,57 @@ def validate_candidate(term: str, relation: str, target: str,
     return out
 
 
+@tool
+def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt") -> dict:
+    """Écrit le fichier de soumission JDM (.txt) au format pipe.
+
+    À utiliser à la FIN du flux d'enrichissement, avec UNIQUEMENT les triplets
+    dont la vérification de candidat a renvoyé `ready_for_submission = true`.
+
+    Chaque triplet est un dict à champs SÉPARÉS et DISTINCTS — ne les confonds
+    pas :
+      - "term", "relation", "target" : le triplet (obligatoires).
+      - "annotation" : tag sémantique OPTIONNEL de la nature du triplet
+        (constitutif, contrastif, probable, incertain, …). Laisser "" si tu
+        n'en as pas. CE N'EST PAS l'explication.
+      - "explanation" : la justification en langage naturel de la déduction
+        (reprends `consolidation_explanation` renvoyé par la vérification).
+        CE N'EST PAS l'annotation.
+
+    Chaque ligne écrite a EXACTEMENT ce format pipe :
+        term|relation|target|annotation < explanation >
+
+    Args:
+        triplets: liste de dicts {term, relation, target, annotation, explanation}.
+        path: chemin du fichier .txt de sortie (défaut : soumission_jdm.txt).
+
+    Renvoie {path, count, lines} — count = nombre de lignes écrites.
+    """
+    from jdm_agent.enrich import Candidate
+    from jdm_agent.enrich.pipeline import write_submission as _write_sub
+
+    cands: list = []
+    for t in triplets:
+        if not (t.get("term") and t.get("relation") and t.get("target")):
+            continue
+        cands.append(Candidate(
+            term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
+            annotation=str(t.get("annotation") or ""),
+            consolidation_explanation=str(t.get("explanation") or ""),
+            confidence=0.7, source="agent",
+            validation_status="ok", consolidation_status="consolidated",
+        ))
+    n = _write_sub(path, cands)
+    return {
+        "path": path, "count": n,
+        "lines": [
+            f"{c.term}|{c.relation}|{c.target}|{c.annotation} < "
+            f"{' '.join(c.consolidation_explanation.split())} >"
+            for c in cands
+        ],
+    }
+
+
 # ---------- Vérification de claims (fact-checking) ----------
 
 @tool
@@ -965,6 +1016,7 @@ ALL_TOOLS: list[StructuredTool] = [
     # Enrichissement
     detect_gaps,
     validate_candidate,
+    write_submission_file,
     list_relation_types,
     # Visualisation
     build_subgraph_visualization,
