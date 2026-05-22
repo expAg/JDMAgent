@@ -52,6 +52,16 @@ TRANSITIVE_RELATIONS: frozenset[str] = frozenset({
     "r_lieu", "r_lieu-1", "r_has_conseq", "r_syn",
 })
 
+#: Nœuds « hubs » trop génériques : on n'enchaîne PAS la transitivité à
+#: travers eux. Ex. « lionne r_has_part corps » + « corps r_has_part
+#: prostate » donnerait à tort « lionne r_has_part prostate » — un corps a
+#: les parties de TOUS les corps, la transitivité y sur-génère massivement.
+GENERIC_HUBS: frozenset[str] = frozenset({
+    "corps", "corps humain", "organisme", "être vivant", "être",
+    "individu", "objet", "chose", "entité", "truc", "machin",
+    "ensemble", "tout", "élément", "partie",
+})
+
 
 # --- Implication ------------------------------------------------------------
 

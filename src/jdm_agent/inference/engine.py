@@ -20,6 +20,7 @@ from jdm_agent.inference.constants import (
     COMPOSITION_MAP,
     DEFAULT_MAX_DEPTH,
     DEFAULT_TOP_K,
+    GENERIC_HUBS,
     IMPLICATION_MAP,
     INVERSE_RELATIONS,
     REFUTATION_SCAN,
@@ -230,13 +231,19 @@ def _schema_deduction_isa(ctx: _Ctx) -> InferenceResult | None:
 
 
 def _schema_transitivity(ctx: _Ctx) -> InferenceResult | None:
-    """Transitivité (relations transitives) : `A R X` ∧ `X R B` ⟹ `A R B`."""
+    """Transitivité (relations transitives) : `A R X` ∧ `X R B` ⟹ `A R B`.
+
+    On saute les intermédiaires « hubs » trop génériques (corps, organisme…) :
+    enchaîner via eux sur-génère (lionne r_has_part corps r_has_part prostate).
+    """
     if ctx.relation not in TRANSITIVE_RELATIONS:
         return None
     mids = topk_positive(_out(ctx, ctx.subject, ctx.relation), ctx.top_k)
     for mname, mw, _rid in mids:
         if norm(mname) in (norm(ctx.subject), norm(ctx.object)):
             continue
+        if norm(mname) in GENERIC_HUBS:
+            continue  # hub universel — transitivité non fiable
         w = _ew(ctx, mname, ctx.relation, ctx.object)
         if w > 0:
             proof = [
@@ -283,11 +290,14 @@ def _schema_class_elim(ctx: _Ctx) -> InferenceResult | None:
     un hyperonyme générique comme `chat r_has_part pénis = +72`).
     """
     hyps = topk_positive(_out(ctx, ctx.subject, "r_isa"), REFUTATION_SCAN)
+    hyp_w = {norm(h): w for h, w, _ in hyps}
+
+    # (a) un hyperonyme nie directement la relation vers la cible.
     for hname, hw, _rid in hyps:
         if norm(hname) == norm(ctx.object):
             continue
         w = _ew(ctx, hname, ctx.relation, ctx.object)
-        if w < 0:  # un hyperonyme NIE explicitement R object
+        if w < 0:
             proof = [
                 ProofStep(source=_disp(ctx, ctx.subject), relation="r_isa",
                           target=_disp(ctx, hname), w=hw),
@@ -295,6 +305,21 @@ def _schema_class_elim(ctx: _Ctx) -> InferenceResult | None:
                           target=_disp(ctx, ctx.object), w=w, note="négation"),
             ]
             return _make_result(ctx, w, FiredSchema.CLASS_ELIM, proof)
+
+    # (b) la négation est stockée sur la relation INVERSE : `object R⁻¹ H' < 0`
+    # avec H' un hyperonyme du sujet. Ex. `prostate r_holo femme = -171`
+    # ⟹ une femme n'a pas de prostate (un seul lookup, pas N).
+    inv = INVERSE_RELATIONS.get(ctx.relation)
+    if inv:
+        for hname, hw, _rid in _out(ctx, ctx.object, inv):
+            if hw < 0 and norm(hname) in hyp_w and norm(hname) != norm(ctx.object):
+                proof = [
+                    ProofStep(source=_disp(ctx, ctx.subject), relation="r_isa",
+                              target=_disp(ctx, hname), w=hyp_w[norm(hname)]),
+                    ProofStep(source=_disp(ctx, ctx.object), relation=inv,
+                              target=_disp(ctx, hname), w=hw, note="négation (inverse)"),
+                ]
+                return _make_result(ctx, hw, FiredSchema.CLASS_ELIM, proof)
     return None
 
 
@@ -393,6 +418,8 @@ def _schema_assoc_bridge(ctx: _Ctx) -> InferenceResult | None:
     for tname, tw, _rid in targets:
         if norm(tname) in (norm(ctx.subject), norm(ctx.object)):
             continue
+        if norm(tname) in GENERIC_HUBS:
+            continue  # hub universel — pont non fiable
         # T est-il synonyme ou fortement associé à la cible ?
         link_w = _ew(ctx, tname, "r_syn", ctx.object)
         link_rel = "r_syn"
@@ -438,13 +465,14 @@ _EFFORT1_SCHEMAS = (
     _schema_hyponym_propagation,
     _schema_synonym_equiv,
 )
-# Effort 2 : schémas plus larges / plus chers. assoc_bridge TOUT À LA FIN —
-# les associations JDM sont très bruitées, on ne les invoque qu'en ultime
-# recours, quand aucun schéma sain ni la synonymie n'a rien donné.
+# Effort 2 : composition (schémas curés, sains) puis assoc_bridge en ultime
+# recours. target_generic et double_isa sont VOLONTAIREMENT exclus : leurs
+# ponts par nœuds génériques sur-génèrent massivement (lionne r_isa animal,
+# animal r_has_part « organe non vital », prostate r_isa « organe non
+# vital » ⟹ lionne r_has_part prostate — faux). Les fonctions restent
+# définies plus haut mais ne sont plus dans la cascade.
 _EFFORT2_SCHEMAS = (
     _schema_composition,
-    _schema_target_generic,
-    _schema_double_isa,
     _schema_assoc_bridge,
 )
 
