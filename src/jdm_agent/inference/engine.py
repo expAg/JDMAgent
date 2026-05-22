@@ -465,14 +465,15 @@ _EFFORT1_SCHEMAS = (
     _schema_hyponym_propagation,
     _schema_synonym_equiv,
 )
-# Effort 2 : composition (schémas curés, sains) puis assoc_bridge en ultime
-# recours. target_generic et double_isa sont VOLONTAIREMENT exclus : leurs
-# ponts par nœuds génériques sur-génèrent massivement (lionne r_isa animal,
-# animal r_has_part « organe non vital », prostate r_isa « organe non
-# vital » ⟹ lionne r_has_part prostate — faux). Les fonctions restent
-# définies plus haut mais ne sont plus dans la cascade.
+# Effort 2 : composition (curée, saine) d'abord, puis les schémas LÂCHES en
+# bas de cascade — target_generic, double_isa, assoc_bridge. Ces trois-là
+# sur-génèrent (ponts par nœuds génériques) : ils ne tournent qu'en dernier
+# recours, après tous les schémas sains ET la synonymie, et leur confiance
+# est fortement décotée (cf. SCHEMA_CONFIDENCE).
 _EFFORT2_SCHEMAS = (
     _schema_composition,
+    _schema_target_generic,
+    _schema_double_isa,
     _schema_assoc_bridge,
 )
 

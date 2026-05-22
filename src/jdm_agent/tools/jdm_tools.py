@@ -714,7 +714,8 @@ def validate_candidate(term: str, relation: str, target: str) -> dict:
 
 @tool
 def verify_claim(subject: str, relation: str, object: str,
-                 polarity: bool = True, effort: int = 0) -> dict:
+                 polarity: bool = True, effort: int = 0,
+                 bypass_containment: bool = False) -> dict:
     """Vérifie un triplet factuel contre le graphe JDM (déterministe, sans LLM).
 
     DEUX RÉGIMES, choisis par `effort` — réfléchis bien à la question posée :
@@ -743,6 +744,9 @@ def verify_claim(subject: str, relation: str, object: str,
         object:   terme cible (ex. "poisson", "rouge", "roue").
         polarity: True pour affirmation, False pour négation ("ne ... pas").
         effort:   0 contenance (défaut) · 1 + inférence noyau · 2 + inférence complète.
+        bypass_containment: si True (et effort ≥ 1), lance l'inférence MÊME si
+            le triplet est déjà présent directement dans JDM — pour obtenir la
+            chaîne de déduction d'un fait pourtant connu. Défaut False.
 
     Statuts : "supported" / "contradicted" / "unknown" (unknown ≠ faux).
     Renvoie {claim, status, confidence, explanation, evidence_for,
@@ -756,7 +760,8 @@ def verify_claim(subject: str, relation: str, object: str,
         text=f"{subject} | {relation} | {object}",
         subject=subject, relation=relation, object=object, polarity=polarity,
     )
-    verdict = _verify(c, claim, effort=int(effort))
+    verdict = _verify(c, claim, effort=int(effort),
+                      bypass_containment=bool(bypass_containment))
     return verdict.model_dump(mode="json")
 
 

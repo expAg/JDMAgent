@@ -164,7 +164,7 @@ EFFORT_CHOICES = {
 
 
 def factcheck_one(subject: str, relation: str, object_: str,
-                  effort_label: str) -> tuple[str, str]:
+                  effort_label: str, bypass: bool) -> tuple[str, str]:
     if not (subject.strip() and object_.strip()):
         return "—", "Renseigne un sujet et un objet."
     effort = EFFORT_CHOICES.get(effort_label, 0)
@@ -172,7 +172,7 @@ def factcheck_one(subject: str, relation: str, object_: str,
     claim = Claim(text=f"{subject} | {relation} | {object_}",
                   subject=subject.strip(), relation=relation, object=object_.strip())
     try:
-        v = verify_claim(c, claim, effort=effort)
+        v = verify_claim(c, claim, effort=effort, bypass_containment=bool(bypass))
     except Exception as e:
         return "—", f"Erreur : {e}"
 
@@ -536,11 +536,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 info="Contenance = JDM contient-il littéralement le triplet ? "
                      "Inférence = peut-on le déduire du réseau si JDM est silencieux ?",
             )
+            fc_bypass = gr.Checkbox(
+                value=False,
+                label="Forcer l'inférence même si le triplet est déjà dans JDM",
+                info="Bypass de la contenance : montre la chaîne de déduction "
+                     "d'un fait pourtant déjà connu (effort ≥ 1 requis).",
+            )
             fc_btn = gr.Button("Vérifier", variant="primary")
             fc_status = gr.Markdown()
             fc_evidence = gr.Markdown()
             fc_btn.click(factcheck_one,
-                         inputs=[fc_subject, fc_relation, fc_object, fc_effort],
+                         inputs=[fc_subject, fc_relation, fc_object, fc_effort, fc_bypass],
                          outputs=[fc_status, fc_evidence])
             gr.Examples(
                 examples=[

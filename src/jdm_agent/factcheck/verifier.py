@@ -78,8 +78,44 @@ def _relations_from_by_type(client: JDMClient, subject: str, relation_name: str,
     return out
 
 
+def _build_direct_verdict(client: JDMClient, claim: Claim,
+                          direct_hit: tuple) -> Verdict:
+    """Construit le verdict de CONTENANCE pour un triplet trouvé en direct."""
+    name, w, rid = direct_hit
+    jdm_says_yes = w > 0
+    status = Status.SUPPORTED if (jdm_says_yes == claim.polarity) else Status.CONTRADICTED
+    conf = round(math.tanh(abs(w) / STRONG_SUPPORT_W), 3)
+
+    try:
+        annotations = client.get_annotations_for_triplet(rid)
+    except Exception:
+        annotations = []
+    annot_str = ""
+    if annotations:
+        tops = ", ".join(f"{a.value} (w={a.w:.0f})" for a in annotations[:3])
+        annot_str = f" Annotations JDM : {tops}."
+    exceptions = [a for a in annotations if a.kind == "exception"]
+    if exceptions:
+        exc_str = ", ".join(a.value for a in exceptions[:3])
+        annot_str += f" Exception(s) annotée(s) : {exc_str}."
+
+    ev = _to_evidence(client, claim.subject, claim.relation, name, w)
+    explanation = (
+        f"JDM contient directement le triplet "
+        f"`{claim.subject} | {claim.relation} | {ev.target}` avec poids "
+        f"{w:.0f} ({'affirmation' if jdm_says_yes else 'négation'} consensuelle).{annot_str}"
+    )
+    return Verdict(
+        claim=claim, status=status, confidence=conf,
+        evidence_for=[ev] if status == Status.SUPPORTED else [],
+        evidence_against=[ev] if status == Status.CONTRADICTED else [],
+        explanation=explanation,
+    )
+
+
 def verify_claim(client: JDMClient, claim: Claim, *,
                  effort: int = 0,
+                 bypass_containment: bool = False,
                  budget: Optional[int] = None,
                  max_depth: int = DEFAULT_MAX_DEPTH) -> Verdict:
     """Vérifie une claim atomique contre JDM. Pas d'appel LLM.
@@ -89,6 +125,10 @@ def verify_claim(client: JDMClient, claim: Claim, *,
         claim: la claim à vérifier.
         effort: 0 = contenance pure (triplet exact uniquement) ; 1 = repli
             inférence noyau si JDM est silencieux ; 2 = inférence complète.
+        bypass_containment: si True (et effort ≥ 1), lance l'inférence MÊME si
+            le triplet est déjà présent directement dans JDM — utile pour voir
+            la chaîne de déduction d'un fait pourtant déjà connu. Par défaut
+            False : un triplet contenu directement court-circuite l'inférence.
         budget: plafond d'appels HTTP pour l'inférence (None = défaut par effort).
         max_depth: profondeur max de l'inférence.
 
@@ -115,46 +155,21 @@ def verify_claim(client: JDMClient, claim: Claim, *,
             direct_hit = (name, w, rid)
             break
 
-    if direct_hit is not None:
-        name, w, rid = direct_hit
-        jdm_says_yes = w > 0
-        claim_says_yes = claim.polarity
-        status = Status.SUPPORTED if (jdm_says_yes == claim_says_yes) else Status.CONTRADICTED
-        conf = round(math.tanh(abs(w) / STRONG_SUPPORT_W), 3)
+    # Contenance directe — court-circuite l'inférence SAUF si bypass demandé.
+    if direct_hit is not None and not bypass_containment:
+        return _build_direct_verdict(client, claim, direct_hit)
 
-        try:
-            annotations = client.get_annotations_for_triplet(rid)
-        except Exception:
-            annotations = []
-        annot_str = ""
-        if annotations:
-            tops = ", ".join(f"{a.value} (w={a.w:.0f})" for a in annotations[:3])
-            annot_str = f" Annotations JDM : {tops}."
-        exceptions = [a for a in annotations if a.kind == "exception"]
-        if exceptions:
-            exc_str = ", ".join(a.value for a in exceptions[:3])
-            annot_str += f" Exception(s) annotée(s) : {exc_str}."
-
-        ev = _to_evidence(client, claim.subject, claim.relation, name, w)
-        explanation = (
-            f"JDM contient directement le triplet "
-            f"`{claim.subject} | {claim.relation} | {ev.target}` avec poids "
-            f"{w:.0f} ({'affirmation' if jdm_says_yes else 'négation'} consensuelle).{annot_str}"
-        )
-        return Verdict(
-            claim=claim, status=status, confidence=conf,
-            evidence_for=[ev] if status == Status.SUPPORTED else [],
-            evidence_against=[ev] if status == Status.CONTRADICTED else [],
-            explanation=explanation,
-        )
-
-    # --- 2) Repli INFÉRENCE (effort >= 1) ------------------------------------
-    # Ne s'exécute QUE si le lookup direct est silencieux : l'inférence ne
-    # surcharge jamais une réponse de contenance.
+    # --- 2) Repli (ou bypass) INFÉRENCE (effort >= 1) ------------------------
     if effort >= 1:
-        inferred = _verdict_from_inference(client, claim, effort, budget, max_depth)
+        inferred = _verdict_from_inference(client, claim, effort, budget, max_depth,
+                                           direct_present=direct_hit is not None)
         if inferred is not None:
             return inferred
+
+    # bypass_containment était actif mais l'inférence est muette : on ne perd
+    # pas l'information de contenance directe.
+    if direct_hit is not None:
+        return _build_direct_verdict(client, claim, direct_hit)
 
     # --- 3) UNKNOWN ----------------------------------------------------------
     # JDM ne contient pas le triplet et (effort 0) ou aucune inférence n'a
@@ -182,11 +197,13 @@ def verify_claim(client: JDMClient, claim: Claim, *,
 
 
 def _verdict_from_inference(client: JDMClient, claim: Claim, effort: int,
-                            budget: Optional[int], max_depth: int) -> Optional[Verdict]:
+                            budget: Optional[int], max_depth: int,
+                            direct_present: bool = False) -> Optional[Verdict]:
     """Tente un verdict par inférence. Renvoie None si l'inférence est silencieuse.
 
-    Le verdict produit est toujours marqué (`inference_schema`) et son
-    explication précise que JDM ne contient pas directement le triplet.
+    Le verdict produit est toujours marqué (`inference_schema`). Si le triplet
+    n'est pas contenu directement, l'explication le précise ; en mode bypass
+    (`direct_present=True`), elle indique que c'est une inférence forcée.
     """
     from jdm_agent.inference import infer
 
@@ -202,10 +219,12 @@ def _verdict_from_inference(client: JDMClient, claim: Claim, effort: int,
     # res.is_true => JDM permet de déduire le triplet ; sinon il le réfute.
     jdm_says_yes = res.is_true
     status = Status.SUPPORTED if (jdm_says_yes == claim.polarity) else Status.CONTRADICTED
-    explanation = (
-        "JDM ne contient pas directement ce triplet — verdict obtenu par "
-        f"inférence. {res.explanation}"
-    )
+    if direct_present:
+        prefix = ("Inférence forcée (bypass) — ce triplet est aussi présent "
+                  "directement dans JDM. ")
+    else:
+        prefix = "JDM ne contient pas directement ce triplet — verdict obtenu par inférence. "
+    explanation = prefix + res.explanation
     return Verdict(
         claim=claim, status=status, confidence=res.confidence,
         evidence_for=proof_ev if status == Status.SUPPORTED else [],
