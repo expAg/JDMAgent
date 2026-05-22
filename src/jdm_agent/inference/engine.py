@@ -20,7 +20,6 @@ from jdm_agent.inference.constants import (
     COMPOSITION_MAP,
     DEFAULT_MAX_DEPTH,
     DEFAULT_TOP_K,
-    ELIMINATION_CLASSES,
     IMPLICATION_MAP,
     INVERSE_RELATIONS,
     REFUTATION_SCAN,
@@ -273,18 +272,26 @@ def _schema_isa_incompatible(ctx: _Ctx) -> InferenceResult | None:
 
 
 def _schema_class_elim(ctx: _Ctx) -> InferenceResult | None:
-    """Réfutation : `A r_isa Classe` ∧ `Classe R B` explicitement négatif."""
-    elim = {norm(c) for c in ELIMINATION_CLASSES}
+    """Réfutation par HÉRITAGE NÉGATIF : `A r_isa H` ∧ `H R B` explicitement nié.
+
+    Scanne TOUS les hyperonymes de A (pas seulement les grandes classes) : si
+    l'un d'eux nie explicitement la relation vers B (w < 0), A en hérite. Une
+    négation JDM est un signal curé délibéré — elle prime sur une déduction
+    positive concurrente. Capture les contrastifs de genre :
+    `chatte r_isa femelle` ∧ `femelle r_has_part pénis = -24` ⟹ réfuté.
+    Doit donc tourner AVANT deduction_isa (qui sinon conclurait « vrai » via
+    un hyperonyme générique comme `chat r_has_part pénis = +72`).
+    """
     hyps = topk_positive(_out(ctx, ctx.subject, "r_isa"), REFUTATION_SCAN)
-    for cname, cw, _rid in hyps:
-        if norm(cname) not in elim or norm(cname) == norm(ctx.object):
+    for hname, hw, _rid in hyps:
+        if norm(hname) == norm(ctx.object):
             continue
-        w = _ew(ctx, cname, ctx.relation, ctx.object)
-        if w < 0:  # la classe NIE explicitement R object
+        w = _ew(ctx, hname, ctx.relation, ctx.object)
+        if w < 0:  # un hyperonyme NIE explicitement R object
             proof = [
                 ProofStep(source=_disp(ctx, ctx.subject), relation="r_isa",
-                          target=_disp(ctx, cname), w=cw),
-                ProofStep(source=_disp(ctx, cname), relation=ctx.relation,
+                          target=_disp(ctx, hname), w=hw),
+                ProofStep(source=_disp(ctx, hname), relation=ctx.relation,
                           target=_disp(ctx, ctx.object), w=w, note="négation"),
             ]
             return _make_result(ctx, w, FiredSchema.CLASS_ELIM, proof)
@@ -408,10 +415,17 @@ def _schema_assoc_bridge(ctx: _Ctx) -> InferenceResult | None:
     return None
 
 
-# Cascade effort 1. Ordre important : schémas gratuits d'abord (guards,
-# prefix, inverse, implication), puis les RÉFUTATIONS (isa_incompatible,
-# class_elim) AVANT les déductions — sinon une chaîne ISA bruitée de JDM
-# (baleine r_isa scie r_isa poisson) ferait conclure « vrai » à tort.
+# Cascade effort 1. ORDRE CRITIQUE (early-exit au 1er schéma concluant) :
+#   1. schémas gratuits / exacts : guards, prefix, inverse, implication
+#   2. RÉFUTATIONS spécialisées : isa_incompatible, class_elim
+#   3. schémas SAINS porteurs de signe : deduction_isa, transitivity,
+#      hyponym_propagation — ils peuvent conclure « vrai » OU « faux » et
+#      doivent passer AVANT la synonymie. Ex. `chatte r_has_part pénis` est
+#      réfuté par deduction_isa (chatte r_isa femelle, femelle r_has_part
+#      pénis = -24) — il ne faut pas qu'un schéma lâche conclue « vrai »
+#      avant via une fausse synonymie (pénis r_syn sexe).
+#   4. synonym_equiv EN DERNIER : la synonymie JDM n'est pas substituable
+#      (souvent une hyperonymie déguisée) → priorité basse, dernier recours.
 _EFFORT1_SCHEMAS = (
     _schema_guards,
     _schema_prefix,
@@ -419,14 +433,14 @@ _EFFORT1_SCHEMAS = (
     _schema_implication,
     _schema_isa_incompatible,
     _schema_class_elim,
-    _schema_synonym_equiv,
     _schema_deduction_isa,
     _schema_transitivity,
     _schema_hyponym_propagation,
+    _schema_synonym_equiv,
 )
-# Effort 2 : schémas plus larges / plus chers (composition, génériques de la
-# cible, double-ISA, pont par association). assoc_bridge en dernier — c'est
-# le plus lâche, on ne l'invoque qu'en dernier recours.
+# Effort 2 : schémas plus larges / plus chers. assoc_bridge TOUT À LA FIN —
+# les associations JDM sont très bruitées, on ne les invoque qu'en ultime
+# recours, quand aucun schéma sain ni la synonymie n'a rien donné.
 _EFFORT2_SCHEMAS = (
     _schema_composition,
     _schema_target_generic,
