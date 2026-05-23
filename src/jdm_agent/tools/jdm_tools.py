@@ -896,6 +896,31 @@ def enrichment_workflow() -> dict:
             "défaut, etc.). Ne lance JAMAIS de batch de validations avant "
             "d'avoir pré-fetché avec `list_existing_for_enrichment`."
         ),
+        "DIVERSITÉ": (
+            "🌿 Le but de l'enrichissement est la VARIÉTÉ — pas la quantité, "
+            "pas le scolaire. La langue française est ouverte et libre, "
+            "explore-la largement. Évite le réflexe « espèces d'animaux, "
+            "variétés de plantes, sous-types de minéraux » qui est très "
+            "scolaire et déjà bien renseigné dans JDM (taxonomies "
+            "biologiques denses). Ce n'est pas interdit, mais c'est le "
+            "domaine où JDM a le moins besoin de toi.\n\n"
+            "Diversifie sur DEUX axes simultanément :\n"
+            "  • RELATIONS : ne te limite pas à r_isa / r_has_part / r_carac. "
+            "Va voir r_telic_role, r_agent-1, r_patient-1, r_instr-1, "
+            "r_lieu, r_sentiment, r_associated, r_has_conseq, r_make, "
+            "r_object>mater, r_time, r_manner, et les ~170 autres relations "
+            "(cf. `list_relation_types`). Une relation rare bien remplie "
+            "vaut mieux qu'une r_isa de plus.\n"
+            "  • TERMES (sources ET cibles) : abstractions (justice, oubli, "
+            "vertige), événements (séisme, mariage, panne), états (fatigue, "
+            "ennui, nostalgie), processus (cuisson, négociation, deuil), "
+            "objets manufacturés rares (sextant, métronome, alambic), "
+            "métiers spécialisés, lieux culturels, sentiments, rituels, "
+            "techniques, savoir-faire, gestes, sensations… Sors des objets "
+            "du quotidien et des noms communs.\n"
+            "Si tu te surprends à proposer une 5ᵉ taxonomie de mammifères "
+            "ou de fleurs, BLOQUE et change radicalement de domaine."
+        ),
         "title": "Flux d'enrichissement JDM (à suivre dans cet ordre)",
         "steps": [
             {
@@ -947,15 +972,20 @@ def enrichment_workflow() -> dict:
                 "name": "Validation + consolidation (un seul appel)",
                 "description": (
                     "Pour CHAQUE candidat (raffiné si polysémique), appelle "
-                    "`validate_candidate` — il fait la validation structurelle "
-                    "(unknown_term / duplicate / inconsistent / ok) ET la "
-                    "consolidation par inférence (consolidated / rejected / "
-                    "not_consolidated) en UN seul appel. Ne retiens pour la "
-                    "soumission QUE les candidats dont `ready_for_submission` "
-                    "vaut true. La validation structurelle « ok » seule NE "
-                    "SUFFIT PAS."
+                    "`validate_candidate(term, relation, target, "
+                    "inference_effort=2)` — TOUJOURS `inference_effort=2` "
+                    "dans le flux d'enrichissement, pour donner au moteur "
+                    "d'inférence sa pleine couverture (cascade complète, "
+                    "schémas plus rares activés) et maximiser le taux de "
+                    "consolidation. C'est `validate_candidate` qui fait la "
+                    "validation structurelle (unknown_term / duplicate / "
+                    "inconsistent / ok) ET la consolidation par inférence "
+                    "(consolidated / rejected / not_consolidated) en UN "
+                    "seul appel. Ne retiens pour la soumission QUE les "
+                    "candidats dont `ready_for_submission` vaut true. La "
+                    "validation structurelle « ok » seule NE SUFFIT PAS."
                 ),
-                "tool": "validate_candidate",
+                "tool": "validate_candidate (inference_effort=2)",
             },
             {
                 "order": 5,
@@ -988,6 +1018,12 @@ def enrichment_workflow() -> dict:
             "définit (r_isa, r_anto, r_has_part, r_object>mater, r_has_conseq, "
             "etc.) ; pas d'invention depuis ta mémoire — utilise `list_relation_types` "
             "si tu as un doute.",
+            "DIVERSITÉ avant volume : varie les relations (au-delà de "
+            "r_isa/r_has_part/r_carac) ET les termes (sors des animaux, "
+            "plantes, taxonomies scolaires — JDM y est déjà très dense). "
+            "Une r_telic_role rare bien remplie vaut mieux qu'une 10ᵉ r_isa.",
+            "Consolidation TOUJOURS à `inference_effort=2` dans le flux "
+            "d'enrichissement — pleine couverture du moteur d'inférence.",
             "Un triplet n'est soumettable QUE si `ready_for_submission` vaut "
             "true (consolidation_status == 'consolidated'). Pas d'exception.",
             "Tu désambiguïses et choisis le sens TOI-MÊME — passe le sense_id "
