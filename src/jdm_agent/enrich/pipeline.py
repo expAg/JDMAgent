@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import csv
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
@@ -10,6 +12,36 @@ from jdm_agent.enrich.detectors import detect_gaps
 from jdm_agent.enrich.models import Candidate, Gap
 from jdm_agent.enrich.proposers import propose_candidates
 from jdm_agent.enrich.validators import consolidate_candidate, validate_candidate
+
+
+def compute_submission_filename(model_name: str, *,
+                                now: Optional[datetime] = None) -> str:
+    """Nom standardisé d'un fichier de soumission LLMDrops.
+
+    Format : `from_{model_slug}_automatic_submission_{HH}h{MM}_{DD}-{MM}-{YY}.enrich`
+
+    Le `model_name` est slugifié : espaces et caractères non-sûrs (URL/shell)
+    sont remplacés par `_`, le reste est conservé (on garde les tirets et le
+    point usuels des noms de modèles type `claude-sonnet-4-7` ou `gpt-4.1`).
+    Le timestamp utilise l'heure LOCALE (cohérent avec le contexte utilisateur).
+
+    Args:
+        model_name: nom du LLM source. Peut être vide → "unknown".
+        now: datetime injectable pour les tests. Défaut: `datetime.now()`.
+
+    Returns:
+        Le nom de fichier (basename, pas un path).
+    """
+    if not model_name:
+        model_name = "unknown"
+    # Slug très conservateur : on garde lettres ASCII, chiffres, tirets, points,
+    # underscores, et on remplace TOUT le reste par '_'. Évite tout pb URL/shell.
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", model_name).strip("_") or "unknown"
+    ts = (now or datetime.now())
+    return (
+        f"from_{slug}_automatic_submission_"
+        f"{ts:%Hh%M}_{ts:%d-%m-%y}.enrich"
+    )
 
 
 def enrich(

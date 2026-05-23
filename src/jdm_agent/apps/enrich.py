@@ -58,6 +58,19 @@ def main() -> int:
     p.add_argument("--submission-output", default=None,
                    help="Fichier de soumission : UNIQUEMENT les triplets consolidés "
                         "par inférence (force --consolidate).")
+    p.add_argument("--upload", action="store_true",
+                   help="Après écriture du fichier de soumission, le POST au "
+                        "endpoint LLMDrops de JDM. Nécessite JDM_DROPS_API_KEY "
+                        "dans l'env (ou --upload-api-key). Force aussi "
+                        "--submission-output si non fourni.")
+    p.add_argument("--upload-model", default=None,
+                   help="Nom du LLM source utilisé dans le filename uploadé "
+                        "(ex. 'claude-sonnet-4-7'). Défaut: env LLM_MODEL ou "
+                        "'mcp_client'.")
+    p.add_argument("--upload-endpoint", default=None,
+                   help="URL du endpoint LLMDrops (override env JDM_DROPS_URL).")
+    p.add_argument("--upload-api-key", default=None,
+                   help="Clé API LLMDrops (override env JDM_DROPS_API_KEY).")
     args = p.parse_args()
 
     terms: list[str] = list(args.terms)
@@ -82,9 +95,13 @@ def main() -> int:
             print(f"[erreur] init LLM : {e}", file=sys.stderr)
             return 2
 
-    # Une soumission n'a de sens que consolidée → --submission-output force
-    # la consolidation systématique de tous les candidats validés.
-    do_consolidate = args.consolidate or bool(args.submission_output)
+    # Une soumission n'a de sens que consolidée → --submission-output et
+    # --upload forcent tous deux la consolidation systématique.
+    do_consolidate = args.consolidate or bool(args.submission_output) or args.upload
+    # --upload sans chemin explicite → on dérive un défaut sensé pour avoir
+    # un fichier local en plus de l'envoi distant.
+    if args.upload and not args.submission_output:
+        args.submission_output = "soumission_jdm.enrich"
 
     print(f"[enrich] {len(terms)} terme(s), relations={target_relations or 'standard'}, "
           f"min_coverage={args.min_coverage}, consolidate={do_consolidate}", file=sys.stderr)
@@ -157,6 +174,29 @@ def main() -> int:
         n = write_submission(args.submission_output, candidates)
         print(f"[soumission] {n} candidat(s) consolidé(s) — fichier {args.submission_output}",
               file=sys.stderr)
+
+        if args.upload:
+            from jdm_agent.enrich import submit_to_jdm
+            # Détermine le nom de modèle uploadé : --upload-model > --model >
+            # env LLM_MODEL > "mcp_client" (cf. submit_to_jdm).
+            upload_model = args.upload_model or args.model
+            result = submit_to_jdm(
+                args.submission_output,
+                api_key=args.upload_api_key,
+                model_name=upload_model,
+                endpoint_url=args.upload_endpoint,
+            )
+            if result["ok"]:
+                print(f"[upload] {GREEN}✓ uploadé{RESET} sous "
+                      f"{result['uploaded_as']} → {result['endpoint']} "
+                      f"(HTTP {result['status_code']})",
+                      file=sys.stderr)
+                print(f"[upload] réponse : {result['response']}", file=sys.stderr)
+            else:
+                print(f"[upload] {RED}✗ échec{RESET} : {result['error']}",
+                      file=sys.stderr)
+                print(f"[upload] le fichier local reste disponible : "
+                      f"{args.submission_output}", file=sys.stderr)
 
     client.close()
     return 0

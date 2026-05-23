@@ -959,7 +959,7 @@ def enrichment_workflow() -> dict:
             },
             {
                 "order": 5,
-                "name": "Écriture du fichier de soumission",
+                "name": "Écriture (et soumission optionnelle) du fichier",
                 "description": (
                     "Écris UNIQUEMENT les candidats consolidés au format pipe "
                     "`terme | relation | cible | annotation < explication >`. "
@@ -967,7 +967,16 @@ def enrichment_workflow() -> dict:
                     "l'EXPLICATION (chaîne d'inférence en langage naturel) sont "
                     "DEUX champs distincts — ne les confonds pas. Les raffinements "
                     "bruts sont décodés automatiquement en forme lisible "
-                    "(`avocat>116477>66699` → `avocat (personne, juriste)`)."
+                    "(`avocat>116477>66699` → `avocat (personne, juriste)`).\n\n"
+                    "SOUMISSION AUTOMATIQUE (opt-in) : si l'utilisateur demande "
+                    "de soumettre / pousser / envoyer le fichier à JDM, appelle "
+                    "`write_submission_file(..., upload=True, model_name='<ton "
+                    "propre nom de modèle>')`. Le fichier est alors POSTé au "
+                    "endpoint LLMDrops sous un nom standardisé qui trace quel "
+                    "LLM l'a produit et quand. La clé API est lue dans "
+                    "`JDM_DROPS_API_KEY` (env) ou passée explicitement via "
+                    "`api_key=...`. Défaut `upload=False` : on n'envoie JAMAIS "
+                    "sans demande explicite."
                 ),
                 "tool": "write_submission_file",
             },
@@ -1002,8 +1011,15 @@ def enrichment_workflow() -> dict:
 
 
 @tool
-def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt") -> dict:
-    """Écrit le fichier de soumission JDM (.txt) au format pipe.
+def write_submission_file(
+    triplets: list[dict],
+    path: str = "soumission_jdm.txt",
+    upload: bool = False,
+    model_name: str = "",
+    api_key: str = "",
+) -> dict:
+    """Écrit le fichier de soumission JDM (.txt) au format pipe, et — sur
+    demande — le SOUMET automatiquement au endpoint LLMDrops de JDM.
 
     À utiliser à la FIN du flux d'enrichissement, avec UNIQUEMENT les triplets
     dont la vérification de candidat a renvoyé `ready_for_submission = true`.
@@ -1027,11 +1043,26 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
     d'écrire — le fichier de soumission ne contient JAMAIS d'identifiants
     numériques, uniquement la forme lisible.
 
+    SOUMISSION AUTOMATIQUE au LLMDrops (Phase 12, opt-in) :
+      - `upload=True` : après écriture locale, POST le fichier au endpoint
+        LLMDrops JDM. Le fichier est uploadé sous un nom standardisé
+        `from_{model}_automatic_submission_{HHhMM}_{DD-MM-YY}.enrich` qui
+        trace quel LLM a produit la soumission et quand.
+      - `model_name` : nom du LLM source (ex. "claude-sonnet-4-7", "gpt-5").
+        Vide → fallback sur l'env `LLM_MODEL` puis `"mcp_client"`.
+      - `api_key`    : clé API LLMDrops. Vide → lue dans `JDM_DROPS_API_KEY`.
+      - Défaut `upload=False` : pas de transmission silencieuse, le LLM
+        doit demander l'upload explicitement.
+
     Args:
         triplets: liste de dicts {term, relation, target, annotation, explanation}.
         path: chemin du fichier .txt de sortie (défaut : soumission_jdm.txt).
+        upload: True pour soumettre au LLMDrops après écriture (défaut False).
+        model_name: nom du LLM source pour le filename uploadé.
+        api_key: clé API LLMDrops (override env JDM_DROPS_API_KEY).
 
-    Renvoie {path, count, lines} — count = nombre de lignes écrites.
+    Renvoie {path, count, lines, upload?} — `upload` présent uniquement si
+    `upload=True`, contient {ok, status_code, uploaded_as, response, error}.
     """
     from jdm_agent.enrich import Candidate
     from jdm_agent.enrich.pipeline import _decoded, write_submission as _write_sub
@@ -1049,7 +1080,7 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
             validation_status="ok", consolidation_status="consolidated",
         ))
     n = _write_sub(path, cands, client=c)
-    return {
+    out: dict = {
         "path": path, "count": n,
         "lines": [
             f"{_decoded(cd.term, c)} | {cd.relation} | {_decoded(cd.target, c)} | "
@@ -1057,6 +1088,15 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
             for cd in cands
         ],
     }
+
+    if upload:
+        from jdm_agent.enrich.uploader import submit_to_jdm
+        out["upload"] = submit_to_jdm(
+            path,
+            api_key=api_key or None,
+            model_name=model_name or None,
+        )
+    return out
 
 
 # ---------- Vérification de claims (fact-checking) ----------

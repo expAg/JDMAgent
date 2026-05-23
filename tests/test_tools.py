@@ -337,3 +337,72 @@ def test_all_tools_have_valid_schemas():
     for t in ALL_TOOLS:
         schema = t.args_schema.model_json_schema() if t.args_schema else {}
         assert "properties" in schema, f"{t.name} sans schema"
+
+
+# -------------------- Phase 12 : write_submission_file avec upload --------------------
+
+@respx.mock
+def test_write_submission_file_local_only_default(tmp_path, monkeypatch):
+    """Par défaut upload=False : on écrit le fichier local, on ne POST rien."""
+    monkeypatch.setenv("JDM_DROPS_API_KEY", "would-be-used")
+    from jdm_agent.tools.jdm_tools import write_submission_file
+    from jdm_agent.enrich.uploader import DEFAULT_ENDPOINT_URL
+
+    # Si un POST partait, respx mock le bloquerait (pas de route → erreur).
+    out = write_submission_file.invoke({
+        "triplets": [{
+            "term": "chat", "relation": "r_isa", "target": "mammifère",
+            "annotation": "constitutif", "explanation": "trivialement",
+        }],
+        "path": str(tmp_path / "sub.enrich"),
+    })
+    assert out["count"] == 1
+    assert "upload" not in out  # pas tenté
+
+
+@respx.mock
+def test_write_submission_file_with_upload_success(tmp_path, monkeypatch):
+    monkeypatch.delenv("JDM_DROPS_API_KEY", raising=False)
+    from jdm_agent.tools.jdm_tools import write_submission_file
+    from jdm_agent.enrich.uploader import DEFAULT_ENDPOINT_URL
+
+    respx.post(DEFAULT_ENDPOINT_URL).mock(
+        return_value=httpx.Response(200, json={"status": "ok", "id": 7})
+    )
+
+    out = write_submission_file.invoke({
+        "triplets": [{
+            "term": "chat", "relation": "r_isa", "target": "mammifère",
+            "annotation": "", "explanation": "trivialement",
+        }],
+        "path": str(tmp_path / "sub.enrich"),
+        "upload": True,
+        "model_name": "claude-sonnet-4-7",
+        "api_key": "explicit-key",
+    })
+    assert out["count"] == 1
+    assert out["upload"]["ok"] is True
+    assert out["upload"]["status_code"] == 200
+    assert out["upload"]["uploaded_as"].startswith(
+        "from_claude-sonnet-4-7_automatic_submission_"
+    )
+    assert out["upload"]["response"] == {"status": "ok", "id": 7}
+
+
+def test_write_submission_file_upload_without_api_key(tmp_path, monkeypatch):
+    """upload=True sans clé : fichier local OK, upload reporte l'erreur."""
+    monkeypatch.delenv("JDM_DROPS_API_KEY", raising=False)
+    from jdm_agent.tools.jdm_tools import write_submission_file
+
+    out = write_submission_file.invoke({
+        "triplets": [{
+            "term": "chat", "relation": "r_isa", "target": "mammifère",
+            "annotation": "", "explanation": "trivialement",
+        }],
+        "path": str(tmp_path / "sub.enrich"),
+        "upload": True,
+        "model_name": "claude-haiku",
+    })
+    assert out["count"] == 1
+    assert out["upload"]["ok"] is False
+    assert "API" in out["upload"]["error"] or "JDM_DROPS_API_KEY" in out["upload"]["error"]
