@@ -96,7 +96,27 @@ def write_candidates_csv(path: str | Path, candidates: Iterable[Candidate]) -> N
             })
 
 
-def write_submission(path: str | Path, candidates: Iterable[Candidate]) -> int:
+def _decoded(name: str, client) -> str:
+    """Renvoie la forme lisible d'un nom de nœud JDM.
+
+    Si `name` est un raffinement brut (ex. `avocat>116477>66699`), on le
+    décode via le client en forme humaine (ex. `avocat (personne, juriste)`).
+    Si ce n'est pas un raffinement, on renvoie le nom tel quel. Si le
+    décodage échoue (réseau, terme inconnu) ou si aucun client n'est
+    disponible, dégradé propre : on garde la racine avant le premier `>`.
+    """
+    if ">" not in name:
+        return name
+    if client is None:
+        return name.split(">", 1)[0]
+    try:
+        return client.decode_node_name(name).get("decoded") or name.split(">", 1)[0]
+    except Exception:
+        return name.split(">", 1)[0]
+
+
+def write_submission(path: str | Path, candidates: Iterable[Candidate],
+                     client=None) -> int:
     """Écrit le fichier de soumission JDM — UNIQUEMENT les triplets consolidés.
 
     Le fichier ne contient QUE les candidats confirmés par inférence
@@ -105,8 +125,14 @@ def write_submission(path: str | Path, candidates: Iterable[Candidate]) -> int:
     PAS écrits : un fichier de soumission doit être propre et directement
     soumettable.
 
-    Format d'une ligne : ``terme|relation|cible|annotation < explication >``
-    où l'explication est la chaîne d'inférence qui justifie le triplet.
+    Les `term` et `target` sont DÉCODÉS : si le LLM a proposé un raffinement
+    brut (`avocat>116477>66699`), on l'écrit en forme humaine
+    (`avocat (personne, juriste)`). Si aucun client n'est passé et qu'un
+    décodage est nécessaire, on instancie un `JDMClient` par défaut (cache
+    disque utilisé).
+
+    Format d'une ligne : ``terme | relation | cible | annotation < explication >``
+    où l'explication est la chaîne d'inférence en langage naturel.
 
     Returns:
         Le nombre de triplets consolidés écrits.
@@ -114,6 +140,15 @@ def write_submission(path: str | Path, candidates: Iterable[Candidate]) -> int:
     consolidated = [
         c for c in candidates if c.is_consolidated() and c.is_valid()
     ]
+    # On a besoin d'un client uniquement si au moins un terme/cible est un
+    # raffinement brut à décoder. Un seul client réutilisé pour tous.
+    if client is None and any(">" in c.term or ">" in c.target for c in consolidated):
+        try:
+            from jdm_agent.client import JDMClient
+            client = JDMClient()
+        except Exception:
+            client = None
+
     lines: list[str] = [
         f"# Soumission JeuxDeMots — {len(consolidated)} triplet(s) consolidé(s) "
         "par inférence dans le réseau.",
@@ -122,7 +157,9 @@ def write_submission(path: str | Path, candidates: Iterable[Candidate]) -> int:
     ]
     for c in consolidated:
         expl = " ".join(c.consolidation_explanation.split())
-        lines.append(f"{c.term} | {c.relation} | {c.target} | {c.annotation} < {expl} >")
+        term = _decoded(c.term, client)
+        target = _decoded(c.target, client)
+        lines.append(f"{term} | {c.relation} | {target} | {c.annotation} < {expl} >")
 
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return len(consolidated)

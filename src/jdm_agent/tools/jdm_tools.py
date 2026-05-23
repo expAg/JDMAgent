@@ -802,6 +802,12 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
     Chaque ligne écrite a EXACTEMENT ce format pipe (espaces autour des `|`) :
         term | relation | target | annotation < explanation >
 
+    Si tu as proposé un raffinement brut (`avocat>116477>66699`) pour
+    désambiguïser, passe-le ici tel quel : le tool DÉCODE automatiquement
+    les raffinements en forme humaine (`avocat (personne, juriste)`) avant
+    d'écrire — le fichier de soumission ne contient JAMAIS d'identifiants
+    numériques, uniquement la forme lisible.
+
     Args:
         triplets: liste de dicts {term, relation, target, annotation, explanation}.
         path: chemin du fichier .txt de sortie (défaut : soumission_jdm.txt).
@@ -809,8 +815,9 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
     Renvoie {path, count, lines} — count = nombre de lignes écrites.
     """
     from jdm_agent.enrich import Candidate
-    from jdm_agent.enrich.pipeline import write_submission as _write_sub
+    from jdm_agent.enrich.pipeline import _decoded, write_submission as _write_sub
 
+    c = _client()
     cands: list = []
     for t in triplets:
         if not (t.get("term") and t.get("relation") and t.get("target")):
@@ -822,13 +829,13 @@ def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt"
             confidence=0.7, source="agent",
             validation_status="ok", consolidation_status="consolidated",
         ))
-    n = _write_sub(path, cands)
+    n = _write_sub(path, cands, client=c)
     return {
         "path": path, "count": n,
         "lines": [
-            f"{c.term} | {c.relation} | {c.target} | {c.annotation} < "
-            f"{' '.join(c.consolidation_explanation.split())} >"
-            for c in cands
+            f"{_decoded(cd.term, c)} | {cd.relation} | {_decoded(cd.target, c)} | "
+            f"{cd.annotation} < {' '.join(cd.consolidation_explanation.split())} >"
+            for cd in cands
         ],
     }
 
