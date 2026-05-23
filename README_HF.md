@@ -65,8 +65,8 @@ régimes au choix :
   Si la contenance échoue, un moteur d'inférence symbolique enchaîne une
   cascade de schémas (transitivité, déduction par généralisation, élimination
   par classe, contraste antonymique, etc.) bornée par un budget HTTP.
-- **Effort 2 — inférence complète** : ajoute les schémas plus coûteux
-  (composition, double-isa, target-generic).
+- **Effort 2 — inférence complète** : ajoute la composition curée de
+  relations (R₁ ⟸ R₂ ∘ R₃ selon une carte de compositions valides).
 
 Chaque verdict (`supported` / `contradicted` / `unknown`) est accompagné de
 la chaîne de preuve — les triplets JDM réels qui le justifient, et le schéma
