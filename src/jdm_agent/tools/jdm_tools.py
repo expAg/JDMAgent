@@ -787,6 +787,136 @@ def validate_candidate(term: str, relation: str, target: str,
 
 
 @tool
+def enrichment_workflow() -> dict:
+    """Renvoie le flux canonique à suivre pour TOUTE demande d'enrichissement JDM.
+
+    ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on te
+    demande de PROPOSER / SUGGÉRER / AJOUTER / ENRICHIR des triplets dans JDM
+    (que la demande mentionne un terme, une relation, les deux, ou rien). Il
+    n'a aucun coût (renvoyé instantanément, pas d'appel HTTP) et te donne la
+    marche à suivre exacte — y compris les règles qui évitent de gaspiller des
+    appels d'outils.
+
+    Renvoie un dict avec :
+      - title    : intitulé du flux
+      - steps    : liste ordonnée des étapes (ordre, nom, description, tool)
+      - rules    : règles transversales (correction sémantique, polysémie,
+                   ready_for_submission, etc.)
+      - if_no_term : que faire si l'utilisateur n'a donné qu'une relation
+    """
+    return {
+        "title": "Flux d'enrichissement JDM (à suivre dans cet ordre)",
+        "steps": [
+            {
+                "order": 1,
+                "name": "Pré-fetch de l'existant",
+                "description": (
+                    "Pour chaque couple (terme, relation) que tu vas enrichir, "
+                    "récupère D'ABORD les triplets DÉJÀ présents dans JDM. "
+                    "Tu en tires ta liste d'EXCLUSION : tu ne proposes ensuite "
+                    "que des cibles HORS de cette liste. Pourquoi : générer "
+                    "puis consolider un candidat coûte 1-2 appels par triplet ; "
+                    "la moitié des doublons sont évitables si tu connais "
+                    "l'existant. Ne pré-fetcher PAS c'est gaspiller."
+                ),
+                "tool": (
+                    "Outil dédié à la relation si elle en a un — get_synonyms (r_syn), "
+                    "get_antonyms (r_anto), get_hypernyms (r_isa), get_hyponyms (r_hypo), "
+                    "get_parts (r_has_part), get_characteristics (r_carac), "
+                    "get_agents/patients/instruments (r_agent/r_patient/r_instr), "
+                    "get_locations (r_lieu), get_telic_role, get_manner, get_consequences, "
+                    "get_domain_members, get_actions_of/on, get_uses_with, etc. "
+                    "Sinon, get_relations_of_type(term, relation_name) en fallback générique."
+                ),
+            },
+            {
+                "order": 2,
+                "name": "Désambiguïsation si polysémique",
+                "description": (
+                    "Si le terme OU la cible que tu vas proposer a plusieurs "
+                    "sens (avocat, souris, police, chat, livre, sens, vol, "
+                    "glace, etc.), désambiguïse via `disambiguate`, CHOISIS "
+                    "toi-même le sens visé, et passe le `sense_id` raffiné "
+                    "(forme brute `avocat>116477>66699`) à validate_candidate. "
+                    "Pas la forme générique. C'est ta décision sémantique."
+                ),
+                "tool": "disambiguate",
+            },
+            {
+                "order": 3,
+                "name": "Proposition",
+                "description": (
+                    "Génère tes candidats HORS de la liste d'exclusion du "
+                    "pré-fetch. La correction sémantique est TA responsabilité, "
+                    "pas celle de JDM : tes triplets doivent être linguistiquement "
+                    "et factuellement justes selon ta connaissance du français. "
+                    "Si tu as repéré une erreur ou bizarrerie dans JDM en "
+                    "pré-fetchant, NE t'aligne PAS — propose ce qui est correct. "
+                    "JDM n'est pas un oracle parfait, tu contribues pour "
+                    "l'améliorer."
+                ),
+                "tool": "(pas d'appel — génération interne)",
+            },
+            {
+                "order": 4,
+                "name": "Validation + consolidation (un seul appel)",
+                "description": (
+                    "Pour CHAQUE candidat (raffiné si polysémique), appelle "
+                    "`validate_candidate` — il fait la validation structurelle "
+                    "(unknown_term / duplicate / inconsistent / ok) ET la "
+                    "consolidation par inférence (consolidated / rejected / "
+                    "not_consolidated) en UN seul appel. Ne retiens pour la "
+                    "soumission QUE les candidats dont `ready_for_submission` "
+                    "vaut true. La validation structurelle « ok » seule NE "
+                    "SUFFIT PAS."
+                ),
+                "tool": "validate_candidate",
+            },
+            {
+                "order": 5,
+                "name": "Écriture du fichier de soumission",
+                "description": (
+                    "Écris UNIQUEMENT les candidats consolidés au format pipe "
+                    "`terme | relation | cible | annotation < explication >`. "
+                    "L'ANNOTATION (constitutif, contrastif, probable…) et "
+                    "l'EXPLICATION (chaîne d'inférence en langage naturel) sont "
+                    "DEUX champs distincts — ne les confonds pas. Les raffinements "
+                    "bruts sont décodés automatiquement en forme lisible "
+                    "(`avocat>116477>66699` → `avocat (personne, juriste)`)."
+                ),
+                "tool": "write_submission_file",
+            },
+        ],
+        "rules": [
+            "Tout ce que tu énonces (relation, triplet, verdict, gap) provient "
+            "d'un appel d'outil JDM réel — pas de simulation.",
+            "Les noms de relations s'orthographient PRÉCISÉMENT comme JDM les "
+            "définit (r_isa, r_anto, r_has_part, r_object>mater, r_has_conseq, "
+            "etc.) ; pas d'invention depuis ta mémoire — utilise `list_relation_types` "
+            "si tu as un doute.",
+            "Un triplet n'est soumettable QUE si `ready_for_submission` vaut "
+            "true (consolidation_status == 'consolidated'). Pas d'exception.",
+            "Tu désambiguïses et choisis le sens TOI-MÊME — passe le sense_id "
+            "raffiné à validate_candidate, pas la forme générique.",
+            "Le pré-fetch sert UNIQUEMENT à éviter les doublons. Il ne remplace "
+            "PAS ton jugement sémantique et tu ne t'alignes JAMAIS sur les "
+            "erreurs que JDM contient.",
+        ],
+        "if_no_term": (
+            "Si l'utilisateur n'a donné qu'une relation (ex. « enrichis r_holo » "
+            "ou « propose des triplets pour r_telic_role »), c'est À TOI de "
+            "fournir le terme. Tire un mot français au hasard (vraie variété "
+            "— ne te limite à aucun registre, varie domaine / longueur / niveau "
+            "d'abstraction d'un essai à l'autre et d'une session à l'autre), "
+            "vérifie qu'il existe dans JDM via `lookup_term`. Si le mot n'est "
+            "pas dans JDM ou si tu n'obtiens rien d'intéressant après "
+            "pré-fetch, recommence avec un AUTRE mot. NE demande JAMAIS le "
+            "terme à l'utilisateur."
+        ),
+    }
+
+
+@tool
 def write_submission_file(triplets: list[dict], path: str = "soumission_jdm.txt") -> dict:
     """Écrit le fichier de soumission JDM (.txt) au format pipe.
 
@@ -1059,6 +1189,7 @@ ALL_TOOLS: list[StructuredTool] = [
     infer,
     get_triplet_annotations,
     # Enrichissement
+    enrichment_workflow,
     detect_gaps,
     validate_candidate,
     write_submission_file,

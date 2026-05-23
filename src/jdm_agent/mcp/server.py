@@ -75,10 +75,14 @@ def build_server(client: JDMClient | None = None) -> FastMCP:
             "explorer plusieurs angles complémentaires (catégorisation / parties / "
             "caractéristiques ; fonction / usages / actions subies ; …) enrichit "
             "la réponse. Utilise ton jugement.\n\n"
-            "FLUX DE SOUMISSION & DÉTECTION DE GAPS SANS TERME : règles détaillées "
-            "dans les docstrings de `validate_candidate`, `detect_gaps` et "
-            "`write_submission_file` — elles sont autoritaires et rechargées à "
-            "chaque appel d'outil."
+            "ENRICHISSEMENT : dès qu'on te demande de proposer / suggérer / "
+            "ajouter / enrichir des triplets dans JDM, ton TOUT PREMIER appel "
+            "est `enrichment_workflow()` — il renvoie le flux canonique à "
+            "suivre étape par étape (pré-fetch, désambiguïsation, proposition, "
+            "validation + consolidation, écriture soumission) et les règles "
+            "transversales. C'est la source de vérité du flux.\n\n"
+            "DÉTECTION DE GAPS SANS TERME : règle détaillée dans la docstring "
+            "de `detect_gaps` (rechargée à chaque appel d'outil)."
         ),
     )
 
