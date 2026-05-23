@@ -18,11 +18,12 @@ def compute_submission_filename(model_name: str, *,
                                 now: Optional[datetime] = None) -> str:
     """Nom standardisé d'un fichier de soumission LLMDrops.
 
-    Format : `from_{model_slug}_automatic_submission_{HH}h{MM}_{DD}-{MM}-{YY}.enrich`
+    Format : `{HH}h{MM}_{DD}-{MM}-{YY}_automatic_submission_from_{model_slug}.enrich`
 
+    L'horodatage en tête sert au tri chronologique naturel dans un dossier.
     Le `model_name` est slugifié : espaces et caractères non-sûrs (URL/shell)
     sont remplacés par `_`, le reste est conservé (on garde les tirets et le
-    point usuels des noms de modèles type `claude-sonnet-4-7` ou `gpt-4.1`).
+    point usuels des noms de modèles type `claude-opus-4-7` ou `gpt-4.1`).
     Le timestamp utilise l'heure LOCALE (cohérent avec le contexte utilisateur).
 
     Args:
@@ -39,8 +40,7 @@ def compute_submission_filename(model_name: str, *,
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", model_name).strip("_") or "unknown"
     ts = (now or datetime.now())
     return (
-        f"from_{slug}_automatic_submission_"
-        f"{ts:%Hh%M}_{ts:%d-%m-%y}.enrich"
+        f"{ts:%Hh%M}_{ts:%d-%m-%y}_automatic_submission_from_{slug}.enrich"
     )
 
 

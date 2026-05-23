@@ -1046,10 +1046,15 @@ def write_submission_file(
     SOUMISSION AUTOMATIQUE au LLMDrops (Phase 12, opt-in) :
       - `upload=True` : après écriture locale, POST le fichier au endpoint
         LLMDrops JDM. Le fichier est uploadé sous un nom standardisé
-        `from_{model}_automatic_submission_{HHhMM}_{DD-MM-YY}.enrich` qui
-        trace quel LLM a produit la soumission et quand.
-      - `model_name` : nom du LLM source (ex. "claude-sonnet-4-7", "gpt-5").
-        Vide → fallback sur l'env `LLM_MODEL` puis `"mcp_client"`.
+        `{HHhMM}_{DD-MM-YY}_automatic_submission_from_{model}.enrich` qui
+        permet le tri chronologique naturel et trace quel LLM a produit
+        la soumission.
+      - `model_name` : nom EXACT du LLM source (ex. "claude-opus-4-7",
+        "claude-sonnet-4-5", "gpt-5"). ⚠️ Ne DEVINE PAS, ne MÉLANGE PAS les
+        versions : tu DOIS passer ton VRAI identifiant tel qu'il apparaît
+        dans ta config (Claude Code l'affiche en bas du terminal). Si tu
+        n'es pas sûr, laisse vide → fallback sur env `LLM_MODEL` puis
+        `"mcp_client"`. Mieux vaut "mcp_client" qu'un nom inventé.
       - `api_key`    : clé API LLMDrops. Vide → lue dans `JDM_DROPS_API_KEY`.
       - Défaut `upload=False` : pas de transmission silencieuse, le LLM
         doit demander l'upload explicitement.

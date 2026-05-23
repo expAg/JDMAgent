@@ -383,8 +383,8 @@ def test_write_submission_file_with_upload_success(tmp_path, monkeypatch):
     assert out["count"] == 1
     assert out["upload"]["ok"] is True
     assert out["upload"]["status_code"] == 200
-    assert out["upload"]["uploaded_as"].startswith(
-        "from_claude-sonnet-4-7_automatic_submission_"
+    assert out["upload"]["uploaded_as"].endswith(
+        "_automatic_submission_from_claude-sonnet-4-7.enrich"
     )
     assert out["upload"]["response"] == {"status": "ok", "id": 7}
 

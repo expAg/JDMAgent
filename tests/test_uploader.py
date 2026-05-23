@@ -15,28 +15,28 @@ from jdm_agent.enrich.uploader import DEFAULT_ENDPOINT_URL
 
 def test_filename_basic_format():
     now = datetime(2026, 5, 27, 14, 32, 0)
-    name = compute_submission_filename("claude-sonnet-4-7", now=now)
-    assert name == "from_claude-sonnet-4-7_automatic_submission_14h32_27-05-26.enrich"
+    name = compute_submission_filename("claude-opus-4-7", now=now)
+    assert name == "14h32_27-05-26_automatic_submission_from_claude-opus-4-7.enrich"
 
 
 def test_filename_slug_spaces_to_underscores():
     now = datetime(2026, 1, 3, 9, 5, 0)
-    name = compute_submission_filename("Claude Sonnet 4.7", now=now)
+    name = compute_submission_filename("Claude Opus 4.7", now=now)
     # Les espaces → '_', le point conservé (autorisé en filename), pas de doublon.
-    assert name == "from_Claude_Sonnet_4.7_automatic_submission_09h05_03-01-26.enrich"
+    assert name == "09h05_03-01-26_automatic_submission_from_Claude_Opus_4.7.enrich"
 
 
 def test_filename_slug_strips_dangerous_chars():
     now = datetime(2026, 12, 31, 23, 59, 0)
     name = compute_submission_filename("gpt-5/turbo:beta", now=now)
     # Slashes et deux-points → '_' (sécurité URL / shell).
-    assert name == "from_gpt-5_turbo_beta_automatic_submission_23h59_31-12-26.enrich"
+    assert name == "23h59_31-12-26_automatic_submission_from_gpt-5_turbo_beta.enrich"
 
 
 def test_filename_empty_model_falls_back():
     now = datetime(2026, 5, 27, 14, 32, 0)
     name = compute_submission_filename("", now=now)
-    assert name == "from_unknown_automatic_submission_14h32_27-05-26.enrich"
+    assert name == "14h32_27-05-26_automatic_submission_from_unknown.enrich"
 
 
 def test_filename_only_unsafe_chars_falls_back():
@@ -64,7 +64,8 @@ def test_submit_missing_api_key(tmp_path, monkeypatch):
     assert out["ok"] is False
     assert "API" in out["error"] or "JDM_DROPS_API_KEY" in out["error"]
     # Mais le filename uploadé est quand même calculé (utile pour log).
-    assert out["uploaded_as"].startswith("from_")
+    assert "_automatic_submission_from_" in out["uploaded_as"]
+    assert out["uploaded_as"].endswith(".enrich")
 
 
 @respx.mock
@@ -76,13 +77,13 @@ def test_submit_success_with_json_response(tmp_path):
         return_value=httpx.Response(200, json={"status": "ok", "drop_id": 42})
     )
 
-    out = submit_to_jdm(p, api_key="secret-key", model_name="claude-sonnet-4-7")
+    out = submit_to_jdm(p, api_key="secret-key", model_name="claude-opus-4-7")
 
     assert route.called
     assert out["ok"] is True
     assert out["status_code"] == 200
     assert out["response"] == {"status": "ok", "drop_id": 42}
-    assert out["uploaded_as"].startswith("from_claude-sonnet-4-7_automatic_submission_")
+    assert "_automatic_submission_from_claude-opus-4-7.enrich" in out["uploaded_as"]
     assert out["endpoint"] == DEFAULT_ENDPOINT_URL
     assert out["error"] is None
 
@@ -91,7 +92,7 @@ def test_submit_success_with_json_response(tmp_path):
     assert request.headers["X-API-Key"] == "secret-key"
     body = request.content.decode("utf-8", errors="replace")
     # Multipart contient le filename uploadé et le format=json.
-    assert "from_claude-sonnet-4-7_automatic_submission_" in body
+    assert "_automatic_submission_from_claude-opus-4-7.enrich" in body
     assert "format" in body and "json" in body
 
 
