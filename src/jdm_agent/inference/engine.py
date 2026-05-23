@@ -571,14 +571,24 @@ _EFFORT1_SCHEMAS = (
     # positif n'a abouti (sinon la transitivité aurait confirmé).
     _schema_cohyponym,
 )
-# Effort 2 : composition (curée, saine) d'abord, puis les schémas LÂCHES en
-# bas de cascade — target_generic, double_isa. Ces deux-là sur-génèrent
-# (ponts par nœuds génériques) : ils ne tournent qu'en dernier recours,
-# et leur confiance est fortement décotée (cf. SCHEMA_CONFIDENCE).
+# Effort 2 : composition seule (curée, saine).
+#
+# Les schémas `_schema_target_generic` et `_schema_double_isa` ont été
+# DÉSACTIVÉS définitivement : ils faisaient de l'INDUCTION (spécialisation
+# vers le bas de l'arbre r_isa), pas de la déduction.
+#
+# Exemple du bug qu'ils produisaient :
+#   « chaise r_has_part coussin » + « coussin en cuir r_isa coussin »
+#   ⟹ FAUX « chaise r_has_part coussin en cuir »
+#
+# La cible (« coussin en cuir ») est PLUS SPÉCIFIQUE que ce qu'on sait
+# (« coussin »), donc on ne peut RIEN en déduire — c'est l'erreur d'affirmation
+# du conséquent. Décoter la confiance d'un schéma logiquement faux ne le rend
+# pas vrai. La direction valide (spécifique → général) est déjà capturée par
+# `_schema_hyponym_propagation`. Les fonctions restent définies pour
+# rétro-compatibilité d'imports mais ne tournent plus.
 _EFFORT2_SCHEMAS = (
     _schema_composition,
-    _schema_target_generic,
-    _schema_double_isa,
 )
 
 
