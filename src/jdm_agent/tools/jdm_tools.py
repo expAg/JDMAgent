@@ -691,6 +691,29 @@ def validate_candidate(term: str, relation: str, target: str,
                        inference_effort: int = 1) -> dict:
     """Vérifie COMPLÈTEMENT un triplet candidat proposé pour enrichir JDM.
 
+    PRÉ-FETCH RECOMMANDÉ AVANT D'APPELER : générer puis consolider chaque
+    candidat coûte 1-2 appels par triplet, et la moitié des doublons sont
+    évitables. Avant de générer tes idées pour un couple (terme, relation),
+    jette un œil rapide à l'existant via l'outil le plus approprié pour cette
+    relation — un outil dédié si elle en a un (`get_synonyms`,
+    `get_hypernyms`, `get_parts`, `get_characteristics`, etc.), sinon
+    `get_relations_of_type`. Tu en tires la liste des cibles déjà présentes
+    et tu proposes hors de cette liste. Le pré-fetch sert UNIQUEMENT à éviter
+    les doublons, il ne remplace pas ton jugement sémantique.
+
+    CORRECTION SÉMANTIQUE = TA RESPONSABILITÉ, pas celle de JDM. Tes triplets
+    doivent être linguistiquement et factuellement justes selon ta connaissance
+    du français. Si tu repères une erreur ou une bizarrerie dans JDM en
+    pré-fetchant, ce n'est PAS une licence pour t'aligner — ignore-la, propose
+    ce qui est correct. JDM n'est pas un oracle parfait ; tu y contribues
+    précisément pour l'améliorer.
+
+    POLYSÉMIE : si le terme OU la cible a plusieurs sens (avocat, souris,
+    police, chat, livre, sens, vol, glace…), désambiguïse d'abord via
+    `disambiguate` et passe ici le `sense_id` du raffinement que TU as choisi
+    (forme brute type `avocat>116477>66699`), pas la forme générique. La
+    consolidation tournera sur ce sens raffiné — c'est TA décision sémantique.
+
     Fait TOUT le contrôle en UN seul appel — ne t'arrête jamais à mi-chemin :
 
       ÉTAPE 1 — validation structurelle (déterministe) :
@@ -707,16 +730,8 @@ def validate_candidate(term: str, relation: str, target: str,
                                PAS prêt pour soumission en l'état)
 
     RÈGLE ABSOLUE : un triplet n'est soumettable QUE si
-    `ready_for_submission` vaut true (c.-à-d. consolidation_status ==
-    "consolidated"). La seule validation structurelle « ok » NE SUFFIT PAS —
-    ne déclare jamais un candidat « prêt » sans consolidation.
-
-    POLYSÉMIE : si le terme OU la cible a plusieurs sens (avocat, souris,
-    police, chat, livre, sens, vol, glace, …), DÉSAMBIGUÏSE d'abord toi-même
-    (`disambiguate`) et passe ici le `sense_id` du raffinement que TU as
-    choisi (forme brute type `avocat>116477>66699`), pas la forme générique
-    « avocat ». La consolidation utilisera ce sens raffiné tel quel — c'est
-    TA décision sémantique, pas celle de l'outil.
+    `ready_for_submission` vaut true. La validation structurelle « ok » seule
+    NE SUFFIT PAS — ne déclare jamais un candidat « prêt » sans consolidation.
 
     Args:
         term:     terme source (ou son `sense_id` raffiné si polysémique).
