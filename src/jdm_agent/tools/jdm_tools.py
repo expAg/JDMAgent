@@ -936,7 +936,8 @@ def enrichment_workflow() -> dict:
             "même classe-pivot, tu n'as proposé qu'UN "
             "trait générique × N étiquettes — pas N enrichissements distincts. "
             "Choisis d'abord le triplet pour sa PERTINENCE linguistique et conceptuelle, "
-            "ensuite seulement tu laisses la consolidation décider."
+            "ensuite seulement tu laisses la consolidation décider.\n"
+            "🎯 itérer jusqu'à atteindre le nombre demandé, ne pas s'arrêter parce que l'objectif n'est pas atteignable avec facilité."
         ),
         "title": "Flux d'enrichissement JDM (à suivre dans cet ordre)",
         "steps": [
