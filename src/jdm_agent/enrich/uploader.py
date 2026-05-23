@@ -21,6 +21,16 @@ from typing import Optional
 
 import httpx
 
+# Charge le .env du projet pour que `JDM_DROPS_API_KEY`, `JDM_DROPS_URL` et
+# `LLM_MODEL` soient disponibles même si l'appelant n'a pas importé d'autre
+# composant qui charge dotenv (cas typique : `python -c "from jdm_agent.enrich
+# import submit_to_jdm; ..."`).
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv(override=False)
+except Exception:
+    pass
+
 
 DEFAULT_ENDPOINT_URL = "http://jeuxdemots.org/LLMDrops.php"
 
