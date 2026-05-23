@@ -78,7 +78,10 @@ COMPOSITION_MAP: dict[str, list[tuple[str, str]]] = {
 # --- Génériques & classes ---------------------------------------------------
 
 #: Relations « génériques » : du terme vers ses sur-ensembles (déduction-ISA).
-GENERIC_RELATIONS: tuple[str, ...] = ("r_isa", "r_syn")
+#: La synonymie a été retirée volontairement : `A r_syn B` ne signifie pas que
+#: A et B sont substituables dans tous les contextes (souvent une hyperonymie
+#: déguisée). La garder ici introduisait trop de faux positifs.
+GENERIC_RELATIONS: tuple[str, ...] = ("r_isa",)
 
 #: Grandes classes pour le schéma d'élimination par classe.
 ELIMINATION_CLASSES: tuple[str, ...] = (

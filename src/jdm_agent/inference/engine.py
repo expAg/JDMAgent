@@ -304,7 +304,7 @@ def _schema_synonym_equiv(ctx: _Ctx) -> InferenceResult | None:
 
 
 def _schema_deduction_isa(ctx: _Ctx) -> InferenceResult | None:
-    """Déduction par généralisation : `A r_isa/r_syn G` ∧ `G R B` ⟹ `A R B`.
+    """Déduction par généralisation : `A r_isa G` ∧ `G R B` ⟹ `A R B`.
 
     Le schéma le plus rentable — un trait porté par un générique se transfère.
     AGRÉGATION MULTI-CHEMINS : on n'arrête PAS au 1er générique concluant, on
@@ -526,7 +526,7 @@ def _schema_double_isa(ctx: _Ctx) -> InferenceResult | None:
 
 
 def _schema_target_generic(ctx: _Ctx) -> InferenceResult | None:
-    """Via un générique de l'object : `subject R G` ∧ `object r_isa/r_syn G`."""
+    """Via un générique de l'object : `subject R G` ∧ `object r_isa G`."""
     for gname, gw, via in _gens(ctx, ctx.object):
         if norm(gname) == norm(ctx.subject):
             continue
@@ -546,13 +546,13 @@ def _schema_target_generic(ctx: _Ctx) -> InferenceResult | None:
 #   1. schémas gratuits / exacts : guards, prefix, inverse, implication
 #   2. RÉFUTATIONS spécialisées : isa_incompatible, class_elim
 #   3. schémas SAINS porteurs de signe : deduction_isa, transitivity,
-#      hyponym_propagation — ils peuvent conclure « vrai » OU « faux » et
-#      doivent passer AVANT la synonymie. Ex. `chatte r_has_part pénis` est
-#      réfuté par deduction_isa (chatte r_isa femelle, femelle r_has_part
-#      pénis = -24) — il ne faut pas qu'un schéma lâche conclue « vrai »
-#      avant via une fausse synonymie (pénis r_syn sexe).
-#   4. synonym_equiv EN DERNIER : la synonymie JDM n'est pas substituable
-#      (souvent une hyperonymie déguisée) → priorité basse, dernier recours.
+#      hyponym_propagation — ils peuvent conclure « vrai » OU « faux ».
+#   4. réfutation tardive par cohyponymie.
+# La SYNONYMIE (schéma synonym_equiv et r_syn dans les chemins de
+# généralisation) a été DÉSACTIVÉE volontairement : la synonymie JDM n'est
+# pas substituable (ex. « pénis r_syn sexe » est en fait une hyperonymie),
+# elle générait trop de faux positifs. Le schéma `_schema_synonym_equiv`
+# reste défini mais ne figure plus dans la cascade.
 _EFFORT1_SCHEMAS = (
     _schema_guards,
     _schema_prefix,
@@ -570,14 +570,11 @@ _EFFORT1_SCHEMAS = (
     # Réfutation tardive : cohyponymie — uniquement si aucun chemin ISA
     # positif n'a abouti (sinon la transitivité aurait confirmé).
     _schema_cohyponym,
-    # Synonymie en tout dernier (priorité basse, substitution non stricte).
-    _schema_synonym_equiv,
 )
 # Effort 2 : composition (curée, saine) d'abord, puis les schémas LÂCHES en
 # bas de cascade — target_generic, double_isa. Ces deux-là sur-génèrent
 # (ponts par nœuds génériques) : ils ne tournent qu'en dernier recours,
-# après tous les schémas sains ET la synonymie, et leur confiance est
-# fortement décotée (cf. SCHEMA_CONFIDENCE).
+# et leur confiance est fortement décotée (cf. SCHEMA_CONFIDENCE).
 _EFFORT2_SCHEMAS = (
     _schema_composition,
     _schema_target_generic,
