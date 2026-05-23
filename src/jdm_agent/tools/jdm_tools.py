@@ -699,11 +699,6 @@ def validate_candidate(term: str, relation: str, target: str,
                        inference_effort: int = 1) -> dict:
     """Vérifie un triplet candidat — étape 4 du flux d'enrichissement.
 
-    Tool spécialisé : ne le rappelle PAS pour redécouvrir le flux complet —
-    c'est `enrichment_workflow()` qui donne les étapes (pré-fetch d'abord,
-    désambiguïsation si polysémique, ta correction sémantique, etc.). Cette
-    docstring décrit UNIQUEMENT ce que fait cet appel précis.
-
     Fait TOUT le contrôle en UN seul appel — ne t'arrête jamais à mi-chemin :
 
       ÉTAPE 1 — validation structurelle (déterministe) :
@@ -757,7 +752,18 @@ def validate_candidate(term: str, relation: str, target: str,
             "`terme|relation|cible|annotation < explication >` en reprenant "
             "`consolidation_explanation` comme explication."
         )
-    elif cand.validation_status in ("duplicate", "unknown_term", "inconsistent"):
+    elif cand.validation_status == "duplicate":
+        out["next_step"] = (
+            f"À REJETER (duplicate) : {cand.validation_note} — "
+            "⚠️ ATTENTION : un duplicate ici, c'est que tu N'AS PAS pré-fetché "
+            f"`{cand.term} | {cand.relation} | ?` avant de proposer. ARRÊTE "
+            "ton batch maintenant, appelle l'outil de pré-fetch correspondant "
+            f"à `{cand.relation}` (get_synonyms / get_parts / get_hypernyms / "
+            "get_characteristics / … ou get_relations_of_type), récupère la "
+            "liste des cibles déjà présentes, et reprends en proposant HORS "
+            "de cette liste. Sinon tu vas tourner en rond."
+        )
+    elif cand.validation_status in ("unknown_term", "inconsistent"):
         out["next_step"] = f"À REJETER ({cand.validation_status}) : {cand.validation_note}"
     elif cand.consolidation_status == "rejected":
         out["next_step"] = f"À REJETER (réfuté par inférence) : {cand.consolidation_explanation}"
@@ -766,6 +772,17 @@ def validate_candidate(term: str, relation: str, target: str,
             "NON CONSOLIDÉ — l'inférence n'a pas pu démontrer ce triplet. "
             "Pas prêt pour soumission (ne pas l'inclure)."
         )
+    # Garde persistante : rappel injecté dans CHAQUE réponse pour discipliner
+    # le flux. Le LLM le voit à chaque appel, c'est conçu pour qu'il ne
+    # « tourne en rond » jamais — même s'il a oublié de pré-fetcher au début.
+    out["prefetch_reminder"] = (
+        f"As-tu pré-fetché `{cand.term} | {cand.relation} | ?` AVANT de "
+        "proposer ? Si non, fais-le maintenant (get_synonyms / get_parts / "
+        "get_hypernyms / get_characteristics / … selon la relation, ou "
+        "get_relations_of_type en fallback) et exclus ces cibles de tes "
+        "prochaines propositions. Sans pré-fetch tu gaspilles des appels "
+        "sur des doublons."
+    )
     return out
 
 
@@ -788,6 +805,18 @@ def enrichment_workflow() -> dict:
       - if_no_term : que faire si l'utilisateur n'a donné qu'une relation
     """
     return {
+        "STOP_AVANT_DE_PROPOSER": (
+            "⛔ PRÉ-FETCH OBLIGATOIRE. Pour CHAQUE couple (terme, relation) que "
+            "tu vas enrichir, AVANT de générer le moindre candidat, appelle "
+            "l'outil de pré-fetch correspondant à la relation (get_synonyms, "
+            "get_parts, get_hypernyms, get_characteristics, get_telic_role, … "
+            "ou get_relations_of_type en fallback). Tu en tires la liste des "
+            "cibles DÉJÀ DANS JDM, et tu proposes UNIQUEMENT hors de cette "
+            "liste. Sans ce pré-fetch tu vas TOURNER EN ROND : statistiquement "
+            "~50-80 % de tes candidats batch seront des doublons (vu en pratique : "
+            "65 candidats → 60+ duplicates), c.-à-d. autant d'appels gaspillés. "
+            "Ne lance JAMAIS de batch de validations avant d'avoir pré-fetché."
+        ),
         "title": "Flux d'enrichissement JDM (à suivre dans cet ordre)",
         "steps": [
             {
