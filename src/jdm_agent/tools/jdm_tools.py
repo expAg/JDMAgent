@@ -650,13 +650,21 @@ def detect_gaps(
 ) -> list[dict]:
     """Détecte les trous de couverture de JDM pour un terme donné.
 
-    Si on te demande la détection pour une relation seule sans terme
-    (ex. « détecte les trous pour r_holo »), c'est à toi de fournir le
-    terme : tire un mot français au hasard, vérifie via `lookup_term`
-    qu'il est dans JDM, appelle `detect_gaps` dessus. Itère (max ~6-8
-    essais) en variant vraiment les tirages si le mot manque ou si tu
-    n'obtiens pas au moins ≈ 3 gaps. Ne demande pas le terme à
-    l'utilisateur.
+    ⚠️ TERME OBLIGATOIRE — RÈGLE NON-NÉGOCIABLE :
+    Si l'utilisateur a indiqué SEULEMENT une relation (ex. « détecte les
+    trous pour r_holo », « r_telic_role »...) SANS donner de terme, NE LUI
+    DEMANDE PAS de terme. NE LUI POSE PAS DE QUESTION. À la place :
+      1. tire toi-même un mot français au hasard. VARIE VRAIMENT — d'un
+         essai à l'autre, et d'une session à l'autre. La langue française
+         et JDM sont infiniment riches : ne te limite à aucun registre,
+         change de domaine, de longueur, de niveau d'abstraction ;
+      2. vérifie qu'il existe dans JDM via `lookup_term` ;
+      3. appelle `detect_gaps` dessus avec la relation demandée ;
+      4. si le terme n'est pas dans JDM OU si tu ne trouves pas au moins
+         3 gaps intéressants, RECOMMENCE avec un AUTRE mot (registre
+         différent) — itère silencieusement, max 6-8 essais, et ne montre
+         que le résultat final exploitable.
+    Cette règle prime sur tout réflexe de « clarifier avec l'utilisateur ».
 
     Trois types de gaps :
       - MISSING         : aucun triplet (term, relation, ?) — relation jugée
