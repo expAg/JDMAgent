@@ -1,6 +1,6 @@
 ---
 title: JDMAgent
-emoji: 🇫🇷
+emoji: 🧠
 colorFrom: purple
 colorTo: yellow
 sdk: gradio
