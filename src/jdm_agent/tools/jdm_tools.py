@@ -756,12 +756,13 @@ def validate_candidate(term: str, relation: str, target: str,
         out["next_step"] = (
             f"À REJETER (duplicate) : {cand.validation_note} — "
             "⚠️ ATTENTION : un duplicate ici, c'est que tu N'AS PAS pré-fetché "
-            f"`{cand.term} | {cand.relation} | ?` avant de proposer. ARRÊTE "
-            "ton batch maintenant, appelle l'outil de pré-fetch correspondant "
-            f"à `{cand.relation}` (get_synonyms / get_parts / get_hypernyms / "
-            "get_characteristics / … ou get_relations_of_type), récupère la "
-            "liste des cibles déjà présentes, et reprends en proposant HORS "
-            "de cette liste. Sinon tu vas tourner en rond."
+            f"`{cand.term} | {cand.relation} | ?` avant de proposer (ou que "
+            "ton pré-fetch a été tronqué par un outil de consultation). "
+            "ARRÊTE ton batch maintenant, appelle "
+            f"`list_existing_for_enrichment(term='{cand.term}', "
+            f"relation_name='{cand.relation}')` (exhaustif par construction), "
+            "récupère `exclusion_set`, et reprends en proposant HORS de cette "
+            "liste. Sinon tu vas tourner en rond."
         )
     elif cand.validation_status in ("unknown_term", "inconsistent"):
         out["next_step"] = f"À REJETER ({cand.validation_status}) : {cand.validation_note}"
@@ -776,14 +777,89 @@ def validate_candidate(term: str, relation: str, target: str,
     # le flux. Le LLM le voit à chaque appel, c'est conçu pour qu'il ne
     # « tourne en rond » jamais — même s'il a oublié de pré-fetcher au début.
     out["prefetch_reminder"] = (
-        f"As-tu pré-fetché `{cand.term} | {cand.relation} | ?` AVANT de "
-        "proposer ? Si non, fais-le maintenant (get_synonyms / get_parts / "
-        "get_hypernyms / get_characteristics / … selon la relation, ou "
-        "get_relations_of_type en fallback) et exclus ces cibles de tes "
-        "prochaines propositions. Sans pré-fetch tu gaspilles des appels "
-        "sur des doublons."
+        f"As-tu appelé `list_existing_for_enrichment(term='{cand.term}', "
+        f"relation_name='{cand.relation}')` AVANT de proposer ? Si non OU "
+        "si tu as utilisé get_synonyms/get_parts/etc. (qui tronquent), "
+        "fais-le maintenant — c'est l'outil dédié au pré-fetch exhaustif, "
+        "il renvoie `exclusion_set` complet sans seuil de poids ni limite "
+        "basse. Sans ça tu gaspilles des appels sur des doublons."
     )
     return out
+
+
+@tool
+def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
+    """Liste EXHAUSTIVE des triplets existants pour `(term, relation)` —
+    OUTIL DE PRÉ-FETCH dédié au flux d'enrichissement.
+
+    Usage : à appeler AVANT toute proposition de candidats pour ce couple
+    (term, relation). Renvoie TOUT ce que JDM contient (positifs, négatifs,
+    faibles, forts), sans seuil de poids, jusqu'à `limit_cap` entrées.
+    C'est ta LISTE D'EXCLUSION : ne propose ensuite QUE des cibles HORS
+    de `exclusion_set`.
+
+    Différence avec `get_synonyms` / `get_parts` / `get_relations_of_type` :
+    ceux-là sont des outils de CONSULTATION optimisés pour répondre à
+    l'utilisateur (top-N par poids, seuils conservateurs). Ils tronquent
+    silencieusement — un `get_synonyms("joyeux")` peut louper `enjoué` à
+    w=278 si la limite par défaut le coupe. Pour pré-fetcher en
+    enrichissement, c'est piégeur : tu crois avoir la liste complète,
+    tu proposes des doublons, tu tournes en rond.
+
+    Ce tool, lui, est calibré pour l'EXHAUSTIVITÉ (et donc pour la
+    fiabilité de l'exclusion) — c'est son SEUL job.
+
+    Args:
+        term: terme source (forme générique ou raffinée `avocat>116477>66699`).
+        relation_name: relation JDM (`r_isa`, `r_has_part`, `r_lieu`…).
+
+    Renvoie {term, relation, count, targets, exclusion_set} où
+    `exclusion_set` est la liste plate des cibles déjà présentes
+    (normalisées en minuscules, sans accents — prêtes pour matcher tes
+    propositions).
+    """
+    import unicodedata
+
+    def _norm(s: str) -> str:
+        s = unicodedata.normalize("NFKD", s)
+        return "".join(ch for ch in s if not unicodedata.combining(ch)).lower().strip()
+
+    c = _client()
+    rid = c.relation_type_id(relation_name)
+    if rid is None:
+        return {
+            "term": term, "relation": relation_name,
+            "error": f"Relation inconnue : {relation_name!r}. "
+                     "Vérifie le nom via `list_relation_types`.",
+            "count": 0, "targets": [], "exclusion_set": [],
+        }
+
+    LIMIT_CAP = 500
+    MIN_W = -1e9  # tout, négatifs compris
+    try:
+        res = c.relations_from(term, types_ids=[rid],
+                               min_weight=MIN_W, limit=LIMIT_CAP)
+    except Exception as e:
+        return {
+            "term": term, "relation": relation_name,
+            "error": f"Échec du pré-fetch : {e}",
+            "count": 0, "targets": [], "exclusion_set": [],
+        }
+
+    targets = _resolve_targets(c, term, relation_name, res, incoming=False)
+    exclusion = sorted({_norm(t.get("target") or "") for t in targets if t.get("target")})
+    return {
+        "term": term,
+        "relation": relation_name,
+        "count": len(targets),
+        "targets": targets,         # triplets complets avec polarité / poids
+        "exclusion_set": exclusion, # liste plate normalisée pour matching rapide
+        "note": (
+            f"{len(exclusion)} cible(s) existante(s) — propose UNIQUEMENT des "
+            "cibles hors de `exclusion_set`. Si tu proposes quand même quelque "
+            "chose qui y figure, tu auras un verdict 'duplicate' en validation."
+        ),
+    }
 
 
 @tool
@@ -808,38 +884,35 @@ def enrichment_workflow() -> dict:
         "STOP_AVANT_DE_PROPOSER": (
             "⛔ PRÉ-FETCH OBLIGATOIRE. Pour CHAQUE couple (terme, relation) que "
             "tu vas enrichir, AVANT de générer le moindre candidat, appelle "
-            "l'outil de pré-fetch correspondant à la relation (get_synonyms, "
-            "get_parts, get_hypernyms, get_characteristics, get_telic_role, … "
-            "ou get_relations_of_type en fallback). Tu en tires la liste des "
-            "cibles DÉJÀ DANS JDM, et tu proposes UNIQUEMENT hors de cette "
-            "liste. Sans ce pré-fetch tu vas TOURNER EN ROND : statistiquement "
-            "~50-80 % de tes candidats batch seront des doublons (vu en pratique : "
-            "65 candidats → 60+ duplicates), c.-à-d. autant d'appels gaspillés. "
-            "Ne lance JAMAIS de batch de validations avant d'avoir pré-fetché."
+            "`list_existing_for_enrichment(term, relation_name)`. C'est UN seul "
+            "tool, dédié et exhaustif (limit haute, pas de seuil de poids — "
+            "contrairement à get_synonyms/get_parts/etc. qui tronquent "
+            "silencieusement). Tu reçois `exclusion_set` (liste plate "
+            "normalisée des cibles déjà présentes) et tu proposes UNIQUEMENT "
+            "hors de cette liste. Sans ce pré-fetch tu vas TOURNER EN ROND : "
+            "vu en pratique sur un batch — 65 candidats proposés, 60+ "
+            "duplicates parce que les outils de consultation classiques "
+            "tronquaient (joyeux r_syn enjoué à w=278 raté par get_synonyms "
+            "défaut, etc.). Ne lance JAMAIS de batch de validations avant "
+            "d'avoir pré-fetché avec `list_existing_for_enrichment`."
         ),
         "title": "Flux d'enrichissement JDM (à suivre dans cet ordre)",
         "steps": [
             {
                 "order": 1,
-                "name": "Pré-fetch de l'existant",
+                "name": "Pré-fetch exhaustif de l'existant",
                 "description": (
                     "Pour chaque couple (terme, relation) que tu vas enrichir, "
-                    "récupère D'ABORD les triplets DÉJÀ présents dans JDM. "
-                    "Tu en tires ta liste d'EXCLUSION : tu ne proposes ensuite "
-                    "que des cibles HORS de cette liste. Pourquoi : générer "
-                    "puis consolider un candidat coûte 1-2 appels par triplet ; "
-                    "la moitié des doublons sont évitables si tu connais "
-                    "l'existant. Ne pré-fetcher PAS c'est gaspiller."
+                    "appelle `list_existing_for_enrichment(term, relation_name)`. "
+                    "Tu reçois `exclusion_set` (liste plate normalisée des "
+                    "cibles déjà présentes) et tu proposes UNIQUEMENT hors de "
+                    "cette liste. N'utilise PAS get_synonyms/get_parts/etc. "
+                    "ici : ces outils de consultation tronquent silencieusement "
+                    "(top-N par poids, seuils conservateurs) et te font louper "
+                    "des cibles fortes mais hors du top — résultat : tu "
+                    "proposes des doublons sans le savoir."
                 ),
-                "tool": (
-                    "Outil dédié à la relation si elle en a un — get_synonyms (r_syn), "
-                    "get_antonyms (r_anto), get_hypernyms (r_isa), get_hyponyms (r_hypo), "
-                    "get_parts (r_has_part), get_characteristics (r_carac), "
-                    "get_agents/patients/instruments (r_agent/r_patient/r_instr), "
-                    "get_locations (r_lieu), get_telic_role, get_manner, get_consequences, "
-                    "get_domain_members, get_actions_of/on, get_uses_with, etc. "
-                    "Sinon, get_relations_of_type(term, relation_name) en fallback générique."
-                ),
+                "tool": "list_existing_for_enrichment",
             },
             {
                 "order": 2,
@@ -1202,6 +1275,7 @@ ALL_TOOLS: list[StructuredTool] = [
     get_triplet_annotations,
     # Enrichissement
     enrichment_workflow,
+    list_existing_for_enrichment,
     detect_gaps,
     validate_candidate,
     write_submission_file,
