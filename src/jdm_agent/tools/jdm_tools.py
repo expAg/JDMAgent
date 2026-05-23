@@ -280,12 +280,9 @@ def get_relations_of_type(
     r_against, r_sentiment, r_has_conseq, r_has_causatif, r_can_eat, etc.
     (180+ types — voir relation_definitions.md).
 
-    🔑 USAGE OBLIGATOIRE EN FLUX D'ENRICHISSEMENT : avant de proposer des
-    triplets candidats pour un couple (term, relation), tu DOIS appeler
-    ce tool en PREMIER pour récupérer ce qui existe déjà — c'est ta liste
-    d'exclusion. Tu n'as alors plus qu'à proposer HORS de cette liste.
-    Sans ce pré-fetch, tu gaspilles des appels à `validate_candidate` sur
-    des triplets déjà présents (verdict "duplicate" = appel raté).
+    Pratique en flux d'enrichissement : si la relation ciblée n'a pas
+    d'outil dédié, c'est le bon outil pour jeter un œil rapide à ce qui
+    existe déjà avant de proposer (évite les doublons).
 
     Args:
         term: le terme source ou cible.
@@ -653,21 +650,13 @@ def detect_gaps(
 ) -> list[dict]:
     """Détecte les trous de couverture de JDM pour un terme donné.
 
-    ⚠️ TERME OBLIGATOIRE — RÈGLE NON-NÉGOCIABLE :
-    Si l'utilisateur a indiqué SEULEMENT une relation (ex. « détecte les
-    trous pour r_holo », « r_telic_role »…) SANS donner de terme, NE LUI
-    DEMANDE PAS de terme. NE LUI POSE PAS DE QUESTION. À la place :
-      1. tire toi-même un mot français au hasard. VARIE VRAIMENT — d'un
-         essai à l'autre, et d'une session à l'autre. La langue française
-         et JDM sont infiniment riches : ne te limite à aucun registre,
-         change de domaine, de longueur, de niveau d'abstraction ;
-      2. vérifie qu'il existe dans JDM via `lookup_term` ;
-      3. appelle `detect_gaps` dessus avec la relation demandée ;
-      4. si le terme n'est pas dans JDM OU si tu ne trouves pas au moins
-         3 gaps intéressants, RECOMMENCE avec un AUTRE mot (registre
-         différent) — itère silencieusement, max 6-8 essais, et ne montre
-         que le résultat final exploitable.
-    Cette règle prime sur tout réflexe de « clarifier avec l'utilisateur ».
+    Si on te demande la détection pour une relation seule sans terme
+    (ex. « détecte les trous pour r_holo »), c'est à toi de fournir le
+    terme : tire un mot français au hasard, vérifie via `lookup_term`
+    qu'il est dans JDM, appelle `detect_gaps` dessus. Itère (max ~6-8
+    essais) en variant vraiment les tirages si le mot manque ou si tu
+    n'obtiens pas au moins ≈ 3 gaps. Ne demande pas le terme à
+    l'utilisateur.
 
     Trois types de gaps :
       - MISSING         : aucun triplet (term, relation, ?) — relation jugée
@@ -701,14 +690,6 @@ def detect_gaps(
 def validate_candidate(term: str, relation: str, target: str,
                        inference_effort: int = 1) -> dict:
     """Vérifie COMPLÈTEMENT un triplet candidat proposé pour enrichir JDM.
-
-    ⚠️ PRÉREQUIS OBLIGATOIRE — AVANT d'appeler cet outil pour un (term,
-    relation), tu DOIS avoir déjà appelé `get_relations_of_type(term,
-    relation)` pour récupérer la liste DÉJÀ présente dans JDM, et tu ne
-    proposes ici que des cibles HORS de cette liste. Si tu obtiens un
-    statut "duplicate" à ce stade, c'est que tu as triché : tu as proposé
-    sans pré-fetcher. Pré-fetch d'abord, proposition ensuite — chaque
-    appel à cet outil sans pré-fetch préalable est un gaspillage.
 
     Fait TOUT le contrôle en UN seul appel — ne t'arrête jamais à mi-chemin :
 
