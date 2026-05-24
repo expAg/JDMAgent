@@ -32,6 +32,16 @@ def _is_bounded_budget(budget_label: str) -> bool:
     return s.isdigit() and int(s) > 0
 
 
+_RANDOM_TERM_INSTRUCTION = (
+    "Je n'ai pas précisé de terme — TIRE toi-même un mot français au "
+    "hasard et VARIÉ (varie domaine, registre, longueur, niveau "
+    "d'abstraction d'un essai à l'autre et d'une session à l'autre). "
+    "Évite les taxonomies scolaires (animaux, plantes) où JDM est "
+    "déjà dense. Vérifie d'abord qu'il existe via `lookup_term` ; "
+    "si non, recommence avec un autre — jusqu'à un terme exploitable."
+)
+
+
 def build_enrich_prompt(
     term: str,
     relation: str = "",
@@ -46,7 +56,11 @@ def build_enrich_prompt(
     relation = (relation or "").strip()
     bounded = _is_bounded_budget(budget_label)
     parts: list[str] = []
-    parts.append(f"Je veux ENRICHIR le terme « {term} » dans JDM.")
+    if term:
+        parts.append(f"Je veux ENRICHIR le terme « {term} » dans JDM.")
+    else:
+        parts.append("Je veux ENRICHIR un terme dans JDM.")
+        parts.append(_RANDOM_TERM_INSTRUCTION)
     if relation:
         parts.append(f"Relation cible prioritaire : `{relation}`.")
     if vary_relations:
@@ -103,16 +117,31 @@ def build_audit_prompt(
     term = (term or "").strip()
     relation = (relation or "").strip()
     parts: list[str] = []
-    parts.append(f"Je veux AUDITER le terme « {term} » dans JDM.")
+    if term:
+        parts.append(f"Je veux AUDITER le terme « {term} » dans JDM.")
+    else:
+        parts.append(
+            "Je veux AUDITER un terme POLYSÉMIQUE dans JDM (chercher des "
+            "contaminations du générique par des sens non-premiers)."
+        )
+        parts.append(_RANDOM_TERM_INSTRUCTION + (
+            " IMPORTANT : pour l'audit, le terme tiré doit être "
+            "POLYSÉMIQUE (plusieurs sens dans disambiguate) ; sinon "
+            "retire un autre mot."
+        ))
     if relation:
         parts.append(
             f"Restreins l'audit à la relation `{relation}` (la liste par "
             "défaut sinon : r_isa, r_has_part, r_carac, r_telic_role, "
-            "r_lieu, r_anto, r_syn)."
+            "r_lieu, r_anto, r_syn, r_agent-1, r_patient-1)."
         )
     parts.append(
-        "Examine sens par sens (top 2-3 par poids r_raff_sem) et rends "
-        "un verdict pour CHAQUE triplet du terme générique."
+        "Détecte les CONTAMINATIONS du terme générique par des relations "
+        "qui appartiennent à des sens NON-PREMIERS (2e, 3e, … par poids "
+        "r_raff_sem). Examine TOUS les sens non-premiers, pas un top "
+        "arbitraire. Signale aussi tout cas où le sens classé 1er par "
+        "r_raff_sem n'est pas, selon ton jugement, celui qui devrait "
+        "intuitivement être premier en français contemporain."
     )
     if _is_bounded_budget(budget_label):
         parts.append(
@@ -140,7 +169,11 @@ def build_gap_prompt(
     """Compose le pré-prompt de détection de trous à partir du formulaire."""
     term = (term or "").strip()
     parts: list[str] = []
-    parts.append(f"Je veux DÉTECTER les trous de JDM pour le terme « {term} ».")
+    if term:
+        parts.append(f"Je veux DÉTECTER les trous de JDM pour le terme « {term} ».")
+    else:
+        parts.append("Je veux DÉTECTER les trous de JDM pour un terme.")
+        parts.append(_RANDOM_TERM_INSTRUCTION)
     if relations:
         rels = ", ".join(f"`{r}`" for r in relations if r)
         parts.append(f"Relations cibles : {rels}.")
@@ -174,9 +207,13 @@ def build_signalement_prompt(
     term = (term or "").strip()
     relation = (relation or "").strip()
     parts: list[str] = []
-    parts.append(
-        f"Je veux SIGNALER les triplets suspects de JDM pour « {term} »."
-    )
+    if term:
+        parts.append(
+            f"Je veux SIGNALER les triplets suspects de JDM pour « {term} »."
+        )
+    else:
+        parts.append("Je veux SIGNALER les triplets suspects de JDM pour un terme.")
+        parts.append(_RANDOM_TERM_INSTRUCTION)
     if relation:
         parts.append(f"Restreins le scan à la relation `{relation}` seule.")
     else:
@@ -235,10 +272,11 @@ def build_stats_prompt(
         )
     else:
         parts.append(
-            "Je veux des statistiques JDM mais je n'ai pas précisé "
-            "le terme ni la relation — choisis un terme français au "
-            "hasard et donne-moi son profil sur les relations principales."
+            "Je veux des STATISTIQUES JDM mais je n'ai pas précisé "
+            "le terme ni la relation — exécute le mode PAR_TERME sur "
+            "un terme tiré au hasard."
         )
+        parts.append(_RANDOM_TERM_INSTRUCTION)
     if _is_bounded_budget(budget_label):
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum."

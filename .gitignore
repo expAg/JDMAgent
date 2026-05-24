@@ -13,3 +13,13 @@ build/
 *.log
 erreurs_a_corriger.md
 COMMANDES.md
+# Artefacts de travail (fichiers générés par les runs locaux)
+*.enrich
+*.audit
+*.err
+*_subgraph.html
+*_complet.html
+*_complet.png
+*_enrichissement_jdm.csv
+*_enrichissement_jdm.txt
+modèle Inférences php.txt

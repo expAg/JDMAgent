@@ -86,6 +86,29 @@ def test_audit_workflow_has_meta_section_mention():
         "audit_workflow doit mentionner === META === dans l'étape d'écriture"
 
 
+def test_audit_workflow_focuses_on_non_premier_sens():
+    """Le nouveau flow audit cible la CONTAMINATION du générique par
+    les sens NON-PREMIERS, et NE limite PAS à top 2-3."""
+    result = audit_workflow.invoke({})
+    full = result["intent"] + " ".join(s["description"] for s in result["steps"])
+    # Doit parler de contamination / sens non premier
+    assert "NON-PREMIER" in full or "non-premier" in full or "non premier" in full
+    assert "contamination" in full.lower() or "CONTAMINATION" in full
+    # Ne doit pas imposer un top arbitraire (les anciennes versions disaient top 2-3)
+    assert "top 2-3" not in full.lower()
+    # Doit aussi inclure le cas du sens premier discutable
+    assert "premier" in full.lower() and "discutable" in full.lower()
+
+
+def test_audit_workflow_handles_no_term():
+    """Le nouveau flow audit doit accepter qu'on lui demande sans terme :
+    il tire alors un mot polysémique au hasard."""
+    result = audit_workflow.invoke({})
+    full = " ".join(s["description"] for s in result["steps"])
+    # Mention du tirage au hasard
+    assert "hasard" in full or "TIRE" in full or "tire" in full
+
+
 def test_signalement_workflow_mentions_judgment():
     """signalement_workflow doit explicitement dire que le jugement du LLM compte."""
     result = signalement_workflow.invoke({})

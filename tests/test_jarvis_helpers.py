@@ -96,6 +96,38 @@ def test_enrich_relation_optional():
     assert "r_isa" in p_yes
 
 
+# ---------- Terme vide → tirage au hasard (tous les builders) ----------
+
+def test_enrich_empty_term_triggers_random_pick():
+    p = build_enrich_prompt("")
+    assert "ENRICHIR un terme" in p or "hasard" in p
+    assert "lookup_term" in p  # vérif d'existence via lookup_term
+
+
+def test_audit_empty_term_triggers_random_polysemous_pick():
+    p = build_audit_prompt("")
+    assert "AUDITER un terme" in p
+    assert "POLYSÉMIQUE" in p   # contrainte spécifique à l'audit
+    assert "hasard" in p
+
+
+def test_gap_empty_term_triggers_random_pick():
+    p = build_gap_prompt("")
+    assert "DÉTECTER les trous" in p
+    assert "hasard" in p
+
+
+def test_signalement_empty_term_triggers_random_pick():
+    p = build_signalement_prompt("")
+    assert "SIGNALER" in p
+    assert "hasard" in p
+
+
+def test_stats_empty_everything_triggers_random_pick():
+    p = build_stats_prompt(term="", relation="")
+    assert "hasard" in p
+
+
 # ---------- build_audit_prompt ----------
 
 def test_audit_mentions_workflow():

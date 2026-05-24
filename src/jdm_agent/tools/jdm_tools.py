@@ -1103,136 +1103,168 @@ def audit_workflow() -> dict:
 
     ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on
     te demande d'AUDITER / VÉRIFIER / CONTRÔLER la répartition des sens
-    d'un terme polysémique dans JDM. Zéro coût, te donne la marche à
-    suivre exacte (analyse sens-par-sens + section META narrative).
+    d'un terme polysémique dans JDM. Zéro coût.
     """
     return {
-        "title": "Flux d'audit JDM — répartition des sens et annotations",
+        "title": "Flux d'audit JDM — confusion entre sens raffinés",
         "intent": (
-            "Pour un terme (souvent polysémique), examiner les triplets "
-            "rangés sous le TERME GÉNÉRIQUE et décider, en s'appuyant sur "
-            "les SENS RAFFINÉS, si chacun est légitimement placé là, ou "
-            "s'il devrait être contrastif / non-contrastif / négativé. "
-            "Produit en plus un compte-rendu narratif sur la propagation "
-            "et la confusion des sens (section META)."
+            "Détecter les CONFUSIONS entre sens raffinés d'un terme "
+            "polysémique. Principe JDM : le terme générique (sans "
+            "raffinement) hérite normalement des relations du SENS "
+            "PREMIER (le sens dominant, poids `r_raff_sem` le plus "
+            "fort). Si des relations propres à un sens NON-PREMIER "
+            "(2e, 3e, … par poids) apparaissent dans le générique, "
+            "c'est une CONTAMINATION à signaler. Inversement : si le "
+            "sens classé 1er par r_raff_sem n'est pas celui qui devrait "
+            "intuitivement être premier (selon ton jugement de "
+            "francophone), c'est aussi à signaler."
         ),
         "steps": [
             {
                 "order": 1,
-                "name": "Lister les sens du terme",
+                "name": "Choisir/recevoir un terme polysémique",
+                "description": (
+                    "Si l'utilisateur a fourni un terme, vérifie sa "
+                    "polysémie via `disambiguate`. S'il n'en a pas "
+                    "fourni, TIRE toi-même un mot français au hasard "
+                    "et varié (varie domaine, registre, longueur d'un "
+                    "essai à l'autre), vérifie qu'il existe via "
+                    "`lookup_term` puis qu'il est polysémique via "
+                    "`disambiguate`. Si non polysémique → autre tirage. "
+                    "Max 6-8 essais avant de proposer le résultat."
+                ),
+                "tool": "lookup_term + disambiguate",
+            },
+            {
+                "order": 2,
+                "name": "Lister TOUS les sens par poids r_raff_sem",
                 "description": (
                     "Appelle `disambiguate(term)`. Tu obtiens la liste "
-                    "ordonnée des sens par poids `r_raff_sem` (consensus). "
-                    "Le SENS DOMINANT est le 1er (poids le plus fort). "
-                    "Note les top 2-3 sens : ce sont eux qui « comptent » "
-                    "pour décider si un triplet du générique est légitime."
+                    "ordonnée des sens par poids `r_raff_sem` (consensus "
+                    "des joueurs sur « ce nœud est un sens de term »). "
+                    "Le 1er est le SENS DOMINANT (premier). Tous les "
+                    "autres sont des SENS NON-PREMIERS (2e, 3e, 4e…). "
+                    "Tu prends TOUS les sens significatifs, pas seulement "
+                    "le top — c'est dans les sens minoritaires qu'on "
+                    "trouve les contaminations les plus intéressantes."
                 ),
                 "tool": "disambiguate",
             },
             {
-                "order": 2,
+                "order": 3,
                 "name": "Inventaire des triplets sur le terme générique",
                 "description": (
-                    "Pour chaque relation à auditer (la relation cible si "
-                    "l'utilisateur l'a précisée, sinon la liste par défaut "
-                    "[r_isa, r_has_part, r_carac, r_telic_role, r_lieu, "
-                    "r_anto, r_syn]), appelle "
-                    "`get_relations_of_type(term, relation_name)` sur le "
-                    "TERME GÉNÉRIQUE — récupère TOUS ses triplets sur "
-                    "cette relation."
-                ),
-                "tool": "get_relations_of_type",
-            },
-            {
-                "order": 3,
-                "name": "Inventaire par sens raffiné dominant",
-                "description": (
-                    "Pour CHAQUE sens raffiné dominant identifié à l'étape "
-                    "1 (top 2-3), appelle "
-                    "`get_relations_of_type(sense_id, relation_name)` sur "
-                    "la même relation. Ces triplets sont l'inventaire "
-                    "« vrai » de chaque sens. Garde-les en mémoire pour "
-                    "la comparaison."
+                    "Pour chaque relation à auditer (la relation cible "
+                    "si l'utilisateur l'a précisée, sinon la liste par "
+                    "défaut [r_isa, r_has_part, r_carac, r_telic_role, "
+                    "r_lieu, r_anto, r_syn, r_agent-1, r_patient-1]), "
+                    "appelle `get_relations_of_type(term, relation_name)` "
+                    "sur le TERME GÉNÉRIQUE (forme nue, sans raffinement) "
+                    "— récupère TOUS ses triplets pour cette relation."
                 ),
                 "tool": "get_relations_of_type",
             },
             {
                 "order": 4,
-                "name": "Verdict par triplet du générique",
+                "name": "Inventaire par sens NON-PREMIER",
                 "description": (
-                    "Pour CHAQUE triplet du terme générique listé à "
-                    "l'étape 2, rends UN verdict parmi :\n"
-                    "  • LEGITIME : appartient au sens dominant (idéalement "
-                    "le 1er) ou commun à tous les sens. Rien à faire.\n"
-                    "  • DEVRAIT_ETRE_CONTRASTIF : appartient à un sens "
-                    "minoritaire MAIS ce trait DISTINGUE ce sens des "
-                    "autres. Suggère d'ajouter une annotation `contrastif` "
-                    "sur le triplet (côté sens) ET de négativer côté "
-                    "générique si pertinent.\n"
-                    "  • DEVRAIT_ETRE_NON_CONTRASTIF : appartient à un sens "
-                    "minoritaire ET est partagé avec d'autres sens. Suggère "
-                    "d'ajouter une annotation `non contrastif` pour "
-                    "expliciter qu'il N'EST PAS distinctif.\n"
-                    "  • DEVRAIT_ETRE_NEGATIVE : n'appartient à AUCUN sens "
-                    "ou seulement à un sens marginal (poids r_raff_sem "
-                    "très faible). Suggère de poser une NÉGATION sur le "
-                    "générique pour empêcher l'inférence erronée.\n"
-                    "Justifie chaque verdict en UNE phrase (référence "
-                    "explicite aux sens identifiés)."
+                    "Pour CHAQUE sens NON-PREMIER (2e, 3e, … par poids "
+                    "r_raff_sem — donc tous SAUF le 1er), appelle "
+                    "`get_relations_of_type(sense_id, relation_name)` "
+                    "sur les mêmes relations qu'à l'étape 3. Garde ces "
+                    "inventaires pour les comparer au générique. C'est "
+                    "ces relations-LÀ qu'on cherche à détecter dans le "
+                    "générique (= contamination par un sens minoritaire)."
                 ),
-                "tool": "(pas d'appel — jugement sémantique du LLM)",
+                "tool": "get_relations_of_type",
             },
             {
                 "order": 5,
-                "name": "Compte rendu narratif (section META)",
+                "name": "Détecter les contaminations",
                 "description": (
-                    "En PROSE (français, 5-10 lignes max), rédige un "
-                    "compte rendu sur la confusion et la propagation des "
-                    "relations pour ce terme : « le sens dominant 'X (Y)' "
-                    "est sous-représenté », « la confusion entre les sens "
-                    "A et B propage des relations contradictoires », "
-                    "« beaucoup de traits du sens 'Z' sont injustement "
-                    "rangés sous le générique »… C'est de la lecture "
-                    "humaine pour le mainteneur, pas du parsing machine."
+                    "Compare l'inventaire du terme générique (étape 3) "
+                    "avec ceux des sens non-premiers (étape 4). Pour "
+                    "CHAQUE triplet du générique qui apparaît AUSSI dans "
+                    "un sens non-premier (et pas chez le sens premier), "
+                    "c'est une CONTAMINATION à signaler. Format :\n"
+                    "  « le terme `<X>` a la relation `<Y>` → `<Z>` du "
+                    "raffinement `<sens_n>` (sens n°<N> par poids "
+                    "r_raff_sem), mais ce n'est pas le sens premier de "
+                    "<X> ; ce trait propre à <sens_n> ne devrait pas "
+                    "être attaché au générique. »\n"
+                    "Tu utilises ton jugement de francophone : si un "
+                    "triplet du générique appartient sémantiquement au "
+                    "sens 1er ou est commun à tous les sens, il est "
+                    "LEGITIME — ne le flag pas."
                 ),
-                "tool": "(pas d'appel — synthèse linguistique)",
+                "tool": "(jugement sémantique + comparaison)",
             },
             {
                 "order": 6,
+                "name": "Vérifier l'ordre des sens (sens premier discutable ?)",
+                "description": (
+                    "Indépendamment des contaminations, regarde le "
+                    "CLASSEMENT que disambiguate te renvoie. Le 1er "
+                    "sens (poids r_raff_sem le plus fort) est-il "
+                    "vraiment, intuitivement, le sens dominant du "
+                    "terme en français contemporain ? Si non, ajoute "
+                    "un signalement dédié de la forme :\n"
+                    "  « le sens premier de `<X>` selon r_raff_sem est "
+                    "`<sens_actuel>` mais en français contemporain ce "
+                    "devrait plutôt être `<sens_attendu>` (justification "
+                    "courte). »"
+                ),
+                "tool": "(jugement linguistique)",
+            },
+            {
+                "order": 7,
+                "name": "Compte rendu narratif (section META)",
+                "description": (
+                    "En PROSE (français, 5-10 lignes max), rédige une "
+                    "vue d'ensemble sur la confusion des sens pour ce "
+                    "terme : combien de contaminations, par quels sens, "
+                    "le sens premier paraît-il fiable, faut-il "
+                    "réorganiser ?  C'est de la lecture humaine pour "
+                    "un mainteneur — pas du parsing machine."
+                ),
+                "tool": "(synthèse linguistique)",
+            },
+            {
+                "order": 8,
                 "name": "Écriture du fichier .audit",
                 "description": (
                     "Appelle `write_submission_file(triplets=..., "
-                    "path='<term>_audit.audit', upload=...)` (modèle = ton "
-                    "nom). Le fichier doit comporter DEUX SECTIONS clairement "
-                    "séparées :\n\n"
-                    "  === PROPOSITIONS ===\n"
-                    "  term | relation | target | annotation | verdict | justification\n"
-                    "  ...\n"
+                    "path='<term>_audit.audit', upload=...)`. Le fichier "
+                    "doit comporter DEUX SECTIONS séparées :\n\n"
+                    "  === SIGNALEMENTS ===\n"
+                    "  term | relation | target | type | sens_concerné | justification\n"
+                    "  ... une ligne par contamination ou par sens-premier-discutable ...\n"
                     "  === META ===\n"
-                    "  <le compte rendu narratif de l'étape 5>\n\n"
-                    "La section PROPOSITIONS est MACHINE-LISIBLE (pipe-"
-                    "separated stable) — utilise `annotation` = 'contrastif' "
-                    "/ 'non contrastif' / '' (vide si verdict NEGATIVE ou "
-                    "LEGITIME). `verdict` = LEGITIME / DEVRAIT_ETRE_CONTRASTIF "
-                    "/ DEVRAIT_ETRE_NON_CONTRASTIF / DEVRAIT_ETRE_NEGATIVE.\n\n"
+                    "  <compte rendu narratif de l'étape 7>\n\n"
+                    "où `type` ∈ { contamination_sens_non_premier, "
+                    "sens_premier_discutable } et `sens_concerné` = "
+                    "le sense_id raffiné concerné (ex: `avocat>116477>66699` "
+                    "ou sa forme décodée `avocat (personne, juriste)`). "
+                    "Le séparateur `=== META ===` est OBLIGATOIRE.\n\n"
                     "SOUMISSION optionnelle : si l'utilisateur a demandé "
-                    "d'envoyer le fichier, `upload=True` (clé via "
-                    "`api_key=` argument ou env `JDM_DROPS_API_KEY`)."
+                    "d'envoyer, `upload=True` (clé via `api_key=` ou env "
+                    "`JDM_DROPS_API_KEY`)."
                 ),
                 "tool": "write_submission_file",
             },
         ],
         "rules": [
-            "Le LLM utilise son JUGEMENT linguistique de francophone — il "
-            "n'a PAS besoin de justifier chaque verdict par un appel "
-            "d'outil supplémentaire.",
-            "Le SENS DOMINANT = celui de plus fort poids `r_raff_sem` "
+            "Le LLM utilise son JUGEMENT linguistique — pas besoin de "
+            "vérifier chaque hypothèse par un appel d'outil supplémentaire.",
+            "Le SENS PREMIER = celui de plus fort poids `r_raff_sem` "
             "(et idéalement le 1er retourné par disambiguate).",
-            "Section PROPOSITIONS = machine-lisible (pipe-separated) ; "
+            "Examine TOUS les sens non-premiers, pas une sélection "
+            "arbitraire top-N. C'est dans les sens minoritaires qu'on "
+            "trouve les contaminations les plus utiles à signaler.",
+            "Section SIGNALEMENTS = machine-lisible (pipe-separated) ; "
             "section META = prose, lecture humaine.",
             "Ne crée PAS de triplets nouveaux — l'audit examine l'existant.",
-            "Le séparateur `=== META ===` est OBLIGATOIRE pour qu'un "
-            "parser puisse retrouver les 2 sections.",
+            "Le séparateur `=== META ===` est OBLIGATOIRE.",
         ],
     }
 

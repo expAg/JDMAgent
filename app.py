@@ -1577,7 +1577,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     with gr.Row():
                         with gr.Column(scale=1):
                             je_term = gr.Textbox(
-                                label="Terme à enrichir",
+                                label="Terme à enrichir (optionnel — vide = tirage au hasard)",
                                 placeholder="ex: guitare",
                             )
                             je_relation = gr.Dropdown(
@@ -1622,12 +1622,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         lance le flow Jarvis."""
                         from jarvis import build_enrich_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        if not (term or "").strip():
-                            yield [
-                                {"role": "assistant",
-                                 "content": "⚠️ Saisis un terme à enrichir."},
-                            ]
-                            return
+                        # Terme vide AUTORISÉ — l'agent tirera un mot au
+                        # hasard (cf. build_enrich_prompt → fallback random).
                         prompt = build_enrich_prompt(
                             term=term,
                             relation=relation,
@@ -1668,7 +1664,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     with gr.Row():
                         with gr.Column(scale=1):
                             ja_term = gr.Textbox(
-                                label="Terme à auditer (idéalement polysémique)",
+                                label="Terme à auditer (optionnel — vide = tirage polysémique au hasard)",
                                 placeholder="ex: avocat",
                             )
                             ja_relation = gr.Dropdown(
@@ -1703,10 +1699,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     def _run_audit(term, relation, upload, drops_key, model, budget_label):
                         from jarvis import build_audit_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        if not (term or "").strip():
-                            yield [{"role": "assistant",
-                                    "content": "⚠️ Saisis un terme à auditer."}]
-                            return
+                        # Terme vide AUTORISÉ — l'agent tirera un mot
+                        # polysémique au hasard.
                         prompt = build_audit_prompt(
                             term=term, relation=relation,
                             budget_label=str(budget_label),
@@ -1738,7 +1732,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     with gr.Row():
                         with gr.Column(scale=1):
                             jg_term = gr.Textbox(
-                                label="Terme à analyser",
+                                label="Terme à analyser (optionnel — vide = tirage au hasard)",
                                 placeholder="ex: smartphone",
                             )
                             jg_relations = gr.CheckboxGroup(
@@ -1789,49 +1783,53 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
 
                         term = (term or "").strip()
-                        if not term:
-                            yield (
-                                gr.update(value=[]),
-                                gr.update(choices=[], value=None),
-                                [{"role": "assistant",
-                                  "content": "⚠️ Saisis un terme à analyser."}],
-                            )
-                            return
+                        target_rels = list(relations) if relations else None
 
-                        # 1) Détection directe (cache disque amorti — 1-2s max)
-                        try:
-                            target_rels = list(relations) if relations else None
-                            gaps = detect_gaps(
-                                get_client(), term,
-                                target_relations=target_rels,
-                                min_to_consider=int(min_pos),
-                            )
-                        except Exception as e:
-                            yield (
-                                gr.update(value=[]),
-                                gr.update(choices=[], value=None),
-                                [{"role": "assistant",
-                                  "content": f"❌ Erreur de détection : {e}"}],
-                            )
-                            return
+                        # Terme vide AUTORISÉ : on saute le detect_gaps
+                        # direct (impossible sans terme), l'agent tirera
+                        # un terme au hasard puis fera lui-même detect_gaps.
+                        if term:
+                            try:
+                                gaps = detect_gaps(
+                                    get_client(), term,
+                                    target_relations=target_rels,
+                                    min_to_consider=int(min_pos),
+                                )
+                            except Exception as e:
+                                yield (
+                                    gr.update(value=[]),
+                                    gr.update(choices=[], value=None),
+                                    [{"role": "assistant",
+                                      "content": f"❌ Erreur de détection : {e}"}],
+                                )
+                                return
 
-                        table_rows = [
-                            [g.term, g.relation, g.gap_type.value,
-                             round(g.severity, 2), g.detail[:120]]
-                            for g in gaps
-                        ]
-                        gap_labels = [
-                            f"{g.term} | {g.relation} | {g.gap_type.value}"
-                            for g in gaps
-                        ]
+                            table_rows = [
+                                [g.term, g.relation, g.gap_type.value,
+                                 round(g.severity, 2), g.detail[:120]]
+                                for g in gaps
+                            ]
+                            gap_labels = [
+                                f"{g.term} | {g.relation} | {g.gap_type.value}"
+                                for g in gaps
+                            ]
+                            user_msg = f"Détecte les trous de « {term} »."
+                        else:
+                            # Pas de detect_gaps direct possible — placeholder
+                            table_rows = []
+                            gap_labels = []
+                            user_msg = (
+                                "Détecte les trous de JDM pour un terme "
+                                "(tiré au hasard par toi)."
+                            )
 
-                        # Premier yield : tableau + dropdown peuplés, chatbot placeholder
+                        # Premier yield : tableau + dropdown (vides si term vide),
+                        # chatbot placeholder
                         yield (
                             gr.update(value=table_rows),
                             gr.update(choices=gap_labels,
                                       value=gap_labels[0] if gap_labels else None),
-                            [{"role": "user",
-                              "content": f"Détecte les trous de « {term} »."},
+                            [{"role": "user", "content": user_msg},
                              {"role": "assistant",
                               "content": "*🧠 Synthèse en cours…*"}],
                         )
@@ -1911,7 +1909,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     with gr.Row():
                         with gr.Column(scale=1):
                             js_term = gr.Textbox(
-                                label="Terme à scanner",
+                                label="Terme à scanner (optionnel — vide = tirage au hasard)",
                                 placeholder="ex: baleine",
                             )
                             js_relation = gr.Dropdown(
@@ -1941,10 +1939,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     def _run_signalement(term, relation, upload, drops_key, model, budget_label):
                         from jarvis import build_signalement_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        if not (term or "").strip():
-                            yield [{"role": "assistant",
-                                    "content": "⚠️ Saisis un terme à scanner."}]
-                            return
+                        # Terme vide AUTORISÉ — l'agent tirera un mot au hasard.
                         prompt = build_signalement_prompt(
                             term=term, relation=relation,
                             budget_label=str(budget_label),
@@ -2010,10 +2005,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     def _run_stats(term, relation, drops_key, model, budget_label):
                         from jarvis import build_stats_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        if not (term or "").strip() and not (relation or "").strip():
-                            yield [{"role": "assistant",
-                                    "content": "⚠️ Saisis au moins un terme OU une relation."}]
-                            return
+                        # Les deux champs vides AUTORISÉS — l'agent tirera
+                        # un terme au hasard en mode PAR_TERME.
                         prompt = build_stats_prompt(
                             term=term, relation=relation,
                             budget_label=str(budget_label),
