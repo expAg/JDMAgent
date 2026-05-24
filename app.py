@@ -520,10 +520,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     # Sortie finale : 100 % markdown plat. Aucun HTML, parce que
     # gr.Chatbot v5 (avec ou sans sanitize_html) fragmente n'importe
     # quel tag inconnu en un caractère par ligne et casse l'affichage.
-    # On nettoie final_answer parce que certains modèles (Gemini 3.x via
-    # SDK natif Google) renvoient des chars de contrôle invisibles qui
-    # font fragmenter le rendu quand on concatène les outils derrière.
-    out = _clean_for_markdown(final_answer) or "*(réponse vide)*"
+    out = final_answer or "*(réponse vide)*"
 
     # Viz : lien markdown standard. Gradio le rendra cliquable et
     # l'ouverture dans un nouvel onglet dépend du client (Ctrl+clic
@@ -575,8 +572,13 @@ def _extract_html_path(tool_message_content: str) -> Optional[str]:
 
 def _build_viz_url(html_path: str) -> Optional[str]:
     """Copie le fichier HTML viz dans VIZ_DIR et renvoie l'URL Gradio
-    statique pour y accéder. Format `/file=ABS_PATH` (compatible Gradio
-    4.x et 5.x, mieux supporté que `/gradio_api/file=` sur HF Spaces).
+    statique pour y accéder. Aucun tag HTML — juste l'URL en string,
+    pour qu'on l'injecte dans un markdown `[label](url)` qui sera
+    rendu correctement par gr.Chatbot.
+
+    Tente d'abord `/gradio_api/file=` (Gradio 5.x), fallback `/file=`
+    (gradio <5). En réalité on émet `/gradio_api/file=` et on espère
+    que la version HF le supporte ; si 404, on pourra basculer.
 
     Retourne None si la copie échoue → chat continue avec seulement le
     texte, pas d'erreur bloquante.
@@ -594,29 +596,7 @@ def _build_viz_url(html_path: str) -> Optional[str]:
     except Exception:
         return None
     abs_path = str(dest.resolve()).replace("\\", "/")
-    return f"/file={abs_path}"
-
-
-def _clean_for_markdown(text: str) -> str:
-    """Nettoie un texte avant injection dans un markdown final pour Gradio.
-
-    Gemini 3.x (via SDK natif Google) peut renvoyer des caractères de
-    contrôle invisibles (\\r, \\x00, etc.) ou des séquences unicode
-    bizarres en fin de stream. Quand on concatène les outils derrière,
-    le diff incremental de gr.Chatbot fragmente l'affichage en un
-    caractère par ligne. Cette fonction normalise tout en `\\n` simple
-    et drop les chars de contrôle non printables.
-    """
-    if not text:
-        return ""
-    # Normalise CRLF / CR isolés
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    # Drop tous les chars de contrôle sauf \n et \t
-    cleaned = "".join(
-        ch for ch in text
-        if ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F)
-    )
-    return cleaned.strip()
+    return f"/gradio_api/file={abs_path}"
 
 
 # ---------- UI ----------
@@ -747,44 +727,7 @@ def viz_subgraph(term: str, depth: float,
         return f"❌ Erreur : {e}\n\n```\n{tb}\n```", "", None
 
 
-# JS injecté dans la <head> : MutationObserver qui ajoute target="_blank"
-# à tout lien <a> rendu dans une bulle de chat. Gradio ne permet pas de
-# spécifier target via markdown `[label](url)`, donc on patch côté DOM.
-# Marche à chaque re-render de message (streaming inclus).
-_ENSURE_BLANK_LINKS_JS = """
-<script>
-(function() {
-  function patchLinks(root) {
-    root.querySelectorAll('a[href]').forEach(function(a) {
-      // Ne touche que les liens qui ne sont pas déjà target=_blank
-      // et qui pointent vers un fichier servi par Gradio
-      // (i.e. /file= ou /gradio_api/file=).
-      if (!a.target && (a.href.indexOf('/file=') !== -1 ||
-                         a.href.indexOf('/gradio_api/file=') !== -1)) {
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-      }
-    });
-  }
-  // Au load initial
-  document.addEventListener('DOMContentLoaded', function() {
-    patchLinks(document);
-  });
-  // À chaque mutation du DOM (streaming chat, nouveaux messages)
-  var observer = new MutationObserver(function(mutations) {
-    mutations.forEach(function(m) {
-      m.addedNodes.forEach(function(n) {
-        if (n.nodeType === 1) { patchLinks(n); }
-      });
-    });
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-})();
-</script>
-"""
-
-with gr.Blocks(theme=THEME, title="JDMAgent Demo",
-                head=_ENSURE_BLANK_LINKS_JS) as demo:
+with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
 
     with gr.Tabs():
 
