@@ -1423,11 +1423,19 @@ def build_jdm_tools(
 ) -> list[StructuredTool]:
     """Renvoie la liste des outils LangChain, optionnellement avec docstrings
     enrichies des définitions tirées de `relation_definitions.md`.
+
+    Phase 13 — toute la liste est passée par `apply_budget_wrapping` :
+    si une invocation agent est encapsulée dans `budget_context(N)`
+    (côté Jarvis), chaque appel d'outil consomme une unité ; au-delà
+    de N, les tools renvoient le sentinel `BUDGET_EXHAUSTED` et le
+    LLM stoppe proprement (cf. règle 15). Sans contexte, les tools
+    s'exécutent librement — zéro régression sur les flows existants.
     """
     if client is not None:
         set_default_client(client)
     if not enrich_docstrings:
-        return list(ALL_TOOLS)
+        from jdm_agent.tools.budget import apply_budget_wrapping
+        return apply_budget_wrapping(list(ALL_TOOLS))
 
     docs = parse_relation_definitions()
     suffix_map = {
@@ -1456,4 +1464,5 @@ def build_jdm_tools(
         rel = suffix_map.get(t.name)
         if rel and docs.get(rel):
             t.description = f"{t.description}\n\n[JDM] {describe_relation(rel, docs)}"
-    return list(ALL_TOOLS)
+    from jdm_agent.tools.budget import apply_budget_wrapping
+    return apply_budget_wrapping(list(ALL_TOOLS))
