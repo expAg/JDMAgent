@@ -271,7 +271,7 @@ GEMINI_MODELS = {
 #    serveur rejette les enchaînements de tool calls — cf. issue LangChain
 #    #34056 : https://github.com/langchain-ai/langchain/issues/34056).
 GEMINI_MODEL_ROUTING = {
-    "gemini-3.1-flash-lite":   "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite":   "gemini-3.1-flash-lite",
     "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
     "gemini-3.5-flash":        "gemini-3.5-flash",
 }
