@@ -1500,6 +1500,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         """Wrapper Gradio : valide les champs, construit le prompt,
                         lance le flow Jarvis."""
                         from jarvis import build_enrich_prompt, run_jarvis_flow
+                        from jdm_agent.tools.jdm_agent import build_jdm_agent
                         if not (term or "").strip():
                             yield [
                                 {"role": "assistant",
@@ -1522,9 +1523,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
-                            build_agent_fn=__import__(
-                                "jdm_agent.tools.jdm_agent", fromlist=["build_jdm_agent"]
-                            ).build_jdm_agent,
+                            build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                         )
 
@@ -1549,19 +1548,225 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
                 with gr.Tab("🕳️ Détection de trous", id="jarvis-gaps"):
                     gr.Markdown(
-                        "*Sous-onglet en construction (Phase 13.4).*\n\n"
                         "Identifie les trous de couverture (MISSING / "
-                        "NEGATIVE_FILLED / LOW_COVERAGE) pour un terme et "
-                        "propose des actions de routage (Enrichir / Auditer / "
-                        "Stats sur chaque trou)."
+                        "NEGATIVE_FILLED / LOW_COVERAGE) pour un terme. "
+                        "Le LLM ajoute une synthèse narrative et propose "
+                        "des routages vers les autres sous-onglets."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            jg_term = gr.Textbox(
+                                label="Terme à analyser",
+                                placeholder="ex: smartphone",
+                            )
+                            jg_relations = gr.CheckboxGroup(
+                                choices=JARVIS_RELATIONS,
+                                value=[],
+                                label="Relations à examiner (vide = défaut intelligent)",
+                            )
+                            jg_min_pos = gr.Slider(
+                                1, 10, value=3, step=1,
+                                label="Seuil LOW_COVERAGE (< N triplets positifs)",
+                            )
+                            jg_launch = gr.Button(
+                                "🕳️ Détecter les trous",
+                                variant="primary",
+                            )
+                            gr.Markdown("### Router un trou détecté")
+                            jg_gap_dropdown = gr.Dropdown(
+                                choices=[],
+                                label="Choisis un gap à router",
+                                interactive=True,
+                            )
+                            with gr.Row():
+                                jg_route_enrich = gr.Button("→ Enrichir ce trou", scale=1)
+                                jg_route_audit = gr.Button("→ Auditer", scale=1, interactive=False)
+                                jg_route_stats = gr.Button("→ Stats", scale=1, interactive=False)
+                            gr.Markdown(
+                                "<small><em>Auditer et Stats seront actifs "
+                                "quand leurs sous-onglets seront déployés "
+                                "(Phases 13.5 / 13.6).</em></small>"
+                            )
+                        with gr.Column(scale=2):
+                            jg_gaps_table = gr.Dataframe(
+                                headers=["term", "relation", "type", "sévérité", "détail"],
+                                datatype=["str", "str", "str", "number", "str"],
+                                label="Trous détectés (déterministe, instantané)",
+                                interactive=False,
+                                wrap=True,
+                            )
+                            jg_chat = gr.Chatbot(
+                                type="messages",
+                                elem_id="jarvis-gaps-chat",
+                                label="Synthèse de l'agent",
+                                show_label=True,
+                                resizable=True,
+                                height=400,
+                            )
+
+                    def _run_gap_detection(term, relations, min_pos, drops_key, model, budget_label):
+                        """Détecte les gaps DIRECTEMENT (rapide, déterministe)
+                        puis lance l'agent pour la synthèse narrative."""
+                        from jarvis import build_gap_prompt, run_jarvis_flow
+                        from jdm_agent.enrich.detectors import detect_gaps
+                        from jdm_agent.tools.jdm_agent import build_jdm_agent
+
+                        term = (term or "").strip()
+                        if not term:
+                            yield (
+                                gr.update(value=[]),
+                                gr.update(choices=[], value=None),
+                                [{"role": "assistant",
+                                  "content": "⚠️ Saisis un terme à analyser."}],
+                            )
+                            return
+
+                        # 1) Détection directe (cache disque amorti — 1-2s max)
+                        try:
+                            target_rels = list(relations) if relations else None
+                            gaps = detect_gaps(
+                                get_client(), term,
+                                target_relations=target_rels,
+                                min_to_consider=int(min_pos),
+                            )
+                        except Exception as e:
+                            yield (
+                                gr.update(value=[]),
+                                gr.update(choices=[], value=None),
+                                [{"role": "assistant",
+                                  "content": f"❌ Erreur de détection : {e}"}],
+                            )
+                            return
+
+                        table_rows = [
+                            [g.term, g.relation, g.gap_type.value,
+                             round(g.severity, 2), g.detail[:120]]
+                            for g in gaps
+                        ]
+                        gap_labels = [
+                            f"{g.term} | {g.relation} | {g.gap_type.value}"
+                            for g in gaps
+                        ]
+
+                        # Premier yield : tableau + dropdown peuplés, chatbot placeholder
+                        yield (
+                            gr.update(value=table_rows),
+                            gr.update(choices=gap_labels,
+                                      value=gap_labels[0] if gap_labels else None),
+                            [{"role": "user",
+                              "content": f"Détecte les trous de « {term} »."},
+                             {"role": "assistant",
+                              "content": "*🧠 Synthèse en cours…*"}],
+                        )
+
+                        # 2) Synthèse via l'agent (peut prendre du temps)
+                        prompt = build_gap_prompt(
+                            term=term, relations=target_rels,
+                            budget_label=str(budget_label),
+                        )
+                        for chat_msgs in run_jarvis_flow(
+                            prompt=prompt, model=model, api_key="",
+                            budget_label=str(budget_label),
+                            drops_key=drops_key,
+                            build_llm_fn=_build_llm,
+                            build_agent_fn=build_jdm_agent,
+                            get_client_fn=get_client,
+                        ):
+                            yield (gr.update(), gr.update(), chat_msgs)
+
+                    jg_launch.click(
+                        _run_gap_detection,
+                        inputs=[jg_term, jg_relations, jg_min_pos,
+                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat],
+                    )
+
+                    # Routage du gap sélectionné → onglet Enrichissement,
+                    # avec pré-remplissage des champs.
+                    def _route_gap_to_enrich(gap_label):
+                        if not gap_label:
+                            return (gr.update(), gr.update(),
+                                    gr.update())  # no-op
+                        parts = [p.strip() for p in gap_label.split("|")]
+                        if len(parts) < 2:
+                            return (gr.update(), gr.update(), gr.update())
+                        term_v, relation_v = parts[0], parts[1]
+                        return (
+                            gr.update(value=term_v),     # je_term
+                            gr.update(value=relation_v), # je_relation
+                            gr.update(selected="jarvis-enrich"),  # jarvis_tabs
+                        )
+
+                    jg_route_enrich.click(
+                        _route_gap_to_enrich,
+                        inputs=[jg_gap_dropdown],
+                        outputs=[je_term, je_relation, jarvis_tabs],
                     )
 
                 with gr.Tab("⚠️ Signalement", id="jarvis-err"):
                     gr.Markdown(
-                        "*Sous-onglet en construction (Phase 13.4).*\n\n"
-                        "Scanne les triplets d'un terme (et éventuellement "
-                        "d'une relation) pour flagger ceux qui paraissent "
-                        "suspects au LLM. Produit un fichier `.err`."
+                        "Scanne les triplets d'un terme (optionnellement "
+                        "restreint à une relation) et flagge ceux qui "
+                        "paraissent suspects au LLM. Le LLM utilise son "
+                        "**jugement linguistique** — sa suspicion vaut, "
+                        "même sans preuve d'outil. Produit un fichier `.err`."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            js_term = gr.Textbox(
+                                label="Terme à scanner",
+                                placeholder="ex: baleine",
+                            )
+                            js_relation = gr.Dropdown(
+                                choices=[""] + JARVIS_RELATIONS,
+                                value="",
+                                label="Relation cible (optionnel)",
+                                allow_custom_value=True,
+                            )
+                            js_upload = gr.Checkbox(
+                                value=False,
+                                label="Soumettre directement à JDM (LLMDrops)",
+                                info="Nécessite une clé API LLMDrops dans le bandeau ou en env.",
+                            )
+                            js_launch = gr.Button(
+                                "⚠️ Scanner et signaler",
+                                variant="primary",
+                            )
+                        with gr.Column(scale=2):
+                            js_chat = gr.Chatbot(
+                                type="messages",
+                                elem_id="jarvis-err-chat",
+                                show_label=False,
+                                resizable=True,
+                                height=520,
+                            )
+
+                    def _run_signalement(term, relation, upload, drops_key, model, budget_label):
+                        from jarvis import build_signalement_prompt, run_jarvis_flow
+                        from jdm_agent.tools.jdm_agent import build_jdm_agent
+                        if not (term or "").strip():
+                            yield [{"role": "assistant",
+                                    "content": "⚠️ Saisis un terme à scanner."}]
+                            return
+                        prompt = build_signalement_prompt(
+                            term=term, relation=relation,
+                            budget_label=str(budget_label),
+                            upload=bool(upload),
+                        )
+                        yield from run_jarvis_flow(
+                            prompt=prompt, model=model, api_key="",
+                            budget_label=str(budget_label),
+                            drops_key=drops_key,
+                            build_llm_fn=_build_llm,
+                            build_agent_fn=build_jdm_agent,
+                            get_client_fn=get_client,
+                        )
+
+                    js_launch.click(
+                        _run_signalement,
+                        inputs=[js_term, js_relation, js_upload,
+                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                        outputs=[js_chat],
                     )
 
                 with gr.Tab("📊 Stats", id="jarvis-stats"):
