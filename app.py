@@ -277,7 +277,9 @@ GEMINI_MODEL_ROUTING = {
 }
 # Modèles qui exigent le SDK natif Google (`langchain-google-genai`)
 # au lieu de l'endpoint OpenAI-compatible, pour préserver thought_signature.
-GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite"}
+# Tous les Gemini 3.x ont le reasoning activé par défaut → thought_signature
+# rejeté sur l'endpoint OpenAI-compat. SDK natif obligatoire pour ces modèles.
+GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite", "gemini-3.5-flash"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 ALL_MODELS = {
