@@ -591,10 +591,17 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
     bouton « voir » qui ré-ouvre l'iframe avec ce fichier, et un bouton
     « télécharger »).
 
+    Stratégie : on copie le fichier passé en argument dans VIZ_DIR sous
+    un nom canonique `chat_<stem>_<hash>.html`, puis on glob VIZ_DIR
+    pour bâtir l'inventaire. Garantit que la viz courante apparaît dans
+    la liste — même si l'agent l'a écrite ailleurs (CWD par défaut).
+
     Retourne None si la lecture du fichier courant échoue.
     """
     import base64 as _b64
+    import hashlib as _hashlib
     import json as _json
+    import shutil as _shutil
     from pathlib import Path as _Path
 
     src = _Path(html_path)
@@ -604,12 +611,25 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
         current_text = src.read_text(encoding="utf-8")
     except Exception:
         return None
+
+    # Copie dans VIZ_DIR sous un nom canonique pour qu'il apparaisse dans
+    # le glob. Hash du contenu = idempotent (mêmes graphes → même nom).
+    stem = src.stem.removeprefix("chat_").removeprefix("viz_") or "viz"
+    h = _hashlib.sha1(current_text.encode("utf-8")).hexdigest()[:8]
+    canonical = VIZ_DIR / f"chat_{stem}_{h}.html"
+    if not canonical.exists():
+        try:
+            canonical.write_text(current_text, encoding="utf-8")
+        except Exception:
+            pass  # si l'écriture échoue, on continue avec ce qu'on a
+
     current_b64 = _b64.b64encode(current_text.encode("utf-8")).decode("ascii")
 
     # Inventaire de TOUS les fichiers viz stagés dans la session, triés
-    # par date de modif desc (les plus récents en haut).
+    # par date de modif desc (les plus récents en haut). On accepte les
+    # deux préfixes : `chat_*` (cet agent) ET `viz_*` (tab Sous-graphe).
     viz_files = sorted(
-        VIZ_DIR.glob("chat_*.html"),
+        list(VIZ_DIR.glob("chat_*.html")) + list(VIZ_DIR.glob("viz_*.html")),
         key=lambda p: -p.stat().st_mtime,
     )
     files_data = []
@@ -619,9 +639,10 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
         except Exception:
             continue
         b64 = _b64.b64encode(txt.encode("utf-8")).decode("ascii")
-        # Nom lisible : on retire le préfixe `chat_` et le suffixe hashé.
-        # Format actuel : chat_<stem>_<hash>.html → on extrait <stem>.
-        nice = f.stem.removeprefix("chat_").rsplit("_", 1)[0] or f.stem
+        # Nom lisible : on retire le préfixe et le suffixe hashé.
+        # Format : chat_<stem>_<hash>.html ou viz_<hash>.html
+        bare = f.stem.removeprefix("chat_").removeprefix("viz_")
+        nice = bare.rsplit("_", 1)[0] or bare or f.stem
         files_data.append({
             "id": f.stem,
             "label": nice,
@@ -1127,7 +1148,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS) as demo:
                 # fragmente tout tag inconnu en un caractère par ligne ;
                 # on s'en tient à du markdown plat dans chat_with_agent.
                 chatbot=gr.Chatbot(
-                    height=780,
+                    # Pas de `height` fixe : on borne par min/max pour que
+                    # la bulle reste petite quand vide et grandisse avec le
+                    # contenu (responsive vrai). Gradio 5 honore ces props.
+                    min_height=180,
+                    max_height=820,
+                    resizable=True,
                     type="messages",
                     show_label=False,
                     avatar_images=(None, None),
@@ -1136,15 +1162,14 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS) as demo:
                 # [message, key, model]. La clé reste vide pour les exemples ;
                 # sans clé, l'utilisateur aura le message d'erreur informatif.
                 examples=[
-                    # Exemples cliquables par n'importe quel visiteur sans
-                    # coller de clé. Répartis sur les Gemini Flash pour
-                    # étaler la charge entre les variantes. En cas
-                    # d'épuisement, BYOK Claude / GPT.
-                    ["Quels sont les synonymes de voiture ?", "", "gemini-2.5-flash-lite"],
-                    ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash-lite"],
+                    # Tous les exemples passent par Gemini 3.1 Flash Lite
+                    # (quota le plus large : 500 req/jour, le plus rapide).
+                    # En cas d'épuisement, BYOK Claude / GPT.
+                    ["Quels sont les synonymes de voiture ?", "", "gemini-3.1-flash-lite"],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-3.1-flash-lite"],
                     ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3.1-flash-lite"],
-                    ["Que peut faire un chat ?", "", "gemini-3.5-flash"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-3.5-flash"],
+                    ["Que peut faire un chat ?", "", "gemini-3.1-flash-lite"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-3.1-flash-lite"],
                 ],
                 cache_examples=False,
                 type="messages",

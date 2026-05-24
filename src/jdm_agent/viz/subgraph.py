@@ -321,6 +321,16 @@ def build_subgraph(
     c = client or JDMClient()
     depth = max(1, min(int(depth), 4))  # garde-fou : 1..4
 
+    # Si l'agent passe un raffinement brut (`guitare>91594`), on garde la
+    # forme brute pour les requêtes HTTP (clé interne JDM) mais on affiche
+    # la forme décodée partout (titre, légende, nœud central).
+    raw_term = term
+    try:
+        _dec = c.decode_node_name(term)
+        term_display = _dec.get("decoded") or term
+    except Exception:
+        term_display = term
+
     # Sélection effective par profondeur.
     rels_by_depth: dict[int, list[str]] = {
         1: list(relations) if relations is not None else list(DEFAULT_RELATIONS),
@@ -337,12 +347,16 @@ def build_subgraph(
         4: int(top_k_depth4) if top_k_depth4 is not None else int(top_k_per_relation),
     }
 
-    # 1) Nœud central
-    root_node = _build_node("ROOT", term, "center", depth=0, fixed_center=True)
+    # 1) Nœud central — affichage en forme DÉCODÉE (cf. raffinements
+    # `guitare>91594` → `guitare (instrument de musique)`), HTTP queries
+    # restent sur `raw_term` pour que JDM accepte la clé interne.
+    root_node = _build_node("ROOT", term_display, "center", depth=0, fixed_center=True)
     nodes: list[dict[str, Any]] = [root_node]
     edges: list[dict[str, Any]] = []
-    # Index pour dédupliquer les nœuds par identifiant lisible (label décodé).
-    label_to_id: dict[str, str] = {term: "ROOT"}
+    # Index pour dédupliquer les nœuds. On enregistre les DEUX formes
+    # (raw + display) → "ROOT", car les rows enfants peuvent référencer
+    # la racine via l'une ou l'autre.
+    label_to_id: dict[str, str] = {term_display: "ROOT", raw_term: "ROOT"}
     next_uid = [0]
 
     def _ensure_node(label: str, kind: str, depth_lv: int) -> str:
@@ -382,7 +396,7 @@ def build_subgraph(
                 for row in rows:
                     tgt = row["target_display"]
                     is_neg_edge = row["polarity"] == "négation"
-                    if tgt == term:
+                    if tgt == term_display or tgt == raw_term:
                         # Lien retour vers la racine : on matérialise l'arête
                         # mais on ne ré-ajoute pas le nœud.
                         edges.append(_build_edge(
@@ -430,7 +444,7 @@ def build_subgraph(
 
     # output == "html"
     legend_chips = [
-        f'<span style="background:#212121;color:#fff;">{term}</span>',
+        f'<span style="background:#212121;color:#fff;">{term_display}</span>',
     ]
     for rel in rels:
         kind = KIND_OF_REL.get(rel, "assoc")
@@ -446,7 +460,7 @@ def build_subgraph(
 
     html = (
         HTML_TEMPLATE
-        .replace("{{TITLE}}", f"« {term} » — sous-graphe JDM (profondeur {depth})")
+        .replace("{{TITLE}}", f"« {term_display} » — sous-graphe JDM (profondeur {depth})")
         .replace(
             "{{SUBTITLE}}",
             "Couleur par type de relation, opacité décroissante avec la profondeur, "
