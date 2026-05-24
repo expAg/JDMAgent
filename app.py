@@ -428,16 +428,17 @@ def _history_to_lc(history: list[dict], current_user_message: str) -> list:
         if role == "user":
             lc.append(HumanMessage(content=content))
         elif role == "assistant":
-            # On nettoie de l'historique LLM les blocs annexes (lien viz,
-            # liste outils, anciens HTML hérités) pour ne renvoyer au LLM
-            # que le texte de réponse utile au contexte conversationnel.
+            # On nettoie de l'historique LLM les blocs annexes (compteur
+            # outils, lien viz, anciens formats hérités) pour ne renvoyer
+            # au LLM que le texte de réponse utile au contexte.
             answer_only = content
             for marker in (
-                "\n\n---\n**Outils JDM appelés",   # nouveau format markdown
-                "\n\n📊 [Ouvrir la visualisation", # nouveau lien viz
-                "\n\n<iframe",                      # ancien (à supprimer)
-                "\n\n<details>",                    # ancien (à supprimer)
+                "\n\n*(",                           # nouveau compteur outils
+                "\n\n📊 [Ouvrir la visualisation", # lien viz
+                "\n\n---\n**Outils JDM appelés",   # ancien format markdown liste
                 "\n\n---\n*Outils JDM appelés*",   # ancien markdown italique
+                "\n\n<iframe",                      # ancien HTML
+                "\n\n<details>",                    # ancien HTML
             ):
                 answer_only = answer_only.split(marker, 1)[0]
             answer_only = answer_only.strip()
@@ -531,18 +532,13 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         if viz_url:
             out += f"\n\n📊 [Ouvrir la visualisation interactive]({viz_url})"
 
-    # Tools : liste markdown brute, SANS backticks (qui déclenchaient
-    # le bug d'éclatement par caractère via le parser code inline).
-    # Pas déplable — assumé : la lisibilité passe avant le pliage.
+    # Tools : juste le compteur. La liste détaillée a été visible
+    # pendant le streaming (chaque tool call affiché en direct), pas
+    # besoin de la dupliquer ici. La liste avec listes markdown causait
+    # une fragmentation par caractère systématique sur Gemini 3.x —
+    # une seule ligne italique ne pète jamais.
     if tool_traces:
-        # Strip les backticks des entrées (elles avaient été ajoutées
-        # plus haut dans tool_traces avec backticks).
-        clean = [t.replace("`", "") for t in tool_traces]
-        out += (
-            f"\n\n---\n"
-            f"**Outils JDM appelés ({len(clean)})**\n"
-            + "\n".join(clean)
-        )
+        out += f"\n\n*({len(tool_traces)} outils JDM appelés)*"
     yield out
 
 
