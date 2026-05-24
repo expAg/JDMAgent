@@ -1155,11 +1155,11 @@ def audit_workflow() -> dict:
                 "name": "Inventaire des triplets sur le terme générique",
                 "description": (
                     "Choisis les relations à auditer — celles précisées "
-                    "par l'utilisateur si fournies, sinon des relations "
-                    "tirées au hasard parmi celles de JDM (via "
-                    "`list_relation_types`). Pour chacune, appelle "
+                    "par l'utilisateur si fournies, sinon celles que tu "
+                    "décides toi-même (`list_relation_types` pour les "
+                    "découvrir). Pour chacune, appelle "
                     "`get_relations_of_type(term, relation_name)` sur la "
-                    "FORME NUE du terme et garde les triplets."
+                    "FORME NUE du terme et garde tous les triplets."
                 ),
                 "tool": "list_relation_types + get_relations_of_type",
             },
@@ -1307,16 +1307,9 @@ def gap_detection_workflow() -> dict:
                     "typés MISSING (aucun triplet ni positif ni négatif) "
                     "/ NEGATIVE_FILLED (que des triplets négatifs — JDM "
                     "a regardé et dit non) / LOW_COVERAGE (< N triplets "
-                    "positifs).\n\n"
-                    "Si l'utilisateur n'a fourni AUCUNE relation cible : "
-                    "CHOISIS-EN toi-même un ensemble varié — pioche "
-                    "librement parmi les ~180 relations JDM "
-                    "(`list_relation_types` pour les découvrir), adapte "
-                    "à la nature du terme (verbe → relations verbales, "
-                    "objet → parties / fonctions, sentiment → causes / "
-                    "effets…), et VARIE d'une session à l'autre. "
-                    "N'utilise PAS toujours le même quintette r_isa / "
-                    "r_has_part / r_carac — c'est appauvrissant."
+                    "positifs). Si l'utilisateur n'a fourni aucune "
+                    "relation cible, choisis-les toi-même "
+                    "(`list_relation_types` pour les découvrir)."
                 ),
                 "tool": "list_relation_types + detect_gaps",
             },
@@ -1374,13 +1367,10 @@ def signalement_workflow() -> dict:
                 "order": 1,
                 "name": "Cadrer le scan",
                 "description": (
-                    "Si une relation a été fournie : restreins le scan à "
-                    "cette relation seule. Sinon : CHOISIS librement un "
-                    "ensemble varié de relations parmi les ~180 de JDM "
-                    "(`list_relation_types` si besoin), adapte à la "
-                    "nature du terme, et VARIE d'une session à l'autre. "
-                    "Si le terme est polysémique, traite chaque sens "
-                    "raffiné séparément."
+                    "Si une relation a été fournie, restreins le scan à "
+                    "elle. Sinon, choisis toi-même les relations à "
+                    "scanner. Si le terme est polysémique, traite chaque "
+                    "sens raffiné séparément."
                 ),
                 "tool": "list_relation_types (si besoin)",
             },
@@ -1489,16 +1479,14 @@ def stats_workflow() -> dict:
                 "order": 2,
                 "name": "Mode PAR_TERME",
                 "description": (
-                    "Si un terme est fourni : CHOISIS un ensemble varié "
-                    "de relations à examiner (pioche librement parmi les "
-                    "~180 de JDM via `list_relation_types`, adapte à la "
-                    "nature du terme, varie d'une session à l'autre — "
-                    "pas toujours r_isa/r_hypo/r_syn). Pour CHAQUE relation "
-                    "choisie, appelle "
-                    "`list_existing_for_enrichment(term, relation_name)` "
-                    "— c'est EXHAUSTIF (pas de seuil ni de limite, "
-                    "contrairement à get_*). Compte nb total, nb positif, "
-                    "nb négatif, max(w), min(w), mean(w) par relation."
+                    "Si un terme est fourni : choisis toi-même les "
+                    "relations à examiner (`list_relation_types` pour "
+                    "les découvrir). Pour chaque relation choisie, "
+                    "appelle `list_existing_for_enrichment(term, "
+                    "relation_name)` — c'est EXHAUSTIF (pas de seuil ni "
+                    "de limite, contrairement à get_*). Compte nb total, "
+                    "nb positif, nb négatif, max(w), min(w), mean(w) par "
+                    "relation."
                 ),
                 "tool": "list_relation_types + list_existing_for_enrichment",
             },

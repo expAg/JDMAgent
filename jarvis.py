@@ -166,11 +166,7 @@ def build_gap_prompt(
         rels = ", ".join(f"`{r}`" for r in relations if r)
         parts.append(f"Relations cibles : {rels}.")
     else:
-        parts.append(
-            "Pas de relation imposée : CHOISIS-toi-même un ensemble varié "
-            "parmi les ~180 relations JDM (pioche librement, adapte à la "
-            "nature du terme, varie d'une session à l'autre)."
-        )
+        parts.append("Pas de relation imposée : choisis-les toi-même.")
     if _is_bounded_budget(budget_label):
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum."
@@ -206,9 +202,7 @@ def build_signalement_prompt(
     if relation:
         parts.append(f"Restreins le scan à la relation `{relation}` seule.")
     else:
-        parts.append(
-            "Pas de relation imposée : scanne les relations principales."
-        )
+        parts.append("Pas de relation imposée : choisis-les toi-même.")
     parts.append(
         "Utilise TON JUGEMENT linguistique de francophone — pas besoin "
         "de vérifier chaque suspect par un outil, ta suspicion vaut. "
