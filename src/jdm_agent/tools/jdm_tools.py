@@ -81,7 +81,8 @@ def _make_triplet(
 
 def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
                      incoming: bool = False,
-                     with_annotations: bool = False) -> list[dict]:
+                     with_annotations: bool = False,
+                     limit: Optional[int] = None) -> list[dict]:
     """Construit la liste de triplets en résolvant les noms d'autres bouts
     ET en décodant tout refinement opaque (`avocat>116477>66699`) en clair.
 
@@ -91,6 +92,13 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
 
     Si incoming=True (direction "to"), le terme `source_name` correspond au
     node2 des relations renvoyées, et l'autre bout à exposer est node1.
+
+    IMPORTANT — bug API JDM : `/v0/relations/from?limit=N` tronque AVANT le
+    tri par poids, donc passer `limit` à l'API fait perdre les triplets les
+    plus forts (cf. guitare/r_isa : sans tri, "instrument de musique" w=1000
+    disparaît alors que c'est le top hit). Solution : on ne passe JAMAIS
+    `limit` à l'API, on récupère tout, on trie par |w| ici, puis on tronque
+    via le paramètre `limit` de cette fonction.
     """
     idx = result.node_index()
 
@@ -101,7 +109,8 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
     src_id_root = source_name if src_dec["is_refinement"] else None
 
     triplets: list[dict] = []
-    # Tri |w| décroissant : positifs forts ET négatifs forts en tête de liste
+    # Tri |w| décroissant : positifs forts ET négatifs forts en tête de liste.
+    # On itère sur TOUT (l'API n'est plus tronquée) puis on tronque à la fin.
     for r in sorted(result.relations, key=lambda x: -abs(x.w)):
         other_id = r.node1 if incoming else r.node2
         node = idx.get(other_id)
@@ -133,6 +142,9 @@ def _resolve_targets(client: JDMClient, source_name: str, rel_name: str, result,
                 src_display, src_id_root, rel_name,
                 other_display, other_id_str, r.w, annotations,
             ))
+    # Tronque APRÈS le tri par poids (cf. note ci-dessus sur le bug API JDM).
+    if limit is not None and limit > 0:
+        triplets = triplets[:limit]
     return triplets
 
 
@@ -189,9 +201,10 @@ def get_synonyms(term: str, min_weight: Optional[float] = None, limit: Optional[
     """
     c = _client()
     rid = c.relation_type_id("r_syn")
+    lm = _lim(limit, 20)
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 20))
-    return _resolve_targets(c, term, "r_syn", res)
+                           min_weight=_mw(min_weight, 0.0))
+    return _resolve_targets(c, term, "r_syn", res, limit=lm)
 
 
 @tool
@@ -202,9 +215,10 @@ def get_antonyms(term: str, min_weight: Optional[float] = None, limit: Optional[
     """
     c = _client()
     rid = c.relation_type_id("r_anto")
+    lm = _lim(limit, 20)
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 20))
-    return _resolve_targets(c, term, "r_anto", res)
+                           min_weight=_mw(min_weight, 0.0))
+    return _resolve_targets(c, term, "r_anto", res, limit=lm)
 
 
 @tool
@@ -217,9 +231,10 @@ def get_hypernyms(term: str, min_weight: Optional[float] = None, limit: Optional
     """
     c = _client()
     rid = c.relation_type_id("r_isa")
+    lm = _lim(limit, 20)
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 20))
-    return _resolve_targets(c, term, "r_isa", res)
+                           min_weight=_mw(min_weight, 0.0))
+    return _resolve_targets(c, term, "r_isa", res, limit=lm)
 
 
 @tool
@@ -232,9 +247,10 @@ def get_hyponyms(term: str, min_weight: Optional[float] = None, limit: Optional[
     """
     c = _client()
     rid = c.relation_type_id("r_hypo")
+    lm = _lim(limit, 30)
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 30))
-    return _resolve_targets(c, term, "r_hypo", res)
+                           min_weight=_mw(min_weight, 0.0))
+    return _resolve_targets(c, term, "r_hypo", res, limit=lm)
 
 
 @tool
@@ -246,9 +262,10 @@ def get_parts(term: str, min_weight: Optional[float] = None, limit: Optional[int
     """
     c = _client()
     rid = c.relation_type_id("r_has_part")
+    lm = _lim(limit, 30)
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 30))
-    return _resolve_targets(c, term, "r_has_part", res)
+                           min_weight=_mw(min_weight, 0.0))
+    return _resolve_targets(c, term, "r_has_part", res, limit=lm)
 
 
 @tool
@@ -260,9 +277,10 @@ def get_characteristics(term: str, min_weight: Optional[float] = None, limit: Op
     """
     c = _client()
     rid = c.relation_type_id("r_carac")
+    lm = _lim(limit, 30)
     res = c.relations_from(term, types_ids=[rid] if rid else None,
-                           min_weight=_mw(min_weight, 0.0), limit=_lim(limit, 30))
-    return _resolve_targets(c, term, "r_carac", res)
+                           min_weight=_mw(min_weight, 0.0))
+    return _resolve_targets(c, term, "r_carac", res, limit=lm)
 
 
 @tool
@@ -298,10 +316,10 @@ def get_relations_of_type(
     incoming = direction == "to"
     mw, lm = _mw(min_weight, 0.0), _lim(limit, 30)
     if incoming:
-        res = c.relations_to(term, types_ids=[rid], min_weight=mw, limit=lm)
+        res = c.relations_to(term, types_ids=[rid], min_weight=mw)
     else:
-        res = c.relations_from(term, types_ids=[rid], min_weight=mw, limit=lm)
-    return _resolve_targets(c, term, relation_name, res, incoming=incoming)
+        res = c.relations_from(term, types_ids=[rid], min_weight=mw)
+    return _resolve_targets(c, term, relation_name, res, incoming=incoming, limit=lm)
 
 
 @tool
@@ -380,10 +398,10 @@ def _predicative_lookup(
     mw, lm = _mw(min_weight, default_mw), _lim(limit, default_limit)
     incoming = direction == "to"
     if incoming:
-        res = c.relations_to(term, types_ids=[rid], min_weight=mw, limit=lm)
+        res = c.relations_to(term, types_ids=[rid], min_weight=mw)
     else:
-        res = c.relations_from(term, types_ids=[rid], min_weight=mw, limit=lm)
-    return _resolve_targets(c, term, relation, res, incoming=incoming)
+        res = c.relations_from(term, types_ids=[rid], min_weight=mw)
+    return _resolve_targets(c, term, relation, res, incoming=incoming, limit=lm)
 
 
 @tool
@@ -615,7 +633,9 @@ def get_triplet_annotations(subject: str, relation: str, target: str) -> list[di
         rid_type = c.relation_type_id(relation)
         if rid_type is None:
             return [{"error": f"relation inconnue : {relation!r}"}]
-        res = c.relations_between(subject, target, types_ids=[rid_type], limit=10)
+        # Pas de limit côté API (cf. bug : JDM tronque AVANT le tri par poids).
+        # Le volume est de toute façon faible (relations entre 2 termes précis).
+        res = c.relations_between(subject, target, types_ids=[rid_type])
     except Exception:
         return []
     idx = res.node_index()

@@ -33,14 +33,18 @@ def _get_relations_signed(client: JDMClient, term: str, relation: str,
                           limit: int = 50) -> list[tuple[str, float]]:
     """Récupère les triplets avec leur poids (signé), Phase 9b sans seuil.
 
-    Renvoie [(target_name, w), ...]. Inclut tout ce que JDM renvoie par
-    défaut (négatifs et faibles inclus).
+    Renvoie [(target_name, w), ...] trié par |w| décroissant. Inclut tout
+    ce que JDM renvoie par défaut (négatifs et faibles inclus).
+
+    Note : on NE passe PAS `limit` à JDM (l'API tronque AVANT le tri par
+    poids — on rate alors les triplets les plus pertinents). On récupère
+    tout, on trie ici, puis on tronque.
     """
     rid = client.relation_type_id(relation)
     if rid is None:
         return []
     try:
-        res = client.relations_from(term, types_ids=[rid], limit=limit)
+        res = client.relations_from(term, types_ids=[rid])
     except Exception:
         return []
     idx = res.node_index()
@@ -49,6 +53,9 @@ def _get_relations_signed(client: JDMClient, term: str, relation: str,
         n = idx.get(r.node2)
         if n is not None:
             out.append((n.name, r.w))
+    out.sort(key=lambda x: -abs(x[1]))
+    if limit and limit > 0:
+        out = out[:limit]
     return out
 
 
