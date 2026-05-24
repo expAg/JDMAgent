@@ -413,6 +413,70 @@ def _read_file_preview(path: Optional[str], max_chars: int = 6000) -> str:
     return text
 
 
+def submit_existing_file(
+    file_path: Optional[str],
+    drops_key: str,
+    model_name: str,
+    current_chat: Optional[list[dict]] = None,
+) -> list[dict]:
+    """Soumet un fichier .enrich/.audit/.err déjà produit au LLMDrops JDM.
+
+    À utiliser pour le bouton « 📤 Soumettre » post-hoc des sous-onglets
+    Jarvis. Si une clé est fournie côté UI (`drops_key`), elle override
+    temporairement `JDM_DROPS_API_KEY` le temps de l'appel.
+
+    Renvoie la liste de messages mise à jour pour le `gr.Chatbot` (append
+    d'un message assistant avec le verdict).
+    """
+    import os
+    from jdm_agent.enrich.uploader import submit_to_jdm
+
+    chat = list(current_chat) if current_chat else []
+
+    if not file_path:
+        chat.append({
+            "role": "assistant",
+            "content": "⚠️ Aucun fichier produit à soumettre."
+        })
+        return chat
+
+    saved = os.environ.get("JDM_DROPS_API_KEY")
+    if drops_key and drops_key.strip():
+        os.environ["JDM_DROPS_API_KEY"] = drops_key.strip()
+    try:
+        result = submit_to_jdm(file_path, model_name=(model_name or "").strip() or None)
+    finally:
+        if drops_key and drops_key.strip():
+            if saved is None:
+                os.environ.pop("JDM_DROPS_API_KEY", None)
+            else:
+                os.environ["JDM_DROPS_API_KEY"] = saved
+
+    if result.get("ok"):
+        chat.append({
+            "role": "assistant",
+            "content": (
+                f"✅ Fichier soumis à JDM (status {result.get('status_code')}) — "
+                f"uploadé sous le nom `{result.get('uploaded_as')}`.\n\n"
+                f"Réponse serveur : `{result.get('response')}`"
+            )
+        })
+    else:
+        chat.append({
+            "role": "assistant",
+            "content": f"❌ Échec de soumission : {result.get('error', 'inconnu')}"
+        })
+    return chat
+
+
+def has_drops_key(ui_key: str = "") -> bool:
+    """True si une clé LLMDrops est disponible (UI override OU env)."""
+    import os
+    if ui_key and ui_key.strip():
+        return True
+    return bool(os.environ.get("JDM_DROPS_API_KEY", "").strip())
+
+
 def run_jarvis_flow(
     prompt: str,
     *,

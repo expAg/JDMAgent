@@ -1617,6 +1617,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 "🌱 Lancer l'enrichissement",
                                 variant="primary",
                             )
+                            # Bouton de soumission post-hoc — apparaît une
+                            # fois qu'un fichier .enrich a été produit.
+                            # Variant 'stop' (rouge) pour le distinguer du
+                            # primary 'Lancer'. Grisé si pas de clé Drops.
+                            from jarvis import has_drops_key as _has_dk
+                            je_submit = gr.Button(
+                                "📤 Soumettre à JDM (post-hoc)",
+                                variant="stop",
+                                visible=False,
+                                interactive=_has_dk(),
+                            )
                         with gr.Column(scale=2):
                             je_chat = gr.Chatbot(
                                 type="messages",
@@ -1683,6 +1694,30 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         outputs=[je_chat, je_file, je_preview],
                     )
 
+                    # Quand un fichier est produit (je_file devient visible),
+                    # on rend visible le bouton « Soumettre » post-hoc.
+                    def _show_submit_btn(file_path, drops_key):
+                        if not file_path:
+                            return gr.update(visible=False)
+                        from jarvis import has_drops_key as _hk
+                        return gr.update(visible=True, interactive=_hk(drops_key))
+
+                    je_file.change(
+                        _show_submit_btn,
+                        inputs=[je_file, jarvis_drops_key],
+                        outputs=[je_submit],
+                    )
+
+                    def _submit_enrich(file_path, drops_key, model, chat):
+                        from jarvis import submit_existing_file
+                        return submit_existing_file(file_path, drops_key, model, chat)
+
+                    je_submit.click(
+                        _submit_enrich,
+                        inputs=[je_file, jarvis_drops_key, jarvis_model, je_chat],
+                        outputs=[je_chat],
+                    )
+
                 with gr.Tab("🔍 Audit", id="jarvis-audit"):
                     gr.Markdown(
                         "Audit sémantique : détecte les CONTAMINATIONS du "
@@ -1712,6 +1747,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             ja_launch = gr.Button(
                                 "🔍 Lancer l'audit",
                                 variant="primary",
+                            )
+                            from jarvis import has_drops_key as _hk_a
+                            ja_submit = gr.Button(
+                                "📤 Soumettre à JDM (post-hoc)",
+                                variant="stop",
+                                visible=False,
+                                interactive=_hk_a(),
                             )
                         with gr.Column(scale=2):
                             ja_chat = gr.Chatbot(
@@ -1767,6 +1809,28 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[ja_term, ja_relation, ja_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget],
                         outputs=[ja_chat, ja_file, ja_preview],
+                    )
+
+                    def _show_audit_submit(file_path, drops_key):
+                        if not file_path:
+                            return gr.update(visible=False)
+                        from jarvis import has_drops_key as _hk
+                        return gr.update(visible=True, interactive=_hk(drops_key))
+
+                    ja_file.change(
+                        _show_audit_submit,
+                        inputs=[ja_file, jarvis_drops_key],
+                        outputs=[ja_submit],
+                    )
+
+                    def _submit_audit(file_path, drops_key, model, chat):
+                        from jarvis import submit_existing_file
+                        return submit_existing_file(file_path, drops_key, model, chat)
+
+                    ja_submit.click(
+                        _submit_audit,
+                        inputs=[ja_file, jarvis_drops_key, jarvis_model, ja_chat],
+                        outputs=[ja_chat],
                     )
 
                 with gr.Tab("🕳️ Détection de trous", id="jarvis-gaps"):
@@ -1985,6 +2049,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 "⚠️ Scanner et signaler",
                                 variant="primary",
                             )
+                            from jarvis import has_drops_key as _hk_s
+                            js_submit = gr.Button(
+                                "📤 Soumettre à JDM (post-hoc)",
+                                variant="stop",
+                                visible=False,
+                                interactive=_hk_s(),
+                            )
                         with gr.Column(scale=2):
                             js_chat = gr.Chatbot(
                                 type="messages",
@@ -2039,6 +2110,28 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[js_term, js_relation, js_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget],
                         outputs=[js_chat, js_file, js_preview],
+                    )
+
+                    def _show_signal_submit(file_path, drops_key):
+                        if not file_path:
+                            return gr.update(visible=False)
+                        from jarvis import has_drops_key as _hk
+                        return gr.update(visible=True, interactive=_hk(drops_key))
+
+                    js_file.change(
+                        _show_signal_submit,
+                        inputs=[js_file, jarvis_drops_key],
+                        outputs=[js_submit],
+                    )
+
+                    def _submit_signal(file_path, drops_key, model, chat):
+                        from jarvis import submit_existing_file
+                        return submit_existing_file(file_path, drops_key, model, chat)
+
+                    js_submit.click(
+                        _submit_signal,
+                        inputs=[js_file, jarvis_drops_key, jarvis_model, js_chat],
+                        outputs=[js_chat],
                     )
 
                 with gr.Tab("📊 Stats", id="jarvis-stats"):
@@ -2144,6 +2237,28 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[jg_gap_dropdown],
                         outputs=[jst_term, jst_relation, jarvis_tabs],
                     )
+
+            # ---- Câblage transverse : quand la clé LLMDrops change dans
+            # le bandeau, on rafraîchit l'état interactive des 3 boutons
+            # « Soumettre » post-hoc (s'ils sont déjà visibles). Si le
+            # bouton n'est pas encore visible (pas de fichier produit),
+            # on garde son visible=False.
+            def _refresh_submit_buttons(drops_key):
+                from jarvis import has_drops_key as _hk
+                ok = _hk(drops_key)
+                # Le `interactive` se met à jour même quand visible=False ;
+                # quand le bouton deviendra visible, l'état est cohérent.
+                return (
+                    gr.update(interactive=ok),
+                    gr.update(interactive=ok),
+                    gr.update(interactive=ok),
+                )
+
+            jarvis_drops_key.change(
+                _refresh_submit_buttons,
+                inputs=[jarvis_drops_key],
+                outputs=[je_submit, ja_submit, js_submit],
+            )
 
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----
         with gr.Tab("🛠️ Aide / Installation"):
