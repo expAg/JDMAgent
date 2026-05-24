@@ -1,19 +1,29 @@
 # JDMAgent
 
-**Agentification d'un graphe lexico-sémantique du français pour les modèles de langue modernes.**
+**Agentification d'un graphe lexico-sémantique du français pour les modèles de langue modernes — couplage hybride neuro-symbolique pour le fact-checking, l'enrichissement assisté et la désambiguïsation.**
 
-JDMAgent transforme **[JeuxDeMots](https://www.jeuxdemots.org)** — une base de
-connaissances lexicale du français comptant environ 2 millions de nœuds et plus
-de 180 relations typées, construite en dix-huit ans de jeu collaboratif sous la
-direction de M. Lafourcade au LIRMM / CNRS — en une **ressource agentique**
-directement exploitable par les LLM modernes (Claude, GPT, modèles locaux via
-Ollama), à travers une couche d'outils Python standardisés et un serveur
-[Model Context Protocol (MCP)](https://modelcontextprotocol.io).
+---
 
-Le projet adresse trois usages prioritaires (Q&A *grounded*, fact-checking
-anti-hallucination, enrichissement assisté de la base) et fournit en couche
-basse un client typé, un cache disque, et un moteur d'inférence symbolique
-borné.
+## Résumé
+
+JDMAgent fait pont entre **JeuxDeMots** (JDM), base de connaissances lexicale du
+français issue de plus de quinze ans de jeu collaboratif au LIRMM/CNRS
+[\[1, 2, 3\]](#references), et l'écosystème actuel des agents fondés sur les
+grands modèles de langue (LLM). JDM expose environ deux millions de nœuds et
+plus de cent-quatre-vingts relations sémantiques typées (hyperonymie, méronymie,
+rôle télique, sujet de procès, etc.), navigables et signées en consensus
+&mdash; une ressource structurelle absente des couches de connaissance que les
+LLM modernes embarquent statistiquement. Le projet l'expose par une couche
+d'outils Python conformes à *LangChain* et un serveur conforme au
+*Model Context Protocol* (MCP) [\[4\]](#references), permettant son utilisation
+en *tool use* [\[5, 6\]](#references) depuis n'importe quel agent. Trois
+contributions méthodologiques : (i) graphe typé plutôt que RAG vectoriel
+[\[7, 8\]](#references) pour les questions lexico-sémantiques ; (ii) séparation
+stricte *extraction par LLM / vérification par Python* pour le fact-checking
+anti-hallucination [\[9, 10, 11\]](#references) ; (iii) moteur d'inférence
+symbolique borné en cascade de schémas, mobilisé à la fois pour la vérification
+et pour la consolidation des candidats en phase d'enrichissement
+[\[12, 13\]](#references).
 
 ---
 
@@ -21,84 +31,73 @@ borné.
 
 | Canal | Pour qui | Lien |
 |---|---|---|
-| 🌐 **Démo web** (Hugging Face Spaces) | Découverte interactive — explorer le graphe, fact-checker, visualiser un sous-graphe, dialoguer avec l'agent (BYOK) | [`expAg/jdmagent`](https://huggingface.co/spaces/expAg/jdmagent) |
+| 🌐 **Démo web** (Hugging Face Spaces) | Découverte interactive — explorer le graphe, fact-checker, visualiser un sous-graphe, dialoguer avec l'agent ou les flux guidés Jarvis | [`expAg/jdmagent`](https://huggingface.co/spaces/expAg/jdmagent) |
 | 🤖 **Serveur MCP local** | Utilisateurs de Claude Code/Desktop, Cursor, Continue | `claude mcp add jdm --scope user -- python -m jdm_agent.mcp.server` (cf. [USAGE.md](USAGE.md)) |
 | 📓 **Notebook Google Colab** | Exploration pédagogique en Python | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb) |
 
 ---
 
-## Motivation scientifique
+## 1. Enjeux et positionnement
 
-Trois positions méthodologiques structurent le projet et le distinguent des
-approches purement vectorielles ou purement génératives.
+### 1.1 Sous-représentation des ressources lexicales structurées du français
 
-### 1. Graphe typé ≻ RAG vectoriel pour la connaissance lexicale
+Les LLM contemporains intériorisent la connaissance lexicale via les
+co-occurrences observées en pré-entraînement, sans représentation symbolique
+explicite. Pour l'anglais, des ressources comme WordNet [\[14\]](#references)
+ou ConceptNet [\[15\]](#references) servent de garde-fous symboliques aux
+systèmes d'IA depuis trois décennies. Pour le français, l'équivalent
+quantitatif et qualitatif est **JeuxDeMots** [\[1, 2\]](#references) — produit
+d'un programme de GWAPs (*games with a purpose*, [\[16, 17\]](#references))
+conduit depuis 2007 par M. Lafourcade et l'équipe TEXTE du LIRMM. Ce graphe
+ne dispose toutefois pas d'une couche d'agentification standardisée à la
+hauteur des protocoles d'aujourd'hui. JDMAgent comble cet écart : il rend
+JDM consommable, dans une seule commande d'installation, par tout client
+*MCP-compatible* (Claude Code/Desktop, Cursor, etc.) et par tout pipeline
+LangChain.
 
-Le RAG vectoriel approxime la similarité sémantique par distance d'embeddings,
-mais **perd la structure relationnelle**. JeuxDeMots expose au contraire des
-relations *explicitement typées* (`r_isa` hyperonymie, `r_has_part` méronymie,
-`r_telic_role` finalité, `r_agent` sujet du procès, etc. —
-[180+ types documentés](relation_definitions.md)), navigables transitivement.
+### 1.2 Limites du RAG vectoriel pour la connaissance lexicale
 
-Pour la classe de questions « qu'est-ce qu'un X ? », « Y est-il un type de
-Z ? », « à quoi sert un W ? », la structure typée est strictement plus
-expressive qu'une similarité d'embeddings : on peut chaîner les relations,
-détecter des incompatibilités via `r_isa-incompatible`, désambiguïser la
-polysémie via des raffinements de sens (`avocat>116477>66699`).
+Le *retrieval-augmented generation* [\[7\]](#references) approxime la
+similarité sémantique par distance dans un espace d'embeddings. Cette
+approche est puissante pour la recherche documentaire ouverte, mais elle
+**ignore la structure relationnelle** des liens sémantiques : la requête
+« quels sont les types de X ? » est mal résolue par une similarité globale.
+Plusieurs travaux récents en *KG-augmented LLM* (knowledge-graph + LLM,
+[\[8, 12\]](#references)) montrent l'intérêt complémentaire des graphes
+typés. Pour les classes de questions structurées (taxonomie, méronymie,
+rôle, propriété), naviguer un graphe avec relations typées est strictement
+plus expressif qu'une similarité d'embeddings. JDM en offre un, déjà construit
+et auto-annoté en signes de consensus.
 
-### 2. Hybride neuro-symbolique séparé pour le fact-checking
+### 1.3 Hallucination et fact-checking
 
-Le pipeline de vérification ([`factcheck/`](src/jdm_agent/factcheck/)) sépare
-strictement deux phases :
+L'hallucination factuelle des LLM est un obstacle reconnu à leur déploiement
+en contexte critique [\[9\]](#references). Les systèmes de fact-checking dits
+*LLM-as-judge* enchaînent souvent extraction et vérification dans le même
+modèle, héritant des biais de génération [\[10, 11\]](#references). JDMAgent
+sépare strictement les deux phases : l'extraction du triplet candidat est
+faite par un LLM (tâche linguistique créative), la vérification est une
+recherche déterministe dans le graphe JDM, complétée si nécessaire d'un
+moteur d'inférence symbolique [\[12, 13\]](#references). Le verdict est
+toujours accompagné de la chaîne de triplets qui le supporte ou le
+contredit, satisfaisant les attentes de traçabilité énoncées dans
+[\[18\]](#references).
 
-| Phase | Implémentée par | Justification |
-|---|---|---|
-| **Extraction** (NL → triplet) | LLM | Tâche linguistique où la créativité du LLM est requise |
-| **Vérification** (triplet → verdict) | Python pur + JDM | Tâche logique, exige déterminisme et traçabilité |
+### 1.4 Couplage neuro-symbolique pour la consolidation des contributions
 
-La vérification ne fait *jamais* appel au LLM. Elle est auditable (chaque
-verdict cite ses triplets sources), reproductible, et résistante aux biais
-de génération. C'est l'inverse du pattern *LLM-as-judge* qui peut halluciner
-ses propres verdicts.
-
-### 3. Moteur d'inférence symbolique borné (Phase 11)
-
-Au-delà de la simple recherche en *contenance* (« JDM contient-il A R B ? »),
-le moteur d'inférence ([`inference/`](src/jdm_agent/inference/)) répond à la
-question distincte « A R B est-il *déductible* du graphe ? ». Il enchaîne
-une cascade de schémas symboliques (inversion, implication, transitivité,
-déduction par généralisation, élimination par classe, propagation par
-hyponymie, contraste antonymique, cohyponymie, géo-propagation, composition,
-etc.), bornée par un budget dur d'appels HTTP.
-
-**Distinction conservée** entre les deux régimes : un résultat inféré porte
-toujours `inference_schema` et son explication précise *« JDM ne contient pas
-directement ce triplet, mais on peut le déduire : … »*. La contenance et
-l'inférence ne sont jamais confondues — discipline essentielle pour préserver
-la confiance dans la ressource.
-
-Cette même mécanique sert à **consolider** les candidats proposés par un LLM
-en phase d'enrichissement : seul un triplet *déductible* du réseau JDM
-existant est jugé prêt pour soumission, ce qui ferme la boucle entre
-proposition créative (LLM) et garantie logique (graphe).
-
-### 4. Tool calling + MCP : la pile standardisée des agents augmentés
-
-Un agent LLM au sens moderne = LLM + outils + boucle de décision + prompt
-système. Le LLM ne décide pas de la sémantique des outils : il choisit lequel
-appeler en lisant leur description et leur schéma de paramètres. C'est cette
-autonomie de routage qui distingue un agent d'un RAG fixe.
-
-Le **Model Context Protocol**, normalisé par Anthropic fin 2024, est devenu
-en quelques mois le standard de facto pour brancher des outils à n'importe
-quel agent LLM. Notre serveur MCP ([`mcp/server.py`](src/jdm_agent/mcp/server.py))
-expose les **34 outils JDM** en une seule commande d'installation, sans
-duplication de code par rapport à l'agent LangChain — les deux surfaces
-partagent la même implémentation Python.
+Le projet JDM, comme toute ressource collaborative, a des **trous de
+couverture**. La proposition spontanée par un LLM est une voie naturelle
+pour les boucher, mais une proposition n'est utile que si elle est
+**cohérente avec l'existant**. JDMAgent ferme la boucle entre *créativité
+neuronale* (LLM qui propose) et *garantie logique* (graphe qui valide) en
+soumettant chaque candidat à un moteur d'inférence symbolique borné : seul
+un triplet *déductible* du réseau existant est marqué prêt pour soumission
+au canal contributif de JDM. Cette discipline s'inscrit dans la lignée des
+architectures neuro-symboliques contemporaines [\[19, 20\]](#references).
 
 ---
 
-## Architecture
+## 2. Architecture
 
 ```mermaid
 flowchart TB
@@ -114,43 +113,44 @@ flowchart TB
         Inf["<b>infer(subject, relation, object)</b><br/>cascade de schémas (15+)<br/>budget HTTP borné<br/>signed weight ± confidence"]
     end
 
-    subgraph TOOLS["🧰 Couche outils · 34 LangChain <code>@tool</code><br/><code>jdm_agent/tools/jdm_tools.py</code>"]
-        T1["<b>Lookup / exploration (10)</b><br/>lookup, synonyms, hypernyms,<br/>parts, disambiguate, …"]
-        T2["<b>Prédicatifs (10)</b><br/>agents, patients, instruments,<br/>causes, conséquences, …"]
-        T3["<b>Fact-check / inférence (3)</b><br/>verify_claim, infer,<br/>get_triplet_annotations"]
-        T4["<b>Enrichissement (5)</b><br/>enrichment_workflow,<br/>list_existing_for_enrichment,<br/>detect_gaps, validate_candidate,<br/>write_submission_file"]
-        T5["<b>Méta + viz (3)</b><br/>list_relation_types,<br/>get_relations_of_type,<br/>build_subgraph_visualization"]
+    subgraph TOOLS["🧰 Couche outils · 35+ LangChain <code>@tool</code><br/><code>jdm_agent/tools/jdm_tools.py</code>"]
+        T1["<b>Lookup / exploration (10)</b>"]
+        T2["<b>Prédicatifs (10)</b>"]
+        T3["<b>Fact-check / inférence (3)</b>"]
+        T4["<b>Enrichissement (5)</b>"]
+        T5["<b>Méta + viz (3)</b>"]
+        T6["<b>Workflow tools (5)</b><br/>enrichment / audit / gap /<br/>signalement / stats"]
     end
 
     subgraph AGENTS["🤖 Surfaces agentiques"]
-        LAg["<b>Agent LangChain</b><br/>create_agent + tool calling<br/>streaming + anti-hallucination<br/><code>tools/jdm_agent.py</code>"]
-        MCP["<b>Serveur MCP (FastMCP)</b><br/>34 outils, transport stdio<br/><code>mcp/server.py</code>"]
-        PIPE["<b>Pipelines déterministes</b><br/>LLM extract → Python verify<br/>+ moteur d'inférence<br/><code>factcheck/</code> · <code>enrich/</code>"]
-        UPL["<b>Uploader LLMDrops</b><br/>POST consolidé → JDM<br/><code>enrich/uploader.py</code>"]
+        LAg["<b>Agent LangChain</b>"]
+        MCP["<b>Serveur MCP (FastMCP)</b>"]
+        PIPE["<b>Pipelines déterministes</b>"]
+        UPL["<b>Uploader LLMDrops</b>"]
+        JV["<b>Onglet Jarvis (Gradio)</b><br/>5 flux guidés"]
     end
 
     subgraph USERS["👤 Consommateurs"]
-        UC["<b>Claude Code · Desktop</b><br/>(via MCP)"]
-        HF["<b>Démo HF Spaces</b><br/>5 onglets Gradio"]
-        CLI["<b>CLIs</b><br/>jdm-qa · jdm-factcheck<br/>jdm-enrich · jdm-eval · jdm-diag"]
-        Py["<b>Python · notebooks</b><br/>(<code>import jdm_agent</code>)"]
+        UC["<b>Claude Code · Desktop</b>"]
+        HF["<b>Démo HF Spaces</b>"]
+        CLI["<b>CLIs</b>"]
+        Py["<b>Python · notebooks</b>"]
     end
 
     JDM == REST/HTTPS ==> Client
-    Client ==> T1 & T2 & T3 & T4 & T5
+    Client ==> T1 & T2 & T3 & T4 & T5 & T6
     Client ==> Inf
     Inf ==> T3
-    T1 & T2 & T3 & T4 & T5 ==> LAg
-    T1 & T2 & T3 & T4 & T5 ==> MCP
+    T1 & T2 & T3 & T4 & T5 & T6 ==> LAg
+    T1 & T2 & T3 & T4 & T5 & T6 ==> MCP
     T3 ==> PIPE
     T4 ==> PIPE & UPL
-
+    LAg --> JV
     LAg --> CLI & HF
     PIPE --> CLI & HF
     UPL -. HTTPS .-> JDM
     MCP -. stdio .-> UC
     Client -.-> Py
-    T1 & T2 & T3 & T4 & T5 -.-> Py
 
     classDef src fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#000
     classDef access fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#000
@@ -161,89 +161,70 @@ flowchart TB
     class JDM src
     class Client access
     class Inf infer
-    class T1,T2,T3,T4,T5 tools
-    class LAg,MCP,PIPE,UPL agents
+    class T1,T2,T3,T4,T5,T6 tools
+    class LAg,MCP,PIPE,UPL,JV agents
     class UC,HF,CLI,Py users
 ```
 
-### Lecture du schéma
+### 2.1 Couche d'accès
 
-Six couches, du concret vers l'interactif :
+Un client Python typé (Pydantic v2), wrapping l'API REST publique de JDM
+(<https://jdm-api.demo.lirmm.fr>) avec retry exponentiel `tenacity`, cache
+disque agressif `diskcache`, et décodage automatique des *refinements*
+de sens (identifiants opaques `avocat>116477>66699` → forme lisible
+`avocat (personne, juriste)`).
 
-1. **Source** — l'API REST publique de JeuxDeMots, lecture seule. Les
-   contributions sortantes (cf. couche *Uploader*) passent par un canal
-   dédié séparé (LLMDrops, Phase 12).
-2. **Accès** — un client Python typé avec cache disque agressif. Les coûts
-   HTTP sont quasi nuls après le premier appel grâce à
-   [`diskcache`](src/jdm_agent/client/cache.py).
-3. **Inférence** — un moteur autonome qui implémente la cascade de schémas
-   symboliques. Réutilisé par `verify_claim` (effort ≥ 1), `infer` et la
-   consolidation des candidats d'enrichissement.
-4. **Outils** — 34 fonctions Python décorées `@tool`, dont les docstrings
-   sont *enrichies automatiquement* à partir de
-   [`relation_definitions.md`](relation_definitions.md) pour guider le
-   routage du LLM.
-5. **Agents** — quatre portes d'entrée pour les LLM et les clients :
-   - **Agent LangChain** : pilote un LLM externe avec prompt système
-     anti-hallucination ;
-   - **Serveur MCP** : expose les mêmes outils à n'importe quel client
-     compatible (Claude Code/Desktop, Cursor, Continue) ;
-   - **Pipelines déterministes** : factcheck et enrichissement, combinant
-     extraction LLM et vérification symbolique ;
-   - **Uploader LLMDrops** : POST automatique d'une soumission consolidée
-     au endpoint contributif de JDM.
-6. **Consommateurs** — usage final : conversation dans Claude Code/Desktop,
-   démo web (HF Spaces), CLIs batch, scripts Python.
+### 2.2 Moteur d'inférence symbolique borné
 
-### Cycle d'une question — « que peut faire un chat ? »
+Implémenté dans [`inference/engine.py`](src/jdm_agent/inference/engine.py), il
+répond à la question « le triplet *A R B* est-il **déductible** du graphe ? »
+distincte de la question de **contenance** (« est-il *littéralement présent* ? »).
+La distinction est cruciale et préservée dans toutes les sorties : un fait
+seulement déductible porte toujours un `inference_schema` et est annoncé
+comme tel. Le moteur enchaîne une cascade de schémas (transitivité,
+déduction par généralisation, élimination par classe, contraste antonymique,
+propagation par hyponymie, composition de relations curée, etc.), bornée par
+un *budget dur* d'appels HTTP — l'inférence reste à coût garanti, conformément
+aux principes énoncés dans [\[13\]](#references) pour les systèmes
+neuro-symboliques en production.
 
-```
-1. L'utilisateur pose la question dans Claude Code.
-2. Le LLM lit la question + les 34 outils sérialisés en JSON Schema.
-3. Il route mentalement : « action que peut faire un sujet » → r_agent-1
-   « source = nom commun, donc pas get_agents (qui exige un verbe) »
-   « r_agent-1 → inverse verbo-nominal → get_actions_of »
-4. Il génère un tool_use structuré : get_actions_of(term="chat")
-5. La couche outils interroge JDM, décode les refinements éventuels,
-   renvoie une liste de triplets {source, relation, target, w, polarity, …}.
-6. Le LLM compose une réponse NL en citant les triplets de plus haut poids.
-```
+### 2.3 Couche outils & protocoles d'agent
 
-La boucle peut s'enchaîner sur 3 à 10 outils pour une question complexe
-(par exemple `disambiguate` → `get_synonyms` → `verify_claim` × 5). Le LLM
-gère le routage à chaque tour en fonction des résultats précédents.
+Les outils sont déclarés une seule fois (décorateur LangChain `@tool`) et
+exposés à deux surfaces :
 
----
+- **Agent LangChain** ([`tools/jdm_agent.py`](src/jdm_agent/tools/jdm_agent.py))
+  via `create_agent`, avec un prompt système strict imposant la citation
+  systématique des triplets sources.
+- **Serveur MCP** ([`mcp/server.py`](src/jdm_agent/mcp/server.py)) via
+  FastMCP, interopérable avec tout client compatible MCP
+  [\[4\]](#references).
 
-## Composants principaux
+Les docstrings des outils sont *enrichies automatiquement* à partir de la
+taxonomie [`relation_definitions.md`](relation_definitions.md) afin de
+guider le routage du LLM ; ce mécanisme s'inscrit dans la lignée des
+travaux sur l'enseignement implicite des LLMs à utiliser des outils
+[\[5, 6\]](#references).
 
-| Composant | Rôle | Fichier |
-|---|---|---|
-| **JDMClient** | Client typé Pydantic, retry httpx, cache disque, décodage refinements | [`src/jdm_agent/client/client.py`](src/jdm_agent/client/client.py) |
-| **Modèles Pydantic** | `Node`, `Relation`, `RelationType`, `DecodedRefinement`, `Annotation` | [`src/jdm_agent/client/models.py`](src/jdm_agent/client/models.py) |
-| **Cache disque** | Wrapper `diskcache` à TTL configurable par catégorie | [`src/jdm_agent/client/cache.py`](src/jdm_agent/client/cache.py) |
-| **Parser de relations** | Parse `relation_definitions.md` pour enrichir les docstrings | [`src/jdm_agent/client/relations.py`](src/jdm_agent/client/relations.py) |
-| **Moteur d'inférence** | `infer(...)` avec cascade de schémas symboliques bornée | [`src/jdm_agent/inference/`](src/jdm_agent/inference/) |
-| **34 outils LangChain** | Wrappers `@tool` (10 exploration + 10 prédicatifs + 3 fact-check + 5 enrichissement + 3 méta/viz + 3 inverses verbo-nominaux ; cf. `ALL_TOOLS`) | [`src/jdm_agent/tools/jdm_tools.py`](src/jdm_agent/tools/jdm_tools.py) |
-| **Agent LangChain** | `create_agent` + prompt système strict, helpers `ask()` / `stream()` | [`src/jdm_agent/tools/jdm_agent.py`](src/jdm_agent/tools/jdm_agent.py) |
-| **LLM factory** | `init_chat_model("provider:model")`, agnostique | [`src/jdm_agent/tools/llm_factory.py`](src/jdm_agent/tools/llm_factory.py) |
-| **Serveur MCP** | FastMCP, réutilise les 34 outils via `.func` | [`src/jdm_agent/mcp/server.py`](src/jdm_agent/mcp/server.py) |
-| **Fact-checker** | `Claim`, `Verdict`, verifier déterministe + repli d'inférence | [`src/jdm_agent/factcheck/`](src/jdm_agent/factcheck/) |
-| **Enrichissement** | `detect_gaps`, `propose_candidates`, `validate_candidate`, `consolidate_candidate`, `enrichment_workflow` | [`src/jdm_agent/enrich/`](src/jdm_agent/enrich/) |
-| **Uploader LLMDrops** | POST automatique d'une soumission consolidée à JDM | [`src/jdm_agent/enrich/uploader.py`](src/jdm_agent/enrich/uploader.py) |
-| **Visualisation** | Sous-graphe interactif vis-network (HTML autonome) | [`src/jdm_agent/viz/`](src/jdm_agent/viz/) |
-| **Taxonomie des relations** | 180+ relations JDM avec descriptions et exemples | [`relation_definitions.md`](relation_definitions.md) |
-| **CLIs** | 6 entry points (`qa`, `eval`, `mcp`, `diag`, `factcheck`, `enrich`) | [`src/jdm_agent/apps/`](src/jdm_agent/apps/) |
-| **Démo HF** | App Gradio à 5 onglets | [`app.py`](app.py) |
+### 2.4 Onglet *Jarvis* — flux guidés par formulaires
+
+Cinq sous-onglets dédiés à des tâches métier (Enrichissement, Audit
+sémantique, Détection de trous, Signalement d'incohérences, Statistiques),
+chacun produisant un fichier typé (`.enrich`, `.audit`, `.err`, `.stat`)
+soumissible au canal contributif de JDM. Le pré-prompt envoyé au LLM est
+construit côté Python à partir des champs du formulaire — l'utilisateur
+n'écrit aucun prompt et n'a donc pas à connaître l'API conversationnelle de
+l'agent. Approche dite *guided prompting* qui réduit la variance des sorties
+et facilite l'évaluation.
 
 ---
 
-## Boucle d'enrichissement de bout en bout (Phase 11–12)
+## 3. Boucle d'enrichissement contributif (Phases 11–12)
 
 C'est la **finalité visée** par le projet : un LLM tiers propose des triplets
 pour boucher les trous de JDM, le système les valide par inférence dans le
-graphe, et les soumissions consolidées sont POSTées au endpoint contributif
-de JDM sans intervention humaine.
+graphe existant, et les soumissions consolidées sont POSTées au endpoint
+contributif de JDM sans intervention humaine.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
@@ -265,17 +246,43 @@ de JDM sans intervention humaine.
 │ 5. Écriture + soumission (write_submission_file, upload=True)         │
 │    → fichier local au format `terme | rel | cible | annot < expli >`  │
 │    → upload optionnel vers http://jeuxdemots.org/LLMDrops.php         │
-│    → nom standardisé HHhMM_DD-MM-YY_automatic_submission_from_X.enrich│
+│    → nom standardisé HHhMM_DD-MM-YY_automatic_submission_from_X.<ext>│
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
 La consolidation par inférence est ce qui distingue ce projet d'une simple
 *proposition* à base de LLM : on ne soumet à JDM que des triplets que le
-graphe existant *permet déjà de déduire*, garantissant cohérence et qualité.
+graphe existant *permet déjà de déduire*. Discipline équivalente à celle des
+systèmes d'auto-correction par vérification externe étudiés dans
+[\[10\]](#references).
 
 ---
 
-## Installation
+## 4. Composants principaux
+
+| Composant | Rôle | Fichier |
+|---|---|---|
+| **JDMClient** | Client typé Pydantic, retry httpx, cache disque, décodage refinements | [`src/jdm_agent/client/client.py`](src/jdm_agent/client/client.py) |
+| **Modèles Pydantic** | `Node`, `Relation`, `RelationType`, `DecodedRefinement`, `Annotation` | [`src/jdm_agent/client/models.py`](src/jdm_agent/client/models.py) |
+| **Cache disque** | Wrapper `diskcache` à TTL configurable par catégorie | [`src/jdm_agent/client/cache.py`](src/jdm_agent/client/cache.py) |
+| **Parser de relations** | Parse `relation_definitions.md` pour enrichir les docstrings | [`src/jdm_agent/client/relations.py`](src/jdm_agent/client/relations.py) |
+| **Moteur d'inférence** | `infer(...)` avec cascade de schémas symboliques bornée | [`src/jdm_agent/inference/`](src/jdm_agent/inference/) |
+| **Outils LangChain** | Wrappers `@tool` ; cf. `ALL_TOOLS` dans `jdm_tools.py` | [`src/jdm_agent/tools/jdm_tools.py`](src/jdm_agent/tools/jdm_tools.py) |
+| **Workflow tools** | `enrichment_workflow`, `audit_workflow`, `gap_detection_workflow`, `signalement_workflow`, `stats_workflow` | idem |
+| **Agent LangChain** | `create_agent` + prompt système strict, helpers `ask()` / `stream()` | [`src/jdm_agent/tools/jdm_agent.py`](src/jdm_agent/tools/jdm_agent.py) |
+| **ToolBudget** | Compteur d'appels d'outils par invocation (ContextVar), sentinel `BUDGET_EXHAUSTED` | [`src/jdm_agent/tools/budget.py`](src/jdm_agent/tools/budget.py) |
+| **LLM factory** | `init_chat_model("provider:model")`, agnostique | [`src/jdm_agent/tools/llm_factory.py`](src/jdm_agent/tools/llm_factory.py) |
+| **Serveur MCP** | FastMCP, réutilise les outils via `.func` | [`src/jdm_agent/mcp/server.py`](src/jdm_agent/mcp/server.py) |
+| **Fact-checker** | `Claim`, `Verdict`, verifier déterministe + repli d'inférence | [`src/jdm_agent/factcheck/`](src/jdm_agent/factcheck/) |
+| **Enrichissement** | `detect_gaps`, `propose_candidates`, `validate_candidate`, `consolidate_candidate` | [`src/jdm_agent/enrich/`](src/jdm_agent/enrich/) |
+| **Uploader LLMDrops** | POST automatique d'une soumission consolidée à JDM, extension préservée (.enrich / .audit / .err / .stat) | [`src/jdm_agent/enrich/uploader.py`](src/jdm_agent/enrich/uploader.py) |
+| **Visualisation** | Sous-graphe interactif vis-network (HTML autonome) | [`src/jdm_agent/viz/`](src/jdm_agent/viz/) |
+| **Démo HF** | App Gradio à 6 onglets (Projet, Explorer, Claim checker, Sous-graphe, Agent, Jarvis, Aide) | [`app.py`](app.py) |
+| **Builders Jarvis** | `build_*_prompt`, `run_jarvis_flow`, `submit_existing_file` | [`jarvis.py`](jarvis.py) |
+
+---
+
+## 5. Installation
 
 ```bash
 git clone https://github.com/expAg/JDMAgent.git
@@ -289,6 +296,7 @@ pip install -e ".[dev,langchain]"
 # Providers LLM (au choix)
 pip install -e ".[anthropic]"   # Claude
 pip install -e ".[openai]"      # GPT
+pip install -e ".[google]"      # Gemini
 pip install -e ".[ollama]"      # local
 
 # Serveur MCP (recommandé)
@@ -297,17 +305,17 @@ pip install -e ".[mcp]"
 # Configuration
 cp .env.example .env
 # édite .env : ANTHROPIC_API_KEY / OPENAI_API_KEY / LLM_PROVIDER / LLM_MODEL
-# et pour la soumission Phase 12 : JDM_DROPS_API_KEY
+# et pour la soumission contributive : JDM_DROPS_API_KEY
 ```
 
 Tests :
 ```bash
-pytest                  # 89/89 passants
+pytest                  # 163/163 passants à l'heure actuelle
 ```
 
 ---
 
-## Démarrage rapide
+## 6. Démarrage rapide
 
 ```bash
 # 1. Interactif : brancher le MCP dans Claude Code
@@ -329,7 +337,7 @@ chaque CLI.
 
 ---
 
-## Roadmap par phases
+## 7. Roadmap par phases
 
 | Phase | Livré | Contenu |
 |---|---|---|
@@ -343,28 +351,17 @@ chaque CLI.
 | 9–10 | ✅ | Polarité, annotations, inverses verbo-nominaux |
 | 11 | ✅ | Moteur d'inférence symbolique borné, consolidation des candidats |
 | 12 | ✅ | Soumission automatique au LLMDrops JDM |
+| 13 | ✅ | Onglet *Jarvis* — 5 flux guidés par formulaire (Enrich/Audit/Gap/Err/Stat) |
 
 Détails et journal de bord dans [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---
 
-## Statut
-
-- **89/89 tests** passants (pytest + respx pour les mocks HTTP).
-- **34 outils MCP**, exposés indifféremment à l'agent LangChain et à tout
-  client MCP.
-- **6 CLIs** : `jdm-qa`, `jdm-eval`, `jdm-mcp`, `jdm-diag`, `jdm-factcheck`,
-  `jdm-enrich`.
-- **Démo HF Spaces** publique à 5 onglets : Projet, Explorer JDM, Claim
-  checker, Sous-graphe, Agent (BYOK).
-
----
-
-## Documentation
+## 8. Documentation
 
 - **[USAGE.md](USAGE.md)** — guide d'utilisation complet. Trois canaux
   (Claude Code via MCP, CLI, Python API), workflows-types, lecture des
-  sorties (terminal, JSON, CSV, fichier de soumission).
+  sorties (terminal, JSON, CSV, fichiers de soumission).
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** — documentation technique. Roadmap
   détaillée, setup dev, tests, dépannage, considérations de performance,
   contributions.
@@ -375,41 +372,54 @@ Détails et journal de bord dans [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---
 
-## Crédits et références
+<a id="references"></a>
+## Références
 
-### JeuxDeMots
+**JeuxDeMots et GWAPs**
+1. Lafourcade, M. (2007). *Making people play for Lexical Acquisition with the JeuxDeMots prototype*. SNLP'07, 7th International Symposium on Natural Language Processing, Bangkok.
+2. Lafourcade, M., & Joubert, A. (2008). *JeuxDeMots : un prototype ludique pour l'émergence de relations entre termes*. Actes de JADT 2008, Lyon.
+3. Lafourcade, M., Joubert, A., & Le Brun, N. (2015). *Games with a Purpose (GWAPs)*. Wiley-ISTE.
+16. von Ahn, L. (2006). *Games with a Purpose*. Computer, 39(6), 92–94. <https://doi.org/10.1109/MC.2006.196>
+17. von Ahn, L., & Dabbish, L. (2008). *Designing games with a purpose*. Communications of the ACM, 51(8), 58–67.
 
-Mathieu Lafourcade et l'équipe TEXTE, **LIRMM, CNRS / Université de
-Montpellier**. Plateforme lancée en 2007, alimentée par des centaines de
-milliers de contributeurs via les jeux *Diko*, *TOTAKI*, *AskIt*, etc.
+**Bases lexicales structurées**
+14. Miller, G. A. (1995). *WordNet: A Lexical Database for English*. Communications of the ACM, 38(11), 39–41.
+15. Speer, R., Chin, J., & Havasi, C. (2017). *ConceptNet 5.5: An Open Multilingual Graph of General Knowledge*. AAAI 2017.
 
-- Site jeu : <https://www.jeuxdemots.org>
-- API publique : <https://jdm-api.demo.lirmm.fr>
-- Documentation des relations : <https://www.jeuxdemots.org/jdm-about-detail-relations.php>
+**Protocoles et tool use**
+4. Anthropic. (2024). *Introducing the Model Context Protocol*. <https://www.anthropic.com/news/model-context-protocol>
+5. Schick, T., Dwivedi-Yu, J., Dessì, R., Raileanu, R., Lomeli, M., Zettlemoyer, L., Cancedda, N., & Scialom, T. (2023). *Toolformer: Language Models Can Teach Themselves to Use Tools*. NeurIPS 2023.
+6. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., & Cao, Y. (2023). *ReAct: Synergizing Reasoning and Acting in Language Models*. ICLR 2023.
 
-### Frameworks et protocoles
+**RAG, KG-LLM et architecture hybride**
+7. Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., et al. (2020). *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. NeurIPS 2020.
+8. Pan, J. Z., Razniewski, S., Kalo, J.-C., Singhania, S., Chen, J., Dietze, S., et al. (2024). *Unifying Large Language Models and Knowledge Graphs: A Roadmap*. IEEE TKDE.
+12. Edge, D., Trinh, H., Cheng, N., Bradley, J., Chao, A., Mody, A., Truitt, S., & Larson, J. (2024). *From Local to Global: A Graph RAG Approach to Query-Focused Summarization*. arXiv:2404.16130.
 
-- **LangChain** ([langchain.com](https://langchain.com)) — agentification,
-  tool calling, structured output.
-- **Model Context Protocol** ([modelcontextprotocol.io](https://modelcontextprotocol.io))
-  — protocole ouvert d'outils LLM, spécifié par Anthropic.
-- **FastMCP** — implémentation Python de référence côté serveur MCP.
-- **Pydantic v2, httpx, tenacity, diskcache, respx** — fondations Python.
+**Hallucination, fact-checking, auto-correction des LLM**
+9. Ji, Z., Lee, N., Frieske, R., Yu, T., Su, D., Xu, Y., et al. (2023). *Survey of Hallucination in Natural Language Generation*. ACM Computing Surveys, 55(12).
+10. Pan, L., Saxon, M., Xu, W., Nathani, D., Wang, X., & Wang, W. Y. (2024). *Automatically Correcting Large Language Models: Surveying the Landscape of Diverse Self-Correction Strategies*. TACL.
+11. Min, S., Krishna, K., Lyu, X., Lewis, M., Yih, W., Koh, P. W., Iyyer, M., Zettlemoyer, L., & Hajishirzi, H. (2023). *FActScore: Fine-grained Atomic Evaluation of Factual Precision in Long Form Text Generation*. EMNLP 2023.
+18. Bommasani, R., Hudson, D. A., Adeli, E., et al. (2021). *On the Opportunities and Risks of Foundation Models*. arXiv:2108.07258 (sections sur traçabilité et provenance).
 
-### Cadre scientifique
-
-Le projet s'inscrit dans la lignée des travaux sur :
-
-- les **agents LLM tool-augmentés** (Toolformer, ReAct, OpenAI function
-  calling, Anthropic tool use, MCP) ;
-- la **knowledge-graph augmented generation** (KAG), par opposition au
-  RAG vectoriel ;
-- les **architectures neuro-symboliques** mêlant raisonnement déterministe
-  borné et génération neuronale ;
-- les **bases de connaissances lexicales construites par jeu** (WordNet,
-  ConceptNet, et JeuxDeMots pour le français).
+**Neuro-symbolique**
+13. Marra, G., Diligenti, M., Giannini, F., Maggini, M., & Melacci, S. (2024). *Neuro-symbolic learning, neural-symbolic systems, and their challenges*. Frontiers in Artificial Intelligence.
+19. Garcez, A. d'A., & Lamb, L. C. (2023). *Neurosymbolic AI: the 3rd Wave*. Artificial Intelligence Review, 56, 12387–12406.
+20. Hitzler, P., Eberhart, A., Ebrahimi, M., Sarker, M. K., & Zhou, L. (2022). *Neuro-symbolic approaches in artificial intelligence*. National Science Review, 9(6).
 
 ---
+
+## Crédits
+
+- **JeuxDeMots** : M. Lafourcade et l'équipe TEXTE, **LIRMM, CNRS /
+  Université de Montpellier**. Plateforme lancée en 2007, alimentée par des
+  centaines de milliers de contributeurs.
+  - Site jeu : <https://www.jeuxdemots.org>
+  - API publique : <https://jdm-api.demo.lirmm.fr>
+  - Documentation des relations : <https://www.jeuxdemots.org/jdm-about-detail-relations.php>
+- **LangChain** : <https://langchain.com>
+- **Model Context Protocol** : <https://modelcontextprotocol.io>
+- **FastMCP** : <https://github.com/jlowin/fastmcp>
 
 ## Licence
 
