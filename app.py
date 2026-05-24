@@ -2163,9 +2163,21 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 "doit être rempli. Les deux ensemble "
                                 "déclenchent les deux modes en séquence.</em></small>"
                             )
+                            jst_upload = gr.Checkbox(
+                                value=False,
+                                label="Soumettre directement à JDM (LLMDrops)",
+                                info="Nécessite une clé API LLMDrops dans le bandeau ou en env.",
+                            )
                             jst_launch = gr.Button(
                                 "📊 Lancer les stats",
                                 variant="primary",
+                            )
+                            from jarvis import has_drops_key as _hk_st
+                            jst_submit = gr.Button(
+                                "📤 Soumettre à JDM (post-hoc)",
+                                variant="stop",
+                                visible=False,
+                                interactive=_hk_st(),
                             )
                         with gr.Column(scale=2):
                             jst_chat = gr.Chatbot(
@@ -2175,15 +2187,26 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 resizable=True,
                                 height=520,
                             )
+                            jst_file = gr.File(
+                                label="📄 Fichier produit (télécharger)",
+                                interactive=False,
+                                visible=False,
+                            )
+                            jst_preview = gr.Code(
+                                label="Aperçu du fichier",
+                                language=None,
+                                lines=12,
+                                interactive=False,
+                                visible=False,
+                            )
 
-                    def _run_stats(term, relations, drops_key, model, budget_label):
+                    def _run_stats(term, relations, upload, drops_key, model, budget_label):
                         from jarvis import build_stats_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        # Les deux champs vides AUTORISÉS — l'agent tirera
-                        # un terme au hasard en mode PAR_TERME.
                         prompt = build_stats_prompt(
                             term=term, relation=relations,
                             budget_label=str(budget_label),
+                            upload=bool(upload),
                         )
                         t = (term or "").strip()
                         rels = relations if isinstance(relations, list) else (
@@ -2197,9 +2220,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             headline = f"📊 Stats sur {len(rels)} relation(s)"
                         else:
                             headline = "📊 Stats (terme tiré au hasard)"
-                        # Stats ne produit pas de fichier — on absorbe les
-                        # 2 outputs file/preview du run_jarvis_flow.
-                        for messages, _fpath, _fprev in run_jarvis_flow(
+                        for messages, fpath, fprev in run_jarvis_flow(
                             prompt=prompt, headline=headline,
                             model=model, api_key="",
                             budget_label=str(budget_label),
@@ -2208,12 +2229,38 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                         ):
-                            yield messages
+                            yield (
+                                messages,
+                                gr.update(value=fpath, visible=bool(fpath)),
+                                gr.update(value=fprev, visible=bool(fprev)),
+                            )
 
                     jst_launch.click(
                         _run_stats,
-                        inputs=[jst_term, jst_relation,
+                        inputs=[jst_term, jst_relation, jst_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget],
+                        outputs=[jst_chat, jst_file, jst_preview],
+                    )
+
+                    def _show_stats_submit(file_path, drops_key):
+                        if not file_path:
+                            return gr.update(visible=False)
+                        from jarvis import has_drops_key as _hk
+                        return gr.update(visible=True, interactive=_hk(drops_key))
+
+                    jst_file.change(
+                        _show_stats_submit,
+                        inputs=[jst_file, jarvis_drops_key],
+                        outputs=[jst_submit],
+                    )
+
+                    def _submit_stats(file_path, drops_key, model, chat):
+                        from jarvis import submit_existing_file
+                        return submit_existing_file(file_path, drops_key, model, chat)
+
+                    jst_submit.click(
+                        _submit_stats,
+                        inputs=[jst_file, jarvis_drops_key, jarvis_model, jst_chat],
                         outputs=[jst_chat],
                     )
 
@@ -2239,16 +2286,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     )
 
             # ---- Câblage transverse : quand la clé LLMDrops change dans
-            # le bandeau, on rafraîchit l'état interactive des 3 boutons
-            # « Soumettre » post-hoc (s'ils sont déjà visibles). Si le
-            # bouton n'est pas encore visible (pas de fichier produit),
-            # on garde son visible=False.
+            # le bandeau, on rafraîchit l'état interactive des 4 boutons
+            # « Soumettre » post-hoc (Enrich/Audit/Signalement/Stats).
             def _refresh_submit_buttons(drops_key):
                 from jarvis import has_drops_key as _hk
                 ok = _hk(drops_key)
-                # Le `interactive` se met à jour même quand visible=False ;
-                # quand le bouton deviendra visible, l'état est cohérent.
                 return (
+                    gr.update(interactive=ok),
                     gr.update(interactive=ok),
                     gr.update(interactive=ok),
                     gr.update(interactive=ok),
@@ -2257,7 +2301,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             jarvis_drops_key.change(
                 _refresh_submit_buttons,
                 inputs=[jarvis_drops_key],
-                outputs=[je_submit, ja_submit, js_submit],
+                outputs=[je_submit, ja_submit, js_submit, jst_submit],
             )
 
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----

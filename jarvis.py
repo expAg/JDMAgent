@@ -307,6 +307,7 @@ def build_stats_prompt(
     term: str = "",
     relation=None,
     budget_label: str = "50",
+    upload: bool = False,
 ) -> str:
     """Compose le pré-prompt de stats à partir du formulaire.
 
@@ -361,8 +362,19 @@ def build_stats_prompt(
         "(targets) toutes relations confondues — top 20 par "
         "occurrence/poids — avec nb_relations_distinctes et "
         "poids_total. Permet de voir quels termes reviennent souvent.\n"
-        "Plus 3-5 observations clés en prose après les tableaux."
+        "Plus 3-5 observations BRÈVES et FACTUELLES après les tableaux."
     )
+    if upload:
+        parts.append(
+            "Soumets directement le fichier `.stat` à JDM (LLMDrops) à "
+            "la fin (`write_submission_file(..., upload=True)`)."
+        )
+    else:
+        parts.append(
+            "Écris le fichier `.stat` à la fin "
+            "(`write_submission_file(..., upload=False)`) — l'utilisateur "
+            "décidera ensuite de le soumettre ou non."
+        )
     parts.append(
         "Tu SUIVRAS `stats_workflow()` en TOUT PREMIER. Obligatoire."
     )

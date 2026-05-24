@@ -1519,29 +1519,52 @@ def stats_workflow() -> dict:
             },
             {
                 "order": 4,
-                "name": "Synthèse structurée (2 tableaux + highlights)",
+                "name": "Synthèse structurée (2 tableaux + observations)",
                 "description": (
                     "Produis DEUX vues complémentaires sous forme de "
-                    "tableaux markdown, plus des observations.\n\n"
+                    "tableaux markdown, plus de brèves observations.\n\n"
                     "  1) TABLEAU par RELATION :\n"
-                    "     une ligne par relation auditée, avec\n"
-                    "     `relation | n_total | n_pos | n_neg | max_w | min_w | mean_w`.\n\n"
+                    "     `relation | n_total | n_pos | n_neg | max_w | min_w | mean_w`\n"
+                    "     une ligne par relation examinée.\n\n"
                     "  2) TABLEAU par TERMES RENCONTRÉS (= targets) :\n"
-                    "     agrège les cibles (target) de tous les triplets\n"
-                    "     collectés, toutes relations confondues. Top 20\n"
-                    "     par fréquence (puis par poids agrégé), avec\n"
-                    "     `target | nb_occurrences | nb_relations_distinctes | poids_total | poids_max`.\n"
-                    "     Permet de voir quels termes reviennent comme\n"
-                    "     cible et où la couverture se concentre.\n\n"
-                    "  Puis 3-5 OBSERVATIONS clés en prose (« la relation\n"
-                    "  r_X est sur-représentée », « la cible Y revient\n"
-                    "  dans 6 relations différentes », etc.)."
+                    "     `target | nb_occurrences | nb_relations_distinctes | poids_total | poids_max`\n"
+                    "     top 20 par fréquence (puis poids agrégé). Permet "
+                    "de voir quels termes reviennent comme cible et où la "
+                    "couverture se concentre.\n\n"
+                    "  Puis 3-5 OBSERVATIONS clés en prose BRÈVES et "
+                    "FACTUELLES (« r_X sur-représentée », « cible Y dans "
+                    "6 relations différentes ») — pas de dissertation."
                 ),
                 "tool": "(synthèse — pas d'appel)",
             },
+            {
+                "order": 5,
+                "name": "Écriture du fichier .stat",
+                "description": (
+                    "Appelle `write_submission_file(triplets=..., "
+                    "path='<term>_stats.stat', upload=...)`. Format "
+                    "strict, TROIS sections séparées :\n\n"
+                    "  === TABLEAU PAR RELATION ===\n"
+                    "  relation | n_total | n_pos | n_neg | max_w | min_w | mean_w\n"
+                    "  ... (une ligne par relation) ...\n"
+                    "\n"
+                    "  === TABLEAU PAR TERMES RENCONTRÉS ===\n"
+                    "  target | nb_occurrences | nb_relations_distinctes | poids_total | poids_max\n"
+                    "  ... (top 20 cibles) ...\n"
+                    "\n"
+                    "  === META ===\n"
+                    "  <3-5 observations clés en prose, brèves et factuelles>\n"
+                    "\n"
+                    "PAS de dissertation, PAS de définitions, PAS de "
+                    "redondance avec les tableaux. Les séparateurs "
+                    "`=== … ===` sont OBLIGATOIRES.\n\n"
+                    "SOUMISSION optionnelle : si l'utilisateur a demandé "
+                    "d'envoyer, `upload=True`."
+                ),
+                "tool": "write_submission_file",
+            },
         ],
         "rules": [
-            "Pas d'écriture de fichier — sortie pure dans la conversation.",
             "Mode PAR_TERME : utilise `list_existing_for_enrichment` "
             "(exhaustif), PAS `get_synonyms`/`get_parts` qui tronquent.",
             "Mode PAR_RELATION : limite-toi à 5-8 termes-pivots — c'est "
@@ -1550,6 +1573,9 @@ def stats_workflow() -> dict:
             "différents si pas de relation imposée) — qualité statistique.",
             "Rends TOUJOURS les 2 tableaux (par relation ET par termes "
             "rencontrés) — pas un seul.",
+            "Le fichier .stat est FACTUEL — tableaux pipe-separated, "
+            "META court (3-5 observations max). PAS de dissertation.",
+            "Les séparateurs `=== … ===` sont OBLIGATOIRES.",
             "Le cache disque rend les stats incrémentales gratuites au "
             "2e appel sur les mêmes termes.",
         ],
