@@ -259,18 +259,21 @@ OPENAI_MODELS = {
 # moindre), `-live` = optimisée pour le streaming temps réel (peut avoir des
 # limitations sur le tool calling complexe).
 GEMINI_MODELS = {
-    "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
-    "gemini-3-flash":         "Gemini 3 Flash (gratuit, qualité supérieure)",
-    "gemini-3-flash-live":    "Gemini 3 Flash Live (gratuit, optimisé streaming temps réel)",
-    "gemini-3.1-flash-lite":  "Gemini 3.1 Flash Lite (gratuit, rapide)",
-    "gemini-3.5-flash":       "Gemini 3.5 Flash (gratuit, qualité top)",
+    "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
+    "gemini-3-flash":          "Gemini 3 Flash Preview (gratuit, qualité supérieure)",
+    "gemini-3.1-flash-live":   "Gemini 3.1 Flash Live Preview (gratuit, streaming temps réel)",
+    "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite Preview (gratuit, rapide)",
+    "gemini-3.5-flash":        "Gemini 3.5 Flash (gratuit, qualité top)",
 }
+# Noms d'identifiants API officiels (cf. https://ai.google.dev/gemini-api/docs/pricing).
+# Les variantes 3.x sont en preview au moment du commit ; certaines deviendront
+# stables, leurs noms perdront alors le suffixe `-preview` (à mettre à jour).
 GEMINI_MODEL_ROUTING = {
-    "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
-    "gemini-3-flash":         "gemini-3-flash",
-    "gemini-3-flash-live":    "gemini-3-flash-live",
-    "gemini-3.1-flash-lite":  "gemini-3.1-flash-lite-preview",
-    "gemini-3.5-flash":       "gemini-3.5-flash",
+    "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
+    "gemini-3-flash":          "gemini-3-flash-preview",
+    "gemini-3.1-flash-live":   "gemini-3.1-flash-live-preview",
+    "gemini-3.1-flash-lite":   "gemini-3.1-flash-lite-preview",
+    "gemini-3.5-flash":        "gemini-3.5-flash",
 }
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
