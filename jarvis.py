@@ -130,10 +130,12 @@ def build_audit_prompt(
             "retire un autre mot."
         ))
     if relation:
+        parts.append(f"Restreins l'audit à la relation `{relation}`.")
+    else:
         parts.append(
-            f"Restreins l'audit à la relation `{relation}` (la liste par "
-            "défaut sinon : r_isa, r_has_part, r_carac, r_telic_role, "
-            "r_lieu, r_anto, r_syn, r_agent-1, r_patient-1)."
+            "Pas de relation imposée : choisis-en UNE au hasard parmi les "
+            "~180 relations JDM (utilise `list_relation_types` pour piocher "
+            "et varie d'une session à l'autre — pas toujours r_isa)."
         )
     parts.append(
         "Détecte les CONTAMINATIONS du terme générique par des relations "
@@ -179,8 +181,9 @@ def build_gap_prompt(
         parts.append(f"Relations cibles : {rels}.")
     else:
         parts.append(
-            "Pas de relation imposée : utilise la liste par défaut "
-            "(adapte selon que le terme est un objet, un verbe, un sentiment…)."
+            "Pas de relation imposée : CHOISIS-toi-même un ensemble varié "
+            "parmi les ~180 relations JDM (pioche librement, adapte à la "
+            "nature du terme, varie d'une session à l'autre)."
         )
     if _is_bounded_budget(budget_label):
         parts.append(

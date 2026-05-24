@@ -170,7 +170,9 @@ def test_gap_relations_list_injected():
     p_yes = build_gap_prompt("x", relations=["r_isa", "r_has_part"])
     assert "r_isa" in p_yes and "r_has_part" in p_yes
     assert "Relations cibles" in p_yes
-    assert "défaut" in p_no
+    # Sans relations imposées, l'agent CHOISIT lui-même (pas de liste défaut)
+    assert "CHOISIS" in p_no or "choisis" in p_no
+    assert "180" in p_no  # mention du parc complet
 
 
 # ---------- build_signalement_prompt ----------

@@ -1154,15 +1154,16 @@ def audit_workflow() -> dict:
                 "order": 3,
                 "name": "Inventaire des triplets sur le terme générique",
                 "description": (
-                    "Pour chaque relation à auditer (la relation cible "
-                    "si l'utilisateur l'a précisée, sinon la liste par "
-                    "défaut [r_isa, r_has_part, r_carac, r_telic_role, "
-                    "r_lieu, r_anto, r_syn, r_agent-1, r_patient-1]), "
-                    "appelle `get_relations_of_type(term, relation_name)` "
-                    "sur le TERME GÉNÉRIQUE (forme nue, sans raffinement) "
-                    "— récupère TOUS ses triplets pour cette relation."
+                    "Pour la relation à auditer (la relation cible si "
+                    "l'utilisateur l'a précisée, sinon tire-en UNE au "
+                    "hasard parmi les ~180 relations JDM via "
+                    "`list_relation_types` — varie d'une session à "
+                    "l'autre, pas toujours r_isa), appelle "
+                    "`get_relations_of_type(term, relation_name)` sur "
+                    "le TERME GÉNÉRIQUE (forme nue, sans raffinement). "
+                    "Récupère TOUS ses triplets pour cette relation."
                 ),
-                "tool": "get_relations_of_type",
+                "tool": "list_relation_types + get_relations_of_type",
             },
             {
                 "order": 4,
@@ -1309,14 +1310,17 @@ def gap_detection_workflow() -> dict:
                     "/ NEGATIVE_FILLED (que des triplets négatifs — JDM "
                     "a regardé et dit non) / LOW_COVERAGE (< N triplets "
                     "positifs).\n\n"
-                    "Si l'utilisateur n'a fourni AUCUNE relation cible, "
-                    "utilise la liste par défaut [r_isa, r_has_part, "
-                    "r_carac, r_telic_role, r_lieu, r_agent-1, "
-                    "r_patient-1] ; ajuste selon la nature du terme "
-                    "(verbe → relations verbales, objet → r_has_part / "
-                    "r_telic_role…)."
+                    "Si l'utilisateur n'a fourni AUCUNE relation cible : "
+                    "CHOISIS-EN toi-même un ensemble varié — pioche "
+                    "librement parmi les ~180 relations JDM "
+                    "(`list_relation_types` pour les découvrir), adapte "
+                    "à la nature du terme (verbe → relations verbales, "
+                    "objet → parties / fonctions, sentiment → causes / "
+                    "effets…), et VARIE d'une session à l'autre. "
+                    "N'utilise PAS toujours le même quintette r_isa / "
+                    "r_has_part / r_carac — c'est appauvrissant."
                 ),
-                "tool": "detect_gaps",
+                "tool": "list_relation_types + detect_gaps",
             },
             {
                 "order": 3,
@@ -1373,12 +1377,14 @@ def signalement_workflow() -> dict:
                 "name": "Cadrer le scan",
                 "description": (
                     "Si une relation a été fournie : restreins le scan à "
-                    "cette relation seule. Sinon : scanne les relations "
-                    "principales [r_isa, r_carac, r_has_part, r_anto, "
-                    "r_syn, r_lieu, r_telic_role]. Si le terme est "
-                    "polysémique, traite chaque sens raffiné séparément."
+                    "cette relation seule. Sinon : CHOISIS librement un "
+                    "ensemble varié de relations parmi les ~180 de JDM "
+                    "(`list_relation_types` si besoin), adapte à la "
+                    "nature du terme, et VARIE d'une session à l'autre. "
+                    "Si le terme est polysémique, traite chaque sens "
+                    "raffiné séparément."
                 ),
-                "tool": "(pas d'appel)",
+                "tool": "list_relation_types (si besoin)",
             },
             {
                 "order": 2,
@@ -1485,16 +1491,18 @@ def stats_workflow() -> dict:
                 "order": 2,
                 "name": "Mode PAR_TERME",
                 "description": (
-                    "Si un terme est fourni : pour CHAQUE relation cible "
-                    "(par défaut [r_isa, r_hypo, r_syn, r_anto, r_carac, "
-                    "r_has_part, r_telic_role, r_lieu, r_agent-1, "
-                    "r_patient-1]), appelle `list_existing_for_enrichment("
-                    "term, relation_name)` — c'est EXHAUSTIF (pas de "
-                    "seuil ni de limite, contrairement à get_*). Compte "
-                    "le nb total, le nb positif, le nb négatif, le "
-                    "max(w), le min(w) par relation."
+                    "Si un terme est fourni : CHOISIS un ensemble varié "
+                    "de relations à examiner (pioche librement parmi les "
+                    "~180 de JDM via `list_relation_types`, adapte à la "
+                    "nature du terme, varie d'une session à l'autre — "
+                    "pas toujours r_isa/r_hypo/r_syn). Pour CHAQUE relation "
+                    "choisie, appelle "
+                    "`list_existing_for_enrichment(term, relation_name)` "
+                    "— c'est EXHAUSTIF (pas de seuil ni de limite, "
+                    "contrairement à get_*). Compte nb total, nb positif, "
+                    "nb négatif, max(w), min(w), mean(w) par relation."
                 ),
-                "tool": "list_existing_for_enrichment",
+                "tool": "list_relation_types + list_existing_for_enrichment",
             },
             {
                 "order": 3,
