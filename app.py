@@ -956,12 +956,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             # via additional_outputs de ChatInterface — donc le message
             # de chat reste UNIQUEMENT le texte de l'agent (pas d'append
             # qui ferait fragmenter Gemini 3.x). Le composant se met à
-            # jour à chaque nouvelle viz, remplaçant l'ancienne (pas
-            # d'accumulation qui figeait le navigateur dans la solution
-            # précédente d'embed inline dans le chat).
+            # jour à chaque nouvelle viz, remplaçant l'ancienne.
+            #
+            # render=False : on déclare le composant ici pour pouvoir le
+            # passer en additional_outputs de ChatInterface, mais on le
+            # rend (.render()) PLUS BAS, après le chat — sinon il
+            # s'afficherait au-dessus de la conversation et l'auto-scroll
+            # Gradio sauterait en bas de page quand il devient visible.
             viz_html_out = gr.HTML(
                 label="🕸️ Visualisation interactive du sous-graphe",
                 visible=False,
+                render=False,
             )
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
@@ -994,6 +999,9 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 cache_examples=False,
                 type="messages",
             )
+            # Rendu effectif de viz_html_out APRÈS le chat → la viz
+            # apparaît sous la conversation, pas au-dessus.
+            viz_html_out.render()
 
     gr.Markdown(
         "---\n*Données : [JeuxDeMots](https://www.jeuxdemots.org) — "
