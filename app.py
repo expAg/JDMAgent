@@ -261,20 +261,19 @@ OPENAI_MODELS = {
 GEMINI_MODELS = {
     "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
     "gemini-2.5-flash":        "Gemini 2.5 Flash (gratuit, stable, qualité solide)",
-    "gemini-3-flash":          "Gemini 3 Flash Preview (gratuit, qualité supérieure)",
     "gemini-3.5-flash":        "Gemini 3.5 Flash (gratuit, qualité top)",
 }
 # Noms d'identifiants API officiels (cf. https://ai.google.dev/gemini-api/docs/pricing).
-# Gemini 3.1 Flash Lite Preview retiré : renvoie systématiquement « Function
-# call is missing a thought_signature » sur les chaînes de tool calls — l'API
-# OpenAI-compatible ne préserve pas la chaîne de raisonnement interne entre
-# tours, ce qui casse les modèles 3.x preview avec reasoning.
-# À réintégrer si Google passe ces variantes en stable ou ajoute le support
-# thought_signature sur l'endpoint OpenAI-compat.
+# Tous les Gemini 3.x preview retirés du dropdown : ils renvoient
+# systématiquement « Function call is missing a thought_signature » sur les
+# chaînes de tool calls, parce que l'endpoint OpenAI-compatible ne préserve
+# pas la chaîne de raisonnement interne entre tours (le mécanisme
+# `thought_signature` est spécifique à l'API native Gemini).
+# Pour les réintégrer, il faudrait passer par `langchain-google-genai` qui
+# utilise le SDK natif (et préserve ces signatures) — cf. doc projet.
 GEMINI_MODEL_ROUTING = {
     "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
     "gemini-2.5-flash":        "gemini-2.5-flash",
-    "gemini-3-flash":          "gemini-3-flash-preview",
     "gemini-3.5-flash":        "gemini-3.5-flash",
 }
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -814,7 +813,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     # d'épuisement, BYOK Claude / GPT.
                     ["Quels sont les synonymes de voiture ?", "", "gemini-2.5-flash-lite"],
                     ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash-lite"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3-flash"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3.5-flash"],
                     ["Que peut faire un chat ?", "", "gemini-3.5-flash"],
                     ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-2.5-flash"],
                 ],
