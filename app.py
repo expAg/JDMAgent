@@ -411,23 +411,6 @@ def _build_gemini_native(model_id: str):
     )
 
 
-def _clean_control_chars(text: str) -> str:
-    """Drop les caractères de contrôle invisibles (\\r, \\x00, etc.) qui
-    peuvent traîner en fin de stream de certains modèles (Gemini 3.x via
-    SDK natif Google notamment). Garde \\n et \\t. Ne touche à rien d'autre
-    — c'est juste un strip de bytes pollués qui sinon font fragmenter
-    Gradio Chatbot quand on append du markdown derrière.
-    """
-    if not text:
-        return ""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    cleaned = "".join(
-        ch for ch in text
-        if ch == "\n" or ch == "\t" or (ord(ch) >= 0x20 and ord(ch) != 0x7F)
-    )
-    return cleaned.rstrip()
-
-
 def _history_to_lc(history: list[dict], current_user_message: str) -> list:
     """Convertit l'historique Gradio (format messages) en messages LangChain.
 
@@ -537,11 +520,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     # Sortie finale : 100 % markdown plat. Aucun HTML, parce que
     # gr.Chatbot v5 (avec ou sans sanitize_html) fragmente n'importe
     # quel tag inconnu en un caractère par ligne et casse l'affichage.
-    # On nettoie aussi les chars de contrôle invisibles de final_answer :
-    # Gemini 3.x (SDK natif Google) termine parfois ses réponses par des
-    # \r, \x00, etc., qui font fragmenter le bloc « Outils » qu'on
-    # concatène derrière.
-    out = _clean_control_chars(final_answer) or "*(réponse vide)*"
+    out = final_answer or "*(réponse vide)*"
 
     # Viz : lien markdown standard. Gradio le rendra cliquable et
     # l'ouverture dans un nouvel onglet dépend du client (Ctrl+clic
