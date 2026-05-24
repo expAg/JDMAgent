@@ -428,12 +428,17 @@ def _history_to_lc(history: list[dict], current_user_message: str) -> list:
         if role == "user":
             lc.append(HumanMessage(content=content))
         elif role == "assistant":
-            # On nettoie de l'historique LLM tous les blocs HTML lourds
-            # (iframe viz, <details> outils) et l'ancien marker markdown,
-            # pour garder un historique conversationnel léger.
+            # On nettoie de l'historique LLM les blocs annexes (lien viz,
+            # liste outils, anciens HTML hérités) pour ne renvoyer au LLM
+            # que le texte de réponse utile au contexte conversationnel.
             answer_only = content
-            for marker in ("\n\n<iframe", "\n\n<details>",
-                            "\n\n---\n*Outils JDM appelés*"):
+            for marker in (
+                "\n\n---\n**Outils JDM appelés",   # nouveau format markdown
+                "\n\n📊 [Ouvrir la visualisation", # nouveau lien viz
+                "\n\n<iframe",                      # ancien (à supprimer)
+                "\n\n<details>",                    # ancien (à supprimer)
+                "\n\n---\n*Outils JDM appelés*",   # ancien markdown italique
+            ):
                 answer_only = answer_only.split(marker, 1)[0]
             answer_only = answer_only.strip()
             if answer_only:
@@ -512,26 +517,31 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         yield f"❌ Erreur agent : {e}"
         return
 
-    # Sortie finale : la réponse synthétique + viz embarquée (si générée)
-    # + bloc déplable des outils. <details> est natif, cliquable, replié
-    # par défaut → ne couvre plus la surface du chat.
+    # Sortie finale : 100 % markdown plat. Aucun HTML, parce que
+    # gr.Chatbot v5 (avec ou sans sanitize_html) fragmente n'importe
+    # quel tag inconnu en un caractère par ligne et casse l'affichage.
     out = final_answer or "*(réponse vide)*"
 
-    # Viz interactive : lien cliquable « nouvel onglet » plutôt qu'iframe
-    # inline (qui figeait le navigateur pour les sous-graphes denses).
-    # L'utilisateur clique, la viz s'ouvre dans un nouvel onglet, l'onglet
-    # chat est intact (pas de « précédent » qui fait perdre l'historique).
+    # Viz : lien markdown standard. Gradio le rendra cliquable et
+    # l'ouverture dans un nouvel onglet dépend du client (Ctrl+clic
+    # marche toujours, sinon clic simple change d'onglet selon le
+    # comportement par défaut du navigateur).
     if viz_path:
-        viz_link = _build_viz_link(viz_path)
-        if viz_link:
-            out += "\n\n" + viz_link
+        viz_url = _build_viz_url(viz_path)
+        if viz_url:
+            out += f"\n\n📊 [Ouvrir la visualisation interactive]({viz_url})"
 
+    # Tools : liste markdown brute, SANS backticks (qui déclenchaient
+    # le bug d'éclatement par caractère via le parser code inline).
+    # Pas déplable — assumé : la lisibilité passe avant le pliage.
     if tool_traces:
-        tools_html = "<br>".join(t for t in tool_traces)
+        # Strip les backticks des entrées (elles avaient été ajoutées
+        # plus haut dans tool_traces avec backticks).
+        clean = [t.replace("`", "") for t in tool_traces]
         out += (
-            f"\n\n<details><summary><i>Outils JDM appelés "
-            f"({len(tool_traces)}) — cliquer pour déplier</i></summary>\n\n"
-            f"{tools_html}\n\n</details>"
+            f"\n\n---\n"
+            f"**Outils JDM appelés ({len(clean)})**\n"
+            + "\n".join(clean)
         )
     yield out
 
@@ -560,15 +570,15 @@ def _extract_html_path(tool_message_content: str) -> Optional[str]:
     return None
 
 
-def _build_viz_link(html_path: str) -> Optional[str]:
-    """Copie le fichier HTML viz dans VIZ_DIR et renvoie un lien cliquable
-    qui s'ouvre dans un NOUVEL ONGLET (pour ne pas perdre l'historique
-    chat). Pas d'iframe : embarquer 1-2 MB de HTML par bulle de chat
-    figeait le navigateur après quelques tours.
+def _build_viz_url(html_path: str) -> Optional[str]:
+    """Copie le fichier HTML viz dans VIZ_DIR et renvoie l'URL Gradio
+    statique pour y accéder. Aucun tag HTML — juste l'URL en string,
+    pour qu'on l'injecte dans un markdown `[label](url)` qui sera
+    rendu correctement par gr.Chatbot.
 
-    On copie dans VIZ_DIR (qui EST dans `allowed_paths` de demo.launch)
-    avec un nom hashé pour éviter les collisions. Gradio sert ensuite le
-    fichier via son API statique.
+    Tente d'abord `/gradio_api/file=` (Gradio 5.x), fallback `/file=`
+    (gradio <5). En réalité on émet `/gradio_api/file=` et on espère
+    que la version HF le supporte ; si 404, on pourra basculer.
 
     Retourne None si la copie échoue → chat continue avec seulement le
     texte, pas d'erreur bloquante.
@@ -585,19 +595,8 @@ def _build_viz_link(html_path: str) -> Optional[str]:
             shutil.copyfile(src, dest)
     except Exception:
         return None
-    # Lien cliquable, target=_blank → ouvre la viz dans un nouvel onglet,
-    # ne touche pas à l'historique du chat. rel="noopener" pour la sécurité.
-    # On utilise /gradio_api/file= (Gradio 5.x) avec fallback `/file=` au
-    # même endroit du DOM si la première URL renvoie 404.
     abs_path = str(dest.resolve()).replace("\\", "/")
-    return (
-        f'<a href="/gradio_api/file={abs_path}" target="_blank" '
-        f'rel="noopener noreferrer" '
-        f'style="display:inline-block;padding:10px 16px;margin:8px 0;'
-        f'background:#7c3aed;color:white;border-radius:8px;'
-        f'text-decoration:none;font-weight:500;">'
-        f'🕸️ Ouvrir la visualisation interactive (nouvel onglet)</a>'
-    )
+    return f"/gradio_api/file={abs_path}"
 
 
 # ---------- UI ----------
@@ -931,19 +930,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
                 additional_inputs=[key_in, model_in],
-                # Chatbot agrandi : 780 px de haut (+30 % vs 600). Donne plus
-                # d'espace pour les réponses longues + le bloc déplable
-                # « Outils JDM appelés » qui reste replié par défaut.
-                # sanitize_html=False est ESSENTIEL pour que le <details>
-                # déplable et le lien <a target=_blank> de la viz soient
-                # rendus comme HTML (sinon Gradio les strippe et les
-                # caractères s'éparpillent dans le rendu markdown).
+                # Chatbot agrandi : 780 px de haut (+30 % vs 600).
+                # Tentative d'HTML/<details> abandonnée — gr.Chatbot v5
+                # fragmente tout tag inconnu en un caractère par ligne ;
+                # on s'en tient à du markdown plat dans chat_with_agent.
                 chatbot=gr.Chatbot(
                     height=780,
                     type="messages",
                     show_label=False,
                     avatar_images=(None, None),
-                    sanitize_html=False,
                 ),
                 # Avec additional_inputs, chaque exemple = liste alignée sur
                 # [message, key, model]. La clé reste vide pour les exemples ;
