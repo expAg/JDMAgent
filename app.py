@@ -260,8 +260,8 @@ OPENAI_MODELS = {
 # limitations sur le tool calling complexe).
 GEMINI_MODELS = {
     "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
+    "gemini-2.5-flash":        "Gemini 2.5 Flash (gratuit, stable, qualité solide)",
     "gemini-3-flash":          "Gemini 3 Flash Preview (gratuit, qualité supérieure)",
-    "gemini-3.1-flash-live":   "Gemini 3.1 Flash Live Preview (gratuit, streaming temps réel)",
     "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite Preview (gratuit, rapide)",
     "gemini-3.5-flash":        "Gemini 3.5 Flash (gratuit, qualité top)",
 }
@@ -270,8 +270,8 @@ GEMINI_MODELS = {
 # stables, leurs noms perdront alors le suffixe `-preview` (à mettre à jour).
 GEMINI_MODEL_ROUTING = {
     "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
+    "gemini-2.5-flash":        "gemini-2.5-flash",
     "gemini-3-flash":          "gemini-3-flash-preview",
-    "gemini-3.1-flash-live":   "gemini-3.1-flash-live-preview",
     "gemini-3.1-flash-lite":   "gemini-3.1-flash-lite-preview",
     "gemini-3.5-flash":        "gemini-3.5-flash",
 }
