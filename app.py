@@ -517,14 +517,14 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     # par défaut → ne couvre plus la surface du chat.
     out = final_answer or "*(réponse vide)*"
 
-    # Viz interactive embarquée : si l'agent a appelé build_subgraph_visualization
-    # et qu'on a un fichier HTML lisible, on le rend en iframe (data URI b64
-    # — même technique que l'onglet Sous-graphe, isole les scripts vis-network
-    # du DOM Gradio).
+    # Viz interactive : lien cliquable « nouvel onglet » plutôt qu'iframe
+    # inline (qui figeait le navigateur pour les sous-graphes denses).
+    # L'utilisateur clique, la viz s'ouvre dans un nouvel onglet, l'onglet
+    # chat est intact (pas de « précédent » qui fait perdre l'historique).
     if viz_path:
-        viz_iframe = _build_viz_iframe(viz_path)
-        if viz_iframe:
-            out += "\n\n" + viz_iframe
+        viz_link = _build_viz_link(viz_path)
+        if viz_link:
+            out += "\n\n" + viz_link
 
     if tool_traces:
         tools_html = "<br>".join(t for t in tool_traces)
@@ -560,21 +560,18 @@ def _extract_html_path(tool_message_content: str) -> Optional[str]:
     return None
 
 
-def _build_viz_iframe(html_path: str) -> Optional[str]:
-    """Renvoie une iframe pointant vers le fichier HTML viz, servi par
-    Gradio via `allowed_paths` (déclaré dans demo.launch).
+def _build_viz_link(html_path: str) -> Optional[str]:
+    """Copie le fichier HTML viz dans VIZ_DIR et renvoie un lien cliquable
+    qui s'ouvre dans un NOUVEL ONGLET (pour ne pas perdre l'historique
+    chat). Pas d'iframe : embarquer 1-2 MB de HTML par bulle de chat
+    figeait le navigateur après quelques tours.
 
-    Stratégie file=`/file=...` plutôt que data URI base64 inline : pour
-    une viz dense (1-2 MB), l'inline saturait le DOM Gradio et figeait
-    le navigateur après quelques tours. Avec /file=, l'iframe lazy-load
-    l'URL et vis-network s'exécute dans son propre contexte isolé.
+    On copie dans VIZ_DIR (qui EST dans `allowed_paths` de demo.launch)
+    avec un nom hashé pour éviter les collisions. Gradio sert ensuite le
+    fichier via son API statique.
 
-    On copie le fichier dans VIZ_DIR (qui EST dans allowed_paths) avec
-    un nom hashé pour éviter les collisions et garantir que Gradio
-    accepte de servir le fichier.
-
-    Retourne None si la copie/lecture échoue → le chat continue sans
-    embed, juste avec le texte.
+    Retourne None si la copie échoue → chat continue avec seulement le
+    texte, pas d'erreur bloquante.
     """
     import shutil
     from pathlib import Path as _Path
@@ -582,20 +579,24 @@ def _build_viz_iframe(html_path: str) -> Optional[str]:
     if not src.exists():
         return None
     try:
-        # Nom stable basé sur le contenu pour cacher les requêtes répétées.
         stem = src.stem
         dest = VIZ_DIR / f"chat_{stem}_{abs(hash(str(src.resolve()))) % 10**8}.html"
         if not dest.exists() or dest.stat().st_size != src.stat().st_size:
             shutil.copyfile(src, dest)
     except Exception:
         return None
-    # Gradio expose les fichiers d'allowed_paths via `/gradio_api/file=` ou
-    # `/file=` selon la version ; on prend la forme officielle moderne.
+    # Lien cliquable, target=_blank → ouvre la viz dans un nouvel onglet,
+    # ne touche pas à l'historique du chat. rel="noopener" pour la sécurité.
+    # On utilise /gradio_api/file= (Gradio 5.x) avec fallback `/file=` au
+    # même endroit du DOM si la première URL renvoie 404.
+    abs_path = str(dest.resolve()).replace("\\", "/")
     return (
-        f'<iframe src="/gradio_api/file={dest.resolve()}" '
-        f'style="width:100%;height:600px;border:1px solid #ddd;'
-        f'border-radius:8px;background:#fff;display:block;" '
-        f'sandbox="allow-scripts allow-same-origin" loading="lazy"></iframe>'
+        f'<a href="/gradio_api/file={abs_path}" target="_blank" '
+        f'rel="noopener noreferrer" '
+        f'style="display:inline-block;padding:10px 16px;margin:8px 0;'
+        f'background:#7c3aed;color:white;border-radius:8px;'
+        f'text-decoration:none;font-weight:500;">'
+        f'🕸️ Ouvrir la visualisation interactive (nouvel onglet)</a>'
     )
 
 
@@ -933,11 +934,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 # Chatbot agrandi : 780 px de haut (+30 % vs 600). Donne plus
                 # d'espace pour les réponses longues + le bloc déplable
                 # « Outils JDM appelés » qui reste replié par défaut.
+                # sanitize_html=False est ESSENTIEL pour que le <details>
+                # déplable et le lien <a target=_blank> de la viz soient
+                # rendus comme HTML (sinon Gradio les strippe et les
+                # caractères s'éparpillent dans le rendu markdown).
                 chatbot=gr.Chatbot(
                     height=780,
                     type="messages",
                     show_label=False,
                     avatar_images=(None, None),
+                    sanitize_html=False,
                 ),
                 # Avec additional_inputs, chaque exemple = liste alignée sur
                 # [message, key, model]. La clé reste vide pour les exemples ;
