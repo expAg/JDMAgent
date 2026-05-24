@@ -631,9 +631,9 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
 
     files_json = _json.dumps(files_data)
 
-    # JS : closeViz() replie l'iframe et affiche la liste ; openViz(idx)
-    # ré-affiche l'iframe avec le fichier choisi ; downloadViz(idx) force
-    # le téléchargement via un <a download>.
+    # Le HTML pose seulement les éléments + un set de window.vizData.
+    # Les fonctions vizClose / vizOpen sont définies globalement dans
+    # _HEAD_JS (sinon Gradio sanitise les <script> inline).
     return f"""
 <div id="viz-container" style="margin:8px 0;border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden;">
   <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f3f4f6;border-bottom:1px solid #ddd;">
@@ -643,7 +643,7 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
         (zoom : molette · déplacer : glisser · double-clic : recentrer)
       </span>
     </span>
-    <button id="viz-close-btn" onclick="vizClose()"
+    <button id="viz-close-btn" onclick="window.vizClose()"
             style="background:#fff;border:1px solid #ccc;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.85em;color:#444;">
       ✖ Fermer
     </button>
@@ -658,52 +658,7 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
     <div id="viz-list-rows"></div>
   </div>
 </div>
-<script>
-(function() {{
-  const vizData = {files_json};
-  function escapeHtml(s) {{
-    return s.replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
-  }}
-  window.vizClose = function() {{
-    const ifr = document.getElementById('viz-iframe');
-    const list = document.getElementById('viz-list');
-    const rows = document.getElementById('viz-list-rows');
-    const btn = document.getElementById('viz-close-btn');
-    if (!ifr || !list || !rows || !btn) return;
-    ifr.style.display = 'none';
-    btn.style.display = 'none';
-    list.style.display = 'block';
-    // Build the file list
-    rows.innerHTML = vizData.map((f, idx) => `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;">
-        <a href="#" onclick="vizOpen(${{idx}});return false;"
-           style="color:#7c3aed;text-decoration:none;font-weight:500;">
-          ${{escapeHtml(f.label)}}
-        </a>
-        <span style="color:#999;font-size:0.85em;">
-          ${{f.size_kb}} KB
-          &nbsp;<a href="data:text/html;base64,${{f.b64}}" download="${{escapeHtml(f.id)}}.html"
-                   style="color:#666;text-decoration:none;border:1px solid #ccc;border-radius:4px;padding:2px 8px;margin-left:8px;font-size:0.85em;">
-            ⬇ Télécharger
-          </a>
-        </span>
-      </div>
-    `).join('');
-  }};
-  window.vizOpen = function(idx) {{
-    const ifr = document.getElementById('viz-iframe');
-    const list = document.getElementById('viz-list');
-    const btn = document.getElementById('viz-close-btn');
-    const title = document.getElementById('viz-title');
-    if (!ifr || !list || !btn) return;
-    ifr.src = 'data:text/html;base64,' + vizData[idx].b64;
-    if (title) title.textContent = vizData[idx].label;
-    ifr.style.display = 'block';
-    btn.style.display = 'inline-block';
-    list.style.display = 'none';
-  }};
-}})();
-</script>
+<img src="x" style="display:none" onerror="window.vizData = {files_json};" />
 """
 
 
@@ -835,7 +790,62 @@ def viz_subgraph(term: str, depth: float,
         return f"❌ Erreur : {e}\n\n```\n{tb}\n```", "", None
 
 
-with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
+# JS GLOBAL injecté dans le <head> de la page Gradio.
+# Contient les fonctions vizClose / vizOpen utilisées par les boutons
+# onclick du composant viz. Le <script> à l'intérieur d'un gr.HTML n'est
+# pas exécuté par Gradio v5 (sanitisation), on remonte les fonctions ici.
+# window.vizData est mis à jour à chaque nouveau rendu (script inline
+# dans le HTML de viz_html_out — voir _stage_viz_html).
+_HEAD_JS = """
+<script>
+(function() {
+  window.vizData = window.vizData || [];
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  window.vizClose = function() {
+    var ifr = document.getElementById('viz-iframe');
+    var list = document.getElementById('viz-list');
+    var rows = document.getElementById('viz-list-rows');
+    var btn = document.getElementById('viz-close-btn');
+    if (!ifr || !list || !rows || !btn) return;
+    ifr.style.display = 'none';
+    btn.style.display = 'none';
+    list.style.display = 'block';
+    rows.innerHTML = window.vizData.map(function(f, idx) {
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;">'
+        + '<a href="#" onclick="window.vizOpen(' + idx + ');return false;" style="color:#7c3aed;text-decoration:none;font-weight:500;">'
+        + esc(f.label) + '</a>'
+        + '<span style="color:#999;font-size:0.85em;">'
+        + f.size_kb + ' KB'
+        + '&nbsp;<a href="data:text/html;base64,' + f.b64 + '" download="' + esc(f.id) + '.html"'
+        + ' style="color:#666;text-decoration:none;border:1px solid #ccc;border-radius:4px;padding:2px 8px;margin-left:8px;font-size:0.85em;">⬇ Télécharger</a>'
+        + '</span>'
+        + '</div>';
+    }).join('');
+  };
+
+  window.vizOpen = function(idx) {
+    var ifr = document.getElementById('viz-iframe');
+    var list = document.getElementById('viz-list');
+    var btn = document.getElementById('viz-close-btn');
+    var title = document.getElementById('viz-title');
+    if (!ifr || !list || !btn) return;
+    ifr.src = 'data:text/html;base64,' + window.vizData[idx].b64;
+    if (title) title.textContent = window.vizData[idx].label;
+    ifr.style.display = 'block';
+    btn.style.display = 'inline-block';
+    list.style.display = 'none';
+  };
+})();
+</script>
+"""
+
+with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS) as demo:
 
     with gr.Tabs():
 
@@ -1029,10 +1039,6 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
                     value="gemini-3.1-flash-lite",
                     label="Modèle",
-                    info=(
-                        "gemini-* = GRATUIT (token côté Space, quota partagé) · "
-                        "claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI"
-                    ),
                     scale=2,
                 )
             # Composant SÉPARÉ pour la viz : gr.HTML qui embarque un
@@ -1086,17 +1092,20 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             # Rendu effectif de viz_html_out APRÈS le chat → la viz
             # apparaît sous la conversation, pas au-dessus.
             viz_html_out.render()
-            # Scroll automatique CENTRÉ sur la viz quand elle apparaît
-            # (sinon la page scrollait vers les exemples du Chatbot et
-            # la viz, encore plus bas, restait tronquée hors viewport).
-            # Utilise scrollIntoView avec block:'center'.
+            # Scroll automatique CENTRÉ sur la viz quand elle apparaît.
+            # Le Chatbot Gradio auto-scrolle vers la fin du chat APRÈS
+            # notre yield, donc on doit scroller APRÈS lui : plusieurs
+            # tentatives échelonnées (300/700/1200ms) pour s'imposer.
             viz_html_out.change(
                 fn=None, inputs=None, outputs=None,
                 js="""() => {
-                  setTimeout(() => {
+                  const scrollToViz = () => {
                     const el = document.getElementById('viz-container');
                     if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
-                  }, 200);
+                  };
+                  setTimeout(scrollToViz, 300);
+                  setTimeout(scrollToViz, 700);
+                  setTimeout(scrollToViz, 1200);
                 }"""
             )
 
