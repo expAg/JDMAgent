@@ -370,7 +370,13 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
         model=routed_model,
         base_url=base_url,
         api_key=token,
-        temperature=0,
+        # temperature=1.0 (au lieu de 0) : sinon Gemini est totalement
+        # déterministe et choisit toujours le même mot quand on lui demande
+        # de « tirer un mot français au hasard » (bug observé : plateau à
+        # chaque fois sur l'audit). 1.0 = défaut Google AI Studio (échelle
+        # 0..2). On garde 1.0 conservateur — si pas assez varié, monter
+        # progressivement.
+        temperature=1.0,
     )
 
 
@@ -411,7 +417,10 @@ def _build_gemini_native(model_id: str):
     return ChatGoogleGenerativeAI(
         model=routed_model,
         google_api_key=token,
-        temperature=0,
+        # temperature=1.0 (au lieu de 0) — cf. note dans _build_openai_compat :
+        # avec t=0 Gemini était déterministe et choisissait toujours le
+        # même mot sur les tirages aléatoires (« plateau » à chaque audit).
+        temperature=1.0,
     )
 
 
