@@ -981,6 +981,24 @@ _HEAD_JS = """
     } catch (e) { /* silently ignore selector failures */ }
   }
 
+  // Debounce du scroll vers le chatbot : on attend que les mutations se
+  // calment (~250 ms) avant de scroller — sinon on scroll à chaque chunk
+  // de streaming. Le viz scroll fire à 300/700/1200 ms via
+  // viz_html_out.change() et l'emporte si une viz a été générée.
+  var _scrollTimer = null;
+  function scrollChatIntoView() {
+    clearTimeout(_scrollTimer);
+    _scrollTimer = setTimeout(function() {
+      var root = document.getElementById('agent-chatbot');
+      if (!root) return;
+      // Si une viz est visible, on NE scroll PAS le chat — la viz scroll
+      // s'en chargera quelques ms plus tard. Évite le saut chat→viz.
+      var viz = document.getElementById('viz-container');
+      if (viz && viz.offsetParent !== null) return;
+      root.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 250);
+  }
+
   // Lance au load, puis observe le DOM du chatbot pour réagir aux
   // ajouts/suppressions de messages (et streaming progressif).
   function bindChatbotObserver() {
@@ -994,6 +1012,11 @@ _HEAD_JS = """
     resizeChatbot();
     new MutationObserver(function() {
       resizeChatbot();
+      // À chaque mutation du chatbot (nouveau message, streaming chunk),
+      // on (re)déclenche le scroll centré — debouncé, donc une seule
+      // exécution au calme.
+      var msgs = root.querySelectorAll('.message, [class*="message-row"], [data-testid="bot"], [data-testid="user"]');
+      if (msgs.length > 0) scrollChatIntoView();
     }).observe(root, { childList: true, subtree: true, characterData: true });
     window.addEventListener('resize', resizeChatbot);
   }
