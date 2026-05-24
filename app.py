@@ -244,7 +244,23 @@ OPENAI_MODELS = {
     "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI, rapide, peu cher)",
     "gpt-4o":      "GPT-4o (BYOK OpenAI, meilleure qualité)",
 }
-ALL_MODELS = {**ANTHROPIC_MODELS, **OPENAI_MODELS}
+# Modèles open-source hébergés via HF Inference Providers (OpenAI-compatible).
+# Le token utilisé est CELUI DU SPACE (env HF_TOKEN, configuré comme secret
+# de l'espace HF) — gratuit pour les visiteurs, quota partagé entre tous.
+# Le suffixe `:provider` pin le backend le plus rapide pour ce modèle.
+HF_MODELS = {
+    "hf-qwen-2.5-7b":      "Qwen 2.5 7B Instruct (gratuit, hébergé via Cerebras)",
+    "hf-mistral-small-24b": "Mistral Small 24B Instruct (gratuit, hébergé via Together AI)",
+}
+ALL_MODELS = {**ANTHROPIC_MODELS, **OPENAI_MODELS, **HF_MODELS}
+
+# Mapping vers le nom de modèle HF + provider pinned via le suffixe `:provider`.
+# Documentation : https://huggingface.co/docs/inference-providers
+HF_MODEL_ROUTING = {
+    "hf-qwen-2.5-7b":      "Qwen/Qwen2.5-7B-Instruct:cerebras",
+    "hf-mistral-small-24b": "mistralai/Mistral-Small-24B-Instruct-2501:together",
+}
+HF_ROUTER_URL = "https://router.huggingface.co/v1"
 
 
 def _build_llm(model: str, api_key: str):
@@ -252,6 +268,10 @@ def _build_llm(model: str, api_key: str):
 
     - claude-*   → Anthropic via clé visiteur (BYOK, sk-ant-...)
     - gpt-*      → OpenAI via clé visiteur (BYOK, sk-...)
+    - hf-*       → HF Inference Providers (OpenAI-compatible) via token HF
+                   (hf_...). Le modèle est routé sur le backend le plus rapide
+                   pour son architecture (Cerebras pour Qwen, Together pour
+                   Mistral) via le suffixe :provider du nom de modèle.
 
     Lève ValueError avec message utilisateur explicite si la clé manque.
     """
@@ -278,6 +298,31 @@ def _build_llm(model: str, api_key: str):
         os.environ["OPENAI_API_KEY"] = api_key.strip()
         from jdm_agent.tools.llm_factory import get_llm
         return get_llm(provider="openai", model=model)
+
+    if model.startswith("hf-"):
+        # Modèle open-source servi par HF Inference Providers — TOKEN DU SPACE
+        # (env HF_TOKEN), pas BYOK. Gratuit pour le visiteur.
+        hf_token = os.environ.get("HF_TOKEN", "").strip()
+        if not hf_token:
+            raise ValueError(
+                "Ce modèle open-source nécessite un token Hugging Face "
+                "côté Space (variable d'environnement HF_TOKEN). L'admin "
+                "du Space doit l'ajouter dans Settings → Variables & "
+                "secrets, ou cocher « Default Hugging Face token » dans "
+                "les options du Space. Le quota gratuit est partagé entre "
+                "visiteurs ; en cas d'épuisement, choisis un modèle BYOK "
+                "Claude ou GPT."
+            )
+        routed_model = HF_MODEL_ROUTING.get(model)
+        if not routed_model:
+            raise ValueError(f"Modèle HF inconnu : {model!r}")
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=routed_model,
+            base_url=HF_ROUTER_URL,
+            api_key=hf_token,
+            temperature=0,
+        )
 
     raise ValueError(f"Modèle inconnu : {model!r}")
 
@@ -689,20 +734,20 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 outputs=[viz_status, viz_out, viz_file],
             ).then(fn=None, inputs=None, outputs=None, js=_scroll_js)
 
-        # ----- Tab 4: Agent (BYOK Anthropic / OpenAI) -----
+        # ----- Tab 4: Agent (BYOK Anthropic / OpenAI ; HF Inference = gratuit) -----
         with gr.Tab("🤖 Agent"):
             with gr.Row():
                 key_in = gr.Textbox(
-                    label="Clé API (Anthropic sk-ant-... ou OpenAI sk-...)",
+                    label="Clé API si modèle Claude ou GPT (sk-ant-… · sk-…)",
                     type="password",
-                    placeholder="sk-ant-... ou sk-...",
+                    placeholder="Laisse vide pour les modèles hf-* (gratuits, hébergés par le Space)",
                     scale=3,
                 )
                 model_in = gr.Dropdown(
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
-                    value="claude-haiku-4-5",
+                    value="hf-qwen-2.5-7b",
                     label="Modèle",
-                    info="claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI",
+                    info="hf-* = open-source GRATUIT (Qwen, Mistral) · claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI",
                     scale=2,
                 )
             chat = gr.ChatInterface(
@@ -720,11 +765,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 # [message, key, model]. La clé reste vide pour les exemples ;
                 # sans clé, l'utilisateur aura le message d'erreur informatif.
                 examples=[
-                    ["Quels sont les synonymes de voiture ?", "", "claude-haiku-4-5"],
-                    ["Le saumon est-il un mammifère selon JDM ?", "", "claude-haiku-4-5"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "claude-haiku-4-5"],
-                    ["Que peut faire un chat ?", "", "claude-haiku-4-5"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "claude-haiku-4-5"],
+                    # Tous les exemples sur hf-qwen par défaut → cliquables
+                    # par n'importe quel visiteur sans coller de clé. Si le
+                    # quota partagé est épuisé, l'utilisateur peut basculer
+                    # sur un modèle BYOK Claude/GPT.
+                    ["Quels sont les synonymes de voiture ?", "", "hf-qwen-2.5-7b"],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "hf-qwen-2.5-7b"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "hf-qwen-2.5-7b"],
+                    ["Que peut faire un chat ?", "", "hf-mistral-small-24b"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "hf-mistral-small-24b"],
                 ],
                 cache_examples=False,
                 type="messages",
