@@ -237,12 +237,12 @@ def factcheck_one(subject: str, relation: str, object_: str,
 # ---------- Tab 3: Agent (HF Inference gratuit OU Anthropic BYOK) ----------
 
 ANTHROPIC_MODELS = {
-    "claude-haiku-4-5":   "Claude Haiku 4.5 (BYOK Anthropic, rapide, peu cher)",
-    "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK Anthropic, top qualité)",
+    "claude-haiku-4-5":   "Claude Haiku 4.5 (BYOK Anthropic)",
+    "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK Anthropic)",
 }
 OPENAI_MODELS = {
-    "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI, rapide, peu cher)",
-    "gpt-4o":      "GPT-4o (BYOK OpenAI, meilleure qualité)",
+    "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI)",
+    "gpt-4o":      "GPT-4o (BYOK OpenAI)",
 }
 # Providers gratuits — token côté Space, gratuit pour le visiteur, quota
 # partagé. Le prompt agent + 34 outils sérialisés fait ~19-20 K tokens par
@@ -259,9 +259,9 @@ OPENAI_MODELS = {
 # moindre), `-live` = optimisée pour le streaming temps réel (peut avoir des
 # limitations sur le tool calling complexe).
 GEMINI_MODELS = {
-    "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite",
-    "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite",
-    "gemini-3.5-flash":        "Gemini 3.5 Flash",
+    "gemini-3.1-flash-lite":   "(500 req/jour) Gemini 3.1 Flash Lite",
+    "gemini-2.5-flash-lite":   "(20 req/jour) Gemini 2.5 Flash Lite",
+    "gemini-3.5-flash":        "(20 req/jour) Gemini 3.5 Flash",
 }
 # Noms d'identifiants API officiels (cf. https://ai.google.dev/gemini-api/docs/pricing).
 # Deux chemins selon la version :
