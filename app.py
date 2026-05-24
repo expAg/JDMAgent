@@ -747,6 +747,18 @@ import tempfile
 VIZ_DIR = Path(tempfile.gettempdir()) / "jdm_viz"
 VIZ_DIR.mkdir(parents=True, exist_ok=True)
 
+# Liste des relations principales exposées aux formulaires Jarvis +
+# Sous-graphe. Sortie au niveau module pour être réutilisable.
+JARVIS_RELATIONS: list[str] = list(DEFAULT_RELATIONS) + [
+    r for r in (
+        "r_syn", "r_anto", "r_agent-1", "r_patient-1", "r_instr-1",
+        "r_telic_role", "r_lieu", "r_has_color", "r_has_part",
+        "r_make", "r_processus>agent", "r_processus>patient",
+        "r_has_conseq", "r_has_causatif", "r_domain", "r_associated",
+    )
+    if r not in DEFAULT_RELATIONS
+]
+
 
 def viz_subgraph(term: str, depth: float,
                  top_k: float, top_k_d2: float, top_k_d3: float, top_k_d4: float,
@@ -1396,6 +1408,169 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                   setTimeout(scrollToViz, 1200);
                 }"""
             )
+
+        # ----- Tab 5: Jarvis (flows guidés par formulaires — Phase 13) -----
+        with gr.Tab("🦾 Jarvis"):
+            gr.Markdown(
+                "# 🦾 Jarvis — flows guidés JDM\n\n"
+                "Pas de prompt à taper : remplis le formulaire, "
+                "Jarvis exécute le flux canonique correspondant. Tous "
+                "les fichiers produits (.enrich / .audit / .err) restent "
+                "en local sauf demande explicite d'upload LLMDrops."
+            )
+
+            # ====== BANDEAU partagé (clé Drops + modèle + budget) ======
+            with gr.Row():
+                jarvis_drops_key = gr.Textbox(
+                    label="Clé API LLMDrops (override env JDM_DROPS_API_KEY)",
+                    type="password",
+                    placeholder="Optionnel — laisse vide pour utiliser la clé d'environnement",
+                    elem_id="jarvis-drops-key",
+                    scale=3,
+                )
+                jarvis_model = gr.Dropdown(
+                    choices=[(label, key) for key, label in ALL_MODELS.items()],
+                    value="gemini-3.1-flash-lite",
+                    label="Modèle LLM (commun aux sous-onglets)",
+                    scale=2,
+                )
+                jarvis_budget = gr.Dropdown(
+                    choices=["10", "25", "50", "100", "illimité"],
+                    value="25",
+                    label="Budget d'appels d'outils",
+                    scale=1,
+                )
+
+            # ====== Sous-onglets ======
+            with gr.Tabs() as jarvis_tabs:
+
+                # ---- Sous-onglet : Enrichissement ----
+                with gr.Tab("🌱 Enrichissement", id="jarvis-enrich"):
+                    gr.Markdown(
+                        "Propose et consolide de nouveaux triplets pour un "
+                        "terme. Le LLM suit `enrichment_workflow()` : "
+                        "pré-fetch exhaustif → désambiguïsation → "
+                        "proposition → validation+consolidation par "
+                        "inférence → écriture du fichier `.enrich`."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            je_term = gr.Textbox(
+                                label="Terme à enrichir",
+                                placeholder="ex: guitare",
+                            )
+                            je_relation = gr.Dropdown(
+                                choices=[""] + JARVIS_RELATIONS,
+                                value="",
+                                label="Relation cible (optionnel)",
+                                allow_custom_value=True,
+                            )
+                            je_target_n = gr.Slider(
+                                1, 50, value=10, step=1,
+                                label="Nombre cible de triplets consolidés",
+                            )
+                            je_vary = gr.Checkbox(
+                                value=True,
+                                label="Varier les types de relations",
+                            )
+                            je_iterate = gr.Checkbox(
+                                value=True,
+                                label="Itérer jusqu'à atteindre le nombre cible",
+                            )
+                            je_upload = gr.Checkbox(
+                                value=False,
+                                label="Soumettre directement à JDM (LLMDrops)",
+                                info="Nécessite une clé API LLMDrops dans le bandeau ou en env JDM_DROPS_API_KEY.",
+                            )
+                            je_launch = gr.Button(
+                                "🌱 Lancer l'enrichissement",
+                                variant="primary",
+                            )
+                        with gr.Column(scale=2):
+                            je_chat = gr.Chatbot(
+                                type="messages",
+                                elem_id="jarvis-enrich-chat",
+                                show_label=False,
+                                resizable=True,
+                                height=520,
+                            )
+
+                    def _run_enrich(term, relation, target_n, vary, iterate, upload,
+                                    drops_key, model, budget_label):
+                        """Wrapper Gradio : valide les champs, construit le prompt,
+                        lance le flow Jarvis."""
+                        from jarvis import build_enrich_prompt, run_jarvis_flow
+                        if not (term or "").strip():
+                            yield [
+                                {"role": "assistant",
+                                 "content": "⚠️ Saisis un terme à enrichir."},
+                            ]
+                            return
+                        prompt = build_enrich_prompt(
+                            term=term,
+                            relation=relation,
+                            target_count=int(target_n),
+                            vary_relations=bool(vary),
+                            iterate=bool(iterate),
+                            budget_label=str(budget_label),
+                            upload=bool(upload),
+                        )
+                        yield from run_jarvis_flow(
+                            prompt=prompt,
+                            model=model,
+                            api_key="",  # Jarvis utilise les clés env, pas BYOK pour l'instant
+                            budget_label=str(budget_label),
+                            drops_key=drops_key,
+                            build_llm_fn=_build_llm,
+                            build_agent_fn=__import__(
+                                "jdm_agent.tools.jdm_agent", fromlist=["build_jdm_agent"]
+                            ).build_jdm_agent,
+                            get_client_fn=get_client,
+                        )
+
+                    je_launch.click(
+                        _run_enrich,
+                        inputs=[je_term, je_relation, je_target_n, je_vary,
+                                je_iterate, je_upload,
+                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                        outputs=[je_chat],
+                    )
+
+                # ---- Sous-onglets placeholders (Phase 13.4-13.6) ----
+                with gr.Tab("🔍 Audit", id="jarvis-audit"):
+                    gr.Markdown(
+                        "*Sous-onglet en construction (Phase 13.5).*\n\n"
+                        "Audit sémantique de la répartition des sens d'un "
+                        "terme polysémique entre son nœud générique et ses "
+                        "raffinements. Produit un fichier `.audit` en deux "
+                        "sections (propositions actionnables + compte rendu "
+                        "narratif)."
+                    )
+
+                with gr.Tab("🕳️ Détection de trous", id="jarvis-gaps"):
+                    gr.Markdown(
+                        "*Sous-onglet en construction (Phase 13.4).*\n\n"
+                        "Identifie les trous de couverture (MISSING / "
+                        "NEGATIVE_FILLED / LOW_COVERAGE) pour un terme et "
+                        "propose des actions de routage (Enrichir / Auditer / "
+                        "Stats sur chaque trou)."
+                    )
+
+                with gr.Tab("⚠️ Signalement", id="jarvis-err"):
+                    gr.Markdown(
+                        "*Sous-onglet en construction (Phase 13.4).*\n\n"
+                        "Scanne les triplets d'un terme (et éventuellement "
+                        "d'une relation) pour flagger ceux qui paraissent "
+                        "suspects au LLM. Produit un fichier `.err`."
+                    )
+
+                with gr.Tab("📊 Stats", id="jarvis-stats"):
+                    gr.Markdown(
+                        "*Sous-onglet en construction (Phase 13.6).*\n\n"
+                        "Statistiques de couverture par terme (distribution "
+                        "des relations, poids positifs/négatifs, max/min/moy) "
+                        "ou par relation (top triplets, distribution typique)."
+                    )
 
     gr.Markdown(
         "---\n*Données : [JeuxDeMots](https://www.jeuxdemots.org) — "
