@@ -15,10 +15,11 @@ from jdm_agent.enrich.validators import consolidate_candidate, validate_candidat
 
 
 def compute_submission_filename(model_name: str, *,
-                                now: Optional[datetime] = None) -> str:
+                                now: Optional[datetime] = None,
+                                extension: str = ".enrich") -> str:
     """Nom standardisé d'un fichier de soumission LLMDrops.
 
-    Format : `{HH}h{MM}_{DD}-{MM}-{YY}_automatic_submission_from_{model_slug}.enrich`
+    Format : `{HH}h{MM}_{DD}-{MM}-{YY}_automatic_submission_from_{model_slug}{extension}`
 
     L'horodatage en tête sert au tri chronologique naturel dans un dossier.
     Le `model_name` est slugifié : espaces et caractères non-sûrs (URL/shell)
@@ -29,6 +30,9 @@ def compute_submission_filename(model_name: str, *,
     Args:
         model_name: nom du LLM source. Peut être vide → "unknown".
         now: datetime injectable pour les tests. Défaut: `datetime.now()`.
+        extension: extension du fichier (avec le point). Défaut `.enrich`.
+            Doit refléter le type de soumission (.enrich / .audit / .err) —
+            `submit_to_jdm` la dérive automatiquement du fichier source.
 
     Returns:
         Le nom de fichier (basename, pas un path).
@@ -38,9 +42,13 @@ def compute_submission_filename(model_name: str, *,
     # Slug très conservateur : on garde lettres ASCII, chiffres, tirets, points,
     # underscores, et on remplace TOUT le reste par '_'. Évite tout pb URL/shell.
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", model_name).strip("_") or "unknown"
+    # Normalise l'extension : doit commencer par un point, fallback .enrich.
+    ext = (extension or ".enrich").strip()
+    if not ext.startswith("."):
+        ext = "." + ext
     ts = (now or datetime.now())
     return (
-        f"{ts:%Hh%M}_{ts:%d-%m-%y}_automatic_submission_from_{slug}.enrich"
+        f"{ts:%Hh%M}_{ts:%d-%m-%y}_automatic_submission_from_{slug}{ext}"
     )
 
 

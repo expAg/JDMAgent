@@ -74,7 +74,13 @@ def submit_to_jdm(
     key = api_key or os.environ.get("JDM_DROPS_API_KEY") or ""
     url = endpoint_url or os.environ.get("JDM_DROPS_URL") or DEFAULT_ENDPOINT_URL
     resolved_model = model_name or os.environ.get("LLM_MODEL") or "mcp_client"
-    uploaded_name = compute_submission_filename(resolved_model)
+    # Extension dérivée du fichier source — préserve .enrich / .audit / .err
+    # pour que le mainteneur JDM voie immédiatement le type du drop.
+    # Fallback .enrich si le fichier n'a pas d'extension reconnue.
+    src_ext = p.suffix.lower()
+    if src_ext not in (".enrich", ".audit", ".err"):
+        src_ext = ".enrich"
+    uploaded_name = compute_submission_filename(resolved_model, extension=src_ext)
 
     if not key:
         return {
@@ -129,8 +135,9 @@ def submit_to_jdm(
 
 
 # Re-export pour ergonomie depuis ce module
-def compute_submission_filename(model_name: str, *, now=None) -> str:
+def compute_submission_filename(model_name: str, *, now=None,
+                                extension: str = ".enrich") -> str:
     """Délègue à `jdm_agent.enrich.pipeline.compute_submission_filename`."""
     # Import local pour éviter une dépendance circulaire au load time
     from jdm_agent.enrich.pipeline import compute_submission_filename as _impl
-    return _impl(model_name, now=now)
+    return _impl(model_name, now=now, extension=extension)
