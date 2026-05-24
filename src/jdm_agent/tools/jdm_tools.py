@@ -1154,16 +1154,24 @@ def audit_workflow() -> dict:
                 "order": 3,
                 "name": "Inventaire des triplets sur le terme générique",
                 "description": (
-                    "Pour la relation à auditer (la relation cible si "
-                    "l'utilisateur l'a précisée, sinon tire-en UNE au "
-                    "hasard parmi les ~180 relations JDM via "
-                    "`list_relation_types` — varie d'une session à "
-                    "l'autre, pas toujours r_isa), appelle "
-                    "`get_relations_of_type(term, relation_name)` sur "
-                    "le TERME GÉNÉRIQUE (forme nue, sans raffinement). "
-                    "Récupère TOUS ses triplets pour cette relation."
+                    "Pour CHAQUE relation à auditer, appelle "
+                    "`get_relations_of_type(term, relation_name)` sur le "
+                    "TERME GÉNÉRIQUE (forme nue). Récupère TOUS ses "
+                    "triplets pour cette relation.\n\n"
+                    "QUELLES relations ? — Si l'utilisateur a précisé une "
+                    "relation cible, restreins-toi à elle. SINON : BALAYE "
+                    "largement. Idéal = TOUTES les relations sur lesquelles "
+                    "le générique a au moins un triplet (tu peux les "
+                    "découvrir en testant les principales puis en élargissant "
+                    "via `list_relation_types`). Si le budget est trop serré, "
+                    "fais un ÉCHANTILLON LARGE et VARIÉ (10-30 relations "
+                    "selon le budget), pioche dans des familles diverses "
+                    "(taxonomiques, méréologiques, prédicatives, spatiales, "
+                    "causales, …). Une contamination peut être sur "
+                    "N'IMPORTE QUELLE relation — ne te limite pas à un "
+                    "quintette canonique."
                 ),
-                "tool": "list_relation_types + get_relations_of_type",
+                "tool": "list_relation_types + get_relations_of_type (en boucle)",
             },
             {
                 "order": 4,

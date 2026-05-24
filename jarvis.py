@@ -133,9 +133,14 @@ def build_audit_prompt(
         parts.append(f"Restreins l'audit à la relation `{relation}`.")
     else:
         parts.append(
-            "Pas de relation imposée : choisis-en UNE au hasard parmi les "
-            "~180 relations JDM (utilise `list_relation_types` pour piocher "
-            "et varie d'une session à l'autre — pas toujours r_isa)."
+            "Pas de relation imposée : BALAYE largement — examine TOUTES "
+            "les relations sur lesquelles le terme générique a des triplets "
+            "(ou un échantillon large et varié si le budget est trop "
+            "serré pour tout). Pioche dans les ~180 relations JDM via "
+            "`list_relation_types`. NE TE LIMITE PAS à une seule ni à "
+            "un quintette canonique r_isa/r_carac/r_has_part — les "
+            "contaminations les plus intéressantes sont souvent sur des "
+            "relations rares."
         )
     parts.append(
         "Détecte les CONTAMINATIONS du terme générique par des relations "
