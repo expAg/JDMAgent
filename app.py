@@ -245,22 +245,49 @@ OPENAI_MODELS = {
     "gpt-4o":      "GPT-4o (BYOK OpenAI, meilleure qualité)",
 }
 # Modèles open-source hébergés via HF Inference Providers (OpenAI-compatible).
-# Le token utilisé est CELUI DU SPACE (env HF_TOKEN, configuré comme secret
-# de l'espace HF) — gratuit pour les visiteurs, quota partagé entre tous.
-# Le suffixe `:provider` pin le backend le plus rapide pour ce modèle.
+# Le token utilisé est CELUI DU SPACE (env HF_TOKEN) — gratuit pour les
+# visiteurs, quota partagé. Le suffixe `:provider` pin le backend le plus
+# adapté pour ce modèle (Cerebras n'héberge que des Llama ; Qwen / Mistral
+# passent par Together AI).
 HF_MODELS = {
-    "hf-qwen-2.5-7b":      "Qwen 2.5 7B Instruct (gratuit, hébergé via Cerebras)",
-    "hf-mistral-small-24b": "Mistral Small 24B Instruct (gratuit, hébergé via Together AI)",
+    "hf-qwen-2.5-7b":       "Qwen 2.5 7B Instruct (gratuit, via HF/Together AI)",
+    "hf-mistral-small-24b": "Mistral Small 24B Instruct (gratuit, via HF/Together AI)",
 }
-ALL_MODELS = {**ANTHROPIC_MODELS, **OPENAI_MODELS, **HF_MODELS}
-
-# Mapping vers le nom de modèle HF + provider pinned via le suffixe `:provider`.
-# Documentation : https://huggingface.co/docs/inference-providers
 HF_MODEL_ROUTING = {
-    "hf-qwen-2.5-7b":      "Qwen/Qwen2.5-7B-Instruct:cerebras",
+    "hf-qwen-2.5-7b":       "Qwen/Qwen2.5-7B-Instruct:together",
     "hf-mistral-small-24b": "mistralai/Mistral-Small-24B-Instruct-2501:together",
 }
 HF_ROUTER_URL = "https://router.huggingface.co/v1"
+
+# Groq — free tier généreux (~30 RPM, pas de carte bancaire requise),
+# tool calling natif, vitesse exceptionnelle (~500-800 tokens/s).
+# Token : env GROQ_API_KEY (côté Space, gratuit pour le visiteur).
+GROQ_MODELS = {
+    "groq-llama-3.3-70b": "Llama 3.3 70B (gratuit Groq, ultra-rapide, top qualité)",
+    "groq-llama-3.1-8b":  "Llama 3.1 8B Instant (gratuit Groq, ultra-rapide)",
+}
+GROQ_MODEL_ROUTING = {
+    "groq-llama-3.3-70b": "llama-3.3-70b-versatile",
+    "groq-llama-3.1-8b":  "llama-3.1-8b-instant",
+}
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+# Google Gemini — free tier très large (~1500 req/jour sur Flash) via
+# l'endpoint OpenAI-compatible de Google AI Studio. Token : env GOOGLE_API_KEY.
+GEMINI_MODELS = {
+    "gemini-2.5-flash": "Gemini 2.5 Flash (gratuit Google, quota généreux)",
+    "gemini-2.0-flash": "Gemini 2.0 Flash (gratuit Google, stable)",
+}
+GEMINI_MODEL_ROUTING = {
+    "gemini-2.5-flash": "gemini-2.5-flash",
+    "gemini-2.0-flash": "gemini-2.0-flash",
+}
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+ALL_MODELS = {
+    **GROQ_MODELS, **GEMINI_MODELS, **HF_MODELS,
+    **ANTHROPIC_MODELS, **OPENAI_MODELS,
+}
 
 
 def _build_llm(model: str, api_key: str):
@@ -299,32 +326,74 @@ def _build_llm(model: str, api_key: str):
         from jdm_agent.tools.llm_factory import get_llm
         return get_llm(provider="openai", model=model)
 
+    # Les trois providers gratuits (HF / Groq / Gemini) passent par un
+    # endpoint OpenAI-compatible — token côté Space, gratuit pour le visiteur,
+    # quota partagé entre tous. Si épuisement, bascule sur BYOK Claude / GPT.
     if model.startswith("hf-"):
-        # Modèle open-source servi par HF Inference Providers — TOKEN DU SPACE
-        # (env HF_TOKEN), pas BYOK. Gratuit pour le visiteur.
-        hf_token = os.environ.get("HF_TOKEN", "").strip()
-        if not hf_token:
-            raise ValueError(
-                "Ce modèle open-source nécessite un token Hugging Face "
-                "côté Space (variable d'environnement HF_TOKEN). L'admin "
-                "du Space doit l'ajouter dans Settings → Variables & "
-                "secrets, ou cocher « Default Hugging Face token » dans "
-                "les options du Space. Le quota gratuit est partagé entre "
-                "visiteurs ; en cas d'épuisement, choisis un modèle BYOK "
-                "Claude ou GPT."
-            )
-        routed_model = HF_MODEL_ROUTING.get(model)
-        if not routed_model:
-            raise ValueError(f"Modèle HF inconnu : {model!r}")
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=routed_model,
-            base_url=HF_ROUTER_URL,
-            api_key=hf_token,
-            temperature=0,
+        return _build_openai_compat(
+            model_id=model, label="Hugging Face Inference Providers",
+            env_var="HF_TOKEN",
+            env_var_help=(
+                "L'admin du Space doit l'ajouter dans Settings → Variables & "
+                "secrets, ou cocher « Default Hugging Face token » dans les "
+                "options du Space."
+            ),
+            base_url=HF_ROUTER_URL, routing=HF_MODEL_ROUTING,
+            api_key=api_key,
+        )
+
+    if model.startswith("groq-"):
+        return _build_openai_compat(
+            model_id=model, label="Groq",
+            env_var="GROQ_API_KEY",
+            env_var_help=(
+                "L'admin du Space doit créer une clé sur https://console.groq.com/keys "
+                "(sans CB), et l'ajouter dans Settings → Variables & secrets."
+            ),
+            base_url=GROQ_BASE_URL, routing=GROQ_MODEL_ROUTING,
+            api_key=api_key,
+        )
+
+    if model.startswith("gemini-"):
+        return _build_openai_compat(
+            model_id=model, label="Google Gemini",
+            env_var="GOOGLE_API_KEY",
+            env_var_help=(
+                "L'admin du Space doit créer une clé sur https://aistudio.google.com/apikey "
+                "(sans CB), et l'ajouter dans Settings → Variables & secrets."
+            ),
+            base_url=GEMINI_BASE_URL, routing=GEMINI_MODEL_ROUTING,
+            api_key=api_key,
         )
 
     raise ValueError(f"Modèle inconnu : {model!r}")
+
+
+def _build_openai_compat(*, model_id: str, label: str, env_var: str,
+                         env_var_help: str, base_url: str, routing: dict,
+                         api_key: str = ""):
+    """Builder commun pour les endpoints OpenAI-compatibles (HF / Groq / Gemini).
+
+    Le token vient de l'env (côté Space), pas du champ BYOK. Le visiteur ne
+    fournit rien — c'est gratuit pour lui, quota partagé.
+    """
+    token = os.environ.get(env_var, "").strip()
+    if not token:
+        raise ValueError(
+            f"Ce modèle nécessite un token {label} côté Space (variable "
+            f"d'environnement {env_var}). {env_var_help} En cas d'épuisement "
+            "du quota partagé, bascule sur un modèle BYOK Claude ou GPT."
+        )
+    routed_model = routing.get(model_id)
+    if not routed_model:
+        raise ValueError(f"Modèle inconnu pour {label} : {model_id!r}")
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model=routed_model,
+        base_url=base_url,
+        api_key=token,
+        temperature=0,
+    )
 
 
 def _history_to_lc(history: list[dict], current_user_message: str) -> list:
@@ -745,9 +814,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 )
                 model_in = gr.Dropdown(
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
-                    value="hf-qwen-2.5-7b",
+                    value="groq-llama-3.3-70b",
                     label="Modèle",
-                    info="hf-* = open-source GRATUIT (Qwen, Mistral) · claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI",
+                    info=(
+                        "groq-* · gemini-* · hf-* = GRATUIT (token côté Space) · "
+                        "claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI"
+                    ),
                     scale=2,
                 )
             chat = gr.ChatInterface(
@@ -765,15 +837,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 # [message, key, model]. La clé reste vide pour les exemples ;
                 # sans clé, l'utilisateur aura le message d'erreur informatif.
                 examples=[
-                    # Tous les exemples sur hf-qwen par défaut → cliquables
-                    # par n'importe quel visiteur sans coller de clé. Si le
-                    # quota partagé est épuisé, l'utilisateur peut basculer
-                    # sur un modèle BYOK Claude/GPT.
-                    ["Quels sont les synonymes de voiture ?", "", "hf-qwen-2.5-7b"],
-                    ["Le saumon est-il un mammifère selon JDM ?", "", "hf-qwen-2.5-7b"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "hf-qwen-2.5-7b"],
+                    # Exemples cliquables par n'importe quel visiteur sans
+                    # coller de clé — répartis sur les 3 providers gratuits
+                    # pour étaler la charge et donner à voir la diversité.
+                    # Si un quota partagé est épuisé, l'utilisateur peut
+                    # basculer sur un modèle BYOK Claude / GPT.
+                    ["Quels sont les synonymes de voiture ?", "", "groq-llama-3.3-70b"],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "groq-llama-3.1-8b"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-2.5-flash"],
                     ["Que peut faire un chat ?", "", "hf-mistral-small-24b"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "hf-mistral-small-24b"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "groq-llama-3.3-70b"],
                 ],
                 cache_examples=False,
                 type="messages",
