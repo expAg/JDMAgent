@@ -15,7 +15,39 @@ streame ses étapes dans le Chatbot.
 """
 from __future__ import annotations
 
-from typing import Generator, Optional
+from typing import Any, Generator, Optional
+
+
+def _content_to_text(content: Any) -> str:
+    """Normalise un `AIMessage.content` LangChain en string plate.
+
+    Selon le provider (Anthropic vs Gemini natif vs OpenAI), `m.content`
+    peut être :
+      - une str directe (cas le plus simple)
+      - une liste de blocs dict {type, text, ...} (Anthropic, Gemini SDK
+        natif quand reasoning_summary ou multimodal)
+      - une liste de str (rare)
+      - None (cas vide)
+    On extrait toujours une str finale concatenable.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                # Bloc de type {"type": "text", "text": "..."} (Anthropic)
+                # ou {"text": "..."} (Gemini), ou autre — on essaye "text".
+                txt = block.get("text")
+                if isinstance(txt, str):
+                    parts.append(txt)
+        return "".join(parts)
+    # Cas pathologique : on tente str() en garde-fou
+    return str(content)
 
 
 # ---------- Construction des pré-prompts ----------
@@ -377,9 +409,9 @@ def run_jarvis_flow(
                                          "content": "\n".join(progress_lines)},
                                     ]
                                 else:
-                                    final_answer = m.content or ""
+                                    final_answer = _content_to_text(m.content)
                             elif isinstance(m, ToolMessage):
-                                content = (m.content or "")
+                                content = _content_to_text(m.content)
                                 preview = content[:120].replace("\n", " ")
                                 if len(content) > 120:
                                     preview += "…"
