@@ -536,8 +536,10 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     is_gemini_3x = model.startswith("gemini-3")
     out = final_answer or "*(réponse vide)*"
 
-    # Viz : toujours via gr.File (séparé, robuste pour tous les modèles).
-    viz_for_file = _stage_viz_file(viz_path) if viz_path else None
+    # Viz : iframe interactif embarqué dans un gr.HTML séparé. Robuste
+    # pour tous les modèles (pas d'append dans la bulle chat → pas de
+    # fragmentation Gemini 3.x).
+    viz_html = _stage_viz_html(viz_path) if viz_path else None
 
     if not is_gemini_3x:
         # Append détaillé pour les modèles qui supportent — info riche
@@ -552,8 +554,8 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
                 + "\n".join(clean)
             )
 
-    if viz_for_file:
-        yield out, gr.update(value=viz_for_file, visible=True)
+    if viz_html:
+        yield out, gr.update(value=viz_html, visible=True)
     else:
         yield out, _NOOP_FILE
 
@@ -582,29 +584,43 @@ def _extract_html_path(tool_message_content: str) -> Optional[str]:
     return None
 
 
-def _stage_viz_file(html_path: str) -> Optional[str]:
-    """Copie le fichier HTML viz dans VIZ_DIR (déclaré dans allowed_paths)
-    et renvoie le chemin absolu local — directement utilisable par
-    `gr.File(value=...)`. Gradio sert le fichier nativement via son API
-    statique, ouverture dans un nouvel onglet quand l'utilisateur clique
-    sur le widget File.
+def _stage_viz_html(html_path: str) -> Optional[str]:
+    """Lit le HTML viz et le renvoie sous forme d'iframe sandbox prêt à
+    embarquer dans un `gr.HTML`. Embed via data URI base64 — fonctionne
+    sans dépendre du serveur de fichiers Gradio (pas de risque 404), le
+    contenu vit dans le DOM du composant HTML uniquement (sandboxé).
 
-    Retourne None si la copie échoue → le widget n'est pas mis à jour,
-    pas d'erreur bloquante côté chat.
+    Comme c'est un composant Gradio séparé qui se met à jour, un seul
+    iframe à la fois → pas l'accumulation qui plombait le navigateur
+    quand l'iframe était inliné dans le chat à chaque tour.
+
+    Retourne None si la lecture échoue → le composant n'est pas mis à
+    jour, pas d'erreur bloquante côté chat.
     """
-    import shutil
+    import base64 as _b64
     from pathlib import Path as _Path
     src = _Path(html_path)
     if not src.exists():
         return None
     try:
-        stem = src.stem
-        dest = VIZ_DIR / f"chat_{stem}_{abs(hash(str(src.resolve()))) % 10**8}.html"
-        if not dest.exists() or dest.stat().st_size != src.stat().st_size:
-            shutil.copyfile(src, dest)
+        text = src.read_text(encoding="utf-8")
     except Exception:
         return None
-    return str(dest.resolve())
+    b64 = _b64.b64encode(text.encode("utf-8")).decode("ascii")
+    return (
+        '<div style="margin:8px 0">'
+        '<div style="margin-bottom:6px;font-weight:500;color:#666;font-size:0.9em">'
+        '🕸️ Visualisation interactive du sous-graphe '
+        '<span style="color:#999;font-size:0.85em">'
+        '(zoom : molette · déplacer : glisser · recentrer : double-clic)'
+        '</span>'
+        '</div>'
+        f'<iframe src="data:text/html;base64,{b64}" '
+        'style="width:100%;height:700px;border:1px solid #ddd;'
+        'border-radius:8px;background:#fff;display:block;" '
+        'sandbox="allow-scripts allow-same-origin"></iframe>'
+        '</div>'
+    )
 
 
 # ---------- UI ----------
@@ -935,20 +951,22 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     ),
                     scale=2,
                 )
-            # Composant SÉPARÉ pour la viz : gr.File géré nativement par
-            # Gradio (URL servie correctement, ouverture nouvel onglet).
-            # Alimenté via additional_outputs de ChatInterface — donc le
-            # message de chat reste UNIQUEMENT le texte de l'agent (pas
-            # d'append qui ferait fragmenter Gemini 3.x).
-            viz_file_out = gr.File(
+            # Composant SÉPARÉ pour la viz : gr.HTML qui embarque un
+            # iframe sandbox avec le sous-graphe interactif. Alimenté
+            # via additional_outputs de ChatInterface — donc le message
+            # de chat reste UNIQUEMENT le texte de l'agent (pas d'append
+            # qui ferait fragmenter Gemini 3.x). Le composant se met à
+            # jour à chaque nouvelle viz, remplaçant l'ancienne (pas
+            # d'accumulation qui figeait le navigateur dans la solution
+            # précédente d'embed inline dans le chat).
+            viz_html_out = gr.HTML(
                 label="🕸️ Visualisation interactive du sous-graphe",
                 visible=False,
-                interactive=False,
             )
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
                 additional_inputs=[key_in, model_in],
-                additional_outputs=[viz_file_out],
+                additional_outputs=[viz_html_out],
                 # Chatbot agrandi : 780 px de haut (+30 % vs 600).
                 # Tentative d'HTML/<details> abandonnée — gr.Chatbot v5
                 # fragmente tout tag inconnu en un caractère par ligne ;
