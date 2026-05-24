@@ -807,6 +807,36 @@ def viz_subgraph(term: str, depth: float,
 _HEAD_JS = """
 <script>
 (function() {
+  // ---------- Style parenthèses des dropdowns (quotas, BYOK) ----------
+  // Trouve toute option dont le texte se termine par « (X req/jour) » ou
+  // « (BYOK ...) » et entoure cette partie d'un span gris/petit.
+  // MutationObserver pour rattraper les options rendues à l'ouverture
+  // du dropdown.
+  var PAREN_RE = /\\s*\\((\\d+\\s*req\\/jour|BYOK\\s+[^)]+)\\)\\s*$/;
+  function styleParens(root) {
+    root.querySelectorAll(
+      'li[role="option"], div[role="option"], [data-testid*="dropdown"] li, ul[role="listbox"] li'
+    ).forEach(function(opt) {
+      if (opt.dataset.parenStyled) return;
+      var text = opt.textContent || '';
+      var m = text.match(PAREN_RE);
+      if (!m) return;
+      var main = text.slice(0, m.index).trim();
+      opt.innerHTML = main +
+        ' <span style="color:var(--body-text-color-subdued,#999);font-size:0.85em;font-weight:normal;">' +
+        m[0].trim() + '</span>';
+      opt.dataset.parenStyled = '1';
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function() { styleParens(document); });
+  new MutationObserver(function(muts) {
+    muts.forEach(function(m) {
+      m.addedNodes.forEach(function(n) {
+        if (n.nodeType === 1) styleParens(n);
+      });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+
   function getVizData() {
     var c = document.getElementById('viz-container');
     if (!c || !c.dataset.viz) return [];
