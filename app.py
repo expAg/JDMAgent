@@ -585,42 +585,126 @@ def _extract_html_path(tool_message_content: str) -> Optional[str]:
 
 
 def _stage_viz_html(html_path: str) -> Optional[str]:
-    """Lit le HTML viz et le renvoie sous forme d'iframe sandbox prêt à
-    embarquer dans un `gr.HTML`. Embed via data URI base64 — fonctionne
-    sans dépendre du serveur de fichiers Gradio (pas de risque 404), le
-    contenu vit dans le DOM du composant HTML uniquement (sandboxé).
+    """Compose l'HTML du composant viz : iframe sandbox de la viz courante
+    + bouton fermer + liste de TOUTES les viz générées dans la session
+    (replie l'iframe au clic et présente la liste ; chaque entrée a un
+    bouton « voir » qui ré-ouvre l'iframe avec ce fichier, et un bouton
+    « télécharger »).
 
-    Comme c'est un composant Gradio séparé qui se met à jour, un seul
-    iframe à la fois → pas l'accumulation qui plombait le navigateur
-    quand l'iframe était inliné dans le chat à chaque tour.
-
-    Retourne None si la lecture échoue → le composant n'est pas mis à
-    jour, pas d'erreur bloquante côté chat.
+    Retourne None si la lecture du fichier courant échoue.
     """
     import base64 as _b64
+    import json as _json
     from pathlib import Path as _Path
+
     src = _Path(html_path)
     if not src.exists():
         return None
     try:
-        text = src.read_text(encoding="utf-8")
+        current_text = src.read_text(encoding="utf-8")
     except Exception:
         return None
-    b64 = _b64.b64encode(text.encode("utf-8")).decode("ascii")
-    return (
-        '<div style="margin:8px 0">'
-        '<div style="margin-bottom:6px;font-weight:500;color:#666;font-size:0.9em">'
-        '🕸️ Visualisation interactive du sous-graphe '
-        '<span style="color:#999;font-size:0.85em">'
-        '(zoom : molette · déplacer : glisser · recentrer : double-clic)'
-        '</span>'
-        '</div>'
-        f'<iframe src="data:text/html;base64,{b64}" '
-        'style="width:100%;height:700px;border:1px solid #ddd;'
-        'border-radius:8px;background:#fff;display:block;" '
-        'sandbox="allow-scripts allow-same-origin"></iframe>'
-        '</div>'
+    current_b64 = _b64.b64encode(current_text.encode("utf-8")).decode("ascii")
+
+    # Inventaire de TOUS les fichiers viz stagés dans la session, triés
+    # par date de modif desc (les plus récents en haut).
+    viz_files = sorted(
+        VIZ_DIR.glob("chat_*.html"),
+        key=lambda p: -p.stat().st_mtime,
     )
+    files_data = []
+    for f in viz_files:
+        try:
+            txt = f.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        b64 = _b64.b64encode(txt.encode("utf-8")).decode("ascii")
+        # Nom lisible : on retire le préfixe `chat_` et le suffixe hashé.
+        # Format actuel : chat_<stem>_<hash>.html → on extrait <stem>.
+        nice = f.stem.removeprefix("chat_").rsplit("_", 1)[0] or f.stem
+        files_data.append({
+            "id": f.stem,
+            "label": nice,
+            "size_kb": round(f.stat().st_size / 1024, 1),
+            "b64": b64,
+        })
+
+    files_json = _json.dumps(files_data)
+
+    # JS : closeViz() replie l'iframe et affiche la liste ; openViz(idx)
+    # ré-affiche l'iframe avec le fichier choisi ; downloadViz(idx) force
+    # le téléchargement via un <a download>.
+    return f"""
+<div id="viz-container" style="margin:8px 0;border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden;">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f3f4f6;border-bottom:1px solid #ddd;">
+    <span style="font-weight:500;color:#444;font-size:0.9em">
+      🕸️ <span id="viz-title">Visualisation interactive du sous-graphe</span>
+      <span style="color:#999;font-size:0.85em">
+        (zoom : molette · déplacer : glisser · double-clic : recentrer)
+      </span>
+    </span>
+    <button id="viz-close-btn" onclick="vizClose()"
+            style="background:#fff;border:1px solid #ccc;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.85em;color:#444;">
+      ✖ Fermer
+    </button>
+  </div>
+  <iframe id="viz-iframe" src="data:text/html;base64,{current_b64}"
+          style="width:100%;height:700px;border:0;background:#fff;display:block;"
+          sandbox="allow-scripts allow-same-origin"></iframe>
+  <div id="viz-list" style="display:none;padding:14px;">
+    <div style="font-weight:500;color:#444;margin-bottom:10px;">
+      📁 Visualisations générées dans cette session
+    </div>
+    <div id="viz-list-rows"></div>
+  </div>
+</div>
+<script>
+(function() {{
+  const vizData = {files_json};
+  function escapeHtml(s) {{
+    return s.replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+  }}
+  window.vizClose = function() {{
+    const ifr = document.getElementById('viz-iframe');
+    const list = document.getElementById('viz-list');
+    const rows = document.getElementById('viz-list-rows');
+    const btn = document.getElementById('viz-close-btn');
+    if (!ifr || !list || !rows || !btn) return;
+    ifr.style.display = 'none';
+    btn.style.display = 'none';
+    list.style.display = 'block';
+    // Build the file list
+    rows.innerHTML = vizData.map((f, idx) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;">
+        <a href="#" onclick="vizOpen(${{idx}});return false;"
+           style="color:#7c3aed;text-decoration:none;font-weight:500;">
+          ${{escapeHtml(f.label)}}
+        </a>
+        <span style="color:#999;font-size:0.85em;">
+          ${{f.size_kb}} KB
+          &nbsp;<a href="data:text/html;base64,${{f.b64}}" download="${{escapeHtml(f.id)}}.html"
+                   style="color:#666;text-decoration:none;border:1px solid #ccc;border-radius:4px;padding:2px 8px;margin-left:8px;font-size:0.85em;">
+            ⬇ Télécharger
+          </a>
+        </span>
+      </div>
+    `).join('');
+  }};
+  window.vizOpen = function(idx) {{
+    const ifr = document.getElementById('viz-iframe');
+    const list = document.getElementById('viz-list');
+    const btn = document.getElementById('viz-close-btn');
+    const title = document.getElementById('viz-title');
+    if (!ifr || !list || !btn) return;
+    ifr.src = 'data:text/html;base64,' + vizData[idx].b64;
+    if (title) title.textContent = vizData[idx].label;
+    ifr.style.display = 'block';
+    btn.style.display = 'inline-block';
+    list.style.display = 'none';
+  }};
+}})();
+</script>
+"""
 
 
 # ---------- UI ----------
@@ -1002,6 +1086,19 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             # Rendu effectif de viz_html_out APRÈS le chat → la viz
             # apparaît sous la conversation, pas au-dessus.
             viz_html_out.render()
+            # Scroll automatique CENTRÉ sur la viz quand elle apparaît
+            # (sinon la page scrollait vers les exemples du Chatbot et
+            # la viz, encore plus bas, restait tronquée hors viewport).
+            # Utilise scrollIntoView avec block:'center'.
+            viz_html_out.change(
+                fn=None, inputs=None, outputs=None,
+                js="""() => {
+                  setTimeout(() => {
+                    const el = document.getElementById('viz-container');
+                    if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                  }, 200);
+                }"""
+            )
 
     gr.Markdown(
         "---\n*Données : [JeuxDeMots](https://www.jeuxdemots.org) — "
