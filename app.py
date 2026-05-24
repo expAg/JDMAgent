@@ -1092,9 +1092,20 @@ _CHATBOT_CSS = """
 #key-in:has(input:disabled) {
   opacity: 0.55;
 }
+
+/* Pleine largeur pour TOUS les onglets : Gradio v5 fixe un max-width
+   par défaut sur .gradio-container, ce qui laisse des bandes vides à
+   gauche/droite sur grands écrans. On le retire — fill_width=True sur
+   gr.Blocks suffit pour la grille de composants mais ne touche pas
+   au conteneur racine. */
+.gradio-container, .gradio-container.app {
+  max-width: 100% !important;
+  width: 100% !important;
+}
 """
 
-with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_CSS) as demo:
+with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_CSS,
+               fill_width=True) as demo:
 
     with gr.Tabs():
 
