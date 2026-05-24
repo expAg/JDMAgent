@@ -406,19 +406,13 @@ def _build_gemini_native(model_id: str):
             "Gemini 3.x preview. Installe-le avec : "
             "pip install langchain-google-genai"
         ) from e
-    kwargs: dict = {
-        "model": routed_model,
-        "google_api_key": token,
-        "temperature": 0,
-    }
-    # Désactivation du reasoning pour 3.1 Flash Lite : trop lent + lance
-    # trop d'outils avec le thinking activé. Le mode no-thinking est
-    # suffisant pour nos chaînes de tool calls dirigées par le prompt.
-    # NB : 3.5 Flash garde le thinking par défaut (qualité de raisonnement
-    # utile, le SDK natif gère bien thought_signature).
-    if model_id == "gemini-3.1-flash-lite":
-        kwargs["thinking_budget"] = 0
-    return ChatGoogleGenerativeAI(**kwargs)
+    # Reasoning conservé sur les 3.x (3.1 Flash Lite reste lent même avec
+    # thinking_budget=0 — pas la peine de sacrifier la qualité).
+    return ChatGoogleGenerativeAI(
+        model=routed_model,
+        google_api_key=token,
+        temperature=0,
+    )
 
 
 def _history_to_lc(history: list[dict], current_user_message: str) -> list:
