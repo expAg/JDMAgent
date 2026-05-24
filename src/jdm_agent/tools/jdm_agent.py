@@ -64,9 +64,12 @@ RÈGLES :
    les triplets de `|w|` élevé (signaux forts, positifs OU négatifs).
 
 7. Pour les termes polysémiques (avocat, souris, police, chat, …), commence
-   TOUJOURS par `disambiguate`. Le résultat contient `sense` (forme lisible)
+   TOUJOURS par `disambiguate` pour connaitre les sens dans JDM. Le résultat contient `sense` (forme lisible)
    et `sense_id` (identifiant brut à passer dans les outils suivants pour
-   requêter ce sens précis).
+   requêter ce sens précis). Tu dois TOUT DE MÊME explorer le terme générique,
+   ce qu'il contient est complémentaire à ce que tu as trouvé de spécifique,
+   spécialement si le sens spécifique est peu renseigné.
+   Tu présenteras le tout dans ta réponse.
 
 8. Quand un triplet renvoyé contient `source_id` ou `target_id`, c'est qu'il
    désigne un sens raffiné. Cite la forme lisible (`source`/`target`), mais
