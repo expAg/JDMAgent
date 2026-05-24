@@ -461,13 +461,17 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     Le paramètre `history` est passé à l'agent pour conserver le contexte
     conversationnel (multi-tours).
     """
+    # Avec additional_outputs=[viz_file_out] côté ChatInterface, chaque
+    # yield doit être un tuple (message, viz_file_update). On garde viz à
+    # gr.update() (no-op) pendant le streaming, et on le set au final.
+    _NOOP_FILE = gr.update()
     if not message.strip():
-        yield "Pose une question sur la langue française."
+        yield "Pose une question sur la langue française.", _NOOP_FILE
         return
     try:
         llm = _build_llm(model, api_key)
     except ValueError as e:
-        yield f"⚠️ {e}"
+        yield f"⚠️ {e}", _NOOP_FILE
         return
 
     from jdm_agent.tools.jdm_agent import build_jdm_agent
@@ -478,7 +482,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     final_answer = ""
     viz_path: Optional[str] = None  # chemin du fichier HTML viz si l'agent en a généré un
 
-    yield "\n".join(progress_lines)
+    yield "\n".join(progress_lines), _NOOP_FILE
 
     try:
         agent = build_jdm_agent(client=get_client(), llm=llm)
@@ -501,7 +505,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
                                 line = f"🔧 `{tc['name']}({args})`"
                                 progress_lines.append(line)
                                 tool_traces.append(f"- `{tc['name']}({args})`")
-                            yield "\n".join(progress_lines)
+                            yield "\n".join(progress_lines), _NOOP_FILE
                         else:
                             # Réponse finale du modèle (pas d'autres tool calls)
                             final_answer = m.content or ""
@@ -517,25 +521,24 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
                         progress_lines.append(
                             f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
                         )
-                        yield "\n".join(progress_lines)
+                        yield "\n".join(progress_lines), _NOOP_FILE
     except Exception as e:
-        yield f"❌ Erreur agent : {e}"
+        yield f"❌ Erreur agent : {e}", _NOOP_FILE
         return
 
-    # Sortie finale : UNIQUEMENT le texte de l'agent, rien d'append derrière.
-    # Cause confirmée empiriquement : avec Gemini 3.x, ajouter QUOI QUE CE
-    # SOIT après final_answer (même une seule ligne italique de compteur)
-    # fragmente l'append en un caractère par ligne dans gr.Chatbot. Cause
-    # racine probable : la fin du contenu Gemini 3.x perturbe le diff
-    # incremental du renderer Chatbot quand on essaie d'append.
-    #
-    # Trade-off assumé : on perd l'affichage du compteur d'outils et du
-    # lien viz dans la bulle finale. Mais :
-    #  - les outils s'affichent en direct pendant le streaming (visible)
-    #  - le chemin du fichier viz est inclus par l'agent dans son texte
-    #    de réponse (cf. system prompt)
+    # Sortie finale : UNIQUEMENT le texte de l'agent dans la bulle chat
+    # (zéro append, sinon Gemini 3.x fragmente). Le fichier viz est
+    # poussé séparément dans le composant gr.File à côté du chat — clic
+    # = ouverture par Gradio dans nouvel onglet, zéro pollution du chat.
     out = final_answer or "*(réponse vide)*"
-    yield out
+    if viz_path:
+        # Copie le fichier dans VIZ_DIR (déclaré dans allowed_paths) pour
+        # que Gradio le serve correctement via le widget File.
+        viz_for_file = _stage_viz_file(viz_path)
+        if viz_for_file:
+            yield out, gr.update(value=viz_for_file, visible=True)
+            return
+    yield out, _NOOP_FILE
 
 
 def _extract_html_path(tool_message_content: str) -> Optional[str]:
@@ -562,18 +565,15 @@ def _extract_html_path(tool_message_content: str) -> Optional[str]:
     return None
 
 
-def _build_viz_url(html_path: str) -> Optional[str]:
-    """Copie le fichier HTML viz dans VIZ_DIR et renvoie l'URL Gradio
-    statique pour y accéder. Aucun tag HTML — juste l'URL en string,
-    pour qu'on l'injecte dans un markdown `[label](url)` qui sera
-    rendu correctement par gr.Chatbot.
+def _stage_viz_file(html_path: str) -> Optional[str]:
+    """Copie le fichier HTML viz dans VIZ_DIR (déclaré dans allowed_paths)
+    et renvoie le chemin absolu local — directement utilisable par
+    `gr.File(value=...)`. Gradio sert le fichier nativement via son API
+    statique, ouverture dans un nouvel onglet quand l'utilisateur clique
+    sur le widget File.
 
-    Tente d'abord `/gradio_api/file=` (Gradio 5.x), fallback `/file=`
-    (gradio <5). En réalité on émet `/gradio_api/file=` et on espère
-    que la version HF le supporte ; si 404, on pourra basculer.
-
-    Retourne None si la copie échoue → chat continue avec seulement le
-    texte, pas d'erreur bloquante.
+    Retourne None si la copie échoue → le widget n'est pas mis à jour,
+    pas d'erreur bloquante côté chat.
     """
     import shutil
     from pathlib import Path as _Path
@@ -587,8 +587,7 @@ def _build_viz_url(html_path: str) -> Optional[str]:
             shutil.copyfile(src, dest)
     except Exception:
         return None
-    abs_path = str(dest.resolve()).replace("\\", "/")
-    return f"/gradio_api/file={abs_path}"
+    return str(dest.resolve())
 
 
 # ---------- UI ----------
@@ -919,9 +918,20 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     ),
                     scale=2,
                 )
+            # Composant SÉPARÉ pour la viz : gr.File géré nativement par
+            # Gradio (URL servie correctement, ouverture nouvel onglet).
+            # Alimenté via additional_outputs de ChatInterface — donc le
+            # message de chat reste UNIQUEMENT le texte de l'agent (pas
+            # d'append qui ferait fragmenter Gemini 3.x).
+            viz_file_out = gr.File(
+                label="🕸️ Visualisation interactive du sous-graphe",
+                visible=False,
+                interactive=False,
+            )
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
                 additional_inputs=[key_in, model_in],
+                additional_outputs=[viz_file_out],
                 # Chatbot agrandi : 780 px de haut (+30 % vs 600).
                 # Tentative d'HTML/<details> abandonnée — gr.Chatbot v5
                 # fragmente tout tag inconnu en un caractère par ligne ;
