@@ -474,7 +474,8 @@ def get_consequences(term: str, min_weight: Optional[float] = None, limit: Optio
 def get_manner(verb: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les MANIÈRES typiques dont une action s'effectue (`r_manner`).
 
-    Manner (`r_manner`) — adverbe ou locution adverbiale décrivant comment.
+    Manner (`r_manner`) — adverbe ou locution adverbiale décrivant COMMENT 
+    peut on faire l'action du terme source.
     Le terme source DOIT être un PRÉDICAT (une action). Deux formes valides :
       - verbe à l'infinitif : manger, courir, parler
       - prédicat nominal de processus (nom déverbal) : lecture, marche,
