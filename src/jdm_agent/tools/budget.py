@@ -105,15 +105,24 @@ def budget_context(limit: Optional[int]) -> Iterator[ToolBudget]:
                 print("Le budget a été dépassé.")
 
     `limit=None` ou `limit<=0` désactive la limite (budget illimité).
+
+    NB sur l'implémentation : on utilise `set(...)` + restauration manuelle
+    de la valeur précédente (au lieu de `reset(token)`). Raison : avec les
+    générateurs Gradio, chaque yield/resume peut basculer dans un contexte
+    asyncio différent ; `reset(token)` échoue alors avec
+    « Token was created in a different Context ». `set(previous)` est
+    cross-context safe — on perd le bénéfice du token (détection d'incohérences
+    de nesting) mais on ne nest jamais en pratique côté Jarvis.
     """
     if limit is not None and limit <= 0:
         limit = None
     budget = ToolBudget(limit=limit)
-    token = _current_budget.set(budget)
+    previous = _current_budget.get()
+    _current_budget.set(budget)
     try:
         yield budget
     finally:
-        _current_budget.reset(token)
+        _current_budget.set(previous)
 
 
 # Noms (préfixes/suffixes) de tools EXCLUS du compteur — ils sont

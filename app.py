@@ -1557,7 +1557,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 )
                 jarvis_budget = gr.Dropdown(
                     choices=["10", "25", "50", "100", "illimité"],
-                    value="25",
+                    value="illimité",
                     label="Budget d'appels d'outils",
                     scale=1,
                 )
