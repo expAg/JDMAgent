@@ -248,35 +248,34 @@ OPENAI_MODELS = {
 # partagé. Le prompt agent + 34 outils sérialisés fait ~19-20 K tokens par
 # appel, ce qui élimine la plupart des free tiers (TPM trop bas).
 #
-# Compatibles avec notre taille de prompt :
-#   - Gemini 2.5 Flash : ~250 K TPM, ~250 RPD → cible principale
-#   - Groq Llama 3.1 8B Instant : ~30 K TPM → suffisant, plus rapide,
-#     qualité moindre que 70B mais OK pour requêtes simples
+# Seul Gemini (Google AI Studio, endpoint OpenAI-compatible) a un quota
+# free tier assez large par modèle pour passer nos 19-20 K tokens. Retirés :
+#   - Groq Llama 3.x (TPM free : 6 K pour 8B, 12 K pour 70B — sous notre seuil)
+#   - HF Inference Providers Together AI (~0.10 $/mois de crédits, épuisés
+#     en quelques appels)
+#   → helpers conservés dans le code pour réactivation si tier payant souscrit.
 #
-# Incompatibles (free tier saturé en 1 requête) :
-#   - Groq Llama 3.3 70B : 12 K TPM < 19 K du prompt
-#   - HF Inference Providers Together AI : crédit ~0.10$ / mois
-#   → retirés du dropdown ; helpers conservés dans le code pour
-#     réactivation si tier payant souscrit.
-
+# `-lite` = variantes optimisées pour le coût/débit (qualité légèrement
+# moindre), `-live` = optimisée pour le streaming temps réel (peut avoir des
+# limitations sur le tool calling complexe).
 GEMINI_MODELS = {
-    "gemini-2.5-flash": "Gemini 2.5 Flash (gratuit Google, ~250 req/jour, qualité top)",
+    "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
+    "gemini-3-flash":         "Gemini 3 Flash (gratuit, qualité supérieure)",
+    "gemini-3-flash-live":    "Gemini 3 Flash Live (gratuit, optimisé streaming temps réel)",
+    "gemini-3.1-flash-lite":  "Gemini 3.1 Flash Lite (gratuit, rapide)",
+    "gemini-3.5-flash":       "Gemini 3.5 Flash (gratuit, qualité top)",
 }
 GEMINI_MODEL_ROUTING = {
-    "gemini-2.5-flash": "gemini-2.5-flash",
+    "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-3-flash":         "gemini-3-flash",
+    "gemini-3-flash-live":    "gemini-3-flash-live",
+    "gemini-3.1-flash-lite":  "gemini-3.1-flash-lite",
+    "gemini-3.5-flash":       "gemini-3.5-flash",
 }
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
-GROQ_MODELS = {
-    "groq-llama-3.1-8b": "Llama 3.1 8B Instant (gratuit Groq, ultra-rapide, qualité moyenne)",
-}
-GROQ_MODEL_ROUTING = {
-    "groq-llama-3.1-8b": "llama-3.1-8b-instant",
-}
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-
 ALL_MODELS = {
-    **GEMINI_MODELS, **GROQ_MODELS,
+    **GEMINI_MODELS,
     **ANTHROPIC_MODELS, **OPENAI_MODELS,
 }
 
@@ -317,23 +316,10 @@ def _build_llm(model: str, api_key: str):
         from jdm_agent.tools.llm_factory import get_llm
         return get_llm(provider="openai", model=model)
 
-    # Gemini = principal provider gratuit (TPM ~250 K, qualité top).
-    # Groq Llama 3.1 8B Instant = secondaire (TPM ~30 K, ultra-rapide,
-    # qualité moindre). Token côté Space, gratuit pour le visiteur. Si
-    # épuisement → BYOK Claude / GPT.
-    if model.startswith("groq-"):
-        return _build_openai_compat(
-            model_id=model, label="Groq",
-            env_var="GROQ_API_KEY",
-            env_var_help=(
-                "L'admin du Space doit créer une clé sur "
-                "https://console.groq.com/keys (signup gratuit, sans CB) "
-                "et l'ajouter dans Settings → Variables & secrets."
-            ),
-            base_url=GROQ_BASE_URL, routing=GROQ_MODEL_ROUTING,
-            api_key=api_key,
-        )
-
+    # Gemini = seul provider gratuit avec un quota TPM assez large pour
+    # notre prompt agent (~19-20 K tokens / appel à cause des 34 outils).
+    # Token côté Space, gratuit pour le visiteur. Si épuisement → BYOK
+    # Claude / GPT.
     if model.startswith("gemini-"):
         return _build_openai_compat(
             model_id=model, label="Google Gemini",
@@ -794,10 +780,10 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 )
                 model_in = gr.Dropdown(
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
-                    value="gemini-2.5-flash",
+                    value="gemini-2.5-flash-lite",
                     label="Modèle",
                     info=(
-                        "gemini-* / groq-* = GRATUIT (token côté Space, quota partagé) · "
+                        "gemini-* = GRATUIT (token côté Space, quota partagé) · "
                         "claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI"
                     ),
                     scale=2,
@@ -818,14 +804,14 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 # sans clé, l'utilisateur aura le message d'erreur informatif.
                 examples=[
                     # Exemples cliquables par n'importe quel visiteur sans
-                    # coller de clé. Gemini en priorité (qualité top), Groq
-                    # Llama 3.1 8B en alternative (très rapide, qualité
-                    # moindre). En cas d'épuisement, BYOK Claude / GPT.
-                    ["Quels sont les synonymes de voiture ?", "", "gemini-2.5-flash"],
-                    ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-2.5-flash"],
-                    ["Que peut faire un chat ?", "", "groq-llama-3.1-8b"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-2.5-flash"],
+                    # coller de clé. Répartis sur les Gemini Flash pour
+                    # étaler la charge entre les variantes. En cas
+                    # d'épuisement, BYOK Claude / GPT.
+                    ["Quels sont les synonymes de voiture ?", "", "gemini-2.5-flash-lite"],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash-lite"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3-flash"],
+                    ["Que peut faire un chat ?", "", "gemini-3.5-flash"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-3.1-flash-lite"],
                 ],
                 cache_examples=False,
                 type="messages",
