@@ -1535,15 +1535,76 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         outputs=[je_chat],
                     )
 
-                # ---- Sous-onglets placeholders (Phase 13.4-13.6) ----
                 with gr.Tab("🔍 Audit", id="jarvis-audit"):
                     gr.Markdown(
-                        "*Sous-onglet en construction (Phase 13.5).*\n\n"
                         "Audit sémantique de la répartition des sens d'un "
                         "terme polysémique entre son nœud générique et ses "
-                        "raffinements. Produit un fichier `.audit` en deux "
-                        "sections (propositions actionnables + compte rendu "
-                        "narratif)."
+                        "raffinements. Le LLM rend un verdict par triplet "
+                        "(LEGITIME / DEVRAIT_ETRE_CONTRASTIF / "
+                        "NON_CONTRASTIF / NEGATIVE) plus une section META "
+                        "narrative. Produit un fichier `.audit`."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            ja_term = gr.Textbox(
+                                label="Terme à auditer (idéalement polysémique)",
+                                placeholder="ex: avocat",
+                            )
+                            ja_relation = gr.Dropdown(
+                                choices=[""] + JARVIS_RELATIONS,
+                                value="",
+                                label="Relation cible (optionnel)",
+                                allow_custom_value=True,
+                                info=(
+                                    "Vide = relations par défaut "
+                                    "(r_isa, r_has_part, r_carac, "
+                                    "r_telic_role, r_lieu, r_anto, r_syn)."
+                                ),
+                            )
+                            ja_upload = gr.Checkbox(
+                                value=False,
+                                label="Soumettre directement à JDM (LLMDrops)",
+                                info="Nécessite une clé API LLMDrops dans le bandeau ou en env.",
+                            )
+                            ja_launch = gr.Button(
+                                "🔍 Lancer l'audit",
+                                variant="primary",
+                            )
+                        with gr.Column(scale=2):
+                            ja_chat = gr.Chatbot(
+                                type="messages",
+                                elem_id="jarvis-audit-chat",
+                                show_label=False,
+                                resizable=True,
+                                height=520,
+                            )
+
+                    def _run_audit(term, relation, upload, drops_key, model, budget_label):
+                        from jarvis import build_audit_prompt, run_jarvis_flow
+                        from jdm_agent.tools.jdm_agent import build_jdm_agent
+                        if not (term or "").strip():
+                            yield [{"role": "assistant",
+                                    "content": "⚠️ Saisis un terme à auditer."}]
+                            return
+                        prompt = build_audit_prompt(
+                            term=term, relation=relation,
+                            budget_label=str(budget_label),
+                            upload=bool(upload),
+                        )
+                        yield from run_jarvis_flow(
+                            prompt=prompt, model=model, api_key="",
+                            budget_label=str(budget_label),
+                            drops_key=drops_key,
+                            build_llm_fn=_build_llm,
+                            build_agent_fn=build_jdm_agent,
+                            get_client_fn=get_client,
+                        )
+
+                    ja_launch.click(
+                        _run_audit,
+                        inputs=[ja_term, ja_relation, ja_upload,
+                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                        outputs=[ja_chat],
                     )
 
                 with gr.Tab("🕳️ Détection de trous", id="jarvis-gaps"):
@@ -1580,12 +1641,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
                             with gr.Row():
                                 jg_route_enrich = gr.Button("→ Enrichir ce trou", scale=1)
-                                jg_route_audit = gr.Button("→ Auditer", scale=1, interactive=False)
+                                jg_route_audit = gr.Button("→ Auditer", scale=1)
                                 jg_route_stats = gr.Button("→ Stats", scale=1, interactive=False)
                             gr.Markdown(
-                                "<small><em>Auditer et Stats seront actifs "
-                                "quand leurs sous-onglets seront déployés "
-                                "(Phases 13.5 / 13.6).</em></small>"
+                                "<small><em>Stats sera actif quand son "
+                                "sous-onglet sera déployé (Phase 13.6).</em></small>"
                             )
                         with gr.Column(scale=2):
                             jg_gaps_table = gr.Dataframe(
@@ -1701,6 +1761,26 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         _route_gap_to_enrich,
                         inputs=[jg_gap_dropdown],
                         outputs=[je_term, je_relation, jarvis_tabs],
+                    )
+
+                    # Routage vers Audit (le sous-onglet Audit a été défini
+                    # AVANT Détection — ja_term/ja_relation sont en scope ici).
+                    def _route_gap_to_audit(gap_label):
+                        if not gap_label:
+                            return (gr.update(), gr.update(), gr.update())
+                        parts = [p.strip() for p in gap_label.split("|")]
+                        if len(parts) < 2:
+                            return (gr.update(), gr.update(), gr.update())
+                        term_v, relation_v = parts[0], parts[1]
+                        return (
+                            gr.update(value=term_v),
+                            gr.update(value=relation_v),
+                            gr.update(selected="jarvis-audit"),
+                        )
+                    jg_route_audit.click(
+                        _route_gap_to_audit,
+                        inputs=[jg_gap_dropdown],
+                        outputs=[ja_term, ja_relation, jarvis_tabs],
                     )
 
                 with gr.Tab("⚠️ Signalement", id="jarvis-err"):
