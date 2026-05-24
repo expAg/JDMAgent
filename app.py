@@ -926,7 +926,23 @@ _HEAD_JS = """
 </script>
 """
 
-with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS) as demo:
+_CHATBOT_CSS = """
+/* Chatbot agent : grandit avec le contenu, compact quand vide, scroll
+   interne au-delà de max-height. Cible le bubble-wrap (zone scrollable
+   v5 de gr.Chatbot) sous notre elem_id #agent-chatbot. Le bloc parent
+   .block reste flexible — on retire le min-height par défaut Gradio qui
+   force ~480 px sinon. */
+#agent-chatbot { min-height: 0 !important; }
+#agent-chatbot .bubble-wrap {
+  height: auto !important;
+  min-height: 120px !important;
+  max-height: 820px !important;
+  overflow-y: auto;
+}
+#agent-chatbot .message-wrap { height: auto !important; }
+"""
+
+with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_CSS) as demo:
 
     with gr.Tabs():
 
@@ -1110,10 +1126,14 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS) as demo:
         # ----- Tab 4: Agent (BYOK Anthropic / OpenAI ; HF Inference = gratuit) -----
         with gr.Tab("🤖 Agent"):
             with gr.Row():
+                # Désactivée par défaut (le modèle initial est Gemini hébergé).
+                # Réactivée dynamiquement quand l'utilisateur choisit
+                # Claude ou GPT via le dropdown ci-dessous.
                 key_in = gr.Textbox(
                     label="Clé API si modèle Claude ou GPT (sk-ant-… · sk-…)",
                     type="password",
-                    placeholder="Laisse vide pour les modèles hf-* (gratuits, hébergés par le Space)",
+                    placeholder="Non requis pour les modèles Gemini hébergés",
+                    interactive=False,
                     scale=3,
                 )
                 model_in = gr.Dropdown(
@@ -1122,6 +1142,24 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS) as demo:
                     label="Modèle",
                     scale=2,
                 )
+
+            # Toggle dynamique : la clé API n'est saisissable que pour les
+            # modèles BYOK (Claude / GPT). Sur un modèle Gemini hébergé,
+            # le champ est grisé même s'il contient déjà du texte — pour
+            # éviter toute confusion sur le fait que la clé serait utilisée.
+            def _toggle_key_field(model: str):
+                needs_key = model.startswith("claude-") or model.startswith("gpt-")
+                return gr.update(
+                    interactive=needs_key,
+                    placeholder=("sk-ant-… ou sk-…" if needs_key
+                                 else "Non requis pour les modèles Gemini hébergés"),
+                )
+
+            model_in.change(
+                _toggle_key_field,
+                inputs=[model_in],
+                outputs=[key_in],
+            )
             # Composant SÉPARÉ pour la viz : gr.HTML qui embarque un
             # iframe sandbox avec le sous-graphe interactif. Alimenté
             # via additional_outputs de ChatInterface — donc le message
@@ -1148,11 +1186,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS) as demo:
                 # fragmente tout tag inconnu en un caractère par ligne ;
                 # on s'en tient à du markdown plat dans chat_with_agent.
                 chatbot=gr.Chatbot(
-                    # Pas de `height` fixe : on borne par min/max pour que
-                    # la bulle reste petite quand vide et grandisse avec le
-                    # contenu (responsive vrai). Gradio 5 honore ces props.
-                    min_height=180,
-                    max_height=820,
+                    # Hauteur gérée par CSS (#agent-chatbot dans _CHATBOT_CSS) :
+                    # bubble-wrap.height = auto → la bulle grandit avec le
+                    # contenu jusqu'à 820 px, puis scrolle. Les props natives
+                    # min/max_height de gr.Chatbot v5 ne suffisent pas à
+                    # supprimer le min-height du conteneur parent.
+                    elem_id="agent-chatbot",
                     resizable=True,
                     type="messages",
                     show_label=False,
