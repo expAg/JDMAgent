@@ -981,21 +981,54 @@ _HEAD_JS = """
     } catch (e) { /* silently ignore selector failures */ }
   }
 
-  // Debounce du scroll vers le chatbot : on attend que les mutations se
-  // calment (~250 ms) avant de scroller — sinon on scroll à chaque chunk
-  // de streaming. Le viz scroll fire à 300/700/1200 ms via
-  // viz_html_out.change() et l'emporte si une viz a été générée.
+  // Debounce du scroll : on attend que les mutations se calment (~250 ms)
+  // avant de scroller — sinon on scroll à chaque chunk de streaming. Le
+  // viz scroll fire à 300/700/1200 ms via viz_html_out.change() et
+  // l'emporte si une viz a été générée.
+  //
+  // CIBLE : la barre de saisie (textarea du chat) — elle DOIT rester
+  // collée au bas de la fenêtre, pour que l'utilisateur réponde sans
+  // scroller. Le chatbot rempli au-dessus se cale naturellement
+  // (jusqu'à 85vh, scroll interne au-delà).
   var _scrollTimer = null;
+  function findChatInput() {
+    // Stratégie multi-fallback (la classe Gradio change entre versions).
+    var root = document.getElementById('agent-chatbot');
+    if (root) {
+      var section = root.closest('[class*="chat-interface"]')
+                 || root.closest('.tabitem')
+                 || root.parentElement;
+      if (section) {
+        // 1) textarea avec placeholder « message » / « Type »
+        var ta = section.querySelector(
+          'textarea[placeholder*="message" i], textarea[placeholder*="Type" i]'
+        );
+        if (ta) return ta;
+        // 2) Fallback : tout textarea visible dans la section
+        var allTa = section.querySelectorAll('textarea');
+        for (var i = 0; i < allTa.length; i++) {
+          if (allTa[i].offsetParent !== null) return allTa[i];
+        }
+      }
+    }
+    // 3) Dernier recours : n'importe quel textarea avec placeholder type message
+    return document.querySelector(
+      'textarea[placeholder*="message" i], textarea[placeholder*="Type" i]'
+    );
+  }
   function scrollChatIntoView() {
     clearTimeout(_scrollTimer);
     _scrollTimer = setTimeout(function() {
-      var root = document.getElementById('agent-chatbot');
-      if (!root) return;
-      // Si une viz est visible, on NE scroll PAS le chat — la viz scroll
-      // s'en chargera quelques ms plus tard. Évite le saut chat→viz.
+      // Si une viz est visible, on NE scroll PAS — la viz scroll s'en
+      // chargera quelques ms plus tard. Évite le saut chat→viz.
       var viz = document.getElementById('viz-container');
       if (viz && viz.offsetParent !== null) return;
-      root.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      var input = findChatInput();
+      if (!input) return;
+      // block:'end' colle l'input contre le bas du viewport ; le chatbot
+      // (au-dessus) occupe le reste de la fenêtre, l'utilisateur voit
+      // les derniers messages + la zone de saisie sans scroller.
+      input.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }, 250);
   }
 
