@@ -20,6 +20,18 @@ from typing import Generator, Optional
 
 # ---------- Construction des pré-prompts ----------
 
+def _is_bounded_budget(budget_label: str) -> bool:
+    """True si le label correspond à une limite finie (et donc qu'il
+    faut prévenir le LLM du sentinel BUDGET_EXHAUSTED). Évite de
+    polluer le prompt quand l'utilisateur a choisi 'illimité'."""
+    if not budget_label:
+        return False
+    s = str(budget_label).strip().lower()
+    if s in ("illimité", "illimite", "unlimited", "none", "0", ""):
+        return False
+    return s.isdigit() and int(s) > 0
+
+
 def build_enrich_prompt(
     term: str,
     relation: str = "",
@@ -32,6 +44,7 @@ def build_enrich_prompt(
     """Compose le pré-prompt d'enrichissement à partir du formulaire."""
     term = (term or "").strip()
     relation = (relation or "").strip()
+    bounded = _is_bounded_budget(budget_label)
     parts: list[str] = []
     parts.append(f"Je veux ENRICHIR le terme « {term} » dans JDM.")
     if relation:
@@ -46,17 +59,21 @@ def build_enrich_prompt(
         "CONSOLIDÉS (ready_for_submission=true)."
     )
     if iterate:
+        if bounded:
+            parts.append(
+                "Itère jusqu'à atteindre le nombre cible — sauf si le "
+                "budget d'appels d'outils est épuisé, auquel cas rends "
+                "proprement ce qui a déjà été consolidé."
+            )
+        else:
+            parts.append("Itère jusqu'à atteindre le nombre cible.")
+    if bounded:
         parts.append(
-            "Itère jusqu'à atteindre le nombre cible — sauf si le "
-            "budget d'appels d'outils est épuisé, auquel cas rends "
-            "proprement ce qui a déjà été consolidé."
+            f"Budget : {budget_label} appels d'outils maximum. Au-delà, "
+            "tu recevras un sentinel BUDGET_EXHAUSTED — arrête alors "
+            "immédiatement et compose ta réponse finale avec ce qui est "
+            "déjà consolidé."
         )
-    parts.append(
-        f"Budget : {budget_label} appels d'outils maximum. Au-delà, "
-        "tu recevras un sentinel BUDGET_EXHAUSTED — arrête alors "
-        "immédiatement et compose ta réponse finale avec ce qui est "
-        "déjà consolidé."
-    )
     if upload:
         parts.append(
             "Soumets directement le fichier d'enrichissement au "
@@ -97,10 +114,11 @@ def build_audit_prompt(
         "Examine sens par sens (top 2-3 par poids r_raff_sem) et rends "
         "un verdict pour CHAQUE triplet du terme générique."
     )
-    parts.append(
-        f"Budget : {budget_label} appels d'outils maximum. Au-delà, "
-        "arrête et compose ta synthèse avec ce que tu as déjà examiné."
-    )
+    if _is_bounded_budget(budget_label):
+        parts.append(
+            f"Budget : {budget_label} appels d'outils maximum. Au-delà, "
+            "arrête et compose ta synthèse avec ce que tu as déjà examiné."
+        )
     if upload:
         parts.append("Soumets ensuite le fichier .audit à JDM (LLMDrops).")
     else:
@@ -131,9 +149,10 @@ def build_gap_prompt(
             "Pas de relation imposée : utilise la liste par défaut "
             "(adapte selon que le terme est un objet, un verbe, un sentiment…)."
         )
-    parts.append(
-        f"Budget : {budget_label} appels d'outils maximum."
-    )
+    if _is_bounded_budget(budget_label):
+        parts.append(
+            f"Budget : {budget_label} appels d'outils maximum."
+        )
     parts.append(
         "Pour chaque gap identifié, propose explicitement les 3 actions "
         "(Enrichir / Auditer / Stats) avec le format `term | relation | "
@@ -169,10 +188,13 @@ def build_signalement_prompt(
         "de vérifier chaque suspect par un outil, ta suspicion vaut. "
         "Suis la grille de signaux du workflow (sémantiques + structurels)."
     )
-    parts.append(
-        f"Budget : {budget_label} appels d'outils maximum. Limite à ~20 "
-        "suspects max pour éviter le bruit."
-    )
+    if _is_bounded_budget(budget_label):
+        parts.append(
+            f"Budget : {budget_label} appels d'outils maximum. Limite à ~20 "
+            "suspects max pour éviter le bruit."
+        )
+    else:
+        parts.append("Limite à ~20 suspects max pour éviter le bruit.")
     if upload:
         parts.append("Soumets ensuite le fichier .err à JDM (LLMDrops).")
     else:
@@ -217,9 +239,10 @@ def build_stats_prompt(
             "le terme ni la relation — choisis un terme français au "
             "hasard et donne-moi son profil sur les relations principales."
         )
-    parts.append(
-        f"Budget : {budget_label} appels d'outils maximum."
-    )
+    if _is_bounded_budget(budget_label):
+        parts.append(
+            f"Budget : {budget_label} appels d'outils maximum."
+        )
     parts.append(
         "Rends une synthèse structurée : un tableau machine-lisible "
         "(une ligne par relation avec n_total, n_pos, n_neg, max_w, "
@@ -355,14 +378,21 @@ def run_jarvis_flow(
             return
 
         # Réponse finale : on remplace les progress_lines par la réponse
-        # définitive du modèle, suivie d'un footer avec compteur de budget
-        footer = (
-            f"\n\n---\n*Budget : {budget.count} appel(s) d'outil"
-            f"{'s' if budget.count > 1 else ''} consommé(s)"
-            f"{' / ' + str(budget.limit) if budget.limit else ''}.*"
-        )
-        if budget.exhausted:
-            footer += " ⚠️ **Budget atteint** — relance avec un budget plus large si besoin."
+        # définitive du modèle, suivie d'un footer avec compteur (limite
+        # n'est mentionnée que si elle est bornée).
+        n = budget.count
+        if budget.limit:
+            footer = (
+                f"\n\n---\n*Budget : {n} appel{'s' if n > 1 else ''} "
+                f"d'outils consommé{'s' if n > 1 else ''} / {budget.limit}.*"
+            )
+            if budget.exhausted:
+                footer += " ⚠️ **Budget atteint** — relance avec un budget plus large si besoin."
+        else:
+            footer = (
+                f"\n\n---\n*Budget illimité — {n} appel{'s' if n > 1 else ''} "
+                f"d'outils consommé{'s' if n > 1 else ''}.*"
+            )
         yield [
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": (final_answer or "*(réponse vide)*") + footer},
