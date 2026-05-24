@@ -1642,11 +1642,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             with gr.Row():
                                 jg_route_enrich = gr.Button("→ Enrichir ce trou", scale=1)
                                 jg_route_audit = gr.Button("→ Auditer", scale=1)
-                                jg_route_stats = gr.Button("→ Stats", scale=1, interactive=False)
-                            gr.Markdown(
-                                "<small><em>Stats sera actif quand son "
-                                "sous-onglet sera déployé (Phase 13.6).</em></small>"
-                            )
+                                jg_route_stats = gr.Button("→ Stats", scale=1)
                         with gr.Column(scale=2):
                             jg_gaps_table = gr.Dataframe(
                                 headers=["term", "relation", "type", "sévérité", "détail"],
@@ -1851,10 +1847,91 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
                 with gr.Tab("📊 Stats", id="jarvis-stats"):
                     gr.Markdown(
-                        "*Sous-onglet en construction (Phase 13.6).*\n\n"
-                        "Statistiques de couverture par terme (distribution "
-                        "des relations, poids positifs/négatifs, max/min/moy) "
-                        "ou par relation (top triplets, distribution typique)."
+                        "Statistiques de couverture JDM. Deux modes "
+                        "(combinables) :\n"
+                        "* **PAR_TERME** — distribution des triplets sur "
+                        "les relations principales pour un terme donné.\n"
+                        "* **PAR_RELATION** — distribution typique d'une "
+                        "relation sur des termes-pivots variés.\n\n"
+                        "Le LLM rend un tableau machine-lisible + des "
+                        "observations clés en prose."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            jst_term = gr.Textbox(
+                                label="Terme (optionnel — mode PAR_TERME)",
+                                placeholder="ex: chat",
+                            )
+                            jst_relation = gr.Dropdown(
+                                choices=[""] + JARVIS_RELATIONS,
+                                value="",
+                                label="Relation (optionnel — mode PAR_RELATION)",
+                                allow_custom_value=True,
+                            )
+                            gr.Markdown(
+                                "<small><em>Au moins un des deux champs "
+                                "doit être rempli. Les deux ensemble "
+                                "déclenchent les deux modes en séquence.</em></small>"
+                            )
+                            jst_launch = gr.Button(
+                                "📊 Lancer les stats",
+                                variant="primary",
+                            )
+                        with gr.Column(scale=2):
+                            jst_chat = gr.Chatbot(
+                                type="messages",
+                                elem_id="jarvis-stats-chat",
+                                show_label=False,
+                                resizable=True,
+                                height=520,
+                            )
+
+                    def _run_stats(term, relation, drops_key, model, budget_label):
+                        from jarvis import build_stats_prompt, run_jarvis_flow
+                        from jdm_agent.tools.jdm_agent import build_jdm_agent
+                        if not (term or "").strip() and not (relation or "").strip():
+                            yield [{"role": "assistant",
+                                    "content": "⚠️ Saisis au moins un terme OU une relation."}]
+                            return
+                        prompt = build_stats_prompt(
+                            term=term, relation=relation,
+                            budget_label=str(budget_label),
+                        )
+                        yield from run_jarvis_flow(
+                            prompt=prompt, model=model, api_key="",
+                            budget_label=str(budget_label),
+                            drops_key=drops_key,
+                            build_llm_fn=_build_llm,
+                            build_agent_fn=build_jdm_agent,
+                            get_client_fn=get_client,
+                        )
+
+                    jst_launch.click(
+                        _run_stats,
+                        inputs=[jst_term, jst_relation,
+                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                        outputs=[jst_chat],
+                    )
+
+                    # Routage du bouton « → Stats » du sous-onglet Détection
+                    # (jst_term/jst_relation existent maintenant — forward
+                    # refs OK pour ce câblage tardif).
+                    def _route_gap_to_stats(gap_label):
+                        if not gap_label:
+                            return (gr.update(), gr.update(), gr.update())
+                        parts = [p.strip() for p in gap_label.split("|")]
+                        if len(parts) < 2:
+                            return (gr.update(), gr.update(), gr.update())
+                        term_v, relation_v = parts[0], parts[1]
+                        return (
+                            gr.update(value=term_v),
+                            gr.update(value=relation_v),
+                            gr.update(selected="jarvis-stats"),
+                        )
+                    jg_route_stats.click(
+                        _route_gap_to_stats,
+                        inputs=[jg_gap_dropdown],
+                        outputs=[jst_term, jst_relation, jarvis_tabs],
                     )
 
     gr.Markdown(
