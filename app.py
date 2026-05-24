@@ -940,6 +940,15 @@ _CHATBOT_CSS = """
   overflow-y: auto;
 }
 #agent-chatbot .message-wrap { height: auto !important; }
+
+/* Champ clé API : quand le textbox est interactive=False (i.e. l'input
+   est disabled), on grise AUSSI le label et l'info de placeholder, pas
+   seulement le champ. CSS :has() supporté par tous les navigateurs
+   modernes (Chrome 105+, Firefox 121+, Safari 15.4+). */
+#key-in:has(input[disabled]),
+#key-in:has(input:disabled) {
+  opacity: 0.55;
+}
 """
 
 with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_CSS) as demo:
@@ -1134,6 +1143,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     type="password",
                     placeholder="Non requis pour les modèles Gemini hébergés",
                     interactive=False,
+                    elem_id="key-in",
                     scale=3,
                 )
                 model_in = gr.Dropdown(
