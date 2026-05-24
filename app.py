@@ -629,22 +629,28 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
             "b64": b64,
         })
 
-    files_json = _json.dumps(files_data)
+    # Données embarquées en attribut data-viz du container.
+    # vizClose() les lit depuis le DOM au moment du clic (plus robuste
+    # qu'un setter `window.vizData = ...` via script inline ou onerror
+    # qui peut ne pas être ré-exécuté après replace du DOM par Gradio).
+    files_attr = _json.dumps(files_data).replace('"', "&quot;")
 
-    # Le HTML pose seulement les éléments + un set de window.vizData.
-    # Les fonctions vizClose / vizOpen sont définies globalement dans
-    # _HEAD_JS (sinon Gradio sanitise les <script> inline).
+    # Couleurs adaptatives au thème via CSS variables Gradio
+    # (--block-background-fill, --body-text-color, etc.) — fond
+    # transparent qui hérite du composant parent. Pas de fond blanc
+    # forcé qui tranche avec le thème dark.
     return f"""
-<div id="viz-container" style="margin:8px 0;border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden;">
-  <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f3f4f6;border-bottom:1px solid #ddd;">
-    <span style="font-weight:500;color:#444;font-size:0.9em">
+<div id="viz-container" data-viz="{files_attr}"
+     style="margin:8px 0;border:1px solid var(--border-color-primary,#ddd);border-radius:8px;background:var(--block-background-fill,transparent);overflow:hidden;">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--background-fill-secondary,#f3f4f6);border-bottom:1px solid var(--border-color-primary,#ddd);">
+    <span style="font-weight:500;color:var(--body-text-color,#444);font-size:0.9em">
       🕸️ <span id="viz-title">Visualisation interactive du sous-graphe</span>
-      <span style="color:#999;font-size:0.85em">
-        (zoom : molette · déplacer : glisser · double-clic : recentrer)
+      <span style="color:var(--body-text-color-subdued,#999);font-size:0.85em">
+        — zoom : molette · déplacer : glisser · double-clic : recentrer
       </span>
     </span>
     <button id="viz-close-btn" onclick="window.vizClose()"
-            style="background:#fff;border:1px solid #ccc;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.85em;color:#444;">
+            style="background:var(--button-secondary-background-fill,#fff);border:1px solid var(--border-color-primary,#ccc);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.85em;color:var(--body-text-color,#444);">
       ✖ Fermer
     </button>
   </div>
@@ -652,13 +658,12 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
           style="width:100%;height:700px;border:0;background:#fff;display:block;"
           sandbox="allow-scripts allow-same-origin"></iframe>
   <div id="viz-list" style="display:none;padding:14px;">
-    <div style="font-weight:500;color:#444;margin-bottom:10px;">
+    <div style="font-weight:500;color:var(--body-text-color,#444);margin-bottom:10px;">
       📁 Visualisations générées dans cette session
     </div>
-    <div id="viz-list-rows"></div>
+    <div id="viz-list-rows" style="color:var(--body-text-color,#444);"></div>
   </div>
 </div>
-<img src="x" style="display:none" onerror="window.vizData = {files_json};" />
 """
 
 
@@ -791,15 +796,19 @@ def viz_subgraph(term: str, depth: float,
 
 
 # JS GLOBAL injecté dans le <head> de la page Gradio.
-# Contient les fonctions vizClose / vizOpen utilisées par les boutons
-# onclick du composant viz. Le <script> à l'intérieur d'un gr.HTML n'est
-# pas exécuté par Gradio v5 (sanitisation), on remonte les fonctions ici.
-# window.vizData est mis à jour à chaque nouveau rendu (script inline
-# dans le HTML de viz_html_out — voir _stage_viz_html).
+# Fonctions vizClose / vizOpen utilisées par les boutons onclick du
+# composant viz. Le <script> à l'intérieur d'un gr.HTML n'est PAS
+# exécuté par Gradio v5 (sanitisation), donc fonctions remontées ici.
+# Les données sont lues depuis l'attribut data-viz du #viz-container
+# au moment du clic (toujours synchro avec le DOM actuel).
 _HEAD_JS = """
 <script>
 (function() {
-  window.vizData = window.vizData || [];
+  function getVizData() {
+    var c = document.getElementById('viz-container');
+    if (!c || !c.dataset.viz) return [];
+    try { return JSON.parse(c.dataset.viz); } catch (e) { return []; }
+  }
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function(c) {
@@ -813,17 +822,22 @@ _HEAD_JS = """
     var rows = document.getElementById('viz-list-rows');
     var btn = document.getElementById('viz-close-btn');
     if (!ifr || !list || !rows || !btn) return;
+    var data = getVizData();
     ifr.style.display = 'none';
     btn.style.display = 'none';
     list.style.display = 'block';
-    rows.innerHTML = window.vizData.map(function(f, idx) {
-      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;">'
-        + '<a href="#" onclick="window.vizOpen(' + idx + ');return false;" style="color:#7c3aed;text-decoration:none;font-weight:500;">'
+    if (data.length === 0) {
+      rows.innerHTML = '<div style="color:var(--body-text-color-subdued,#999);font-style:italic;padding:6px 0;">Aucune visualisation dans la session pour l\\'instant.</div>';
+      return;
+    }
+    rows.innerHTML = data.map(function(f, idx) {
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-color-primary,#eee);">'
+        + '<a href="#" onclick="window.vizOpen(' + idx + ');return false;" style="color:var(--link-text-color,#7c3aed);text-decoration:none;font-weight:500;flex:1;">'
         + esc(f.label) + '</a>'
-        + '<span style="color:#999;font-size:0.85em;">'
-        + f.size_kb + ' KB'
-        + '&nbsp;<a href="data:text/html;base64,' + f.b64 + '" download="' + esc(f.id) + '.html"'
-        + ' style="color:#666;text-decoration:none;border:1px solid #ccc;border-radius:4px;padding:2px 8px;margin-left:8px;font-size:0.85em;">⬇ Télécharger</a>'
+        + '<span style="color:var(--body-text-color-subdued,#999);font-size:0.85em;display:flex;align-items:center;gap:10px;">'
+        + '<span>' + f.size_kb + ' KB</span>'
+        + '<a href="data:text/html;base64,' + f.b64 + '" download="' + esc(f.id) + '.html"'
+        + ' style="color:var(--body-text-color,#666);text-decoration:none;border:1px solid var(--border-color-primary,#ccc);border-radius:4px;padding:3px 10px;font-size:0.85em;background:var(--button-secondary-background-fill,#fff);">⬇ Télécharger</a>'
         + '</span>'
         + '</div>';
     }).join('');
@@ -835,8 +849,10 @@ _HEAD_JS = """
     var btn = document.getElementById('viz-close-btn');
     var title = document.getElementById('viz-title');
     if (!ifr || !list || !btn) return;
-    ifr.src = 'data:text/html;base64,' + window.vizData[idx].b64;
-    if (title) title.textContent = window.vizData[idx].label;
+    var data = getVizData();
+    if (!data[idx]) return;
+    ifr.src = 'data:text/html;base64,' + data[idx].b64;
+    if (title) title.textContent = data[idx].label;
     ifr.style.display = 'block';
     btn.style.display = 'inline-block';
     list.style.display = 'none';
