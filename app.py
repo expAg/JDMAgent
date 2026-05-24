@@ -428,12 +428,14 @@ def _history_to_lc(history: list[dict], current_user_message: str) -> list:
         if role == "user":
             lc.append(HumanMessage(content=content))
         elif role == "assistant":
-            # On nettoie le bloc <details>"Outils JDM appelés" en fin de
-            # message pour garder un historique conversationnel propre.
-            # Fallback aussi sur l'ancien format markdown pour les sessions
-            # héritées qui n'auraient pas encore basculé.
-            answer_only = content.split("\n\n<details>")[0]
-            answer_only = answer_only.split("\n\n---\n*Outils JDM appelés*")[0].strip()
+            # On nettoie de l'historique LLM tous les blocs HTML lourds
+            # (iframe viz, <details> outils) et l'ancien marker markdown,
+            # pour garder un historique conversationnel léger.
+            answer_only = content
+            for marker in ("\n\n<iframe", "\n\n<details>",
+                            "\n\n---\n*Outils JDM appelés*"):
+                answer_only = answer_only.split(marker, 1)[0]
+            answer_only = answer_only.strip()
             if answer_only:
                 lc.append(AIMessage(content=answer_only))
     lc.append(HumanMessage(content=current_user_message))
@@ -559,21 +561,41 @@ def _extract_html_path(tool_message_content: str) -> Optional[str]:
 
 
 def _build_viz_iframe(html_path: str) -> Optional[str]:
-    """Lit le HTML viz et le renvoie sous forme d'iframe data URI prêt
-    à embarquer dans une bulle de chat. Retourne None si lecture échoue.
+    """Renvoie une iframe pointant vers le fichier HTML viz, servi par
+    Gradio via `allowed_paths` (déclaré dans demo.launch).
+
+    Stratégie file=`/file=...` plutôt que data URI base64 inline : pour
+    une viz dense (1-2 MB), l'inline saturait le DOM Gradio et figeait
+    le navigateur après quelques tours. Avec /file=, l'iframe lazy-load
+    l'URL et vis-network s'exécute dans son propre contexte isolé.
+
+    On copie le fichier dans VIZ_DIR (qui EST dans allowed_paths) avec
+    un nom hashé pour éviter les collisions et garantir que Gradio
+    accepte de servir le fichier.
+
+    Retourne None si la copie/lecture échoue → le chat continue sans
+    embed, juste avec le texte.
     """
-    import base64 as _b64
+    import shutil
     from pathlib import Path as _Path
+    src = _Path(html_path)
+    if not src.exists():
+        return None
     try:
-        text = _Path(html_path).read_text(encoding="utf-8")
+        # Nom stable basé sur le contenu pour cacher les requêtes répétées.
+        stem = src.stem
+        dest = VIZ_DIR / f"chat_{stem}_{abs(hash(str(src.resolve()))) % 10**8}.html"
+        if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+            shutil.copyfile(src, dest)
     except Exception:
         return None
-    b64 = _b64.b64encode(text.encode("utf-8")).decode("ascii")
+    # Gradio expose les fichiers d'allowed_paths via `/gradio_api/file=` ou
+    # `/file=` selon la version ; on prend la forme officielle moderne.
     return (
-        f'<iframe src="data:text/html;base64,{b64}" '
+        f'<iframe src="/gradio_api/file={dest.resolve()}" '
         f'style="width:100%;height:600px;border:1px solid #ddd;'
         f'border-radius:8px;background:#fff;display:block;" '
-        f'sandbox="allow-scripts allow-same-origin"></iframe>'
+        f'sandbox="allow-scripts allow-same-origin" loading="lazy"></iframe>'
     )
 
 
