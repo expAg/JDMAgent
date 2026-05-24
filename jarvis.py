@@ -131,25 +131,6 @@ def build_audit_prompt(
         ))
     if relation:
         parts.append(f"Restreins l'audit à la relation `{relation}`.")
-    else:
-        parts.append(
-            "Pas de relation imposée : BALAYE largement — examine TOUTES "
-            "les relations sur lesquelles le terme générique a des triplets "
-            "(ou un échantillon large et varié si le budget est trop "
-            "serré pour tout). Pioche dans les ~180 relations JDM via "
-            "`list_relation_types`. NE TE LIMITE PAS à une seule ni à "
-            "un quintette canonique r_isa/r_carac/r_has_part — les "
-            "contaminations les plus intéressantes sont souvent sur des "
-            "relations rares."
-        )
-    parts.append(
-        "Détecte les CONTAMINATIONS du terme générique par des relations "
-        "qui appartiennent à des sens NON-PREMIERS (2e, 3e, … par poids "
-        "r_raff_sem). Examine TOUS les sens non-premiers, pas un top "
-        "arbitraire. Signale aussi tout cas où le sens classé 1er par "
-        "r_raff_sem n'est pas, selon ton jugement, celui qui devrait "
-        "intuitivement être premier en français contemporain."
-    )
     if _is_bounded_budget(budget_label):
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum. Au-delà, "
