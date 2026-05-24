@@ -705,50 +705,50 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
 
 THEME = gr.themes.Soft(primary_hue="violet", secondary_hue="amber")
 
-PROJET_MD = """# JDMAgent
+PROJET_MD = """# JDMAgent — Démo interactive
 
-**Agentification de [JeuxDeMots](https://www.jeuxdemots.org)** — le graphe
-lexico-sémantique du français de M. Lafourcade et l'équipe TEXTE
-(LIRMM/CNRS) — pour les LLM modernes via LangChain et le Model Context
-Protocol.
+**Objectif** : agentification de [JeuxDeMots](https://www.jeuxdemots.org)
+(LIRMM/CNRS, ~2 M nœuds, 180+ relations typées) pour les LLM modernes via
+**LangChain** et le **Model Context Protocol**.
 
-≈ 2 millions de nœuds · 180+ relations typées · 15+ ans de jeu collaboratif.
+## Que peux-tu faire dans cette démo ?
 
-## Cette démo en 6 onglets
+- **🔎 Explorer JDM** — choisis un terme et une relation, vois les triplets
+  triés par poids consensuel. Annotations sémantiques (constitutif,
+  contrastif, exception, …) optionnelles. Désambiguïsation des termes
+  polysémiques (avocat, souris, police…).
+- **⚖️ Claim checker** — vérifie une affirmation factuelle contre JDM de
+  façon **déterministe** (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN
+  avec citations des triplets utilisés.
+- **🕸️ Sous-graphe** — visualisation interactive (vis-network) du
+  voisinage sémantique d'un terme jusqu'à profondeur 4, sélection de
+  relations indépendante par niveau, négations en rouge.
+- **🤖 Agent** — conversation avec un agent (Gemini hébergé gratuit, ou
+  BYOK Claude/GPT) qui n'utilise QUE les outils JDM et cite ses sources.
+- **🦾 Jarvis** — flux guidés par formulaires (zéro prompt à taper) :
+  - *Enrichissement* — propose et consolide de nouveaux triplets (`.enrich`)
+  - *Audit* — détecte les contaminations par les sens non-premiers (`.audit`)
+  - *Détection de trous* — flagge MISSING / NEGATIVE / LOW_COVERAGE
+  - *Signalement* — flagge les triplets suspects au LLM (`.err`)
+  - *Statistiques* — couverture par relation et par termes rencontrés (`.stat`)
 
-| Onglet | Ce qu'il fait | LLM ? |
-|---|---|---|
-| 🔎 **Explorer JDM** | Triplets pour un terme/relation, triés par poids | Non — déterministe |
-| ⚖️ **Claim checker** | Vérifie A·R·B contre JDM (3 efforts d'inférence) | Non — déterministe |
-| 🕸️ **Sous-graphe** | Voisinage interactif vis-network (profondeur ≤ 4) | Non — déterministe |
-| 🤖 **Agent** | Chat libre avec un agent qui cite ses sources | Gemini hébergé (gratuit) ou BYOK Claude/GPT |
-| 🦾 **Jarvis** | 5 flux guidés par formulaire (Enrich / Audit / Gap / Signal / Stat) | Gemini par défaut, multi-modèle |
-| 🛠️ **Aide** | Installation locale, MCP, clés API, format des fichiers | — |
+## Le projet en bref
 
-## Trois positions méthodologiques
+- Couche client typée (`JDMClient`) sur l'[API JeuxDeMots](https://jdm-api.demo.lirmm.fr)
+  + cache disque + retry exponentiel.
+- ~35 outils MCP exposés à n'importe quel client (Claude Code/Desktop,
+  Cursor, etc.) via [FastMCP](https://github.com/jlowin/fastmcp).
+- Pipeline fact-check déterministe + détection de gaps + **moteur
+  d'inférence symbolique borné** pour la consolidation des candidats avant
+  soumission au canal contributif LLMDrops de JDM.
+- Visualisation sous-graphe HTML autonome (vis-network) avec sélection de
+  relations par niveau, palette par famille de relation et opacité
+  progressive.
 
-1. **Graphe typé ≻ RAG vectoriel** pour la connaissance lexicale —
-   relations explicitement typées navigables, désambiguïsation par
-   raffinements de sens.
-2. **Hybride neuro-symbolique séparé** pour le fact-checking —
-   extraction par LLM, vérification déterministe en Python ; jamais
-   *LLM-as-judge*.
-3. **Inférence symbolique bornée** pour la consolidation — un candidat
-   d'enrichissement n'est soumis à JDM que s'il est *déductible* du
-   graphe existant. Ferme la boucle créativité ↔ logique.
-
-## Pour aller plus loin
-
-Le **serveur MCP** expose les ~35 outils JDM à tout client compatible
-(Claude Code/Desktop, Cursor, Continue) en une commande :
-```bash
-claude mcp add jdm --scope user -- python -m jdm_agent.mcp.server
-```
-
-**Données** : JeuxDeMots — M. Lafourcade & équipe TEXTE, LIRMM/CNRS.
+**Données** : JeuxDeMots — Mathieu Lafourcade, équipe TEXTE, LIRMM/CNRS.
 
 **Liens** :
-[Code & README académique](https://github.com/expAg/JDMAgent) ·
+[Code source & README académique](https://github.com/expAg/JDMAgent) ·
 [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md) ·
 [Notebook Colab](https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb)
 """
