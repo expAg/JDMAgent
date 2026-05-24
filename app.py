@@ -922,24 +922,88 @@ _HEAD_JS = """
     btn.style.display = 'inline-block';
     list.style.display = 'none';
   };
+
+  // ---------- Chatbot auto-resize (content-aware) ----------
+  // Gradio v5 gr.Chatbot a une hauteur fixe par défaut. On observe les
+  // changements de contenu et on adapte dynamiquement la hauteur du
+  // .bubble-wrap :
+  //   - vide (0 message) → 90 px (compact)
+  //   - rempli → grandit avec le contenu jusqu'à 85vh (≈ pleine fenêtre)
+  // Centrage : à chaque nouveau message, on scroll le chatbot dans la
+  // vue centrée verticalement → l'utilisateur n'a presque pas à scroller.
+  function resizeChatbot() {
+    var root = document.getElementById('agent-chatbot');
+    if (!root) return;
+    var wrap = root.querySelector('.bubble-wrap')
+            || root.querySelector('[class*="bubble-wrap"]')
+            || root.querySelector('.wrap');
+    if (!wrap) return;
+    // Compte les messages réels
+    var msgs = root.querySelectorAll('.message, [class*="message-row"], [data-testid="bot"], [data-testid="user"]');
+    var isEmpty = msgs.length === 0;
+    var maxH = Math.floor(window.innerHeight * 0.85);
+    var minH = isEmpty ? 90 : 200;
+    // Hauteur naturelle du contenu (scrollHeight) bornée par max
+    wrap.style.height = 'auto';
+    wrap.style.maxHeight = maxH + 'px';
+    wrap.style.minHeight = minH + 'px';
+    // Si contenu présent et qu'il pousse au-delà du minH, on suit le
+    // scrollHeight pour ne pas créer une scrollbar inutile.
+    if (!isEmpty) {
+      var natural = wrap.scrollHeight;
+      var target = Math.min(natural, maxH);
+      if (target > minH) wrap.style.height = target + 'px';
+    } else {
+      wrap.style.height = minH + 'px';
+    }
+  }
+
+  // Lance au load, puis observe le DOM du chatbot pour réagir aux
+  // ajouts/suppressions de messages (et streaming progressif).
+  function bindChatbotObserver() {
+    var root = document.getElementById('agent-chatbot');
+    if (!root || root.__resizeBound) {
+      // Pas encore monté — retry au prochain tick
+      if (!root) { setTimeout(bindChatbotObserver, 400); return; }
+      return;
+    }
+    root.__resizeBound = true;
+    resizeChatbot();
+    new MutationObserver(function() {
+      resizeChatbot();
+    }).observe(root, { childList: true, subtree: true, characterData: true });
+    window.addEventListener('resize', resizeChatbot);
+  }
+  document.addEventListener('DOMContentLoaded', bindChatbotObserver);
+  // Filet de sécurité : Gradio rend les composants après DOMContentLoaded
+  setTimeout(bindChatbotObserver, 800);
+  setTimeout(bindChatbotObserver, 2000);
 })();
 </script>
 """
 
 _CHATBOT_CSS = """
-/* Chatbot agent : grandit avec le contenu, compact quand vide, scroll
-   interne au-delà de max-height. Cible le bubble-wrap (zone scrollable
-   v5 de gr.Chatbot) sous notre elem_id #agent-chatbot. Le bloc parent
-   .block reste flexible — on retire le min-height par défaut Gradio qui
-   force ~480 px sinon. */
-#agent-chatbot { min-height: 0 !important; }
-#agent-chatbot .bubble-wrap {
+/* Chatbot agent : compact quand vide, grandit avec le contenu jusqu'à
+   ~85vh (presque la hauteur de la fenêtre). On force min-height à 0 sur
+   le wrapper et tous les enfants pour défaire la hauteur fixe par défaut
+   Gradio. Le JS dans _HEAD_JS surveille les changements de contenu et
+   ajuste dynamiquement la hauteur réelle. */
+#agent-chatbot,
+#agent-chatbot > div,
+#agent-chatbot .wrap,
+#agent-chatbot .bubble-wrap,
+#agent-chatbot .message-wrap,
+#agent-chatbot [class*="bubble-wrap"],
+#agent-chatbot [class*="message-wrap"] {
+  min-height: 0 !important;
+  max-height: none !important;
+}
+#agent-chatbot { height: auto !important; }
+#agent-chatbot .bubble-wrap,
+#agent-chatbot [class*="bubble-wrap"] {
   height: auto !important;
-  min-height: 120px !important;
-  max-height: 820px !important;
   overflow-y: auto;
 }
-#agent-chatbot .message-wrap { height: auto !important; }
 
 /* Champ clé API : quand le textbox est interactive=False (i.e. l'input
    est disabled), on grise AUSSI le label et l'info de placeholder, pas
