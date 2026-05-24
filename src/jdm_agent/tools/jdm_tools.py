@@ -1156,8 +1156,8 @@ def audit_workflow() -> dict:
                 "description": (
                     "Choisis les relations à auditer — celles précisées "
                     "par l'utilisateur si fournies, sinon celles que tu "
-                    "décides toi-même (`list_relation_types` pour les "
-                    "découvrir). Pour chacune, appelle "
+                    "décides toi-même (variées, `list_relation_types` "
+                    "pour les découvrir). Pour chacune, appelle "
                     "`get_relations_of_type(term, relation_name)` sur la "
                     "FORME NUE du terme et garde tous les triplets."
                 ),
@@ -1308,8 +1308,8 @@ def gap_detection_workflow() -> dict:
                     "/ NEGATIVE_FILLED (que des triplets négatifs — JDM "
                     "a regardé et dit non) / LOW_COVERAGE (< N triplets "
                     "positifs). Si l'utilisateur n'a fourni aucune "
-                    "relation cible, choisis-les toi-même "
-                    "(`list_relation_types` pour les découvrir)."
+                    "relation cible, choisis-les toi-même (variées, "
+                    "`list_relation_types` pour les découvrir)."
                 ),
                 "tool": "list_relation_types + detect_gaps",
             },
@@ -1369,8 +1369,8 @@ def signalement_workflow() -> dict:
                 "description": (
                     "Si une relation a été fournie, restreins le scan à "
                     "elle. Sinon, choisis toi-même les relations à "
-                    "scanner. Si le terme est polysémique, traite chaque "
-                    "sens raffiné séparément."
+                    "scanner (variées). Si le terme est polysémique, "
+                    "traite chaque sens raffiné séparément."
                 ),
                 "tool": "list_relation_types (si besoin)",
             },
@@ -1480,8 +1480,8 @@ def stats_workflow() -> dict:
                 "name": "Mode PAR_TERME",
                 "description": (
                     "Si un terme est fourni : choisis toi-même les "
-                    "relations à examiner (`list_relation_types` pour "
-                    "les découvrir). Pour chaque relation choisie, "
+                    "relations à examiner (variées, `list_relation_types` "
+                    "pour les découvrir). Pour chaque relation choisie, "
                     "appelle `list_existing_for_enrichment(term, "
                     "relation_name)` — c'est EXHAUSTIF (pas de seuil ni "
                     "de limite, contrairement à get_*). Compte nb total, "
