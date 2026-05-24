@@ -518,27 +518,19 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         yield f"❌ Erreur agent : {e}"
         return
 
-    # Sortie finale : 100 % markdown plat. Aucun HTML, parce que
-    # gr.Chatbot v5 (avec ou sans sanitize_html) fragmente n'importe
-    # quel tag inconnu en un caractère par ligne et casse l'affichage.
+    # Sortie finale : UNIQUEMENT le texte de l'agent, rien d'append derrière.
+    # Cause confirmée empiriquement : avec Gemini 3.x, ajouter QUOI QUE CE
+    # SOIT après final_answer (même une seule ligne italique de compteur)
+    # fragmente l'append en un caractère par ligne dans gr.Chatbot. Cause
+    # racine probable : la fin du contenu Gemini 3.x perturbe le diff
+    # incremental du renderer Chatbot quand on essaie d'append.
+    #
+    # Trade-off assumé : on perd l'affichage du compteur d'outils et du
+    # lien viz dans la bulle finale. Mais :
+    #  - les outils s'affichent en direct pendant le streaming (visible)
+    #  - le chemin du fichier viz est inclus par l'agent dans son texte
+    #    de réponse (cf. system prompt)
     out = final_answer or "*(réponse vide)*"
-
-    # Viz : lien markdown standard. Gradio le rendra cliquable et
-    # l'ouverture dans un nouvel onglet dépend du client (Ctrl+clic
-    # marche toujours, sinon clic simple change d'onglet selon le
-    # comportement par défaut du navigateur).
-    if viz_path:
-        viz_url = _build_viz_url(viz_path)
-        if viz_url:
-            out += f"\n\n📊 [Ouvrir la visualisation interactive]({viz_url})"
-
-    # Tools : juste le compteur. La liste détaillée a été visible
-    # pendant le streaming (chaque tool call affiché en direct), pas
-    # besoin de la dupliquer ici. La liste avec listes markdown causait
-    # une fragmentation par caractère systématique sur Gemini 3.x —
-    # une seule ligne italique ne pète jamais.
-    if tool_traces:
-        out += f"\n\n*({len(tool_traces)} outils JDM appelés)*"
     yield out
 
 
