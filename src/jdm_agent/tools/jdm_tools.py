@@ -1154,12 +1154,11 @@ def audit_workflow() -> dict:
                 "order": 3,
                 "name": "Inventaire des triplets sur le terme générique",
                 "description": (
-                    "Pour chaque relation à auditer — la relation cible "
-                    "si l'utilisateur l'a précisée, sinon TOUTES les "
-                    "relations sur lesquelles le générique a des triplets "
-                    "(découvrables via `list_relation_types`) — appelle "
-                    "`get_relations_of_type(term, relation_name)` sur la "
-                    "FORME NUE du terme et garde la liste."
+                    "Pour la relation à auditer — celle précisée par "
+                    "l'utilisateur si fournie, sinon tirée au hasard "
+                    "parmi les relations JDM (via `list_relation_types`) — "
+                    "appelle `get_relations_of_type(term, relation_name)` "
+                    "sur la FORME NUE du terme et garde la liste."
                 ),
                 "tool": "list_relation_types + get_relations_of_type",
             },
