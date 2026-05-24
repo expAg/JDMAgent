@@ -233,6 +233,14 @@ class JDMClient:
         """Renvoie les raffinements en décodant les IDs internes (`>40056>171870`)
         en labels humains via des lookups `node_by_id`.
 
+        Le `weight` exposé est celui de la **relation `r_raff_sem`** qui lie
+        le terme racine à son sens raffiné — c'est le score de consensus
+        « ce nœud est-il vraiment un sens de `name` ? » qu'affiche le site
+        jeuxdemots.org. PAS la popularité brute du nœud raffiné lui-même
+        (qui est généralement beaucoup plus faible et trompeuse pour
+        classer les sens). Fallback sur le poids du nœud si la relation
+        n'est pas disponible.
+
         Exemple :
             "avocat>116477>66699" → "avocat (personne, juriste)"
             path=["avocat","personne","juriste"], path_ids=[116477, 66699]
@@ -241,6 +249,20 @@ class JDMClient:
         # Indexe d'abord les nœuds déjà fournis par /refinements pour éviter
         # des aller-retours HTTP supplémentaires sur ceux qu'on connaît déjà.
         local = {n.id: n.name for n in ref.nodes}
+
+        # Récupère les poids r_raff_sem pour avoir le score de consensus
+        # de chaque sens (pas la popularité brute du nœud raffiné).
+        # Cache disque → après le 1er appel c'est gratuit.
+        raff_weights: dict[int, float] = {}
+        try:
+            rid = self.relation_type_id("r_raff_sem")
+            if rid is not None:
+                rels = self.relations_from(name, types_ids=[rid])
+                for rel in rels.relations:
+                    raff_weights[rel.node2] = rel.w
+        except Exception:
+            pass  # fallback silencieux sur r.w (popularité du nœud)
+
         out: list[DecodedRefinement] = []
         for r in ref.refinements:
             parts = r.name.split(">")
@@ -263,9 +285,12 @@ class JDMClient:
                         lbl = f"<id:{nid}>"
                 path.append(lbl)
             decoded = f"{head} ({', '.join(path[1:])})" if len(path) > 1 else head
+            # Poids r_raff_sem (consensus du sens) si dispo, sinon r.w
+            # (popularité brute du nœud — fallback de dernier recours).
+            true_weight = raff_weights.get(r.id, r.w)
             out.append(DecodedRefinement(
                 id=r.id, name=r.name, decoded=decoded,
-                path=path, path_ids=path_ids, weight=r.w,
+                path=path, path_ids=path_ids, weight=true_weight,
             ))
         return out
 
