@@ -1205,6 +1205,32 @@ _HEAD_JS = """
   // Filet de sécurité : Gradio rend les composants après DOMContentLoaded
   setTimeout(bindChatbotObserver, 800);
   setTimeout(bindChatbotObserver, 2000);
+
+  // ---------- Onglet Aide flush à droite ----------
+  // CSS pur ne marche pas de façon fiable (structure DOM Gradio v5
+  // varie). On cherche tous les boutons role="tab" qui contiennent
+  // « Aide » dans leur texte et on leur applique margin-left:auto.
+  function pushAideTabRight() {
+    var tabs = document.querySelectorAll('[role="tab"]');
+    var done = false;
+    for (var i = 0; i < tabs.length; i++) {
+      var label = (tabs[i].textContent || '').trim();
+      if (label.indexOf('Aide') >= 0) {
+        tabs[i].style.marginLeft = 'auto';
+        done = true;
+      }
+    }
+    return done;
+  }
+  document.addEventListener('DOMContentLoaded', pushAideTabRight);
+  setTimeout(pushAideTabRight, 400);
+  setTimeout(pushAideTabRight, 1200);
+  setTimeout(pushAideTabRight, 2500);
+  // Si l'utilisateur clique sur un autre onglet et revient, Gradio peut
+  // re-render et perdre le margin — on observe le DOM.
+  new MutationObserver(function() {
+    pushAideTabRight();
+  }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
 """
@@ -1241,13 +1267,12 @@ _CHATBOT_CSS = """
   opacity: 0.55;
 }
 
-/* Onglet Aide flush à droite — l'onglet Aide est rendu en DERNIER
-   dans la barre principale (gr.Tabs). On le pousse à droite via
-   margin-left:auto sur le dernier bouton de tab du tablist racine.
-   Le sélecteur `.tabs > .tab-nav` cible bien la rangée d'onglets
-   principale (pas celle interne à Jarvis). */
-.tabs > .tab-nav > button:last-child {
-  margin-left: auto;
+/* Onglet Aide flush à droite — appliqué par JS (pushAideTabRight
+   dans _HEAD_JS) qui cherche par texte « Aide » dans tous les
+   boutons role="tab", car la structure DOM Gradio v5 varie. CSS
+   ci-dessous = fallback si le JS échoue. */
+[role="tablist"]:first-of-type > [role="tab"]:last-child {
+  margin-left: auto !important;
 }
 
 /* Pleine largeur pour TOUS les onglets : Gradio v5 fixe un max-width
