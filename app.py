@@ -1590,10 +1590,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 placeholder="ex: guitare",
                             )
                             je_relation = gr.Dropdown(
-                                choices=[""] + JARVIS_RELATIONS,
-                                value="",
-                                label="Relation cible (optionnel)",
+                                choices=JARVIS_RELATIONS,
+                                value=[],
+                                label="Relation(s) cible(s) (optionnel — multi-sélection)",
                                 allow_custom_value=True,
+                                multiselect=True,
                             )
                             je_target_n = gr.Slider(
                                 1, 50, value=10, step=1,
@@ -1624,51 +1625,70 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 resizable=True,
                                 height=520,
                             )
+                            je_file = gr.File(
+                                label="📄 Fichier produit (télécharger)",
+                                interactive=False,
+                                visible=False,
+                            )
+                            je_preview = gr.Code(
+                                label="Aperçu du fichier",
+                                language=None,
+                                lines=12,
+                                interactive=False,
+                                visible=False,
+                            )
 
-                    def _run_enrich(term, relation, target_n, vary, iterate, upload,
+                    def _run_enrich(term, relations, target_n, vary, iterate, upload,
                                     drops_key, model, budget_label):
-                        """Wrapper Gradio : valide les champs, construit le prompt,
-                        lance le flow Jarvis."""
+                        """Wrapper Gradio : construit le prompt, lance le flow Jarvis.
+                        Yield (chatbot, file_update, preview_update)."""
                         from jarvis import build_enrich_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        # Terme vide AUTORISÉ — l'agent tirera un mot au
-                        # hasard (cf. build_enrich_prompt → fallback random).
                         prompt = build_enrich_prompt(
                             term=term,
-                            relation=relation,
+                            relation=relations,
                             target_count=int(target_n),
                             vary_relations=bool(vary),
                             iterate=bool(iterate),
                             budget_label=str(budget_label),
                             upload=bool(upload),
                         )
-                        yield from run_jarvis_flow(
+                        t = (term or "").strip()
+                        headline = (
+                            f"🌱 Enrichissement de « {t} »"
+                            if t else "🌱 Enrichissement (terme tiré au hasard)"
+                        )
+                        for messages, fpath, fprev in run_jarvis_flow(
                             prompt=prompt,
+                            headline=headline,
                             model=model,
-                            api_key="",  # Jarvis utilise les clés env, pas BYOK pour l'instant
+                            api_key="",
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
-                        )
+                        ):
+                            yield (
+                                messages,
+                                gr.update(value=fpath, visible=bool(fpath)),
+                                gr.update(value=fprev, visible=bool(fprev)),
+                            )
 
                     je_launch.click(
                         _run_enrich,
                         inputs=[je_term, je_relation, je_target_n, je_vary,
                                 je_iterate, je_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget],
-                        outputs=[je_chat],
+                        outputs=[je_chat, je_file, je_preview],
                     )
 
                 with gr.Tab("🔍 Audit", id="jarvis-audit"):
                     gr.Markdown(
-                        "Audit sémantique de la répartition des sens d'un "
-                        "terme polysémique entre son nœud générique et ses "
-                        "raffinements. Le LLM rend un verdict par triplet "
-                        "(LEGITIME / DEVRAIT_ETRE_CONTRASTIF / "
-                        "NON_CONTRASTIF / NEGATIVE) plus une section META "
-                        "narrative. Produit un fichier `.audit`."
+                        "Audit sémantique : détecte les CONTAMINATIONS du "
+                        "terme générique par les relations propres aux sens "
+                        "NON-PREMIERS. Produit un fichier `.audit` factuel "
+                        "(SENS + SIGNALEMENTS + META score/10)."
                     )
                     with gr.Row():
                         with gr.Column(scale=1):
@@ -1677,15 +1697,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 placeholder="ex: avocat",
                             )
                             ja_relation = gr.Dropdown(
-                                choices=[""] + JARVIS_RELATIONS,
-                                value="",
-                                label="Relation cible (optionnel)",
+                                choices=JARVIS_RELATIONS,
+                                value=[],
+                                label="Relation(s) à auditer (optionnel — multi-sélection)",
                                 allow_custom_value=True,
-                                info=(
-                                    "Vide = relations par défaut "
-                                    "(r_isa, r_has_part, r_carac, "
-                                    "r_telic_role, r_lieu, r_anto, r_syn)."
-                                ),
+                                multiselect=True,
+                                info="Vide = le LLM choisit (couvre plusieurs types).",
                             )
                             ja_upload = gr.Checkbox(
                                 value=False,
@@ -1704,31 +1721,52 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 resizable=True,
                                 height=520,
                             )
+                            ja_file = gr.File(
+                                label="📄 Fichier produit (télécharger)",
+                                interactive=False,
+                                visible=False,
+                            )
+                            ja_preview = gr.Code(
+                                label="Aperçu du fichier",
+                                language=None,
+                                lines=14,
+                                interactive=False,
+                                visible=False,
+                            )
 
-                    def _run_audit(term, relation, upload, drops_key, model, budget_label):
+                    def _run_audit(term, relations, upload, drops_key, model, budget_label):
                         from jarvis import build_audit_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        # Terme vide AUTORISÉ — l'agent tirera un mot
-                        # polysémique au hasard.
                         prompt = build_audit_prompt(
-                            term=term, relation=relation,
+                            term=term, relation=relations,
                             budget_label=str(budget_label),
                             upload=bool(upload),
                         )
-                        yield from run_jarvis_flow(
-                            prompt=prompt, model=model, api_key="",
+                        t = (term or "").strip()
+                        headline = (
+                            f"🔍 Audit de « {t} »"
+                            if t else "🔍 Audit (terme polysémique tiré au hasard)"
+                        )
+                        for messages, fpath, fprev in run_jarvis_flow(
+                            prompt=prompt, headline=headline,
+                            model=model, api_key="",
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
-                        )
+                        ):
+                            yield (
+                                messages,
+                                gr.update(value=fpath, visible=bool(fpath)),
+                                gr.update(value=fprev, visible=bool(fprev)),
+                            )
 
                     ja_launch.click(
                         _run_audit,
                         inputs=[ja_term, ja_relation, ja_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget],
-                        outputs=[ja_chat],
+                        outputs=[ja_chat, ja_file, ja_preview],
                     )
 
                 with gr.Tab("🕳️ Détection de trous", id="jarvis-gaps"):
@@ -1744,10 +1782,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 label="Terme à analyser (optionnel — vide = tirage au hasard)",
                                 placeholder="ex: smartphone",
                             )
-                            jg_relations = gr.CheckboxGroup(
+                            jg_relations = gr.Dropdown(
                                 choices=JARVIS_RELATIONS,
                                 value=[],
-                                label="Relations à examiner (vide = défaut intelligent)",
+                                label="Relation(s) à examiner (optionnel — multi-sélection)",
+                                allow_custom_value=True,
+                                multiselect=True,
                             )
                             jg_min_pos = gr.Slider(
                                 1, 10, value=3, step=1,
@@ -1848,8 +1888,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             term=term, relations=target_rels,
                             budget_label=str(budget_label),
                         )
-                        for chat_msgs in run_jarvis_flow(
-                            prompt=prompt, model=model, api_key="",
+                        headline = (
+                            f"🕳️ Détection de trous pour « {term} »"
+                            if term else "🕳️ Détection (terme tiré au hasard)"
+                        )
+                        # run_jarvis_flow yield (messages, fpath, fprev) —
+                        # gap_detection ne produit pas de fichier, on ignore
+                        # les 2 derniers.
+                        for chat_msgs, _fpath, _fprev in run_jarvis_flow(
+                            prompt=prompt, headline=headline,
+                            model=model, api_key="",
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
@@ -1876,8 +1924,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             return (gr.update(), gr.update(), gr.update())
                         term_v, relation_v = parts[0], parts[1]
                         return (
-                            gr.update(value=term_v),     # je_term
-                            gr.update(value=relation_v), # je_relation
+                            gr.update(value=term_v),         # je_term
+                            gr.update(value=[relation_v]),   # je_relation (multiselect)
                             gr.update(selected="jarvis-enrich"),  # jarvis_tabs
                         )
 
@@ -1898,7 +1946,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         term_v, relation_v = parts[0], parts[1]
                         return (
                             gr.update(value=term_v),
-                            gr.update(value=relation_v),
+                            gr.update(value=[relation_v]),   # multiselect
                             gr.update(selected="jarvis-audit"),
                         )
                     jg_route_audit.click(
@@ -1910,9 +1958,9 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 with gr.Tab("⚠️ Signalement", id="jarvis-err"):
                     gr.Markdown(
                         "Scanne les triplets d'un terme (optionnellement "
-                        "restreint à une relation) et flagge ceux qui "
-                        "paraissent suspects au LLM. Le LLM utilise son "
-                        "**jugement linguistique** — sa suspicion vaut, "
+                        "restreint à une ou plusieurs relations) et flagge "
+                        "ceux qui paraissent suspects au LLM. Le LLM utilise "
+                        "son **jugement linguistique** — sa suspicion vaut, "
                         "même sans preuve d'outil. Produit un fichier `.err`."
                     )
                     with gr.Row():
@@ -1922,10 +1970,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 placeholder="ex: baleine",
                             )
                             js_relation = gr.Dropdown(
-                                choices=[""] + JARVIS_RELATIONS,
-                                value="",
-                                label="Relation cible (optionnel)",
+                                choices=JARVIS_RELATIONS,
+                                value=[],
+                                label="Relation(s) à scanner (optionnel — multi-sélection)",
                                 allow_custom_value=True,
+                                multiselect=True,
                             )
                             js_upload = gr.Checkbox(
                                 value=False,
@@ -1944,30 +1993,52 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 resizable=True,
                                 height=520,
                             )
+                            js_file = gr.File(
+                                label="📄 Fichier produit (télécharger)",
+                                interactive=False,
+                                visible=False,
+                            )
+                            js_preview = gr.Code(
+                                label="Aperçu du fichier",
+                                language=None,
+                                lines=12,
+                                interactive=False,
+                                visible=False,
+                            )
 
-                    def _run_signalement(term, relation, upload, drops_key, model, budget_label):
+                    def _run_signalement(term, relations, upload, drops_key, model, budget_label):
                         from jarvis import build_signalement_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
-                        # Terme vide AUTORISÉ — l'agent tirera un mot au hasard.
                         prompt = build_signalement_prompt(
-                            term=term, relation=relation,
+                            term=term, relation=relations,
                             budget_label=str(budget_label),
                             upload=bool(upload),
                         )
-                        yield from run_jarvis_flow(
-                            prompt=prompt, model=model, api_key="",
+                        t = (term or "").strip()
+                        headline = (
+                            f"⚠️ Signalement pour « {t} »"
+                            if t else "⚠️ Signalement (terme tiré au hasard)"
+                        )
+                        for messages, fpath, fprev in run_jarvis_flow(
+                            prompt=prompt, headline=headline,
+                            model=model, api_key="",
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
-                        )
+                        ):
+                            yield (
+                                messages,
+                                gr.update(value=fpath, visible=bool(fpath)),
+                                gr.update(value=fprev, visible=bool(fprev)),
+                            )
 
                     js_launch.click(
                         _run_signalement,
                         inputs=[js_term, js_relation, js_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget],
-                        outputs=[js_chat],
+                        outputs=[js_chat, js_file, js_preview],
                     )
 
                 with gr.Tab("📊 Stats", id="jarvis-stats"):
@@ -1988,10 +2059,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 placeholder="ex: chat",
                             )
                             jst_relation = gr.Dropdown(
-                                choices=[""] + JARVIS_RELATIONS,
-                                value="",
-                                label="Relation (optionnel — mode PAR_RELATION)",
+                                choices=JARVIS_RELATIONS,
+                                value=[],
+                                label="Relation(s) (optionnel — multi-sélection, mode PAR_RELATION)",
                                 allow_custom_value=True,
+                                multiselect=True,
                             )
                             gr.Markdown(
                                 "<small><em>Au moins un des deux champs "
@@ -2011,23 +2083,39 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 height=520,
                             )
 
-                    def _run_stats(term, relation, drops_key, model, budget_label):
+                    def _run_stats(term, relations, drops_key, model, budget_label):
                         from jarvis import build_stats_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         # Les deux champs vides AUTORISÉS — l'agent tirera
                         # un terme au hasard en mode PAR_TERME.
                         prompt = build_stats_prompt(
-                            term=term, relation=relation,
+                            term=term, relation=relations,
                             budget_label=str(budget_label),
                         )
-                        yield from run_jarvis_flow(
-                            prompt=prompt, model=model, api_key="",
+                        t = (term or "").strip()
+                        rels = relations if isinstance(relations, list) else (
+                            [relations] if relations else []
+                        )
+                        if t and rels:
+                            headline = f"📊 Stats sur « {t} » + {len(rels)} relation(s)"
+                        elif t:
+                            headline = f"📊 Stats sur « {t} »"
+                        elif rels:
+                            headline = f"📊 Stats sur {len(rels)} relation(s)"
+                        else:
+                            headline = "📊 Stats (terme tiré au hasard)"
+                        # Stats ne produit pas de fichier — on absorbe les
+                        # 2 outputs file/preview du run_jarvis_flow.
+                        for messages, _fpath, _fprev in run_jarvis_flow(
+                            prompt=prompt, headline=headline,
+                            model=model, api_key="",
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
-                        )
+                        ):
+                            yield messages
 
                     jst_launch.click(
                         _run_stats,
@@ -2048,7 +2136,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         term_v, relation_v = parts[0], parts[1]
                         return (
                             gr.update(value=term_v),
-                            gr.update(value=relation_v),
+                            gr.update(value=[relation_v]),   # multiselect
                             gr.update(selected="jarvis-stats"),
                         )
                     jg_route_stats.click(

@@ -1156,8 +1156,10 @@ def audit_workflow() -> dict:
                 "description": (
                     "Choisis les relations à auditer — celles précisées "
                     "par l'utilisateur si fournies, sinon celles que tu "
-                    "décides toi-même (variées, `list_relation_types` "
-                    "pour les découvrir). Pour chacune, appelle "
+                    "décides toi-même (variées, COUVRE UN NOMBRE "
+                    "SUFFISANT de types pour un audit représentatif, "
+                    "`list_relation_types` pour les découvrir). Pour "
+                    "chacune, appelle "
                     "`get_relations_of_type(term, relation_name)` sur la "
                     "FORME NUE du terme et garde tous les triplets."
                 ),
@@ -1217,37 +1219,48 @@ def audit_workflow() -> dict:
             },
             {
                 "order": 7,
-                "name": "Compte rendu narratif (section META)",
+                "name": "Score de santé + commentaire factuel (META)",
                 "description": (
-                    "En PROSE (français, 5-10 lignes max), rédige une "
-                    "vue d'ensemble sur la confusion des sens pour ce "
-                    "terme : combien de contaminations, par quels sens, "
-                    "le sens premier paraît-il fiable, faut-il "
-                    "réorganiser ?  C'est de la lecture humaine pour "
-                    "un mainteneur — pas du parsing machine."
+                    "Calcule un SCORE DE SANTÉ /10 pour ce terme dans "
+                    "JDM : 10 = aucune contamination, sens premier "
+                    "incontestable ; 5 = quelques contaminations sur "
+                    "sens minoritaires, sens premier discutable ; 0 = "
+                    "générique très contaminé, ordre des sens incohérent. "
+                    "Puis rédige UN commentaire FACTUEL et BREF (3-4 "
+                    "lignes max) qui justifie ce score : combien de "
+                    "contaminations, par quels sens, défauts saillants. "
+                    "PAS de dissertation, PAS de définitions, PAS de "
+                    "redondance avec les signalements."
                 ),
-                "tool": "(synthèse linguistique)",
+                "tool": "(synthèse factuelle)",
             },
             {
                 "order": 8,
                 "name": "Écriture du fichier .audit",
                 "description": (
                     "Appelle `write_submission_file(triplets=..., "
-                    "path='<term>_audit.audit', upload=...)`. Le fichier "
-                    "doit comporter DEUX SECTIONS séparées :\n\n"
+                    "path='<term>_audit.audit', upload=...)`. Format "
+                    "strict :\n\n"
+                    "  === SENS ===\n"
+                    "  sense_id | poids_r_raff_sem | label\n"
+                    "  ... (une ligne par sens trouvé via disambiguate) ...\n"
+                    "\n"
                     "  === SIGNALEMENTS ===\n"
                     "  term | relation | target | type | sens_concerné | justification\n"
-                    "  ... une ligne par contamination ou par sens-premier-discutable ...\n"
+                    "  ... (une ligne par contamination ou sens-premier-discutable) ...\n"
+                    "\n"
                     "  === META ===\n"
-                    "  <compte rendu narratif de l'étape 7>\n\n"
+                    "  Score de santé : N/10\n"
+                    "  <commentaire factuel 3-4 lignes max>\n"
+                    "\n"
                     "où `type` ∈ { contamination_sens_non_premier, "
-                    "sens_premier_discutable } et `sens_concerné` = "
-                    "le sense_id raffiné concerné (ex: `avocat>116477>66699` "
-                    "ou sa forme décodée `avocat (personne, juriste)`). "
-                    "Le séparateur `=== META ===` est OBLIGATOIRE.\n\n"
+                    "sens_premier_discutable } et `sens_concerné` = le "
+                    "sense_id raffiné concerné. La justification de "
+                    "chaque ligne SIGNALEMENT tient en UNE phrase courte. "
+                    "PAS de définitions, PAS de prose dans cette section. "
+                    "Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
                     "SOUMISSION optionnelle : si l'utilisateur a demandé "
-                    "d'envoyer, `upload=True` (clé via `api_key=` ou env "
-                    "`JDM_DROPS_API_KEY`)."
+                    "d'envoyer, `upload=True`."
                 ),
                 "tool": "write_submission_file",
             },
@@ -1255,15 +1268,14 @@ def audit_workflow() -> dict:
         "rules": [
             "Le LLM utilise son JUGEMENT linguistique — pas besoin de "
             "vérifier chaque hypothèse par un appel d'outil supplémentaire.",
-            "Le SENS PREMIER = celui de plus fort poids `r_raff_sem` "
-            "(et idéalement le 1er retourné par disambiguate).",
-            "Examine TOUS les sens non-premiers, pas une sélection "
-            "arbitraire top-N. C'est dans les sens minoritaires qu'on "
-            "trouve les contaminations les plus utiles à signaler.",
-            "Section SIGNALEMENTS = machine-lisible (pipe-separated) ; "
-            "section META = prose, lecture humaine.",
+            "Le SENS PREMIER = celui de plus fort poids `r_raff_sem`.",
+            "Examine TOUS les sens non-premiers, pas top-N arbitraire.",
+            "Le fichier .audit est FACTUEL — sections délimitées, "
+            "lignes pipe-separated, META court (score + 3-4 lignes max). "
+            "PAS de dissertation, PAS de définitions.",
             "Ne crée PAS de triplets nouveaux — l'audit examine l'existant.",
-            "Le séparateur `=== META ===` est OBLIGATOIRE.",
+            "Les séparateurs `=== SENS / SIGNALEMENTS / META ===` "
+            "sont OBLIGATOIRES.",
         ],
     }
 
@@ -1367,10 +1379,12 @@ def signalement_workflow() -> dict:
                 "order": 1,
                 "name": "Cadrer le scan",
                 "description": (
-                    "Si une relation a été fournie, restreins le scan à "
-                    "elle. Sinon, choisis toi-même les relations à "
-                    "scanner (variées). Si le terme est polysémique, "
-                    "traite chaque sens raffiné séparément."
+                    "Si une (ou plusieurs) relation a été fournie, "
+                    "restreins le scan à elle(s). Sinon, choisis toi-même "
+                    "les relations à scanner (variées, COUVRE UN NOMBRE "
+                    "SUFFISANT de types pour un scan représentatif). Si "
+                    "le terme est polysémique, traite chaque sens raffiné "
+                    "séparément."
                 ),
                 "tool": "list_relation_types (si besoin)",
             },
@@ -1505,17 +1519,23 @@ def stats_workflow() -> dict:
             },
             {
                 "order": 4,
-                "name": "Synthèse structurée",
+                "name": "Synthèse structurée (2 tableaux + highlights)",
                 "description": (
-                    "Produis un tableau au format markdown ET un dict "
-                    "JSON-like avec :\n"
-                    "  • table : list of {relation, n_total, n_pos, "
-                    "n_neg, max_w, min_w, mean_w}\n"
-                    "  • highlights : 3-5 observations clés en prose "
-                    "(« la relation r_X est sur-représentée », « r_Y "
-                    "est quasi vide pour ce terme », etc.)\n"
-                    "La UI affichera la table en `gr.DataFrame` et un "
-                    "petit graphe en `gr.BarPlot` automatiquement."
+                    "Produis DEUX vues complémentaires sous forme de "
+                    "tableaux markdown, plus des observations.\n\n"
+                    "  1) TABLEAU par RELATION :\n"
+                    "     une ligne par relation auditée, avec\n"
+                    "     `relation | n_total | n_pos | n_neg | max_w | min_w | mean_w`.\n\n"
+                    "  2) TABLEAU par TERMES RENCONTRÉS (= targets) :\n"
+                    "     agrège les cibles (target) de tous les triplets\n"
+                    "     collectés, toutes relations confondues. Top 20\n"
+                    "     par fréquence (puis par poids agrégé), avec\n"
+                    "     `target | nb_occurrences | nb_relations_distinctes | poids_total | poids_max`.\n"
+                    "     Permet de voir quels termes reviennent comme\n"
+                    "     cible et où la couverture se concentre.\n\n"
+                    "  Puis 3-5 OBSERVATIONS clés en prose (« la relation\n"
+                    "  r_X est sur-représentée », « la cible Y revient\n"
+                    "  dans 6 relations différentes », etc.)."
                 ),
                 "tool": "(synthèse — pas d'appel)",
             },
@@ -1526,6 +1546,10 @@ def stats_workflow() -> dict:
             "(exhaustif), PAS `get_synonyms`/`get_parts` qui tronquent.",
             "Mode PAR_RELATION : limite-toi à 5-8 termes-pivots — c'est "
             "une estimation, pas un census complet.",
+            "COUVRE un nombre SUFFISANT de types de relations (≥ 8-12 "
+            "différents si pas de relation imposée) — qualité statistique.",
+            "Rends TOUJOURS les 2 tableaux (par relation ET par termes "
+            "rencontrés) — pas un seul.",
             "Le cache disque rend les stats incrémentales gratuites au "
             "2e appel sur les mêmes termes.",
         ],

@@ -74,18 +74,30 @@ _RANDOM_TERM_INSTRUCTION = (
 )
 
 
+def _norm_relations(rels) -> list[str]:
+    """Normalise une entrée 'relations' qui peut être None, str ou liste."""
+    if rels is None:
+        return []
+    if isinstance(rels, str):
+        rels = [rels]
+    return [str(r).strip() for r in rels if r and str(r).strip()]
+
+
 def build_enrich_prompt(
     term: str,
-    relation: str = "",
+    relation=None,
     target_count: int = 10,
     vary_relations: bool = False,
     iterate: bool = False,
     budget_label: str = "25",
     upload: bool = False,
 ) -> str:
-    """Compose le pré-prompt d'enrichissement à partir du formulaire."""
+    """Compose le pré-prompt d'enrichissement à partir du formulaire.
+
+    `relation` accepte str (rétro-compat), list ou None.
+    """
     term = (term or "").strip()
-    relation = (relation or "").strip()
+    rels = _norm_relations(relation)
     bounded = _is_bounded_budget(budget_label)
     parts: list[str] = []
     if term:
@@ -93,8 +105,13 @@ def build_enrich_prompt(
     else:
         parts.append("Je veux ENRICHIR un terme dans JDM.")
         parts.append(_RANDOM_TERM_INSTRUCTION)
-    if relation:
-        parts.append(f"Relation cible prioritaire : `{relation}`.")
+    if len(rels) == 1:
+        parts.append(f"Relation cible prioritaire : `{rels[0]}`.")
+    elif len(rels) > 1:
+        parts.append(
+            "Relations cibles prioritaires : "
+            + ", ".join(f"`{r}`" for r in rels) + "."
+        )
     if vary_relations:
         parts.append(
             "Varie explicitement les TYPES de relations explorées — "
@@ -141,13 +158,16 @@ def build_enrich_prompt(
 
 def build_audit_prompt(
     term: str,
-    relation: str = "",
+    relation=None,
     budget_label: str = "50",
     upload: bool = False,
 ) -> str:
-    """Compose le pré-prompt d'audit à partir du formulaire."""
+    """Compose le pré-prompt d'audit à partir du formulaire.
+
+    `relation` accepte str (rétro-compat), list ou None.
+    """
     term = (term or "").strip()
-    relation = (relation or "").strip()
+    rels = _norm_relations(relation)
     parts: list[str] = []
     if term:
         parts.append(f"Je veux AUDITER le terme « {term} » dans JDM.")
@@ -161,8 +181,18 @@ def build_audit_prompt(
             "POLYSÉMIQUE (plusieurs sens dans disambiguate) ; sinon "
             "retire un autre mot."
         ))
-    if relation:
-        parts.append(f"Restreins l'audit à la relation `{relation}`.")
+    if len(rels) == 1:
+        parts.append(f"Restreins l'audit à la relation `{rels[0]}`.")
+    elif len(rels) > 1:
+        parts.append(
+            "Restreins l'audit à ces relations : "
+            + ", ".join(f"`{r}`" for r in rels) + "."
+        )
+    else:
+        parts.append(
+            "Pas de relation imposée : couvre un nombre suffisant de "
+            "types de relations (variées) pour faire un audit représentatif."
+        )
     if _is_bounded_budget(budget_label):
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum. Au-delà, "
@@ -194,11 +224,16 @@ def build_gap_prompt(
     else:
         parts.append("Je veux DÉTECTER les trous de JDM pour un terme.")
         parts.append(_RANDOM_TERM_INSTRUCTION)
-    if relations:
-        rels = ", ".join(f"`{r}`" for r in relations if r)
-        parts.append(f"Relations cibles : {rels}.")
+    rels = _norm_relations(relations)
+    if rels:
+        parts.append(
+            "Relations cibles : " + ", ".join(f"`{r}`" for r in rels) + "."
+        )
     else:
-        parts.append("Pas de relation imposée : choisis-les toi-même (variées).")
+        parts.append(
+            "Pas de relation imposée : choisis-les toi-même (variées, "
+            "couvre un nombre suffisant de types)."
+        )
     if _is_bounded_budget(budget_label):
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum."
@@ -216,13 +251,16 @@ def build_gap_prompt(
 
 def build_signalement_prompt(
     term: str,
-    relation: str = "",
+    relation=None,
     budget_label: str = "50",
     upload: bool = False,
 ) -> str:
-    """Compose le pré-prompt de signalement à partir du formulaire."""
+    """Compose le pré-prompt de signalement à partir du formulaire.
+
+    `relation` accepte str (rétro-compat), list ou None.
+    """
     term = (term or "").strip()
-    relation = (relation or "").strip()
+    rels = _norm_relations(relation)
     parts: list[str] = []
     if term:
         parts.append(
@@ -231,10 +269,18 @@ def build_signalement_prompt(
     else:
         parts.append("Je veux SIGNALER les triplets suspects de JDM pour un terme.")
         parts.append(_RANDOM_TERM_INSTRUCTION)
-    if relation:
-        parts.append(f"Restreins le scan à la relation `{relation}` seule.")
+    if len(rels) == 1:
+        parts.append(f"Restreins le scan à la relation `{rels[0]}` seule.")
+    elif len(rels) > 1:
+        parts.append(
+            "Restreins le scan à ces relations : "
+            + ", ".join(f"`{r}`" for r in rels) + "."
+        )
     else:
-        parts.append("Pas de relation imposée : choisis-les toi-même (variées).")
+        parts.append(
+            "Pas de relation imposée : choisis-les toi-même (variées, "
+            "couvre un nombre suffisant de types)."
+        )
     parts.append(
         "Utilise TON JUGEMENT linguistique de francophone — pas besoin "
         "de vérifier chaque suspect par un outil, ta suspicion vaut. "
@@ -259,31 +305,38 @@ def build_signalement_prompt(
 
 def build_stats_prompt(
     term: str = "",
-    relation: str = "",
+    relation=None,
     budget_label: str = "50",
 ) -> str:
     """Compose le pré-prompt de stats à partir du formulaire.
 
-    `term` seul → mode PAR_TERME. `relation` seule → mode PAR_RELATION.
-    Les deux → fait les deux.
+    `relation` accepte str, list ou None. Une seule relation passée →
+    mode PAR_RELATION focalisé ; plusieurs → mode PAR_RELATION sur
+    chacune ; aucune + terme → mode PAR_TERME (relations choisies par
+    le LLM).
     """
     term = (term or "").strip()
-    relation = (relation or "").strip()
+    rels = _norm_relations(relation)
+    rel_label = (
+        f"`{rels[0]}`" if len(rels) == 1
+        else (", ".join(f"`{r}`" for r in rels) if rels else "")
+    )
     parts: list[str] = []
-    if term and relation:
+    if term and rels:
         parts.append(
             f"Je veux des STATISTIQUES JDM sur le terme « {term} » et "
-            f"sur la relation `{relation}` (deux modes en séquence)."
+            f"sur la/les relation(s) {rel_label} (deux modes en séquence)."
         )
     elif term:
         parts.append(
             f"Je veux des STATISTIQUES JDM sur le terme « {term} » "
             "(mode PAR_TERME : couverture relation par relation)."
         )
-    elif relation:
+    elif rels:
         parts.append(
-            f"Je veux des STATISTIQUES JDM sur la relation `{relation}` "
-            "(mode PAR_RELATION : distribution sur termes-pivots variés)."
+            f"Je veux des STATISTIQUES JDM sur la/les relation(s) "
+            f"{rel_label} (mode PAR_RELATION : distribution sur "
+            "termes-pivots variés)."
         )
     else:
         parts.append(
@@ -297,9 +350,18 @@ def build_stats_prompt(
             f"Budget : {budget_label} appels d'outils maximum."
         )
     parts.append(
-        "Rends une synthèse structurée : un tableau machine-lisible "
-        "(une ligne par relation avec n_total, n_pos, n_neg, max_w, "
-        "min_w, mean_w) ET 3-5 observations clés en prose."
+        "Couvre un nombre SUFFISANT de types de relations (au moins "
+        "8-12 différents si pas de relation imposée — qualité statistique)."
+    )
+    parts.append(
+        "Rends DEUX vues complémentaires :\n"
+        "  1) TABLEAU par RELATION : une ligne par relation (n_total, "
+        "n_pos, n_neg, max_w, min_w, mean_w).\n"
+        "  2) TABLEAU par TERMES RENCONTRÉS : agrège les cibles "
+        "(targets) toutes relations confondues — top 20 par "
+        "occurrence/poids — avec nb_relations_distinctes et "
+        "poids_total. Permet de voir quels termes reviennent souvent.\n"
+        "Plus 3-5 observations clés en prose après les tableaux."
     )
     parts.append(
         "Tu SUIVRAS `stats_workflow()` en TOUT PREMIER. Obligatoire."
@@ -315,9 +377,46 @@ BUDGET_LABEL_TO_LIMIT: dict[str, Optional[int]] = {
 }
 
 
+def _extract_submission_path(tool_message_content: str) -> Optional[str]:
+    """Extrait le chemin du fichier produit par write_submission_file.
+
+    Le ToolMessage contient un dict sérialisé en JSON (ou en repr Python).
+    On regarde la clé `path`.
+    """
+    import json
+    import re
+    if not tool_message_content:
+        return None
+    try:
+        d = json.loads(tool_message_content)
+        if isinstance(d, dict) and d.get("path"):
+            return str(d["path"])
+    except Exception:
+        pass
+    m = re.search(r"['\"]path['\"]\s*:\s*['\"]([^'\"]+)['\"]", tool_message_content)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _read_file_preview(path: Optional[str], max_chars: int = 6000) -> str:
+    """Lit le contenu d'un fichier produit, tronqué à `max_chars` pour le preview UI."""
+    if not path:
+        return ""
+    try:
+        from pathlib import Path
+        text = Path(path).read_text(encoding="utf-8")
+    except Exception as e:
+        return f"⚠️ Impossible de lire {path} : {e}"
+    if len(text) > max_chars:
+        return text[:max_chars] + f"\n\n… [{len(text) - max_chars} caractères supplémentaires non affichés — télécharge le fichier pour tout voir]"
+    return text
+
+
 def run_jarvis_flow(
     prompt: str,
     *,
+    headline: str = "",
     model: str,
     api_key: str,
     budget_label: str,
@@ -325,30 +424,40 @@ def run_jarvis_flow(
     build_llm_fn,
     build_agent_fn,
     get_client_fn,
-) -> Generator[list[dict], None, None]:
+) -> Generator[tuple[list[dict], Optional[str], str], None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
-    Jarvis, et yield des listes de messages compatibles avec
-    `gr.Chatbot(type="messages")`.
+    Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
+    compatibles avec 3 composants Gradio :
+      - `gr.Chatbot(type="messages")`
+      - `gr.File`
+      - `gr.Code`/`gr.Markdown`/`gr.Textbox`
 
     Le messaging modèle :
-      - message 1 : user → le pré-prompt construit par le formulaire
+      - message 1 : user → headline court (PAS le prompt complet)
       - message 2 : assistant → contenu progressivement mis à jour
         pendant le streaming (tool calls + résultats partiels + réponse)
 
+    `file_path` reste None jusqu'à ce qu'un `write_submission_file` soit
+    détecté dans le stream, puis pointe sur le fichier produit. La 3e
+    valeur est le preview texte (lecture tronquée) ou "" si pas de fichier.
+
     Args:
-        prompt        : pré-prompt construit par `build_*_prompt`
-        model         : modèle LLM (clé GEMINI_MODELS ou nom Anthropic/OpenAI)
-        api_key       : clé visiteur Anthropic/OpenAI (vide si Gemini hébergé)
+        prompt        : pré-prompt construit par `build_*_prompt` (envoyé
+                        au LLM mais NON affiché à l'utilisateur)
+        headline      : résumé court 1-ligne affiché dans la bulle « user »
+        model         : modèle LLM
+        api_key       : clé visiteur (vide si modèle hébergé Space)
         budget_label  : "10" / "25" / "50" / "100" / "illimité"
-        drops_key     : clé LLMDrops (override env), passée via os.environ pour
-                        que `submit_to_jdm` la voie quand `upload=True` est utilisé
+        drops_key     : clé LLMDrops (override env)
         build_llm_fn  : `_build_llm` (injection pour éviter import circulaire)
         build_agent_fn: `build_jdm_agent` idem
         get_client_fn : `get_client` idem
 
     Yields:
-        list de dicts {role, content} pour chaque chunk de streaming.
+        (messages, file_path, file_preview)
     """
+    # Bulle user affichée — résumé léger, JAMAIS le prompt technique
+    user_display = headline.strip() or "🚀 Demande envoyée."
     import os
     from jdm_agent.tools.budget import budget_context
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -359,15 +468,18 @@ def run_jarvis_flow(
         saved_drops_key = os.environ.get("JDM_DROPS_API_KEY")
         os.environ["JDM_DROPS_API_KEY"] = drops_key.strip()
 
+    last_file_path: Optional[str] = None
+
     try:
         # LLM + agent
         try:
             llm = build_llm_fn(model, api_key)
         except ValueError as e:
-            yield [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": f"⚠️ {e}"},
-            ]
+            yield (
+                [{"role": "user", "content": user_display},
+                 {"role": "assistant", "content": f"⚠️ {e}"}],
+                None, "",
+            )
             return
 
         agent = build_agent_fn(client=get_client_fn(), llm=llm)
@@ -376,11 +488,12 @@ def run_jarvis_flow(
         progress_lines: list[str] = ["*🧠 Réflexion en cours…*"]
         final_answer: str = ""
 
-        # Yield initial : user message + assistant placeholder
-        yield [
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": "\n".join(progress_lines)},
-        ]
+        # Yield initial : user message + assistant placeholder, pas encore de fichier
+        yield (
+            [{"role": "user", "content": user_display},
+             {"role": "assistant", "content": "\n".join(progress_lines)}],
+            None, "",
+        )
 
         try:
             with budget_context(limit=limit) as budget:
@@ -403,31 +516,40 @@ def run_jarvis_flow(
                                         progress_lines.append(
                                             f"🔧 `{tc['name']}({args})`"
                                         )
-                                    yield [
-                                        {"role": "user", "content": prompt},
-                                        {"role": "assistant",
-                                         "content": "\n".join(progress_lines)},
-                                    ]
+                                    yield (
+                                        [{"role": "user", "content": user_display},
+                                         {"role": "assistant",
+                                          "content": "\n".join(progress_lines)}],
+                                        last_file_path, "",
+                                    )
                                 else:
                                     final_answer = _content_to_text(m.content)
                             elif isinstance(m, ToolMessage):
                                 content = _content_to_text(m.content)
+                                # Captation du fichier produit par
+                                # write_submission_file (.enrich/.audit/.err)
+                                if m.name == "write_submission_file":
+                                    p = _extract_submission_path(content)
+                                    if p:
+                                        last_file_path = p
                                 preview = content[:120].replace("\n", " ")
                                 if len(content) > 120:
                                     preview += "…"
                                 progress_lines.append(
                                     f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
                                 )
-                                yield [
-                                    {"role": "user", "content": prompt},
-                                    {"role": "assistant",
-                                     "content": "\n".join(progress_lines)},
-                                ]
+                                yield (
+                                    [{"role": "user", "content": user_display},
+                                     {"role": "assistant",
+                                      "content": "\n".join(progress_lines)}],
+                                    last_file_path, "",
+                                )
         except Exception as e:
-            yield [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": f"❌ Erreur agent : {e}"},
-            ]
+            yield (
+                [{"role": "user", "content": user_display},
+                 {"role": "assistant", "content": f"❌ Erreur agent : {e}"}],
+                last_file_path, _read_file_preview(last_file_path),
+            )
             return
 
         # Réponse finale : on remplace les progress_lines par la réponse
@@ -446,10 +568,11 @@ def run_jarvis_flow(
                 f"\n\n---\n*Budget illimité — {n} appel{'s' if n > 1 else ''} "
                 f"d'outils consommé{'s' if n > 1 else ''}.*"
             )
-        yield [
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": (final_answer or "*(réponse vide)*") + footer},
-        ]
+        yield (
+            [{"role": "user", "content": user_display},
+             {"role": "assistant", "content": (final_answer or "*(réponse vide)*") + footer}],
+            last_file_path, _read_file_preview(last_file_path),
+        )
     finally:
         # Restore env var si on l'avait modifiée
         if drops_key and drops_key.strip():
