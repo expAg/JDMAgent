@@ -432,9 +432,12 @@ def _history_to_lc(history: list[dict], current_user_message: str) -> list:
         if role == "user":
             lc.append(HumanMessage(content=content))
         elif role == "assistant":
-            # On nettoie les "Outils JDM appelés" en fin de message pour
-            # garder un historique conversationnel propre.
-            answer_only = content.split("\n\n---\n*Outils JDM appelés*")[0].strip()
+            # On nettoie le bloc <details>"Outils JDM appelés" en fin de
+            # message pour garder un historique conversationnel propre.
+            # Fallback aussi sur l'ancien format markdown pour les sessions
+            # héritées qui n'auraient pas encore basculé.
+            answer_only = content.split("\n\n<details>")[0]
+            answer_only = answer_only.split("\n\n---\n*Outils JDM appelés*")[0].strip()
             if answer_only:
                 lc.append(AIMessage(content=answer_only))
     lc.append(HumanMessage(content=current_user_message))
@@ -506,10 +509,20 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         yield f"❌ Erreur agent : {e}"
         return
 
-    # Sortie finale : la réponse synthétique + trace condensée des outils
+    # Sortie finale : la réponse synthétique + bloc déplable HTML pour
+    # les outils JDM appelés. <details> est natif, cliquable, replié par
+    # défaut → ne couvre plus la surface du chat.
     out = final_answer or "*(réponse vide)*"
     if tool_traces:
-        out += "\n\n---\n*Outils JDM appelés* :\n" + "\n".join(tool_traces)
+        # Le contenu interne est en backticks markdown ; Gradio les rendra
+        # correctement à l'intérieur du <details>. Une ligne par tool call,
+        # séparées par <br> (plus sûr que \n à l'intérieur d'HTML brut).
+        tools_html = "<br>".join(t for t in tool_traces)
+        out += (
+            f"\n\n<details><summary><i>Outils JDM appelés "
+            f"({len(tool_traces)}) — cliquer pour déplier</i></summary>\n\n"
+            f"{tools_html}\n\n</details>"
+        )
     yield out
 
 
@@ -844,10 +857,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
                 additional_inputs=[key_in, model_in],
-                # Chatbot agrandi : 600 px de haut au lieu du défaut (~360 px).
-                # Les exemples sous l'input deviennent visibles en scrollant.
+                # Chatbot agrandi : 780 px de haut (+30 % vs 600). Donne plus
+                # d'espace pour les réponses longues + le bloc déplable
+                # « Outils JDM appelés » qui reste replié par défaut.
                 chatbot=gr.Chatbot(
-                    height=600,
+                    height=780,
                     type="messages",
                     show_label=False,
                     avatar_images=(None, None),
