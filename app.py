@@ -629,12 +629,11 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
             "b64": b64,
         })
 
-    # Données embarquées en BASE64 dans l'attribut data-viz du container.
-    # vizClose() / vizOpen() les lisent depuis le DOM au moment du clic
-    # (atob → JSON.parse). Le base64 garantit que l'attribut HTML ne
-    # peut être cassé par aucun caractère du JSON (guillemets, < > &
-    # apostrophes, etc.).
-    files_attr = _b64.b64encode(
+    # Données embarquées dans un élément hidden <pre id="viz-data-b64">,
+    # contenu = base64 du JSON UTF-8. vizClose() / vizOpen() lisent le
+    # textContent au clic.
+    # Évite les attributs data-* qui peuvent être strippés par Gradio.
+    files_b64 = _b64.b64encode(
         _json.dumps(files_data).encode("utf-8")
     ).decode("ascii")
 
@@ -643,8 +642,9 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
     # transparent qui hérite du composant parent. Pas de fond blanc
     # forcé qui tranche avec le thème dark.
     return f"""
-<div id="viz-container" data-viz="{files_attr}"
+<div id="viz-container"
      style="margin:8px 0;border:1px solid var(--border-color-primary,#ddd);border-radius:8px;background:var(--block-background-fill,transparent);overflow:hidden;">
+  <pre id="viz-data-b64" style="display:none">{files_b64}</pre>
   <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--background-fill-secondary,#f3f4f6);border-bottom:1px solid var(--border-color-primary,#ddd);">
     <span style="font-weight:500;color:var(--body-text-color,#444);font-size:0.9em">
       🕸️ <span id="viz-title">Visualisation interactive du sous-graphe</span>
@@ -838,12 +838,14 @@ _HEAD_JS = """
   }).observe(document.body, { childList: true, subtree: true });
 
   function getVizData() {
-    var c = document.getElementById('viz-container');
-    if (!c || !c.dataset.viz) return [];
+    // Lit le base64 depuis <pre id="viz-data-b64"> (textContent, jamais
+    // sanitisé par Gradio contrairement aux attributs).
+    var store = document.getElementById('viz-data-b64');
+    if (!store) return [];
+    var b64 = (store.textContent || '').trim();
+    if (!b64) return [];
     try {
-      // data-viz est en base64 (UTF-8) pour éviter tout problème
-      // d'escaping dans l'attribut HTML.
-      var json = decodeURIComponent(escape(atob(c.dataset.viz)));
+      var json = decodeURIComponent(escape(atob(b64)));
       return JSON.parse(json);
     } catch (e) {
       console.error('viz: getVizData failed', e);
