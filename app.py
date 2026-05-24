@@ -244,25 +244,39 @@ OPENAI_MODELS = {
     "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI, rapide, peu cher)",
     "gpt-4o":      "GPT-4o (BYOK OpenAI, meilleure qualité)",
 }
-# Google Gemini — seul provider gratuit avec un quota assez large pour le
-# prompt système + les 34 outils sérialisés (~15-20K tokens par appel).
-# Endpoint OpenAI-compatible de Google AI Studio. Token côté Space, gratuit
-# pour le visiteur.
+# Providers gratuits — token côté Space, gratuit pour le visiteur, quota
+# partagé. Le prompt agent + 34 outils sérialisés fait ~19-20 K tokens par
+# appel, ce qui élimine la plupart des free tiers (TPM trop bas).
 #
-# NOTE : Groq et HF Inference Providers ont été retirés du dropdown — leurs
-# free tiers (30 RPM / ~0.10$ de crédits) sont saturés en 1 ou 2 conversations
-# par la taille du prompt agent. Le code des helpers reste prêt pour les
-# réactiver si on souscrit à un tier supérieur.
+# Compatibles avec notre taille de prompt :
+#   - Gemini 2.5 Flash : ~250 K TPM, ~250 RPD → cible principale
+#   - Groq Llama 3.1 8B Instant : ~30 K TPM → suffisant, plus rapide,
+#     qualité moindre que 70B mais OK pour requêtes simples
+#
+# Incompatibles (free tier saturé en 1 requête) :
+#   - Groq Llama 3.3 70B : 12 K TPM < 19 K du prompt
+#   - HF Inference Providers Together AI : crédit ~0.10$ / mois
+#   → retirés du dropdown ; helpers conservés dans le code pour
+#     réactivation si tier payant souscrit.
+
 GEMINI_MODELS = {
-    "gemini-2.5-flash": "Gemini 2.5 Flash (gratuit Google, ~250 req/jour avec 34 outils)",
+    "gemini-2.5-flash": "Gemini 2.5 Flash (gratuit Google, ~250 req/jour, qualité top)",
 }
 GEMINI_MODEL_ROUTING = {
     "gemini-2.5-flash": "gemini-2.5-flash",
 }
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+GROQ_MODELS = {
+    "groq-llama-3.1-8b": "Llama 3.1 8B Instant (gratuit Groq, ultra-rapide, qualité moyenne)",
+}
+GROQ_MODEL_ROUTING = {
+    "groq-llama-3.1-8b": "llama-3.1-8b-instant",
+}
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
 ALL_MODELS = {
-    **GEMINI_MODELS,
+    **GEMINI_MODELS, **GROQ_MODELS,
     **ANTHROPIC_MODELS, **OPENAI_MODELS,
 }
 
@@ -303,9 +317,23 @@ def _build_llm(model: str, api_key: str):
         from jdm_agent.tools.llm_factory import get_llm
         return get_llm(provider="openai", model=model)
 
-    # Gemini = seul provider gratuit avec un quota assez large pour notre
-    # prompt agent (~15-20K tokens / appel à cause des 34 outils). Token
-    # côté Space, gratuit pour le visiteur. Si épuisement → BYOK Claude/GPT.
+    # Gemini = principal provider gratuit (TPM ~250 K, qualité top).
+    # Groq Llama 3.1 8B Instant = secondaire (TPM ~30 K, ultra-rapide,
+    # qualité moindre). Token côté Space, gratuit pour le visiteur. Si
+    # épuisement → BYOK Claude / GPT.
+    if model.startswith("groq-"):
+        return _build_openai_compat(
+            model_id=model, label="Groq",
+            env_var="GROQ_API_KEY",
+            env_var_help=(
+                "L'admin du Space doit créer une clé sur "
+                "https://console.groq.com/keys (signup gratuit, sans CB) "
+                "et l'ajouter dans Settings → Variables & secrets."
+            ),
+            base_url=GROQ_BASE_URL, routing=GROQ_MODEL_ROUTING,
+            api_key=api_key,
+        )
+
     if model.startswith("gemini-"):
         return _build_openai_compat(
             model_id=model, label="Google Gemini",
@@ -769,7 +797,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     value="gemini-2.5-flash",
                     label="Modèle",
                     info=(
-                        "gemini-* = GRATUIT (token côté Space, ~250 req/jour partagées) · "
+                        "gemini-* / groq-* = GRATUIT (token côté Space, quota partagé) · "
                         "claude-* = BYOK Anthropic · gpt-* = BYOK OpenAI"
                     ),
                     scale=2,
@@ -790,14 +818,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 # sans clé, l'utilisateur aura le message d'erreur informatif.
                 examples=[
                     # Exemples cliquables par n'importe quel visiteur sans
-                    # coller de clé — sur Gemini 2.5 Flash (seul provider
-                    # gratuit avec un quota assez large pour les 34 outils).
-                    # Si le quota partagé est épuisé, l'utilisateur peut
-                    # basculer sur un modèle BYOK Claude / GPT.
+                    # coller de clé. Gemini en priorité (qualité top), Groq
+                    # Llama 3.1 8B en alternative (très rapide, qualité
+                    # moindre). En cas d'épuisement, BYOK Claude / GPT.
                     ["Quels sont les synonymes de voiture ?", "", "gemini-2.5-flash"],
                     ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash"],
                     ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-2.5-flash"],
-                    ["Que peut faire un chat ?", "", "gemini-2.5-flash"],
+                    ["Que peut faire un chat ?", "", "groq-llama-3.1-8b"],
                     ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-2.5-flash"],
                 ],
                 cache_examples=False,
