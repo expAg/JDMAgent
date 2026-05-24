@@ -259,11 +259,9 @@ OPENAI_MODELS = {
 # moindre), `-live` = optimisée pour le streaming temps réel (peut avoir des
 # limitations sur le tool calling complexe).
 GEMINI_MODELS = {
-    "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
-    "gemini-2.5-flash":        "Gemini 2.5 Flash (gratuit, stable, qualité solide)",
-    "gemini-3-flash":          "Gemini 3 Flash Preview (gratuit, qualité supérieure, SDK natif)",
-    "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite Preview (gratuit, rapide, SDK natif)",
-    "gemini-3.5-flash":        "Gemini 3.5 Flash (gratuit, qualité top)",
+    "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite",
+    "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite",
+    "gemini-3.5-flash":        "Gemini 3.5 Flash",
 }
 # Noms d'identifiants API officiels (cf. https://ai.google.dev/gemini-api/docs/pricing).
 # Deux chemins selon la version :
@@ -273,15 +271,13 @@ GEMINI_MODELS = {
 #    serveur rejette les enchaînements de tool calls — cf. issue LangChain
 #    #34056 : https://github.com/langchain-ai/langchain/issues/34056).
 GEMINI_MODEL_ROUTING = {
-    "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
-    "gemini-2.5-flash":        "gemini-2.5-flash",
-    "gemini-3-flash":          "gemini-3-flash-preview",
     "gemini-3.1-flash-lite":   "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
     "gemini-3.5-flash":        "gemini-3.5-flash",
 }
 # Modèles qui exigent le SDK natif Google (`langchain-google-genai`)
 # au lieu de l'endpoint OpenAI-compatible, pour préserver thought_signature.
-GEMINI_NATIVE_REQUIRED = {"gemini-3-flash", "gemini-3.1-flash-lite"}
+GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 ALL_MODELS = {
@@ -468,6 +464,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
     progress_lines: list[str] = ["*🧠 Réflexion en cours…*"]
     tool_traces: list[str] = []
     final_answer = ""
+    viz_path: Optional[str] = None  # chemin du fichier HTML viz si l'agent en a généré un
 
     yield "\n".join(progress_lines)
 
@@ -498,6 +495,10 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
                             final_answer = m.content or ""
                     elif isinstance(m, ToolMessage):
                         content = (m.content or "")
+                        # Détecte un retour de build_subgraph_visualization
+                        # pour extraire le html_path et l'embarquer plus bas.
+                        if m.name == "build_subgraph_visualization":
+                            viz_path = _extract_html_path(content)
                         preview = content[:140].replace("\n", " ")
                         if len(content) > 140:
                             preview += "…"
@@ -509,14 +510,21 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         yield f"❌ Erreur agent : {e}"
         return
 
-    # Sortie finale : la réponse synthétique + bloc déplable HTML pour
-    # les outils JDM appelés. <details> est natif, cliquable, replié par
-    # défaut → ne couvre plus la surface du chat.
+    # Sortie finale : la réponse synthétique + viz embarquée (si générée)
+    # + bloc déplable des outils. <details> est natif, cliquable, replié
+    # par défaut → ne couvre plus la surface du chat.
     out = final_answer or "*(réponse vide)*"
+
+    # Viz interactive embarquée : si l'agent a appelé build_subgraph_visualization
+    # et qu'on a un fichier HTML lisible, on le rend en iframe (data URI b64
+    # — même technique que l'onglet Sous-graphe, isole les scripts vis-network
+    # du DOM Gradio).
+    if viz_path:
+        viz_iframe = _build_viz_iframe(viz_path)
+        if viz_iframe:
+            out += "\n\n" + viz_iframe
+
     if tool_traces:
-        # Le contenu interne est en backticks markdown ; Gradio les rendra
-        # correctement à l'intérieur du <details>. Une ligne par tool call,
-        # séparées par <br> (plus sûr que \n à l'intérieur d'HTML brut).
         tools_html = "<br>".join(t for t in tool_traces)
         out += (
             f"\n\n<details><summary><i>Outils JDM appelés "
@@ -524,6 +532,49 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
             f"{tools_html}\n\n</details>"
         )
     yield out
+
+
+def _extract_html_path(tool_message_content: str) -> Optional[str]:
+    """Extrait `html_path` d'un retour de build_subgraph_visualization.
+
+    Le ToolMessage contient le dict sérialisé en JSON (ou en repr Python
+    selon LangChain). On essaie les deux.
+    """
+    import json
+    import re
+    if not tool_message_content:
+        return None
+    # 1) Essai JSON propre
+    try:
+        d = json.loads(tool_message_content)
+        if isinstance(d, dict) and d.get("html_path"):
+            return str(d["html_path"])
+    except Exception:
+        pass
+    # 2) Fallback : regex sur 'html_path' dans la chaîne brute
+    m = re.search(r"['\"]html_path['\"]\s*:\s*['\"]([^'\"]+)['\"]", tool_message_content)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _build_viz_iframe(html_path: str) -> Optional[str]:
+    """Lit le HTML viz et le renvoie sous forme d'iframe data URI prêt
+    à embarquer dans une bulle de chat. Retourne None si lecture échoue.
+    """
+    import base64 as _b64
+    from pathlib import Path as _Path
+    try:
+        text = _Path(html_path).read_text(encoding="utf-8")
+    except Exception:
+        return None
+    b64 = _b64.b64encode(text.encode("utf-8")).decode("ascii")
+    return (
+        f'<iframe src="data:text/html;base64,{b64}" '
+        f'style="width:100%;height:600px;border:1px solid #ddd;'
+        f'border-radius:8px;background:#fff;display:block;" '
+        f'sandbox="allow-scripts allow-same-origin"></iframe>'
+    )
 
 
 # ---------- UI ----------
@@ -846,7 +897,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                 )
                 model_in = gr.Dropdown(
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
-                    value="gemini-2.5-flash-lite",
+                    value="gemini-3.1-flash-lite",
                     label="Modèle",
                     info=(
                         "gemini-* = GRATUIT (token côté Space, quota partagé) · "
@@ -876,9 +927,9 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     # d'épuisement, BYOK Claude / GPT.
                     ["Quels sont les synonymes de voiture ?", "", "gemini-2.5-flash-lite"],
                     ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash-lite"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3-flash"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3.1-flash-lite"],
                     ["Que peut faire un chat ?", "", "gemini-3.5-flash"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-2.5-flash"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-3.5-flash"],
                 ],
                 cache_examples=False,
                 type="messages",
