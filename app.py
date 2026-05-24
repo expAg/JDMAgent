@@ -956,6 +956,29 @@ _HEAD_JS = """
     } else {
       wrap.style.height = minH + 'px';
     }
+
+    // ---- Masquer les exemples dès qu'un message existe ----
+    // gr.ChatInterface rend les exemples comme un panneau séparé sous
+    // le chat. On le repère par plusieurs sélecteurs candidats (la
+    // classe exacte change entre versions Gradio v5.x). On remonte au
+    // parent .block pour cacher tout le bloc, pas juste le contenu.
+    try {
+      var sels = [
+        '.examples-holder',
+        '.examples-table',
+        '[data-testid="examples"]',
+        '.examples'
+      ];
+      var ex = null;
+      for (var i = 0; i < sels.length; i++) {
+        ex = document.querySelector(sels[i]);
+        if (ex) break;
+      }
+      if (ex) {
+        var block = ex.closest('.block') || ex.parentElement || ex;
+        block.style.display = isEmpty ? '' : 'none';
+      }
+    } catch (e) { /* silently ignore selector failures */ }
   }
 
   // Lance au load, puis observe le DOM du chatbot pour réagir aux
