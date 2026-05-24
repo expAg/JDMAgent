@@ -1098,6 +1098,415 @@ def enrichment_workflow() -> dict:
 
 
 @tool
+def audit_workflow() -> dict:
+    """Renvoie le flux canonique pour TOUTE demande d'audit sémantique JDM.
+
+    ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on
+    te demande d'AUDITER / VÉRIFIER / CONTRÔLER la répartition des sens
+    d'un terme polysémique dans JDM. Zéro coût, te donne la marche à
+    suivre exacte (analyse sens-par-sens + section META narrative).
+    """
+    return {
+        "title": "Flux d'audit JDM — répartition des sens et annotations",
+        "intent": (
+            "Pour un terme (souvent polysémique), examiner les triplets "
+            "rangés sous le TERME GÉNÉRIQUE et décider, en s'appuyant sur "
+            "les SENS RAFFINÉS, si chacun est légitimement placé là, ou "
+            "s'il devrait être contrastif / non-contrastif / négativé. "
+            "Produit en plus un compte-rendu narratif sur la propagation "
+            "et la confusion des sens (section META)."
+        ),
+        "steps": [
+            {
+                "order": 1,
+                "name": "Lister les sens du terme",
+                "description": (
+                    "Appelle `disambiguate(term)`. Tu obtiens la liste "
+                    "ordonnée des sens par poids `r_raff_sem` (consensus). "
+                    "Le SENS DOMINANT est le 1er (poids le plus fort). "
+                    "Note les top 2-3 sens : ce sont eux qui « comptent » "
+                    "pour décider si un triplet du générique est légitime."
+                ),
+                "tool": "disambiguate",
+            },
+            {
+                "order": 2,
+                "name": "Inventaire des triplets sur le terme générique",
+                "description": (
+                    "Pour chaque relation à auditer (la relation cible si "
+                    "l'utilisateur l'a précisée, sinon la liste par défaut "
+                    "[r_isa, r_has_part, r_carac, r_telic_role, r_lieu, "
+                    "r_anto, r_syn]), appelle "
+                    "`get_relations_of_type(term, relation_name)` sur le "
+                    "TERME GÉNÉRIQUE — récupère TOUS ses triplets sur "
+                    "cette relation."
+                ),
+                "tool": "get_relations_of_type",
+            },
+            {
+                "order": 3,
+                "name": "Inventaire par sens raffiné dominant",
+                "description": (
+                    "Pour CHAQUE sens raffiné dominant identifié à l'étape "
+                    "1 (top 2-3), appelle "
+                    "`get_relations_of_type(sense_id, relation_name)` sur "
+                    "la même relation. Ces triplets sont l'inventaire "
+                    "« vrai » de chaque sens. Garde-les en mémoire pour "
+                    "la comparaison."
+                ),
+                "tool": "get_relations_of_type",
+            },
+            {
+                "order": 4,
+                "name": "Verdict par triplet du générique",
+                "description": (
+                    "Pour CHAQUE triplet du terme générique listé à "
+                    "l'étape 2, rends UN verdict parmi :\n"
+                    "  • LEGITIME : appartient au sens dominant (idéalement "
+                    "le 1er) ou commun à tous les sens. Rien à faire.\n"
+                    "  • DEVRAIT_ETRE_CONTRASTIF : appartient à un sens "
+                    "minoritaire MAIS ce trait DISTINGUE ce sens des "
+                    "autres. Suggère d'ajouter une annotation `contrastif` "
+                    "sur le triplet (côté sens) ET de négativer côté "
+                    "générique si pertinent.\n"
+                    "  • DEVRAIT_ETRE_NON_CONTRASTIF : appartient à un sens "
+                    "minoritaire ET est partagé avec d'autres sens. Suggère "
+                    "d'ajouter une annotation `non contrastif` pour "
+                    "expliciter qu'il N'EST PAS distinctif.\n"
+                    "  • DEVRAIT_ETRE_NEGATIVE : n'appartient à AUCUN sens "
+                    "ou seulement à un sens marginal (poids r_raff_sem "
+                    "très faible). Suggère de poser une NÉGATION sur le "
+                    "générique pour empêcher l'inférence erronée.\n"
+                    "Justifie chaque verdict en UNE phrase (référence "
+                    "explicite aux sens identifiés)."
+                ),
+                "tool": "(pas d'appel — jugement sémantique du LLM)",
+            },
+            {
+                "order": 5,
+                "name": "Compte rendu narratif (section META)",
+                "description": (
+                    "En PROSE (français, 5-10 lignes max), rédige un "
+                    "compte rendu sur la confusion et la propagation des "
+                    "relations pour ce terme : « le sens dominant 'X (Y)' "
+                    "est sous-représenté », « la confusion entre les sens "
+                    "A et B propage des relations contradictoires », "
+                    "« beaucoup de traits du sens 'Z' sont injustement "
+                    "rangés sous le générique »… C'est de la lecture "
+                    "humaine pour le mainteneur, pas du parsing machine."
+                ),
+                "tool": "(pas d'appel — synthèse linguistique)",
+            },
+            {
+                "order": 6,
+                "name": "Écriture du fichier .audit",
+                "description": (
+                    "Appelle `write_submission_file(triplets=..., "
+                    "path='<term>_audit.audit', upload=...)` (modèle = ton "
+                    "nom). Le fichier doit comporter DEUX SECTIONS clairement "
+                    "séparées :\n\n"
+                    "  === PROPOSITIONS ===\n"
+                    "  term | relation | target | annotation | verdict | justification\n"
+                    "  ...\n"
+                    "  === META ===\n"
+                    "  <le compte rendu narratif de l'étape 5>\n\n"
+                    "La section PROPOSITIONS est MACHINE-LISIBLE (pipe-"
+                    "separated stable) — utilise `annotation` = 'contrastif' "
+                    "/ 'non contrastif' / '' (vide si verdict NEGATIVE ou "
+                    "LEGITIME). `verdict` = LEGITIME / DEVRAIT_ETRE_CONTRASTIF "
+                    "/ DEVRAIT_ETRE_NON_CONTRASTIF / DEVRAIT_ETRE_NEGATIVE.\n\n"
+                    "SOUMISSION optionnelle : si l'utilisateur a demandé "
+                    "d'envoyer le fichier, `upload=True` (clé via "
+                    "`api_key=` argument ou env `JDM_DROPS_API_KEY`)."
+                ),
+                "tool": "write_submission_file",
+            },
+        ],
+        "rules": [
+            "Le LLM utilise son JUGEMENT linguistique de francophone — il "
+            "n'a PAS besoin de justifier chaque verdict par un appel "
+            "d'outil supplémentaire.",
+            "Le SENS DOMINANT = celui de plus fort poids `r_raff_sem` "
+            "(et idéalement le 1er retourné par disambiguate).",
+            "Section PROPOSITIONS = machine-lisible (pipe-separated) ; "
+            "section META = prose, lecture humaine.",
+            "Ne crée PAS de triplets nouveaux — l'audit examine l'existant.",
+            "Le séparateur `=== META ===` est OBLIGATOIRE pour qu'un "
+            "parser puisse retrouver les 2 sections.",
+        ],
+    }
+
+
+@tool
+def gap_detection_workflow() -> dict:
+    """Renvoie le flux canonique pour TOUTE demande de DÉTECTION DE TROUS.
+
+    ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on
+    te demande de DÉTECTER / TROUVER / IDENTIFIER les TROUS, MANQUES ou
+    LACUNES de couverture d'un terme dans JDM. Zéro coût.
+    """
+    return {
+        "title": "Flux de détection de trous JDM",
+        "intent": (
+            "Identifier ce qui MANQUE dans JDM pour un terme donné, sur "
+            "un ensemble de relations cibles. Ne propose PAS de triplets "
+            "nouveaux (c'est l'enrichissement) — flag juste ce qui est "
+            "ABSENT, NÉGATIVEMENT-REMPLI, ou SOUS-COUVERT."
+        ),
+        "steps": [
+            {
+                "order": 1,
+                "name": "Vérifier que le terme existe",
+                "description": (
+                    "Appelle `lookup_term(term)`. Si KO, dis-le et arrête. "
+                    "Si le terme est polysémique (plusieurs sens forts), "
+                    "demande à l'utilisateur (ou choisis par défaut le "
+                    "sens dominant) AVANT de continuer — un gap sur un "
+                    "sens raffiné est plus exploitable qu'un gap sur "
+                    "le terme générique."
+                ),
+                "tool": "lookup_term",
+            },
+            {
+                "order": 2,
+                "name": "Détecter les trous",
+                "description": (
+                    "Appelle `detect_gaps(term, target_relations=[…], "
+                    "min_to_consider=…)`. Tu reçois une liste de `Gap` "
+                    "typés MISSING (aucun triplet ni positif ni négatif) "
+                    "/ NEGATIVE_FILLED (que des triplets négatifs — JDM "
+                    "a regardé et dit non) / LOW_COVERAGE (< N triplets "
+                    "positifs).\n\n"
+                    "Si l'utilisateur n'a fourni AUCUNE relation cible, "
+                    "utilise la liste par défaut [r_isa, r_has_part, "
+                    "r_carac, r_telic_role, r_lieu, r_agent-1, "
+                    "r_patient-1] ; ajuste selon la nature du terme "
+                    "(verbe → relations verbales, objet → r_has_part / "
+                    "r_telic_role…)."
+                ),
+                "tool": "detect_gaps",
+            },
+            {
+                "order": 3,
+                "name": "Synthèse + propositions d'action",
+                "description": (
+                    "Rédige une synthèse courte en français : « pour "
+                    "« <terme> », JDM a N triplets MISSING sur ces "
+                    "relations, M NEGATIVE_FILLED, K LOW_COVERAGE ». "
+                    "Pour CHAQUE gap intéressant, propose explicitement "
+                    "3 actions à l'utilisateur :\n"
+                    "  • Enrichir ce trou (orientation Enrichissement)\n"
+                    "  • Auditer ce terme (orientation Audit)\n"
+                    "  • Stats sur ce terme/relation (orientation Stats)\n\n"
+                    "Le format de présentation doit lister chaque gap "
+                    "sous la forme `term | relation | type_de_gap` pour "
+                    "que la UI puisse parser et générer les boutons."
+                ),
+                "tool": "(pas d'appel — synthèse)",
+            },
+        ],
+        "rules": [
+            "Pas d'écriture de fichier — c'est un flow de DÉCOUVERTE.",
+            "Si le terme est polysémique, propose toujours de désambiguïser "
+            "AVANT de détecter — un gap par sens est plus actionnable.",
+            "Sortie structurée pour permettre le routage UI (chaque gap "
+            "doit être identifiable par term + relation + type).",
+            "Si aucun gap n'est trouvé, dis-le clairement — c'est aussi "
+            "une information utile.",
+        ],
+    }
+
+
+@tool
+def signalement_workflow() -> dict:
+    """Renvoie le flux canonique pour TOUTE demande de SIGNALEMENT d'erreur.
+
+    ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on
+    te demande de SIGNALER / REPORTER / FLAGGER des erreurs ou des
+    triplets suspects dans JDM. Zéro coût.
+    """
+    return {
+        "title": "Flux de signalement de triplets suspects JDM",
+        "intent": (
+            "Parcourir les triplets d'un terme (et éventuellement d'une "
+            "relation précise) et flagger ceux qui te paraissent SUSPECTS "
+            "selon ton jugement linguistique de francophone. Le but est "
+            "de SUGGÉRER des points de vigilance au mainteneur JDM — pas "
+            "d'asséner des erreurs prouvées. Ta suspicion VAUT, même sans "
+            "vérification d'outil concluante."
+        ),
+        "steps": [
+            {
+                "order": 1,
+                "name": "Cadrer le scan",
+                "description": (
+                    "Si une relation a été fournie : restreins le scan à "
+                    "cette relation seule. Sinon : scanne les relations "
+                    "principales [r_isa, r_carac, r_has_part, r_anto, "
+                    "r_syn, r_lieu, r_telic_role]. Si le terme est "
+                    "polysémique, traite chaque sens raffiné séparément."
+                ),
+                "tool": "(pas d'appel)",
+            },
+            {
+                "order": 2,
+                "name": "Inventaire des triplets",
+                "description": (
+                    "Pour chaque relation ciblée, appelle "
+                    "`get_relations_of_type(term, relation_name)`. "
+                    "Récupère TOUS les triplets (pas seulement le top)."
+                ),
+                "tool": "get_relations_of_type",
+            },
+            {
+                "order": 3,
+                "name": "Flag selon ton jugement (avec grille de signaux)",
+                "description": (
+                    "Parcours la liste et flag ce qui te paraît suspect. "
+                    "TU UTILISES TON INTUITION DE FRANCOPHONE — pas "
+                    "besoin de vérifier chaque suspect par un outil. "
+                    "Voici la GRILLE DE SIGNAUX qui aident à voir :\n\n"
+                    "  SIGNAUX SÉMANTIQUES (jugement linguistique pur) :\n"
+                    "  • triplet bizarre par rapport au sens du terme\n"
+                    "    (ex: « chat r_carac liquide »)\n"
+                    "  • polarité visiblement inverse à l'attendu\n"
+                    "    (ex: « chat r_isa végétal » avec w>0 fort)\n"
+                    "  • cible incompatible catégoriellement\n"
+                    "    (ex: « animal r_has_color juriste »)\n"
+                    "  • annotation contrastive/exception attendue mais "
+                    "absente (ex: baleine r_isa mammifère sans "
+                    "exception côté poisson)\n\n"
+                    "  SIGNAUX STRUCTURELS (opt-in, si tu veux vérifier) :\n"
+                    "  • duplicate entre raffinements (même triplet sur 2 "
+                    "sens dont un seul est plausible)\n"
+                    "  • poids négatif fort sur un fait sémantiquement vrai\n"
+                    "  • poids positif fort sur un fait sémantiquement faux\n\n"
+                    "Tu peux t'aider de `verify_claim(effort=2)`, "
+                    "`get_triplet_annotations`, etc. si une vérification "
+                    "te paraît utile — mais ce n'est PAS obligatoire. "
+                    "C'est une SOUMISSION DE SUSPECTS, pas d'erreurs prouvées."
+                ),
+                "tool": "(jugement + outils opt-in)",
+            },
+            {
+                "order": 4,
+                "name": "Écriture du fichier .err",
+                "description": (
+                    "Appelle `write_submission_file(triplets=..., "
+                    "path='<term>_signal.err', upload=...)`. Format pipe :\n\n"
+                    "  term | relation | target | catégorie_suspect | justification\n\n"
+                    "où `catégorie_suspect` ∈ { sémantique, polarité, "
+                    "catégorie_cible, annotation_oubliée, duplicate_sens, "
+                    "poids_anormal, autre } et `justification` est UNE "
+                    "phrase claire en français.\n\n"
+                    "SOUMISSION optionnelle : `upload=True` si l'utilisateur "
+                    "le demande (clé via env `JDM_DROPS_API_KEY` ou param "
+                    "`api_key=`)."
+                ),
+                "tool": "write_submission_file",
+            },
+        ],
+        "rules": [
+            "Le LLM signale ce qui LUI paraît suspect — sa suspicion vaut, "
+            "même sans preuve d'outil. C'est utile au mainteneur.",
+            "Chaque suspect DOIT être catégorisé (catégorie_suspect "
+            "parmi la liste) et justifié en UNE phrase courte.",
+            "Pas de seuil arbitraire pour décider quoi flagger — l'humain "
+            "tri ensuite. Mais limite à ~20 suspects max par run pour "
+            "éviter le bruit.",
+            "Pas d'invention de triplet : on flag UNIQUEMENT ce qui "
+            "existe déjà dans JDM (sortie de get_relations_of_type).",
+        ],
+    }
+
+
+@tool
+def stats_workflow() -> dict:
+    """Renvoie le flux canonique pour TOUTE demande de STATISTIQUES JDM.
+
+    ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on
+    te demande des STATS / COMPTER / MESURER / DISTRIBUTION pour un terme
+    ou une relation dans JDM. Zéro coût.
+    """
+    return {
+        "title": "Flux de statistiques JDM (par terme et/ou par relation)",
+        "intent": (
+            "Produire un compte rendu chiffré sur la couverture, la "
+            "distribution de poids et le ratio positif/négatif pour : "
+            "(a) un terme sur un ensemble de relations, OU (b) une "
+            "relation seule sur ses top triplets. Sortie : tableau "
+            "structuré + petit graphe (côté UI)."
+        ),
+        "steps": [
+            {
+                "order": 1,
+                "name": "Identifier le mode",
+                "description": (
+                    "Si un TERME est fourni → mode PAR_TERME (étape 2a). "
+                    "Si une RELATION est fournie (sans terme) → mode "
+                    "PAR_RELATION (étape 2b). Si les DEUX → fais les "
+                    "deux modes en séquence."
+                ),
+                "tool": "(pas d'appel)",
+            },
+            {
+                "order": 2,
+                "name": "Mode PAR_TERME",
+                "description": (
+                    "Si un terme est fourni : pour CHAQUE relation cible "
+                    "(par défaut [r_isa, r_hypo, r_syn, r_anto, r_carac, "
+                    "r_has_part, r_telic_role, r_lieu, r_agent-1, "
+                    "r_patient-1]), appelle `list_existing_for_enrichment("
+                    "term, relation_name)` — c'est EXHAUSTIF (pas de "
+                    "seuil ni de limite, contrairement à get_*). Compte "
+                    "le nb total, le nb positif, le nb négatif, le "
+                    "max(w), le min(w) par relation."
+                ),
+                "tool": "list_existing_for_enrichment",
+            },
+            {
+                "order": 3,
+                "name": "Mode PAR_RELATION",
+                "description": (
+                    "Si une relation est fournie sans terme : appelle "
+                    "`list_relation_types` pour confirmer le `r_*` exact, "
+                    "puis appelle `get_relations_of_type` sur quelques "
+                    "termes-pivots variés (animal, objet, action, sentiment, "
+                    "lieu…) pour estimer la distribution typique. Limite "
+                    "à 5-8 termes-pivots — au-delà tu épuises ton budget."
+                ),
+                "tool": "list_relation_types + get_relations_of_type",
+            },
+            {
+                "order": 4,
+                "name": "Synthèse structurée",
+                "description": (
+                    "Produis un tableau au format markdown ET un dict "
+                    "JSON-like avec :\n"
+                    "  • table : list of {relation, n_total, n_pos, "
+                    "n_neg, max_w, min_w, mean_w}\n"
+                    "  • highlights : 3-5 observations clés en prose "
+                    "(« la relation r_X est sur-représentée », « r_Y "
+                    "est quasi vide pour ce terme », etc.)\n"
+                    "La UI affichera la table en `gr.DataFrame` et un "
+                    "petit graphe en `gr.BarPlot` automatiquement."
+                ),
+                "tool": "(synthèse — pas d'appel)",
+            },
+        ],
+        "rules": [
+            "Pas d'écriture de fichier — sortie pure dans la conversation.",
+            "Mode PAR_TERME : utilise `list_existing_for_enrichment` "
+            "(exhaustif), PAS `get_synonyms`/`get_parts` qui tronquent.",
+            "Mode PAR_RELATION : limite-toi à 5-8 termes-pivots — c'est "
+            "une estimation, pas un census complet.",
+            "Le cache disque rend les stats incrémentales gratuites au "
+            "2e appel sur les mêmes termes.",
+        ],
+    }
+
+
+@tool
 def write_submission_file(
     triplets: list[dict],
     path: str = "soumission_jdm.txt",
@@ -1405,8 +1814,12 @@ ALL_TOOLS: list[StructuredTool] = [
     verify_claim,
     infer,
     get_triplet_annotations,
-    # Enrichissement
+    # Enrichissement + autres flows guidés (Phase 13)
     enrichment_workflow,
+    audit_workflow,
+    gap_detection_workflow,
+    signalement_workflow,
+    stats_workflow,
     list_existing_for_enrichment,
     detect_gaps,
     validate_candidate,
