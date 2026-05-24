@@ -629,10 +629,12 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
             "b64": b64,
         })
 
-    # Données embarquées dans un élément hidden <pre id="viz-data-b64">,
-    # contenu = base64 du JSON UTF-8. vizClose() / vizOpen() lisent le
-    # textContent au clic.
-    # Évite les attributs data-* qui peuvent être strippés par Gradio.
+    # Données passées EN ARGUMENT du onclick="vizClose('...')" — la
+    # seule méthode survivant à DOMPurify de Gradio (qui strippe les
+    # data-*, les <pre>, les <script>, et les éléments style=display:none).
+    # Base64 ASCII pur → safe dans l'attribut JS (ni quote ni < ni >).
+    # vizClose() reçoit la data, la parse et la stocke sur l'élément
+    # container pour les appels vizOpen() suivants.
     files_b64 = _b64.b64encode(
         _json.dumps(files_data).encode("utf-8")
     ).decode("ascii")
@@ -644,7 +646,6 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
     return f"""
 <div id="viz-container"
      style="margin:8px 0;border:1px solid var(--border-color-primary,#ddd);border-radius:8px;background:var(--block-background-fill,transparent);overflow:hidden;">
-  <pre id="viz-data-b64" style="display:none">{files_b64}</pre>
   <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--background-fill-secondary,#f3f4f6);border-bottom:1px solid var(--border-color-primary,#ddd);">
     <span style="font-weight:500;color:var(--body-text-color,#444);font-size:0.9em">
       🕸️ <span id="viz-title">Visualisation interactive du sous-graphe</span>
@@ -652,7 +653,7 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
         — zoom : molette · déplacer : glisser · double-clic : recentrer
       </span>
     </span>
-    <button id="viz-close-btn" onclick="window.vizClose()"
+    <button id="viz-close-btn" onclick="window.vizClose('{files_b64}')"
             style="background:var(--button-secondary-background-fill,#fff);border:1px solid var(--border-color-primary,#ccc);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.85em;color:var(--body-text-color,#444);">
       ✖ Fermer
     </button>
@@ -837,18 +838,11 @@ _HEAD_JS = """
     });
   }).observe(document.body, { childList: true, subtree: true });
 
-  function getVizData() {
-    // Lit le base64 depuis <pre id="viz-data-b64"> (textContent, jamais
-    // sanitisé par Gradio contrairement aux attributs).
-    var store = document.getElementById('viz-data-b64');
-    if (!store) return [];
-    var b64 = (store.textContent || '').trim();
-    if (!b64) return [];
+  function parseB64Json(b64) {
     try {
-      var json = decodeURIComponent(escape(atob(b64)));
-      return JSON.parse(json);
+      return JSON.parse(decodeURIComponent(escape(atob(b64))));
     } catch (e) {
-      console.error('viz: getVizData failed', e);
+      console.error('viz: parse failed', e);
       return [];
     }
   }
@@ -859,13 +853,19 @@ _HEAD_JS = """
     });
   }
 
-  window.vizClose = function() {
+  // vizClose reçoit le base64 du JSON des fichiers EN ARGUMENT (passé
+  // directement depuis l'onclick HTML — seule méthode robuste face à
+  // DOMPurify de Gradio qui strippe data-*, <pre>, <script>, etc.).
+  // On stocke la data parsée sur le container pour les vizOpen suivants.
+  window.vizClose = function(b64) {
     var ifr = document.getElementById('viz-iframe');
     var list = document.getElementById('viz-list');
     var rows = document.getElementById('viz-list-rows');
     var btn = document.getElementById('viz-close-btn');
-    if (!ifr || !list || !rows || !btn) return;
-    var data = getVizData();
+    var c = document.getElementById('viz-container');
+    if (!ifr || !list || !rows || !btn || !c) return;
+    var data = b64 ? parseB64Json(b64) : (c.__vizFiles || []);
+    c.__vizFiles = data;  // mémorise pour vizOpen
     ifr.style.display = 'none';
     btn.style.display = 'none';
     list.style.display = 'block';
@@ -891,8 +891,9 @@ _HEAD_JS = """
     var list = document.getElementById('viz-list');
     var btn = document.getElementById('viz-close-btn');
     var title = document.getElementById('viz-title');
-    if (!ifr || !list || !btn) return;
-    var data = getVizData();
+    var c = document.getElementById('viz-container');
+    if (!ifr || !list || !btn || !c) return;
+    var data = c.__vizFiles || [];
     if (!data[idx]) return;
     ifr.src = 'data:text/html;base64,' + data[idx].b64;
     if (title) title.textContent = data[idx].label;
