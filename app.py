@@ -259,9 +259,9 @@ OPENAI_MODELS = {
 # moindre), `-live` = optimisée pour le streaming temps réel (peut avoir des
 # limitations sur le tool calling complexe).
 GEMINI_MODELS = {
-    "gemini-3.1-flash-lite":   "(500 req/jour) Gemini 3.1 Flash Lite",
-    "gemini-2.5-flash-lite":   "(20 req/jour) Gemini 2.5 Flash Lite",
-    "gemini-3.5-flash":        "(20 req/jour) Gemini 3.5 Flash",
+    "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite (500 req/jour)",
+    "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite (20 req/jour)",
+    "gemini-3.5-flash":        "Gemini 3.5 Flash (20 req/jour)",
 }
 # Noms d'identifiants API officiels (cf. https://ai.google.dev/gemini-api/docs/pricing).
 # Deux chemins selon la version :
@@ -629,11 +629,14 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
             "b64": b64,
         })
 
-    # Données embarquées en attribut data-viz du container.
-    # vizClose() les lit depuis le DOM au moment du clic (plus robuste
-    # qu'un setter `window.vizData = ...` via script inline ou onerror
-    # qui peut ne pas être ré-exécuté après replace du DOM par Gradio).
-    files_attr = _json.dumps(files_data).replace('"', "&quot;")
+    # Données embarquées en BASE64 dans l'attribut data-viz du container.
+    # vizClose() / vizOpen() les lisent depuis le DOM au moment du clic
+    # (atob → JSON.parse). Le base64 garantit que l'attribut HTML ne
+    # peut être cassé par aucun caractère du JSON (guillemets, < > &
+    # apostrophes, etc.).
+    files_attr = _b64.b64encode(
+        _json.dumps(files_data).encode("utf-8")
+    ).decode("ascii")
 
     # Couleurs adaptatives au thème via CSS variables Gradio
     # (--block-background-fill, --body-text-color, etc.) — fond
@@ -807,7 +810,15 @@ _HEAD_JS = """
   function getVizData() {
     var c = document.getElementById('viz-container');
     if (!c || !c.dataset.viz) return [];
-    try { return JSON.parse(c.dataset.viz); } catch (e) { return []; }
+    try {
+      // data-viz est en base64 (UTF-8) pour éviter tout problème
+      // d'escaping dans l'attribut HTML.
+      var json = decodeURIComponent(escape(atob(c.dataset.viz)));
+      return JSON.parse(json);
+    } catch (e) {
+      console.error('viz: getVizData failed', e);
+      return [];
+    }
   }
 
   function esc(s) {
