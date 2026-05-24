@@ -262,17 +262,19 @@ GEMINI_MODELS = {
     "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
     "gemini-2.5-flash":        "Gemini 2.5 Flash (gratuit, stable, qualité solide)",
     "gemini-3-flash":          "Gemini 3 Flash Preview (gratuit, qualité supérieure)",
-    "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite Preview (gratuit, rapide)",
     "gemini-3.5-flash":        "Gemini 3.5 Flash (gratuit, qualité top)",
 }
 # Noms d'identifiants API officiels (cf. https://ai.google.dev/gemini-api/docs/pricing).
-# Les variantes 3.x sont en preview au moment du commit ; certaines deviendront
-# stables, leurs noms perdront alors le suffixe `-preview` (à mettre à jour).
+# Gemini 3.1 Flash Lite Preview retiré : renvoie systématiquement « Function
+# call is missing a thought_signature » sur les chaînes de tool calls — l'API
+# OpenAI-compatible ne préserve pas la chaîne de raisonnement interne entre
+# tours, ce qui casse les modèles 3.x preview avec reasoning.
+# À réintégrer si Google passe ces variantes en stable ou ajoute le support
+# thought_signature sur l'endpoint OpenAI-compat.
 GEMINI_MODEL_ROUTING = {
     "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
     "gemini-2.5-flash":        "gemini-2.5-flash",
     "gemini-3-flash":          "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite":   "gemini-3.1-flash-lite-preview",
     "gemini-3.5-flash":        "gemini-3.5-flash",
 }
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -814,7 +816,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash-lite"],
                     ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3-flash"],
                     ["Que peut faire un chat ?", "", "gemini-3.5-flash"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-3.1-flash-lite"],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-2.5-flash"],
                 ],
                 cache_examples=False,
                 type="messages",
