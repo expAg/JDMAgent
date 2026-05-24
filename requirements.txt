@@ -14,10 +14,15 @@ langchain-core>=0.3
 langgraph>=0.2
 
 # Providers LLM activés (routés par préfixe du modèle dans app.py)
-# - langchain-anthropic : BYOK (utilisateur fournit sa clé sk-ant-...)
-# - langchain-openai    : BYOK (utilisateur fournit sa clé sk-...)
+# - langchain-anthropic    : BYOK (utilisateur fournit sa clé sk-ant-...)
+# - langchain-openai       : BYOK GPT + endpoint OpenAI-compat (Gemini 2.x)
+# - langchain-google-genai : SDK natif Google pour Gemini 3.x preview, qui
+#                            préserve les `thought_signature` entre tours
+#                            (l'endpoint OpenAI-compat ne le fait pas — cf.
+#                            issue LangChain #34056)
 langchain-anthropic>=0.2
 langchain-openai>=0.2
+langchain-google-genai>=2.0
 
 # UI — Gradio 5.x (résout: pas de pydub/audioop, pas de HfFolder removed,
 # pas du bug jinja2 dict cache, et meilleurs defaults pour HF Spaces)

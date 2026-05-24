@@ -25,6 +25,7 @@ langchain = [
 anthropic = ["langchain-anthropic>=0.2"]
 openai = ["langchain-openai>=0.2"]
 ollama = ["langchain-ollama>=0.2"]
+google = ["langchain-google-genai>=2.0"]
 mcp = ["mcp>=1.0", "fastmcp>=0.4"]
 dev = [
     "pytest>=8.0",

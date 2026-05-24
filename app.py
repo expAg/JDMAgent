@@ -261,21 +261,27 @@ OPENAI_MODELS = {
 GEMINI_MODELS = {
     "gemini-2.5-flash-lite":   "Gemini 2.5 Flash Lite (gratuit, rapide, qualité correcte) — défaut",
     "gemini-2.5-flash":        "Gemini 2.5 Flash (gratuit, stable, qualité solide)",
+    "gemini-3-flash":          "Gemini 3 Flash Preview (gratuit, qualité supérieure, SDK natif)",
+    "gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite Preview (gratuit, rapide, SDK natif)",
     "gemini-3.5-flash":        "Gemini 3.5 Flash (gratuit, qualité top)",
 }
 # Noms d'identifiants API officiels (cf. https://ai.google.dev/gemini-api/docs/pricing).
-# Tous les Gemini 3.x preview retirés du dropdown : ils renvoient
-# systématiquement « Function call is missing a thought_signature » sur les
-# chaînes de tool calls, parce que l'endpoint OpenAI-compatible ne préserve
-# pas la chaîne de raisonnement interne entre tours (le mécanisme
-# `thought_signature` est spécifique à l'API native Gemini).
-# Pour les réintégrer, il faudrait passer par `langchain-google-genai` qui
-# utilise le SDK natif (et préserve ces signatures) — cf. doc projet.
+# Deux chemins selon la version :
+#  - 2.x stables → endpoint OpenAI-compat (simple, déjà éprouvé)
+#  - 3.x preview → SDK natif Google (langchain-google-genai), qui préserve
+#    automatiquement les `thought_signature` entre tours (sans quoi le
+#    serveur rejette les enchaînements de tool calls — cf. issue LangChain
+#    #34056 : https://github.com/langchain-ai/langchain/issues/34056).
 GEMINI_MODEL_ROUTING = {
     "gemini-2.5-flash-lite":   "gemini-2.5-flash-lite",
     "gemini-2.5-flash":        "gemini-2.5-flash",
+    "gemini-3-flash":          "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite":   "gemini-3.1-flash-lite-preview",
     "gemini-3.5-flash":        "gemini-3.5-flash",
 }
+# Modèles qui exigent le SDK natif Google (`langchain-google-genai`)
+# au lieu de l'endpoint OpenAI-compatible, pour préserver thought_signature.
+GEMINI_NATIVE_REQUIRED = {"gemini-3-flash", "gemini-3.1-flash-lite"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 ALL_MODELS = {
@@ -325,6 +331,10 @@ def _build_llm(model: str, api_key: str):
     # Token côté Space, gratuit pour le visiteur. Si épuisement → BYOK
     # Claude / GPT.
     if model.startswith("gemini-"):
+        # 3.x preview → SDK natif Google (préserve thought_signature).
+        # 2.x stables → endpoint OpenAI-compat (déjà éprouvé, plus simple).
+        if model in GEMINI_NATIVE_REQUIRED:
+            return _build_gemini_native(model)
         return _build_openai_compat(
             model_id=model, label="Google Gemini",
             env_var="GOOGLE_API_KEY",
@@ -362,6 +372,45 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
         model=routed_model,
         base_url=base_url,
         api_key=token,
+        temperature=0,
+    )
+
+
+def _build_gemini_native(model_id: str):
+    """Builder spécifique pour les Gemini 3.x preview via SDK natif Google.
+
+    Le SDK `langchain-google-genai` (qui enveloppe le SDK Python officiel
+    `google-genai`) préserve automatiquement les `thought_signature` entre
+    les tours, ce que ne fait PAS l'endpoint OpenAI-compatible — cf.
+    https://github.com/langchain-ai/langchain/issues/34056
+
+    Le token GOOGLE_API_KEY (côté Space, gratuit pour le visiteur) est lu
+    automatiquement par le SDK depuis l'env.
+    """
+    token = os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not token:
+        raise ValueError(
+            "Ce modèle Gemini 3.x preview nécessite un token Google côté "
+            "Space (variable d'environnement GOOGLE_API_KEY). L'admin du "
+            "Space doit créer une clé sur https://aistudio.google.com/apikey "
+            "(sans CB), et l'ajouter dans Settings → Variables & secrets. "
+            "En cas d'épuisement du quota partagé, bascule sur un modèle "
+            "BYOK Claude ou GPT."
+        )
+    routed_model = GEMINI_MODEL_ROUTING.get(model_id)
+    if not routed_model:
+        raise ValueError(f"Modèle Gemini natif inconnu : {model_id!r}")
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError as e:
+        raise ValueError(
+            "Le paquet `langchain-google-genai` est requis pour les modèles "
+            "Gemini 3.x preview. Installe-le avec : "
+            "pip install langchain-google-genai"
+        ) from e
+    return ChatGoogleGenerativeAI(
+        model=routed_model,
+        google_api_key=token,
         temperature=0,
     )
 
@@ -813,7 +862,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo") as demo:
                     # d'épuisement, BYOK Claude / GPT.
                     ["Quels sont les synonymes de voiture ?", "", "gemini-2.5-flash-lite"],
                     ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-2.5-flash-lite"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3.5-flash"],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3-flash"],
                     ["Que peut faire un chat ?", "", "gemini-3.5-flash"],
                     ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-2.5-flash"],
                 ],
