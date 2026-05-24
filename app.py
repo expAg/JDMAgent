@@ -526,19 +526,36 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         yield f"❌ Erreur agent : {e}", _NOOP_FILE
         return
 
-    # Sortie finale : UNIQUEMENT le texte de l'agent dans la bulle chat
-    # (zéro append, sinon Gemini 3.x fragmente). Le fichier viz est
-    # poussé séparément dans le composant gr.File à côté du chat — clic
-    # = ouverture par Gradio dans nouvel onglet, zéro pollution du chat.
+    # Sortie finale :
+    #  - Sur les modèles SAINS (Claude, GPT, Gemini 2.x) : on append la
+    #    liste détaillée des outils + un lien markdown vers la viz, comme
+    #    avant — ça marchait bien et on ne casse pas ce qui marche.
+    #  - Sur Gemini 3.x : on n'append RIEN au message (fragmentation
+    #    systématique du texte ajouté après final_answer). La viz passe
+    #    par le composant gr.File séparé qui ne souffre pas du bug.
+    is_gemini_3x = model.startswith("gemini-3")
     out = final_answer or "*(réponse vide)*"
-    if viz_path:
-        # Copie le fichier dans VIZ_DIR (déclaré dans allowed_paths) pour
-        # que Gradio le serve correctement via le widget File.
-        viz_for_file = _stage_viz_file(viz_path)
-        if viz_for_file:
-            yield out, gr.update(value=viz_for_file, visible=True)
-            return
-    yield out, _NOOP_FILE
+
+    # Viz : toujours via gr.File (séparé, robuste pour tous les modèles).
+    viz_for_file = _stage_viz_file(viz_path) if viz_path else None
+
+    if not is_gemini_3x:
+        # Append détaillé pour les modèles qui supportent — info riche
+        # affichée dans la bulle finale.
+        if viz_path:
+            out += "\n\n📊 *Visualisation interactive disponible ci-dessous ↓*"
+        if tool_traces:
+            clean = [t.replace("`", "") for t in tool_traces]
+            out += (
+                "\n\n---\n"
+                f"**Outils JDM appelés ({len(clean)})**\n"
+                + "\n".join(clean)
+            )
+
+    if viz_for_file:
+        yield out, gr.update(value=viz_for_file, visible=True)
+    else:
+        yield out, _NOOP_FILE
 
 
 def _extract_html_path(tool_message_content: str) -> Optional[str]:
