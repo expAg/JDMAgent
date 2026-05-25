@@ -1323,7 +1323,7 @@ _CHATBOT_CSS = """
    filtrés par DOMPurify de Gradio v5. */
 .jdm-thinking,
 .jdm-thinking * {
-  font-size: 0.72em !important;
+  font-size: 0.85em !important;
   color: #999 !important;
   font-style: italic !important;
   line-height: 1.35 !important;
@@ -1337,7 +1337,7 @@ _CHATBOT_CSS = """
    primaire de Gradio (accents UI) pour éviter la confusion. */
 .jdm-narration,
 .jdm-narration * {
-  font-size: 0.72em !important;
+  font-size: 0.85em !important;
   color: #82aaff !important;
   font-style: italic !important;
   line-height: 1.35 !important;
