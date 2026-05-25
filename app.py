@@ -1398,29 +1398,37 @@ _HEAD_JS = """
 _CHATBOT_CSS = """
 /* Checkbox 'Raisonnement' flottante : position absolue dans le coin
    haut-droit du conteneur de la Column qui contient le dropdown modèle
-   — alignée verticalement avec le label « Modèle » du dropdown, sans
-   prendre de place dans le flux (donc le dropdown garde sa hauteur
-   naturelle). */
+   — alignée verticalement sur la baseline du label chip « Modèle ».
+   Le texte « Raisonnement » est à GAUCHE de la case (flex-direction
+   row-reverse sur le label de la checkbox). */
 .floating-thinking-wrap {
   position: relative !important;
 }
 .floating-thinking-wrap .floating-thinking {
   position: absolute !important;
-  top: 0 !important;
-  right: 0 !important;
+  /* Le label chip « Modèle » de Gradio commence à ~6px du haut de la
+     Column. On aligne dessus pour que les deux textes soient sur la
+     même ligne visuelle. */
+  top: 6px !important;
+  right: 4px !important;
   z-index: 5 !important;
-  /* Compact : pas de padding/marge superflus, juste assez pour la case
-     + son label à droite */
   min-width: 0 !important;
   width: auto !important;
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
+  /* Taille de texte normale (pas de réduction) */
+  font-size: 1em !important;
 }
-/* Le label « Raisonnement » à droite de la case, en plus petit pour
-   tenir dans la hauteur du label du dropdown */
-.floating-thinking-wrap .floating-thinking label {
-  font-size: 0.85em !important;
+/* Inverse l'ordre interne du label de la checkbox : case à droite,
+   texte « Raisonnement » à gauche. Sélecteurs multiples pour couvrir
+   les variantes de rendu Gradio v5. */
+.floating-thinking-wrap .floating-thinking label,
+.floating-thinking-wrap .floating-thinking label > div,
+.floating-thinking-wrap .floating-thinking [data-testid="checkbox"] {
+  flex-direction: row-reverse !important;
+  gap: 6px !important;
+  align-items: center !important;
   white-space: nowrap !important;
 }
 
