@@ -1645,7 +1645,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 multiselect=True,
                             )
                             je_target_n = gr.Slider(
-                                1, 50, value=10, step=1,
+                                1, 50, value=3, step=1,
                                 label="Nombre cible de triplets consolidés",
                             )
                             je_vary = gr.Checkbox(
