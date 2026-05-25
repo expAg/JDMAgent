@@ -734,8 +734,15 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                     current_progress = "\n\n".join(progress_live)
                     yield current_progress + wait_msg, _NOOP_FILE
                     _time.sleep(retry_delay)
-                    # PAS de reset des progress / accumulated_messages :
-                    # on veut continuer, pas recommencer.
+                    # PAS de reset des progress / accumulated_messages,
+                    # MAIS strip des blocs thinking pour économiser les
+                    # tokens (le LLM n'a pas besoin de ses pensées pour
+                    # continuer). On garde le DERNIER thinking pour
+                    # la signature Gemini 3.x.
+                    from jarvis import strip_thinking_blocks
+                    accumulated_messages = strip_thinking_blocks(
+                        accumulated_messages, keep_last=True
+                    )
                     continue
                 # Erreur non-retryable ou déjà tenté
                 err_block = ""

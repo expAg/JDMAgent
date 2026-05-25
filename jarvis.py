@@ -102,6 +102,131 @@ def _truncate(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
+def strip_thinking_blocks(messages: list, keep_last: bool = True) -> list:
+    """Filtre les blocs « thinking » / « reasoning » des AIMessage list-content.
+
+    Gemini 3.x avec `include_thoughts=True` produit un content sous forme
+    de liste `[{"type":"thinking", ...}, {"type":"text", ...}, ...]`.
+    Ces résumés de raisonnement coûtent 30-50% des tokens accumulés et
+    ne sont PAS nécessaires pour que l'agent continue son travail —
+    seuls les tool_calls et tool results comptent pour la continuité
+    d'action.
+
+    `keep_last=True` : garde le DERNIER bloc thinking de la session,
+    pour préserver le `thought_signature` que Gemini 3.x utilise entre
+    tours (sans quoi l'API peut rejeter le retour des tool_calls
+    enchaînés).
+    """
+    if not messages:
+        return messages
+
+    # Trouver l'index du dernier AIMessage avec un thinking block
+    last_thinking_idx = -1
+    if keep_last:
+        for i, m in enumerate(messages):
+            content = getattr(m, "content", None)
+            if not isinstance(content, list):
+                continue
+            for blk in content:
+                if isinstance(blk, dict) and blk.get("type") in ("thinking", "reasoning"):
+                    last_thinking_idx = i
+                    break
+
+    out: list = []
+    for i, m in enumerate(messages):
+        content = getattr(m, "content", None)
+        if not isinstance(content, list):
+            out.append(m)
+            continue
+        if i == last_thinking_idx:
+            out.append(m)  # garder tel quel pour la signature
+            continue
+        # Filtrer
+        filtered = [
+            blk for blk in content
+            if not (isinstance(blk, dict) and blk.get("type") in ("thinking", "reasoning"))
+        ]
+        if filtered == content:
+            out.append(m)
+            continue
+        # Reconstruire (pydantic v2 model_copy)
+        try:
+            out.append(m.model_copy(update={"content": filtered}))
+        except Exception:
+            out.append(m)  # fallback : on garde tel quel si copy échoue
+    return out
+
+
+def build_relance_summary(messages: list, n_done: int, target: int,
+                          relance_num: int, max_relances: int) -> str:
+    """Construit un résumé condensé pour le HumanMessage de relance.
+
+    Au lieu de ré-injecter `accumulated_messages` complet (50-200 messages,
+    explosion des tokens), on liste :
+      - les triplets déjà CONSOLIDÉS (à préserver)
+      - les cibles déjà testées en échec (à ne pas reproposer, top 20)
+      - les couples (term, relation) déjà pré-fetchés
+    Le LLM reçoit cette synthèse + l'instruction « continue » et reprend
+    avec un brief propre, sans bagage cognitif.
+    """
+    consolidated: list[str] = []
+    failed: list[str] = []
+    prefetched: set[str] = set()
+
+    for m in messages:
+        name = getattr(m, "name", None) or ""
+        content_str = str(getattr(m, "content", "") or "")
+        parsed = _parse_tool_result(content_str)
+        if not isinstance(parsed, dict):
+            continue
+        if name == "validate_candidate":
+            t = parsed.get("term") or "?"
+            r = parsed.get("relation") or "?"
+            tg = parsed.get("target") or "?"
+            triplet = f"{t} | {r} | {tg}"
+            if parsed.get("ready_for_submission") is True or parsed.get("consolidation_status") == "consolidated":
+                consolidated.append(triplet)
+            else:
+                failed.append(triplet)
+        elif name == "list_existing_for_enrichment":
+            t = parsed.get("term")
+            r = parsed.get("relation")
+            if t and r:
+                prefetched.add(f"{t} | {r}")
+
+    lines = [
+        f"⛔ STOP. Tu as consolidé **{n_done}/{target}** triplet(s) — il en manque "
+        f"{target - n_done}.",
+    ]
+    if consolidated:
+        lines.append("")
+        lines.append("**Déjà consolidés (PRÉSERVE-les dans le fichier final)** :")
+        for c in consolidated:
+            lines.append(f"  ✅ {c}")
+    if failed:
+        lines.append("")
+        lines.append("**Cibles déjà testées sans succès** (NE PAS reproposer) :")
+        cap = 20
+        for f in failed[:cap]:
+            lines.append(f"  ⏸️ {f}")
+        if len(failed) > cap:
+            lines.append(f"  … (+ {len(failed) - cap} autres)")
+    if prefetched:
+        lines.append("")
+        lines.append("**Pré-fetchs déjà effectués** (ne PAS rappeler "
+                     "`list_existing_for_enrichment` dessus, le registre "
+                     "côté Python te court-circuitera) :")
+        for p in sorted(prefetched):
+            lines.append(f"  📥 {p}")
+    lines.append("")
+    lines.append(
+        f"RECOMMENCE avec de NOUVEAUX candidats sur d'AUTRES relations / "
+        f"d'AUTRES cibles. Ne rends ta réponse finale QU'APRÈS avoir "
+        f"atteint le compte cible. (Relance auto {relance_num}/{max_relances}.)"
+    )
+    return "\n".join(lines)
+
+
 def count_consolidated_in_messages(messages: list) -> int:
     """Compte les triplets consolidés en parcourant les ToolMessages
     `validate_candidate` accumulés pendant l'invocation agent.
@@ -853,7 +978,7 @@ def run_jarvis_flow(
     get_client_fn,
     use_thinking: bool = True,
     consolidation_target: Optional[int] = None,
-    max_persistence_relances: int = 3,
+    max_persistence_relances: int = 5,
 ) -> Generator[tuple[list[dict], Optional[str], str], None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -1124,11 +1249,16 @@ def run_jarvis_flow(
                                 last_file_path, _read_file_preview(last_file_path),
                             )
                             _time.sleep(retry_delay)
-                            # PAS de reset : progress_live / progress_full /
-                            # last_file_path / accumulated_messages restent
-                            # intacts. Le while continue → restart agent.stream
-                            # avec accumulated_messages (cf. le for chunk plus
-                            # haut qui passe {"messages": accumulated_messages}).
+                            # PAS de reset des progress / last_file_path.
+                            # MAIS strip des blocs thinking pour réduire
+                            # massivement les tokens ré-envoyés (le LLM
+                            # n'a pas besoin de ses propres pensées pour
+                            # continuer — juste des tool_calls et résultats).
+                            # On garde le DERNIER thinking pour préserver
+                            # le thought_signature Gemini 3.x.
+                            accumulated_messages = strip_thinking_blocks(
+                                accumulated_messages, keep_last=True
+                            )
                             continue
                         # Pas un quota retryable, ou déjà tenté : erreur finale
                         err_block = ""
@@ -1162,20 +1292,23 @@ def run_jarvis_flow(
             if persistence_relances >= max_persistence_relances:
                 persistence_done = True
                 continue
-            # On relance avec un nudge fort
+            # On relance avec un nudge fort.
             persistence_relances += 1
-            still_needed = consolidation_target - n_done
-            nudge = (
-                f"⛔ STOP. Tu as produit {n_done} triplet(s) consolidé(s) "
-                f"sur les {consolidation_target} demandés par l'utilisateur "
-                f"(il en manque {still_needed}). Tu N'AS PAS terminé. "
-                f"Recommence IMMÉDIATEMENT à proposer de NOUVEAUX "
-                f"candidats — d'AUTRES relations, d'AUTRES cibles, hors "
-                f"des exclusion_set déjà obtenues. NE rends ta réponse "
-                f"finale QUE quand tu auras atteint le compte cible. "
-                f"(Relance automatique {persistence_relances}/{max_persistence_relances}.)"
+            # Construit un résumé condensé (consolidés / échecs / pré-fetchs)
+            # à partir des accumulated_messages, PUIS reset à juste :
+            #   [HumanMessage initial, HumanMessage du résumé+nudge]
+            # → drop massif des tokens (de ~50k à ~2k typiquement).
+            # Le LLM reprend frais avec un état explicite plutôt que de
+            # devoir digérer 50+ messages avec leurs raisonnements.
+            summary = build_relance_summary(
+                accumulated_messages, n_done, consolidation_target,
+                persistence_relances, max_persistence_relances,
             )
-            accumulated_messages.append(HumanMessage(content=nudge))
+            initial_human = accumulated_messages[0]  # HumanMessage(prompt)
+            accumulated_messages = [
+                initial_human,
+                HumanMessage(content=summary),
+            ]
             _add_line(
                 f"*🔁 Relance automatique {persistence_relances}/"
                 f"{max_persistence_relances} — {n_done}/{consolidation_target} "
