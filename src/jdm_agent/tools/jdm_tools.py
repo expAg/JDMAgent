@@ -1241,13 +1241,12 @@ def audit_workflow() -> dict:
                 "order": 8,
                 "name": "Écriture du fichier .audit",
                 "description": (
-                    "Construis la CHAÎNE DE TEXTE COMPLÈTE du fichier "
-                    ".audit avec les 3 sections, puis passe-la dans "
-                    "`raw_content=` (pas dans `triplets=`) : \n"
-                    "`write_submission_file(triplets=[], "
-                    "path='<term>_audit.audit', upload=..., "
-                    "raw_content='''=== SENS ===\\n...''')`\n\n"
-                    "Format strict du raw_content :\n\n"
+                    "Appelle `write_submission_file(triplets=[...lignes...], "
+                    "path='<term>_audit.audit', upload=...)` en passant "
+                    "une LISTE DE STRINGS — une string par ligne du "
+                    "fichier. Le tool détecte automatiquement que ce "
+                    "sont des lignes brutes (pas des dicts) et les écrit "
+                    "telles quelles. Format à respecter :\n\n"
                     "  === SENS ===\n"
                     "  sense_id | poids_r_raff_sem | label\n"
                     "  ... (une ligne par sens trouvé via disambiguate)\n"
@@ -1263,12 +1262,12 @@ def audit_workflow() -> dict:
                     "où `type` ∈ { contamination_sens_non_premier, "
                     "sens_premier_discutable }. Justification = UNE phrase "
                     "courte. Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
-                    "⚠️ Si tu appelles avec raw_content vide, le fichier "
-                    "sera vide — ERREUR. Tu DOIS construire la chaîne "
-                    "complète avant l'appel.\n\n"
+                    "Si tu n'as rien trouvé (aucun signalement, sens "
+                    "tous légitimes), dis-le dans le chat et n'appelle "
+                    "PAS le tool — il refusera d'écrire un fichier vide.\n\n"
                     "SOUMISSION optionnelle : `upload=True` si demandé."
                 ),
-                "tool": "write_submission_file (mode raw_content)",
+                "tool": "write_submission_file",
             },
         ],
         "rules": [
@@ -1438,28 +1437,23 @@ def signalement_workflow() -> dict:
                 "order": 4,
                 "name": "Écriture du fichier .err",
                 "description": (
-                    "Construis la CHAÎNE DE TEXTE COMPLÈTE du fichier "
-                    ".err (une ligne d'en-tête + une ligne par suspect) "
-                    "puis passe-la dans `raw_content=` (pas dans "
-                    "`triplets=`) :\n"
-                    "`write_submission_file(triplets=[], "
-                    "path='<term>_signal.err', upload=..., "
-                    "raw_content='''term | relation | target | "
-                    "catégorie_suspect | justification\\n...''')`\n\n"
-                    "Format strict du raw_content :\n\n"
+                    "Appelle `write_submission_file(triplets=[...lignes...], "
+                    "path='<term>_signal.err', upload=...)` en passant "
+                    "une LISTE DE STRINGS — une string par ligne du "
+                    "fichier (en-tête puis une ligne par suspect). Le "
+                    "tool écrit les strings telles quelles. Format :\n\n"
                     "  term | relation | target | catégorie_suspect | justification\n"
                     "  ... (une ligne par suspect, max ~20) ...\n\n"
                     "où `catégorie_suspect` ∈ { sémantique, polarité, "
                     "catégorie_cible, annotation_oubliée, duplicate_sens, "
                     "poids_anormal, autre } et `justification` est UNE "
                     "phrase claire en français.\n\n"
-                    "⚠️ raw_content vide = fichier vide = ERREUR. Si tu "
-                    "n'as rien trouvé de suspect, dis-le dans le chat et "
-                    "n'appelle pas write_submission_file.\n\n"
-                    "SOUMISSION optionnelle : `upload=True` si l'utilisateur "
-                    "le demande."
+                    "Si tu n'as rien trouvé de suspect, dis-le dans le "
+                    "chat et n'appelle PAS write_submission_file — il "
+                    "refusera d'écrire un fichier vide.\n\n"
+                    "SOUMISSION optionnelle : `upload=True` si demandé."
                 ),
-                "tool": "write_submission_file (mode raw_content)",
+                "tool": "write_submission_file",
             },
         ],
         "rules": [
@@ -1557,13 +1551,11 @@ def stats_workflow() -> dict:
                 "order": 5,
                 "name": "Écriture du fichier .stat",
                 "description": (
-                    "Construis la CHAÎNE DE TEXTE COMPLÈTE du fichier "
-                    ".stat (3 sections) puis passe-la dans `raw_content=` "
-                    "(pas dans `triplets=`) :\n"
-                    "`write_submission_file(triplets=[], "
-                    "path='<term>_stats.stat', upload=..., "
-                    "raw_content='''=== TABLEAU PAR RELATION ===\\n...''')`\n\n"
-                    "Format strict du raw_content, TROIS sections :\n\n"
+                    "Appelle `write_submission_file(triplets=[...lignes...], "
+                    "path='<term>_stats.stat', upload=...)` en passant "
+                    "une LISTE DE STRINGS — une string par ligne du "
+                    "fichier. Le tool écrit les strings telles quelles. "
+                    "Format à respecter, TROIS sections :\n\n"
                     "  === TABLEAU PAR RELATION ===\n"
                     "  relation | n_total | n_pos | n_neg | max_w | min_w | mean_w\n"
                     "  ... (une ligne par relation)\n"
@@ -1577,10 +1569,9 @@ def stats_workflow() -> dict:
                     "\n"
                     "PAS de dissertation, PAS de redondance avec les "
                     "tableaux. Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
-                    "⚠️ raw_content vide = fichier vide = ERREUR.\n\n"
                     "SOUMISSION optionnelle : `upload=True` si demandé."
                 ),
-                "tool": "write_submission_file (mode raw_content)",
+                "tool": "write_submission_file",
             },
         ],
         "rules": [
@@ -1603,95 +1594,125 @@ def stats_workflow() -> dict:
 
 @tool
 def write_submission_file(
-    triplets: list[dict],
+    triplets: list,
     path: str = "soumission_jdm.txt",
     upload: bool = False,
     model_name: str = "",
     api_key: str = "",
-    raw_content: str = "",
 ) -> dict:
     """Écrit le fichier de soumission JDM (.txt) et — sur demande — le
     SOUMET automatiquement au endpoint LLMDrops de JDM.
 
-    DEUX MODES D'ÉCRITURE :
+    Le paramètre `triplets` accepte DEUX types d'items, AUTO-DÉTECTÉS
+    par leur type Python — pas besoin de spécifier un mode :
 
-    1) Mode TRIPLETS (par défaut, `raw_content=""`) — pour
-       l'enrichissement (.enrich). On passe une liste de triplets dicts
-       et le tool écrit le fichier au format pipe :
+    1) **dict** `{term, relation, target, annotation, explanation}` →
+       ligne au format pipe canonique :
            term | relation | target | annotation < explanation >
+       (utilisé pour l'enrichissement, fichier `.enrich`)
 
-    2) Mode RAW (`raw_content="..."`) — pour audit (.audit), signalement
-       (.err), statistiques (.stat). Le paramètre `triplets` est ignoré ;
-       le `raw_content` est écrit TEL QUEL dans le fichier. À utiliser
-       quand le format de sortie n'est PAS la table de triplets pipe
-       canonique mais un format multi-sections (=== SENS === / ===
-       SIGNALEMENTS === / === META === pour audit, etc.). Le LLM
-       CONSTRUIT lui-même la chaîne complète avec les séparateurs
-       attendus par le workflow correspondant.
+    2) **str** → ligne écrite TELLE QUELLE dans le fichier (utilisé
+       pour audit `.audit`, signalement `.err`, stats `.stat`, dont le
+       format est multi-sections avec des séparateurs `=== … ===` que
+       tu construis toi-même)
 
-    ⚠️ NE JAMAIS appeler ce tool avec `triplets=[]` ET `raw_content=""`
-    en même temps — un fichier vide est une erreur grave qui signifie
-    que tu n'as rien accumulé pendant le flux. Si tu n'as VRAIMENT rien
-    trouvé à proposer, dis-le dans le chat et n'appelle pas ce tool.
+    Tu passes simplement une liste de dicts OU une liste de strings,
+    selon le format attendu par ton workflow. Exemple .audit :
 
-    Mode TRIPLETS — chaque triplet est un dict à champs SÉPARÉS et
-    DISTINCTS — ne les confonds pas :
-      - "term", "relation", "target" : le triplet (obligatoires).
-      - "annotation" : tag sémantique OPTIONNEL (constitutif, contrastif,
-        …). CE N'EST PAS l'explication.
-      - "explanation" : justification en langage naturel. CE N'EST PAS
-        l'annotation.
-    Les raffinements bruts (`avocat>116477>66699`) sont décodés
-    automatiquement avant écriture.
+        triplets = [
+            "=== SENS ===",
+            "guitare>91594 | 1000 | guitare (instrument de musique)",
+            "",
+            "=== SIGNALEMENTS ===",
+            "guitare | r_isa | poisson | contamination_sens_non_premier | sens minoritaire",
+            "",
+            "=== META ===",
+            "Score de santé : 7/10",
+            "...",
+        ]
+
+    ⚠️ **Si `triplets` est vide ou ne contient AUCUN item valide**
+    (ni dict canonique, ni string), AUCUN fichier n'est écrit et le
+    tool retourne `{"error": "..."}`. Si tu n'as vraiment rien à
+    soumettre, dis-le dans le chat — n'appelle PAS ce tool « pour la
+    forme ».
+
+    Mode dict — les raffinements bruts (`avocat>116477>66699`) sont
+    décodés automatiquement en forme lisible avant écriture.
 
     SOUMISSION AUTOMATIQUE au LLMDrops (opt-in) :
       - `upload=True` : POST le fichier après écriture. Le nom uploadé
         est `{HHhMM}_{DD-MM-YY}_automatic_submission_from_{model}.{ext}`
         où `.ext` est dérivée du `path` (.enrich / .audit / .err / .stat).
-      - `model_name` : nom EXACT du LLM (claude-opus-4-7, gemini-3.1-…).
-        ⚠️ Ne DEVINE PAS ; si pas sûr, laisse vide.
+      - `model_name` : nom EXACT du LLM. ⚠️ Ne DEVINE PAS ; si pas sûr,
+        laisse vide.
       - `api_key`    : clé API LLMDrops. Vide → env `JDM_DROPS_API_KEY`.
 
     Args:
-        triplets: liste de dicts (mode triplets, ignoré si raw_content fourni).
+        triplets: liste de dicts et/ou strings. Type auto-détecté.
         path: chemin du fichier de sortie (extension détermine le type).
         upload: True pour soumettre au LLMDrops après écriture.
         model_name: nom du LLM source pour le filename uploadé.
         api_key: clé API LLMDrops (override env JDM_DROPS_API_KEY).
-        raw_content: contenu brut à écrire tel quel (mode RAW).
 
-    Renvoie {path, count, lines?, upload?}.
+    Renvoie {path, count, mode, lines?, upload?, error?}.
     """
+    from pathlib import Path as _Path
     from jdm_agent.enrich import Candidate
     from jdm_agent.enrich.pipeline import _decoded, write_submission as _write_sub
 
-    # Mode RAW : on écrit le contenu tel quel (audit / err / stat)
-    if raw_content and raw_content.strip():
-        from pathlib import Path as _Path
-        p = _Path(path)
+    # Classement par type — auto-détection : pas de mode explicite.
+    items = triplets or []
+    str_lines: list[str] = []
+    dict_items: list[dict] = []
+    for t in items:
+        if isinstance(t, str):
+            str_lines.append(t)
+        elif isinstance(t, dict) and t.get("term") and t.get("relation") and t.get("target"):
+            dict_items.append(t)
+        # Tout autre item (dict mal formé, list imbriquée, None, …) est
+        # ignoré silencieusement ; reflété dans le count final.
+
+    # Garde-fou : rien à écrire → AUCUN fichier créé, on signale au LLM
+    if not str_lines and not dict_items:
+        return {
+            "path": path, "count": 0,
+            "error": (
+                "Aucun contenu valide à écrire. `triplets` doit contenir "
+                "soit des dicts `{term, relation, target, annotation, "
+                "explanation}` (mode .enrich), soit des strings (lignes "
+                "brutes pour .audit/.err/.stat). Si tu n'as rien à "
+                "soumettre, dis-le dans le chat — aucun fichier vide "
+                "n'a été créé."
+            ),
+        }
+
+    c = _client()
+
+    # Mode RAW : si des strings ont été passées on les écrit telles quelles
+    if str_lines:
+        content = "\n".join(str_lines) + "\n"
         try:
-            p.write_text(raw_content, encoding="utf-8")
+            _Path(path).write_text(content, encoding="utf-8")
         except OSError as e:
             return {"path": path, "count": 0, "error": f"Écriture impossible : {e}"}
         out: dict = {
             "path": path,
-            "count": raw_content.count("\n") + 1,
+            "count": len(str_lines),
             "mode": "raw",
         }
+        # Mix dict + str (rare mais possible) : on signale les dicts ignorés
+        if dict_items:
+            out["ignored_dicts"] = len(dict_items)
     else:
-        # Mode TRIPLETS canonique
-        c = _client()
-        cands: list = []
-        for t in triplets:
-            if not (t.get("term") and t.get("relation") and t.get("target")):
-                continue
-            cands.append(Candidate(
-                term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
-                annotation=str(t.get("annotation") or ""),
-                consolidation_explanation=str(t.get("explanation") or ""),
-                confidence=0.7, source="agent",
-                validation_status="ok", consolidation_status="consolidated",
-            ))
+        # Mode TRIPLETS canonique (que des dicts)
+        cands = [Candidate(
+            term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
+            annotation=str(t.get("annotation") or ""),
+            consolidation_explanation=str(t.get("explanation") or ""),
+            confidence=0.7, source="agent",
+            validation_status="ok", consolidation_status="consolidated",
+        ) for t in dict_items]
         n = _write_sub(path, cands, client=c)
         out = {
             "path": path, "count": n,
