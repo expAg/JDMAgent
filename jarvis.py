@@ -105,14 +105,30 @@ def build_enrich_prompt(
     else:
         parts.append("Je veux ENRICHIR un terme dans JDM.")
         parts.append(_RANDOM_TERM_INSTRUCTION)
-    if len(rels) == 1:
+    # Si l'utilisateur a précisé un terme ET au moins une relation, on
+    # IMPÉRATIF : les triplets proposés doivent porter sur CE terme et
+    # une de CES relations. Pas le droit de partir sur d'autres termes
+    # ou d'autres relations « par diversité » — la diversité ne joue
+    # que sur les CIBLES proposées.
+    if term and rels:
+        rel_str = ", ".join(f"`{r}`" for r in rels)
+        parts.append(
+            f"⚠️ IMPÉRATIF : tous les triplets proposés DOIVENT avoir "
+            f"« {term} » comme SOURCE et l'une des relations {rel_str} "
+            "comme PRÉDICAT. Tu varies les CIBLES, pas le terme ni la "
+            "relation. NE propose AUCUN triplet sur un autre terme ou "
+            "une autre relation — même si elles paraissent intéressantes."
+        )
+    elif len(rels) == 1:
         parts.append(f"Relation cible prioritaire : `{rels[0]}`.")
     elif len(rels) > 1:
         parts.append(
             "Relations cibles prioritaires : "
             + ", ".join(f"`{r}`" for r in rels) + "."
         )
-    if vary_relations:
+    if vary_relations and not (term and rels):
+        # 'Varier les relations' ne s'applique que si l'utilisateur n'a
+        # PAS imposé de relations spécifiques.
         parts.append(
             "Varie explicitement les TYPES de relations explorées — "
             "pas une seule, plusieurs angles."

@@ -1030,24 +1030,27 @@ def enrichment_workflow() -> dict:
                 "order": 5,
                 "name": "Écriture (et soumission optionnelle) du fichier",
                 "description": (
-                    "Écris UNIQUEMENT les candidats consolidés au format pipe "
-                    "`terme | relation | cible | annotation < explication >`. "
-                    "L'ANNOTATION (constitutif, contrastif, probable…) et "
-                    "l'EXPLICATION (chaîne d'inférence en langage naturel) sont "
-                    "DEUX champs distincts — ne les confonds pas. Les raffinements "
-                    "bruts sont décodés automatiquement en forme lisible "
-                    "(`avocat>116477>66699` → `avocat (personne, juriste)`).\n\n"
-                    "SOUMISSION AUTOMATIQUE (opt-in) : si l'utilisateur demande "
-                    "de soumettre / pousser / envoyer le fichier à JDM, appelle "
-                    "`write_submission_file(..., upload=True, model_name='<ton "
-                    "propre nom de modèle>')`. Le fichier est alors POSTé au "
-                    "endpoint LLMDrops sous un nom standardisé qui trace quel "
-                    "LLM l'a produit et quand. La clé API est lue dans "
-                    "`JDM_DROPS_API_KEY` (env) ou passée explicitement via "
-                    "`api_key=...`. Défaut `upload=False` : on n'envoie JAMAIS "
-                    "sans demande explicite."
+                    "Appelle `write_submission_file(triplets=[...], "
+                    "path='<term>.enrich', upload=...)` avec la liste des "
+                    "candidats consolidés (PAS raw_content ici — c'est le "
+                    "MODE TRIPLETS canonique).\n\n"
+                    "⚠️ CRUCIAL : `triplets=[]` produit un fichier VIDE — "
+                    "c'est une ERREUR GRAVE. Tu DOIS accumuler au fur et "
+                    "à mesure du flux les candidats dont "
+                    "`ready_for_submission=true` et les passer ici. Si "
+                    "tu n'as rien à soumettre (aucun candidat consolidé), "
+                    "dis-le dans le chat et N'APPELLE PAS write_submission_file.\n\n"
+                    "Chaque triplet est un dict {term, relation, target, "
+                    "annotation, explanation}. L'ANNOTATION et "
+                    "l'EXPLICATION sont DEUX champs distincts — ne les "
+                    "confonds pas. Les raffinements bruts sont décodés "
+                    "automatiquement (`avocat>116477>66699` → "
+                    "`avocat (personne, juriste)`).\n\n"
+                    "SOUMISSION AUTOMATIQUE (opt-in) : `upload=True` POST "
+                    "au LLMDrops sous un nom standardisé. Clé via env "
+                    "`JDM_DROPS_API_KEY` ou param `api_key=`."
                 ),
-                "tool": "write_submission_file",
+                "tool": "write_submission_file (mode triplets)",
             },
         ],
         "rules": [
@@ -1238,31 +1241,34 @@ def audit_workflow() -> dict:
                 "order": 8,
                 "name": "Écriture du fichier .audit",
                 "description": (
-                    "Appelle `write_submission_file(triplets=..., "
-                    "path='<term>_audit.audit', upload=...)`. Format "
-                    "strict :\n\n"
+                    "Construis la CHAÎNE DE TEXTE COMPLÈTE du fichier "
+                    ".audit avec les 3 sections, puis passe-la dans "
+                    "`raw_content=` (pas dans `triplets=`) : \n"
+                    "`write_submission_file(triplets=[], "
+                    "path='<term>_audit.audit', upload=..., "
+                    "raw_content='''=== SENS ===\\n...''')`\n\n"
+                    "Format strict du raw_content :\n\n"
                     "  === SENS ===\n"
                     "  sense_id | poids_r_raff_sem | label\n"
-                    "  ... (une ligne par sens trouvé via disambiguate) ...\n"
+                    "  ... (une ligne par sens trouvé via disambiguate)\n"
                     "\n"
                     "  === SIGNALEMENTS ===\n"
                     "  term | relation | target | type | sens_concerné | justification\n"
-                    "  ... (une ligne par contamination ou sens-premier-discutable) ...\n"
+                    "  ... (une ligne par contamination ou sens-premier-discutable)\n"
                     "\n"
                     "  === META ===\n"
                     "  Score de santé : N/10\n"
                     "  <commentaire factuel 3-4 lignes max>\n"
                     "\n"
                     "où `type` ∈ { contamination_sens_non_premier, "
-                    "sens_premier_discutable } et `sens_concerné` = le "
-                    "sense_id raffiné concerné. La justification de "
-                    "chaque ligne SIGNALEMENT tient en UNE phrase courte. "
-                    "PAS de définitions, PAS de prose dans cette section. "
-                    "Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
-                    "SOUMISSION optionnelle : si l'utilisateur a demandé "
-                    "d'envoyer, `upload=True`."
+                    "sens_premier_discutable }. Justification = UNE phrase "
+                    "courte. Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
+                    "⚠️ Si tu appelles avec raw_content vide, le fichier "
+                    "sera vide — ERREUR. Tu DOIS construire la chaîne "
+                    "complète avant l'appel.\n\n"
+                    "SOUMISSION optionnelle : `upload=True` si demandé."
                 ),
-                "tool": "write_submission_file",
+                "tool": "write_submission_file (mode raw_content)",
             },
         ],
         "rules": [
@@ -1432,18 +1438,28 @@ def signalement_workflow() -> dict:
                 "order": 4,
                 "name": "Écriture du fichier .err",
                 "description": (
-                    "Appelle `write_submission_file(triplets=..., "
-                    "path='<term>_signal.err', upload=...)`. Format pipe :\n\n"
-                    "  term | relation | target | catégorie_suspect | justification\n\n"
+                    "Construis la CHAÎNE DE TEXTE COMPLÈTE du fichier "
+                    ".err (une ligne d'en-tête + une ligne par suspect) "
+                    "puis passe-la dans `raw_content=` (pas dans "
+                    "`triplets=`) :\n"
+                    "`write_submission_file(triplets=[], "
+                    "path='<term>_signal.err', upload=..., "
+                    "raw_content='''term | relation | target | "
+                    "catégorie_suspect | justification\\n...''')`\n\n"
+                    "Format strict du raw_content :\n\n"
+                    "  term | relation | target | catégorie_suspect | justification\n"
+                    "  ... (une ligne par suspect, max ~20) ...\n\n"
                     "où `catégorie_suspect` ∈ { sémantique, polarité, "
                     "catégorie_cible, annotation_oubliée, duplicate_sens, "
                     "poids_anormal, autre } et `justification` est UNE "
                     "phrase claire en français.\n\n"
+                    "⚠️ raw_content vide = fichier vide = ERREUR. Si tu "
+                    "n'as rien trouvé de suspect, dis-le dans le chat et "
+                    "n'appelle pas write_submission_file.\n\n"
                     "SOUMISSION optionnelle : `upload=True` si l'utilisateur "
-                    "le demande (clé via env `JDM_DROPS_API_KEY` ou param "
-                    "`api_key=`)."
+                    "le demande."
                 ),
-                "tool": "write_submission_file",
+                "tool": "write_submission_file (mode raw_content)",
             },
         ],
         "rules": [
@@ -1541,27 +1557,30 @@ def stats_workflow() -> dict:
                 "order": 5,
                 "name": "Écriture du fichier .stat",
                 "description": (
-                    "Appelle `write_submission_file(triplets=..., "
-                    "path='<term>_stats.stat', upload=...)`. Format "
-                    "strict, TROIS sections séparées :\n\n"
+                    "Construis la CHAÎNE DE TEXTE COMPLÈTE du fichier "
+                    ".stat (3 sections) puis passe-la dans `raw_content=` "
+                    "(pas dans `triplets=`) :\n"
+                    "`write_submission_file(triplets=[], "
+                    "path='<term>_stats.stat', upload=..., "
+                    "raw_content='''=== TABLEAU PAR RELATION ===\\n...''')`\n\n"
+                    "Format strict du raw_content, TROIS sections :\n\n"
                     "  === TABLEAU PAR RELATION ===\n"
                     "  relation | n_total | n_pos | n_neg | max_w | min_w | mean_w\n"
-                    "  ... (une ligne par relation) ...\n"
+                    "  ... (une ligne par relation)\n"
                     "\n"
                     "  === TABLEAU PAR TERMES RENCONTRÉS ===\n"
                     "  target | nb_occurrences | nb_relations_distinctes | poids_total | poids_max\n"
-                    "  ... (top 20 cibles) ...\n"
+                    "  ... (top 20 cibles)\n"
                     "\n"
                     "  === META ===\n"
-                    "  <3-5 observations clés en prose, brèves et factuelles>\n"
+                    "  <3-5 observations clés brèves et factuelles>\n"
                     "\n"
-                    "PAS de dissertation, PAS de définitions, PAS de "
-                    "redondance avec les tableaux. Les séparateurs "
-                    "`=== … ===` sont OBLIGATOIRES.\n\n"
-                    "SOUMISSION optionnelle : si l'utilisateur a demandé "
-                    "d'envoyer, `upload=True`."
+                    "PAS de dissertation, PAS de redondance avec les "
+                    "tableaux. Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
+                    "⚠️ raw_content vide = fichier vide = ERREUR.\n\n"
+                    "SOUMISSION optionnelle : `upload=True` si demandé."
                 ),
-                "tool": "write_submission_file",
+                "tool": "write_submission_file (mode raw_content)",
             },
         ],
         "rules": [
@@ -1589,82 +1608,100 @@ def write_submission_file(
     upload: bool = False,
     model_name: str = "",
     api_key: str = "",
+    raw_content: str = "",
 ) -> dict:
-    """Écrit le fichier de soumission JDM (.txt) au format pipe, et — sur
-    demande — le SOUMET automatiquement au endpoint LLMDrops de JDM.
+    """Écrit le fichier de soumission JDM (.txt) et — sur demande — le
+    SOUMET automatiquement au endpoint LLMDrops de JDM.
 
-    À utiliser à la FIN du flux d'enrichissement, avec UNIQUEMENT les triplets
-    dont la vérification de candidat a renvoyé `ready_for_submission = true`.
+    DEUX MODES D'ÉCRITURE :
 
-    Chaque triplet est un dict à champs SÉPARÉS et DISTINCTS — ne les confonds
-    pas :
+    1) Mode TRIPLETS (par défaut, `raw_content=""`) — pour
+       l'enrichissement (.enrich). On passe une liste de triplets dicts
+       et le tool écrit le fichier au format pipe :
+           term | relation | target | annotation < explanation >
+
+    2) Mode RAW (`raw_content="..."`) — pour audit (.audit), signalement
+       (.err), statistiques (.stat). Le paramètre `triplets` est ignoré ;
+       le `raw_content` est écrit TEL QUEL dans le fichier. À utiliser
+       quand le format de sortie n'est PAS la table de triplets pipe
+       canonique mais un format multi-sections (=== SENS === / ===
+       SIGNALEMENTS === / === META === pour audit, etc.). Le LLM
+       CONSTRUIT lui-même la chaîne complète avec les séparateurs
+       attendus par le workflow correspondant.
+
+    ⚠️ NE JAMAIS appeler ce tool avec `triplets=[]` ET `raw_content=""`
+    en même temps — un fichier vide est une erreur grave qui signifie
+    que tu n'as rien accumulé pendant le flux. Si tu n'as VRAIMENT rien
+    trouvé à proposer, dis-le dans le chat et n'appelle pas ce tool.
+
+    Mode TRIPLETS — chaque triplet est un dict à champs SÉPARÉS et
+    DISTINCTS — ne les confonds pas :
       - "term", "relation", "target" : le triplet (obligatoires).
-      - "annotation" : tag sémantique OPTIONNEL de la nature du triplet
-        (constitutif, contrastif, probable, incertain, …). Laisser "" si tu
-        n'en as pas. CE N'EST PAS l'explication.
-      - "explanation" : la justification en langage naturel de la déduction
-        (reprends `consolidation_explanation` renvoyé par la vérification).
-        CE N'EST PAS l'annotation.
+      - "annotation" : tag sémantique OPTIONNEL (constitutif, contrastif,
+        …). CE N'EST PAS l'explication.
+      - "explanation" : justification en langage naturel. CE N'EST PAS
+        l'annotation.
+    Les raffinements bruts (`avocat>116477>66699`) sont décodés
+    automatiquement avant écriture.
 
-    Chaque ligne écrite a EXACTEMENT ce format pipe (espaces autour des `|`) :
-        term | relation | target | annotation < explanation >
-
-    Si tu as proposé un raffinement brut (`avocat>116477>66699`) pour
-    désambiguïser, passe-le ici tel quel : le tool DÉCODE automatiquement
-    les raffinements en forme humaine (`avocat (personne, juriste)`) avant
-    d'écrire — le fichier de soumission ne contient JAMAIS d'identifiants
-    numériques, uniquement la forme lisible.
-
-    SOUMISSION AUTOMATIQUE au LLMDrops (Phase 12, opt-in) :
-      - `upload=True` : après écriture locale, POST le fichier au endpoint
-        LLMDrops JDM. Le fichier est uploadé sous un nom standardisé
-        `{HHhMM}_{DD-MM-YY}_automatic_submission_from_{model}.enrich` qui
-        permet le tri chronologique naturel et trace quel LLM a produit
-        la soumission.
-      - `model_name` : nom EXACT du LLM source (ex. "claude-opus-4-7",
-        "claude-sonnet-4-5", "gpt-5"). ⚠️ Ne DEVINE PAS, ne MÉLANGE PAS les
-        versions : tu DOIS passer ton VRAI identifiant tel qu'il apparaît
-        dans ta config (Claude Code l'affiche en bas du terminal). Si tu
-        n'es pas sûr, laisse vide → fallback sur env `LLM_MODEL` puis
-        `"mcp_client"`. Mieux vaut "mcp_client" qu'un nom inventé.
-      - `api_key`    : clé API LLMDrops. Vide → lue dans `JDM_DROPS_API_KEY`.
-      - Défaut `upload=False` : pas de transmission silencieuse, le LLM
-        doit demander l'upload explicitement.
+    SOUMISSION AUTOMATIQUE au LLMDrops (opt-in) :
+      - `upload=True` : POST le fichier après écriture. Le nom uploadé
+        est `{HHhMM}_{DD-MM-YY}_automatic_submission_from_{model}.{ext}`
+        où `.ext` est dérivée du `path` (.enrich / .audit / .err / .stat).
+      - `model_name` : nom EXACT du LLM (claude-opus-4-7, gemini-3.1-…).
+        ⚠️ Ne DEVINE PAS ; si pas sûr, laisse vide.
+      - `api_key`    : clé API LLMDrops. Vide → env `JDM_DROPS_API_KEY`.
 
     Args:
-        triplets: liste de dicts {term, relation, target, annotation, explanation}.
-        path: chemin du fichier .txt de sortie (défaut : soumission_jdm.txt).
-        upload: True pour soumettre au LLMDrops après écriture (défaut False).
+        triplets: liste de dicts (mode triplets, ignoré si raw_content fourni).
+        path: chemin du fichier de sortie (extension détermine le type).
+        upload: True pour soumettre au LLMDrops après écriture.
         model_name: nom du LLM source pour le filename uploadé.
         api_key: clé API LLMDrops (override env JDM_DROPS_API_KEY).
+        raw_content: contenu brut à écrire tel quel (mode RAW).
 
-    Renvoie {path, count, lines, upload?} — `upload` présent uniquement si
-    `upload=True`, contient {ok, status_code, uploaded_as, response, error}.
+    Renvoie {path, count, lines?, upload?}.
     """
     from jdm_agent.enrich import Candidate
     from jdm_agent.enrich.pipeline import _decoded, write_submission as _write_sub
 
-    c = _client()
-    cands: list = []
-    for t in triplets:
-        if not (t.get("term") and t.get("relation") and t.get("target")):
-            continue
-        cands.append(Candidate(
-            term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
-            annotation=str(t.get("annotation") or ""),
-            consolidation_explanation=str(t.get("explanation") or ""),
-            confidence=0.7, source="agent",
-            validation_status="ok", consolidation_status="consolidated",
-        ))
-    n = _write_sub(path, cands, client=c)
-    out: dict = {
-        "path": path, "count": n,
-        "lines": [
-            f"{_decoded(cd.term, c)} | {cd.relation} | {_decoded(cd.target, c)} | "
-            f"{cd.annotation} < {' '.join(cd.consolidation_explanation.split())} >"
-            for cd in cands
-        ],
-    }
+    # Mode RAW : on écrit le contenu tel quel (audit / err / stat)
+    if raw_content and raw_content.strip():
+        from pathlib import Path as _Path
+        p = _Path(path)
+        try:
+            p.write_text(raw_content, encoding="utf-8")
+        except OSError as e:
+            return {"path": path, "count": 0, "error": f"Écriture impossible : {e}"}
+        out: dict = {
+            "path": path,
+            "count": raw_content.count("\n") + 1,
+            "mode": "raw",
+        }
+    else:
+        # Mode TRIPLETS canonique
+        c = _client()
+        cands: list = []
+        for t in triplets:
+            if not (t.get("term") and t.get("relation") and t.get("target")):
+                continue
+            cands.append(Candidate(
+                term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
+                annotation=str(t.get("annotation") or ""),
+                consolidation_explanation=str(t.get("explanation") or ""),
+                confidence=0.7, source="agent",
+                validation_status="ok", consolidation_status="consolidated",
+            ))
+        n = _write_sub(path, cands, client=c)
+        out = {
+            "path": path, "count": n,
+            "lines": [
+                f"{_decoded(cd.term, c)} | {cd.relation} | {_decoded(cd.target, c)} | "
+                f"{cd.annotation} < {' '.join(cd.consolidation_explanation.split())} >"
+                for cd in cands
+            ],
+            "mode": "triplets",
+        }
 
     if upload:
         from jdm_agent.enrich.uploader import submit_to_jdm
