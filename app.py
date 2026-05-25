@@ -1282,6 +1282,19 @@ _CHATBOT_CSS = """
   overflow-y: auto;
 }
 
+/* Blocs « thinking » dans les messages Jarvis — rendus discrets :
+   très petits, grisés, italiques. La classe `.jdm-thinking` est
+   appliquée par un <span> dans les progress_lines de jarvis.py.
+   On passe par une classe car les attributs `style=` inline sont
+   filtrés par DOMPurify de Gradio v5. */
+.jdm-thinking,
+.jdm-thinking * {
+  font-size: 0.72em !important;
+  color: #999 !important;
+  font-style: italic !important;
+  line-height: 1.35 !important;
+}
+
 /* Champ clé API : quand le textbox est interactive=False (i.e. l'input
    est disabled), on grise AUSSI le label et l'info de placeholder, pas
    seulement le champ. CSS :has() supporté par tous les navigateurs

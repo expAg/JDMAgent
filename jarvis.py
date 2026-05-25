@@ -808,13 +808,17 @@ def run_jarvis_flow(
                                 thoughts = _content_to_thoughts(m.content)
                                 if thoughts.strip():
                                     t = thoughts.strip()
-                                    # font-size 0.75em + couleur grisée +
-                                    # italique : encore plus discret que
-                                    # <small> seul (qui est ~0.83em par
-                                    # défaut).
+                                    # Classe CSS plutôt que `style=` inline
+                                    # car Gradio v5 (DOMPurify) filtre les
+                                    # attributs style — la classe passe.
+                                    # Stylage dans _CHATBOT_CSS : 0.72em,
+                                    # grisé, italique. Le blockquote `>` est
+                                    # retiré (il alourdissait visuellement
+                                    # le rendu et écrasait partiellement le
+                                    # style).
                                     line = (
-                                        f"> <span style=\"font-size:0.75em;"
-                                        f"color:#999;\"><em>💭 {t}</em></span>"
+                                        f"<span class=\"jdm-thinking\">"
+                                        f"💭 {t}</span>"
                                     )
                                     _add_line(line)
                                 # 2) Texte parlé entre 2 tool_calls (Claude/
