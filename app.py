@@ -2199,9 +2199,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 multiselect=True,
                             )
                             gr.Markdown(
-                                "<small><em>Au moins un des deux champs "
-                                "doit être rempli. Les deux ensemble "
-                                "déclenchent les deux modes en séquence.</em></small>"
+                                "<small><em>Si les deux champs sont vides, "
+                                "le LLM choisira un terme au hasard.</em></small>"
                             )
                             jst_upload = gr.Checkbox(
                                 value=False,
