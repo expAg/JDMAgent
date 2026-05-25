@@ -1297,12 +1297,15 @@ _CHATBOT_CSS = """
 
 /* Narrations des outils Jarvis (« 📖 Je vérifie l'existence… »,
    « 🔧 enrichment_workflow(...) », « ✓ outil renvoie N chars »).
-   MÊME TAILLE que thinking (0.72em) pour cohérence visuelle, mais
-   couleur normale (hérite du thème, donc blanc en dark mode) et
-   pas d'italique — ce sont des FAITS techniques, pas du discours. */
+   MÊME taille et italique que thinking, mais teinte BLEU-CYAN doux
+   (#82aaff) au lieu du gris — se démarque subtilement du flux
+   principal blanc tout en restant lisible. Distinct du violet
+   primaire de Gradio (accents UI) pour éviter la confusion. */
 .jdm-narration,
 .jdm-narration * {
   font-size: 0.72em !important;
+  color: #82aaff !important;
+  font-style: italic !important;
   line-height: 1.35 !important;
 }
 
