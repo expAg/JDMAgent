@@ -330,8 +330,27 @@ def get_relations_between(term1: str, term2: str, min_weight: Optional[float] = 
     Les éventuels refinements (ex: "avocat>116477>66699") sont décodés
     en clair ("avocat (personne, juriste)") avec leur ID préservé dans
     `source_id`/`target_id`.
+
+    Si l'un des deux termes n'existe pas dans JDM, renvoie une liste
+    avec UN SEUL item contenant `{"error": ..., "missing": ...}` — le
+    LLM doit alors comprendre que le terme est inconnu (pas que les
+    deux n'ont pas de relations communes).
     """
     c = _client()
+    # Pré-check : si un terme est absent, on retourne un signal explicite
+    # plutôt qu'une liste vide ambiguë (= "pas de relations" vs "terme
+    # inexistant"). Cache disque → 1 appel HTTP par terme au premier
+    # appel seulement.
+    for t in (term1, term2):
+        try:
+            c.node_by_name(t)
+        except Exception:
+            return [{
+                "error": f"Terme « {t} » inconnu de JDM — vérifie l'orthographe ou utilise lookup_term pour confirmer.",
+                "missing": t,
+                "term1": term1,
+                "term2": term2,
+            }]
     res = c.relations_between(term1, term2, min_weight=_mw(min_weight, 0.0))
     idx = res.node_index()
     src_dec = c.decode_node_name(term1, local_nodes=idx)

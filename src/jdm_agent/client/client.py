@@ -100,6 +100,17 @@ class JDMClient:
     def _get_raw(self, path: str, params: Optional[dict] = None) -> dict | list:
         params = {k: v for k, v in (params or {}).items() if v is not None}
         r = self._http.get(path, params=params)
+        # Cas particulier : JDM renvoie parfois 500 (au lieu de 404) quand
+        # un nœud n'existe pas — le message du body est le même
+        # (« Node 'X' not found! »). Avant de retry sur 5xx, on inspecte
+        # le body : si c'est manifestement un nœud absent, on traite
+        # comme un 404 (JDMNotFoundError, pas de retry).
+        body_lc = (r.text or "").lower()
+        if r.status_code >= 500 and "not found" in body_lc:
+            raise JDMNotFoundError(
+                f"GET {path} → {r.status_code} (JDM renvoie 500 sur un nœud "
+                f"absent ; traité comme 404) : {r.text[:200]}"
+            )
         if r.status_code == 429 or r.status_code >= 500:
             r.raise_for_status()  # déclenchera un retry via tenacity
         if r.status_code == 404:

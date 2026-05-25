@@ -136,6 +136,14 @@ def test_get_relations_of_type_to_direction(patched_client):
 def test_get_relations_between(patched_client):
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    # Pré-check : le tool vérifie que les deux termes existent avant
+    # de querier les relations. Mocks requis.
+    respx.get(f"{BASE}/v0/node_by_name/chat").mock(return_value=httpx.Response(200, json={
+        "id": 150, "name": "chat", "type": 1, "w": 100,
+    }))
+    respx.get(f"{BASE}/v0/node_by_name/internet").mock(return_value=httpx.Response(200, json={
+        "id": 999, "name": "internet", "type": 1, "w": 100,
+    }))
     respx.get(f"{BASE}/v0/relations/from/chat/to/internet").mock(return_value=httpx.Response(200, json={
         "nodes": [],
         "relations": [
@@ -147,6 +155,25 @@ def test_get_relations_between(patched_client):
     assert len(out) == 2
     # Trié par poids décroissant.
     assert out[0]["w"] >= out[1]["w"]
+
+
+@respx.mock
+def test_get_relations_between_missing_term(patched_client):
+    """Si l'un des termes n'existe pas, on renvoie un item d'erreur
+    explicite plutôt qu'une liste vide ambiguë."""
+    respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
+    respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
+    respx.get(f"{BASE}/v0/node_by_name/tuile").mock(return_value=httpx.Response(200, json={
+        "id": 200, "name": "tuile", "type": 1, "w": 50,
+    }))
+    # Le terme « materiau » n'existe pas (404 ou 500 avec body "not found")
+    respx.get(f"{BASE}/v0/node_by_name/materiau").mock(return_value=httpx.Response(404, json={
+        "error": "Node 'materiau' not found!",
+    }))
+    out = get_relations_between.invoke({"term1": "tuile", "term2": "materiau"})
+    assert len(out) == 1
+    assert "error" in out[0]
+    assert out[0]["missing"] == "materiau"
 
 
 @respx.mock
