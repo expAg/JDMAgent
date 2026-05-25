@@ -1266,7 +1266,7 @@ _HEAD_JS = """
       if (txt.indexOf('Jarvis') < 0) continue;
       // Force un espace insécable AVANT Jarvis pour éviter le collage.
       t.innerHTML = t.innerHTML.replace(
-        /\s*Jarvis/g,
+        /\\s*Jarvis/g,
         '&nbsp;<span style="color:#f5b042;font-weight:600;">Jarvis</span>'
       );
       t.dataset.jarvisStyled = '1';
