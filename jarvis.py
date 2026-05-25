@@ -19,7 +19,8 @@ from typing import Any, Generator, Optional
 
 
 def _content_to_text(content: Any) -> str:
-    """Normalise un `AIMessage.content` LangChain en string plate.
+    """Normalise un `AIMessage.content` LangChain en string plate
+    (TEXTE PARLÉ uniquement, exclut les blocs thinking/reasoning).
 
     Selon le provider (Anthropic vs Gemini natif vs OpenAI), `m.content`
     peut être :
@@ -28,7 +29,8 @@ def _content_to_text(content: Any) -> str:
         natif quand reasoning_summary ou multimodal)
       - une liste de str (rare)
       - None (cas vide)
-    On extrait toujours une str finale concatenable.
+    On extrait UNIQUEMENT les blocs de type 'text' — pas les blocs
+    'thinking'/'reasoning' (cf. `_content_to_thoughts` pour ça).
     """
     if content is None:
         return ""
@@ -40,14 +42,167 @@ def _content_to_text(content: Any) -> str:
             if isinstance(block, str):
                 parts.append(block)
             elif isinstance(block, dict):
-                # Bloc de type {"type": "text", "text": "..."} (Anthropic)
-                # ou {"text": "..."} (Gemini), ou autre — on essaye "text".
-                txt = block.get("text")
-                if isinstance(txt, str):
-                    parts.append(txt)
+                # On accepte UNIQUEMENT les blocs text (pas thinking).
+                btype = block.get("type")
+                if btype in (None, "text"):
+                    txt = block.get("text")
+                    if isinstance(txt, str):
+                        parts.append(txt)
         return "".join(parts)
     # Cas pathologique : on tente str() en garde-fou
     return str(content)
+
+
+def _content_to_thoughts(content: Any) -> str:
+    """Extrait UNIQUEMENT le chain-of-thought / raisonnement exposé
+    par le modèle dans `AIMessage.content`.
+
+    Reconnaît les deux formats coexistant dans LangChain :
+      - {"type": "thinking", "thinking": "..."}    (Anthropic Extended
+        Thinking, Gemini langchain-google-genai v0)
+      - {"type": "reasoning", "reasoning": "..."} (OpenAI o1/o3,
+        Gemini langchain-google-genai v1, standard LangChain Core 1.0)
+
+    Renvoie "" si pas de thinking exposé (cas normal pour les modèles
+    sans thinking, ou Gemini sans `include_thoughts=True`).
+    """
+    if content is None or isinstance(content, str):
+        return ""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "thinking":
+            txt = block.get("thinking")
+            if isinstance(txt, str) and txt.strip():
+                parts.append(txt)
+        elif btype == "reasoning":
+            txt = block.get("reasoning")
+            if isinstance(txt, str) and txt.strip():
+                parts.append(txt)
+    return "\n".join(parts)
+
+
+# ---------- Narration lexicalisée des appels d'outils Jarvis ----------
+# Pour les outils utilisés couramment dans les flux Jarvis, on remplace
+# l'affichage technique « 🔧 tool_name(args) » par une phrase en français
+# plus lisible. Fallback : si l'outil n'est pas dans la table, on garde
+# l'affichage technique actuel (zéro régression sur les ~30 autres outils).
+#
+# Chaque entrée : {"start": fn(args)->str, "done": fn(result_str)->str}
+# - `start` : phrase affichée AVANT l'exécution du tool (sur le tool_call)
+# - `done`  : phrase affichée APRÈS (sur le ToolMessage de retour)
+# Si une fn lève une exception, on fait gracieusement fallback.
+
+def _truncate(s: str, n: int = 60) -> str:
+    s = str(s or "").strip()
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def _parse_tool_result(content: str) -> dict:
+    """Parse défensif d'un retour de tool — soit JSON soit dict-repr."""
+    import json
+    if not content:
+        return {}
+    try:
+        d = json.loads(content)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+TOOL_NARRATION: dict[str, dict] = {
+    "list_existing_for_enrichment": {
+        "start": lambda a: (
+            f"📥 Je récupère ce qui existe déjà sur "
+            f"« {_truncate(a.get('term'))} » pour la relation "
+            f"`{a.get('relation_name') or a.get('relation') or '?'}`…"
+        ),
+        "done": lambda c: (
+            lambda d: (f"→ {d.get('count', '?')} triplet(s) existant(s) trouvé(s)."
+                      if d else "→ (résultat non parsable)")
+        )(_parse_tool_result(c)),
+    },
+    "validate_candidate": {
+        "start": lambda a: (
+            f"🧪 Je teste le candidat « {_truncate(a.get('term'))} | "
+            f"{a.get('relation', '?')} | {_truncate(a.get('target'))} »…"
+        ),
+        "done": lambda c: (
+            lambda d: (
+                "✅ consolidé" if d.get("consolidation_status") == "consolidated"
+                else "⏸️ pas concluant" if d.get("consolidation_status") == "silent"
+                else "❌ rejeté par inférence" if d.get("consolidation_status") == "rejected"
+                else f"→ {d.get('validation_status', '?')}"
+            ) if d else "→ (résultat non parsable)"
+        )(_parse_tool_result(c)),
+    },
+    "disambiguate": {
+        "start": lambda a: f"🔎 Je cherche les sens de « {_truncate(a.get('term'))} »…",
+        "done": lambda c: f"→ {len(_parse_tool_result(c).get('senses') or _parse_tool_result(c).get('refinements') or []) or '?'} sens trouvés."
+        if _parse_tool_result(c) else "→ (résultat non parsable)",
+    },
+    "lookup_term": {
+        "start": lambda a: f"📖 Je vérifie l'existence de « {_truncate(a.get('term'))} » dans JDM…",
+        "done": lambda c: (
+            (lambda d: ("→ trouvé." if d.get("found") or d.get("id") else "→ inconnu."))(
+                _parse_tool_result(c))
+            if _parse_tool_result(c) else "→ (résultat non parsable)"
+        ),
+    },
+    "get_relations_of_type": {
+        "start": lambda a: (
+            f"🔗 Je regarde les triplets « {_truncate(a.get('term'))} | "
+            f"{a.get('relation_name') or a.get('relation') or '?'} »…"
+        ),
+        "done": lambda c: (
+            (lambda d: f"→ {d.get('count', len(d.get('triplets', [])) or '?')} relation(s) trouvée(s).")(
+                _parse_tool_result(c))
+            if _parse_tool_result(c) else "→ (résultat non parsable)"
+        ),
+    },
+    "write_submission_file": {
+        "start": lambda a: (
+            f"💾 J'écris le fichier de soumission ({len(a.get('triplets') or [])} item(s))"
+            + (" et je le pousse à JDM…" if a.get("upload") else "…")
+        ),
+        "done": lambda c: (
+            (lambda d: (
+                f"❌ {d['error']}" if d.get("error")
+                else f"→ écrit dans `{d.get('path', '?')}` ({d.get('count', '?')} ligne(s))."
+            ))(_parse_tool_result(c))
+            if _parse_tool_result(c) else "→ (résultat non parsable)"
+        ),
+    },
+}
+
+
+def _narrate_tool_call(name: str, args: dict) -> Optional[str]:
+    """Renvoie une phrase narrative pour un tool_call si l'outil est
+    connu de TOOL_NARRATION, sinon None (le caller fera fallback sur
+    l'affichage technique)."""
+    spec = TOOL_NARRATION.get(name)
+    if not spec:
+        return None
+    try:
+        return spec["start"](args or {})
+    except Exception:
+        return None
+
+
+def _narrate_tool_result(name: str, content: str) -> Optional[str]:
+    """Renvoie une phrase narrative pour un ToolMessage si l'outil est
+    connu, sinon None."""
+    spec = TOOL_NARRATION.get(name)
+    if not spec:
+        return None
+    try:
+        return spec["done"](content)
+    except Exception:
+        return None
 
 
 # ---------- Construction des pré-prompts ----------
@@ -629,15 +784,40 @@ def run_jarvis_flow(
                         for m in msgs:
                             if isinstance(m, AIMessage):
                                 tcs = getattr(m, "tool_calls", []) or []
+                                # 1) Chain-of-thought éventuellement exposé
+                                #    par le modèle (Anthropic Extended
+                                #    Thinking, Gemini avec include_thoughts,
+                                #    o1/o3) — affiché avant tout, en italique.
+                                thoughts = _content_to_thoughts(m.content)
+                                if thoughts.strip():
+                                    progress_lines.append(
+                                        f"💭 *{thoughts.strip()}*"
+                                    )
+                                # 2) Texte parlé du modèle (commentaires
+                                #    intermédiaires de Claude/GPT entre 2
+                                #    tool_calls — Gemini souvent vide ici).
+                                spoken = _content_to_text(m.content)
+                                if tcs and spoken.strip():
+                                    progress_lines.append(
+                                        f"💬 {spoken.strip()}"
+                                    )
                                 if tcs:
                                     for tc in tcs:
-                                        args = ", ".join(
-                                            f"{k}={v!r}"
-                                            for k, v in (tc.get("args") or {}).items()
-                                        )
-                                        progress_lines.append(
-                                            f"🔧 `{tc['name']}({args})`"
-                                        )
+                                        name = tc.get("name", "?")
+                                        tc_args = tc.get("args") or {}
+                                        # Lexicalisation maison si l'outil
+                                        # est connu, sinon fallback technique.
+                                        narrated = _narrate_tool_call(name, tc_args)
+                                        if narrated:
+                                            progress_lines.append(narrated)
+                                        else:
+                                            args_str = ", ".join(
+                                                f"{k}={v!r}"
+                                                for k, v in tc_args.items()
+                                            )
+                                            progress_lines.append(
+                                                f"🔧 `{name}({args_str})`"
+                                            )
                                     yield (
                                         [{"role": "user", "content": user_display},
                                          {"role": "assistant",
@@ -645,7 +825,10 @@ def run_jarvis_flow(
                                         last_file_path, "",
                                     )
                                 else:
-                                    final_answer = _content_to_text(m.content)
+                                    # Pas de tool_calls → c'est la réponse
+                                    # finale (le texte parlé devient la
+                                    # réponse à l'utilisateur).
+                                    final_answer = spoken
                             elif isinstance(m, ToolMessage):
                                 content = _content_to_text(m.content)
                                 # Captation du fichier produit par
@@ -654,12 +837,18 @@ def run_jarvis_flow(
                                     p = _extract_submission_path(content)
                                     if p:
                                         last_file_path = p
-                                preview = content[:120].replace("\n", " ")
-                                if len(content) > 120:
-                                    preview += "…"
-                                progress_lines.append(
-                                    f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
-                                )
+                                # Lexicalisation maison si l'outil est connu,
+                                # sinon fallback technique (preview brute).
+                                narrated_done = _narrate_tool_result(m.name, content)
+                                if narrated_done:
+                                    progress_lines.append(narrated_done)
+                                else:
+                                    preview = content[:120].replace("\n", " ")
+                                    if len(content) > 120:
+                                        preview += "…"
+                                    progress_lines.append(
+                                        f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
+                                    )
                                 yield (
                                     [{"role": "user", "content": user_display},
                                      {"role": "assistant",

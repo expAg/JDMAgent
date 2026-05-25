@@ -422,14 +422,27 @@ def _build_gemini_native(model_id: str):
         ) from e
     # Reasoning conservé sur les 3.x (3.1 Flash Lite reste lent même avec
     # thinking_budget=0 — pas la peine de sacrifier la qualité).
-    return ChatGoogleGenerativeAI(
-        model=routed_model,
-        google_api_key=token,
-        # temperature=1.0 (au lieu de 0) — cf. note dans _build_openai_compat :
-        # avec t=0 Gemini était déterministe et choisissait toujours le
-        # même mot sur les tirages aléatoires (« plateau » à chaque audit).
-        temperature=1.0,
-    )
+    # `include_thoughts=True` expose le résumé de raisonnement dans
+    # `m.content` comme blocs {type:"thinking"} ou {type:"reasoning"} —
+    # consommé par `_content_to_thoughts` côté Jarvis pour afficher le
+    # chain-of-thought de l'agent dans la fenêtre de chat.
+    # On try/except : certains modèles preview (3.1 Flash Lite) peuvent
+    # refuser les kwargs thinking — dans ce cas fallback sans.
+    base_kwargs = {
+        "model": routed_model,
+        "google_api_key": token,
+        "temperature": 1.0,
+    }
+    try:
+        return ChatGoogleGenerativeAI(
+            **base_kwargs,
+            include_thoughts=True,
+            thinking_level="low",  # niveau Gemini 3.x (minimal/low/medium/high)
+        )
+    except (TypeError, ValueError):
+        # kwarg non supporté par cette version de langchain-google-genai
+        # ou ce modèle → fallback silencieux sans thinking exposé.
+        return ChatGoogleGenerativeAI(**base_kwargs)
 
 
 def _history_to_lc(history: list[dict], current_user_message: str) -> list:
