@@ -711,9 +711,18 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     if progress_full:
         full_text = "\n".join(progress_full)
         n_steps = len(progress_full)
+        plural = "s" if n_steps > 1 else ""
+        # Libellé adaptatif selon que le raisonnement LLM a été demandé
+        # ou non (cf. run_jarvis_flow pour le même pattern).
+        if use_thinking:
+            summary_label = (
+                f"🧠 Voir le résumé du raisonnement "
+                f"({n_steps} étape{plural})"
+            )
+        else:
+            summary_label = f"🧠 Voir les étapes ({n_steps} étape{plural})"
         out += (
-            f"\n\n<details><summary>🧠 Voir le résumé du raisonnement "
-            f"({n_steps} étape{'s' if n_steps > 1 else ''})</summary>\n\n"
+            f"\n\n<details><summary>{summary_label}</summary>\n\n"
             f"{full_text}\n\n</details>"
         )
 

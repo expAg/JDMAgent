@@ -950,13 +950,26 @@ def run_jarvis_flow(
         # côté API — pas de version raw exposée) + texte parlé +
         # tool_calls + retours, dans l'ordre chronologique. Replié par
         # défaut pour ne pas polluer la réponse.
+        #
+        # Libellé adaptatif :
+        #  - raisonnement ON  → « Voir le résumé du raisonnement (N étapes) »
+        #  - raisonnement OFF → « Voir les étapes (N étapes) »
+        #    (pas de raisonnement LLM dans le bloc, juste la narration des
+        #     appels d'outils et leurs résultats)
         reasoning_block = ""
         if progress_full:
             full_text = "\n".join(progress_full)
             n_steps = len(progress_full)
+            plural = "s" if n_steps > 1 else ""
+            if use_thinking:
+                summary_label = (
+                    f"🧠 Voir le résumé du raisonnement "
+                    f"({n_steps} étape{plural})"
+                )
+            else:
+                summary_label = f"🧠 Voir les étapes ({n_steps} étape{plural})"
             reasoning_block = (
-                f"\n\n<details><summary>🧠 Voir le résumé du raisonnement "
-                f"({n_steps} étape{'s' if n_steps > 1 else ''})</summary>\n\n"
+                f"\n\n<details><summary>{summary_label}</summary>\n\n"
                 f"{full_text}\n\n</details>"
             )
 
