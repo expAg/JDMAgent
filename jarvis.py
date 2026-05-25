@@ -102,6 +102,30 @@ def _truncate(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
+def count_consolidated_in_messages(messages: list) -> int:
+    """Compte les triplets consolidés en parcourant les ToolMessages
+    `validate_candidate` accumulés pendant l'invocation agent.
+
+    Un triplet est compté comme consolidé si le retour contient soit
+    `ready_for_submission=True`, soit `consolidation_status="consolidated"`.
+    Robuste aux différents formats de sérialisation (JSON / Python repr).
+    """
+    n = 0
+    for m in messages:
+        name = getattr(m, "name", None) or ""
+        if name != "validate_candidate":
+            continue
+        content = getattr(m, "content", "") or ""
+        parsed = _parse_tool_result(str(content))
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("ready_for_submission") is True:
+            n += 1
+        elif parsed.get("consolidation_status") == "consolidated":
+            n += 1
+    return n
+
+
 def detect_rate_limit_retry(exc) -> Optional[float]:
     """Détecte les erreurs 429 « PerMinute » sur le free tier Gemini et
     extrait le délai de retry recommandé par l'API.
@@ -828,6 +852,8 @@ def run_jarvis_flow(
     build_agent_fn,
     get_client_fn,
     use_thinking: bool = True,
+    consolidation_target: Optional[int] = None,
+    max_persistence_relances: int = 3,
 ) -> Generator[tuple[list[dict], Optional[str], str], None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -924,92 +950,141 @@ def run_jarvis_flow(
         # d'exclusion MAINTENUS à travers la pause.
         import time as _time
         accumulated_messages: list = [HumanMessage(content=prompt)]
-        rate_limit_attempts = 0
-        with budget_context(limit=limit) as budget, exclusion_context():
-            while rate_limit_attempts < 2:
-                try:
-                    for chunk in agent.stream(
-                        {"messages": accumulated_messages},
-                        stream_mode="updates",
-                    ):
-                        # chunk = dict {node_name: {"messages": [msg, ...]}}
-                        for _node, payload in chunk.items():
-                            msgs = (payload or {}).get("messages") or []
-                            for m in msgs:
-                                # Accumulation pour permettre la reprise
-                                # après pause quota (cf. retry plus bas).
-                                accumulated_messages.append(m)
-                                if isinstance(m, AIMessage):
-                                    tcs = getattr(m, "tool_calls", []) or []
-                                    # 1) Chain-of-thought (Anthropic Extended,
-                                    #    Gemini avec include_thoughts, o1/o3).
-                                    #    Style : blockquote + <small> + couleur
-                                    #    grisée + italique pour le distinguer
-                                    #    nettement des outils et du texte parlé,
-                                    #    et signaler son statut « pensée » plutôt
-                                    #    qu'action. Pas de troncature : Gemini
-                                    #    renvoie déjà une SYNTHÈSE côté API
-                                    #    (jamais les raw thoughts), inutile de
-                                    #    re-raboter.
-                                    thoughts = _content_to_thoughts(m.content)
-                                    if thoughts.strip():
-                                        t = thoughts.strip()
-                                        # Le thinking contient souvent des
-                                        # newlines markdown (\n\n) qui REFERMENT
-                                        # le span/div HTML — d'où le bug observé
-                                        # où seule la 1re ligne avait le style.
-                                        # Fix : on convertit tous les retours en
-                                        # <br> HTML pour rester inline-block, et
-                                        # on enveloppe dans un <div> bloc (les
-                                        # styles bloc s'appliquent au tout).
-                                        # Markdown interne au thinking (genre
-                                        # `code` ou *italique*) ne sera pas
-                                        # rendu — acceptable pour un bloc déjà
-                                        # marqué comme « discret ».
-                                        t_html = (
-                                            t.replace("&", "&amp;")
-                                             .replace("<", "&lt;")
-                                             .replace(">", "&gt;")
-                                             .replace("\n", "<br>")
-                                        )
-                                        line = (
-                                            f"<div class=\"jdm-thinking\">"
-                                            f"💭 {t_html}</div>"
-                                        )
-                                        _add_line(line)
-                                    # 2) Texte parlé entre 2 tool_calls (Claude/
-                                    #    GPT le font ; Gemini souvent vide).
-                                    #    Blockquote normal pour le distinguer du
-                                    #    thinking (qui est plus discret).
-                                    spoken = _content_to_text(m.content)
-                                    if tcs and spoken.strip():
-                                        _add_line(f"> 💬 {spoken.strip()}")
-                                    if tcs:
-                                        for tc in tcs:
-                                            name = tc.get("name", "?")
-                                            tc_args = tc.get("args") or {}
-                                            narrated = _narrate_tool_call(name, tc_args)
-                                            if narrated:
-                                                _add_line(
-                                                    f'<div class="jdm-narration">'
-                                                    f'{narrated}</div>'
-                                                )
-                                            else:
-                                                args_str = ", ".join(
-                                                    f"{k}={v!r}"
-                                                    for k, v in tc_args.items()
-                                                )
-                                                _add_line(
-                                                    f'<div class="jdm-narration">'
-                                                    f'🔧 `{name}({args_str})`</div>'
-                                                )
-                                        # Ajoute en bas un indicateur fugace
-                                        # « génération en cours » pour qu'on
-                                        # sache que ça tourne (le LLM peut
-                                        # tarder à produire sa réponse finale
-                                        # ou son prochain tool_call). Cette
-                                        # ligne disparaît au prochain yield
-                                        # ou au yield final.
+        # `persistence_relances` : nombre de relances déjà tentées via
+        # nudge. Fix structurel du biais d'abandon du LLM — si le LLM
+        # finalise prématurément (= consolidés < target alors qu'on a
+        # demandé iterate), on injecte un HumanMessage qui le force à
+        # reprendre, et on relance le streaming. Cap à
+        # `max_persistence_relances` pour éviter les boucles infinies.
+        # NB : chaque relance ouvre un NOUVEAU budget_context (compteur
+        # reset par relance) — c'est volontaire : le budget label est
+        # interprété « par session de streaming », pas « total absolu ».
+        persistence_relances = 0
+        persistence_done = False
+        budget = None  # accessible hors du with pour le compteur final
+        while not persistence_done:
+            rate_limit_attempts = 0
+            with budget_context(limit=limit) as budget, exclusion_context():
+                # boucle retry quota (intacte)
+                while rate_limit_attempts < 2:
+                    try:
+                        for chunk in agent.stream(
+                            {"messages": accumulated_messages},
+                            stream_mode="updates",
+                        ):
+                            # chunk = dict {node_name: {"messages": [msg, ...]}}
+                            for _node, payload in chunk.items():
+                                msgs = (payload or {}).get("messages") or []
+                                for m in msgs:
+                                    # Accumulation pour permettre la reprise
+                                    # après pause quota (cf. retry plus bas).
+                                    accumulated_messages.append(m)
+                                    if isinstance(m, AIMessage):
+                                        tcs = getattr(m, "tool_calls", []) or []
+                                        # 1) Chain-of-thought (Anthropic Extended,
+                                        #    Gemini avec include_thoughts, o1/o3).
+                                        #    Style : blockquote + <small> + couleur
+                                        #    grisée + italique pour le distinguer
+                                        #    nettement des outils et du texte parlé,
+                                        #    et signaler son statut « pensée » plutôt
+                                        #    qu'action. Pas de troncature : Gemini
+                                        #    renvoie déjà une SYNTHÈSE côté API
+                                        #    (jamais les raw thoughts), inutile de
+                                        #    re-raboter.
+                                        thoughts = _content_to_thoughts(m.content)
+                                        if thoughts.strip():
+                                            t = thoughts.strip()
+                                            # Le thinking contient souvent des
+                                            # newlines markdown (\n\n) qui REFERMENT
+                                            # le span/div HTML — d'où le bug observé
+                                            # où seule la 1re ligne avait le style.
+                                            # Fix : on convertit tous les retours en
+                                            # <br> HTML pour rester inline-block, et
+                                            # on enveloppe dans un <div> bloc (les
+                                            # styles bloc s'appliquent au tout).
+                                            # Markdown interne au thinking (genre
+                                            # `code` ou *italique*) ne sera pas
+                                            # rendu — acceptable pour un bloc déjà
+                                            # marqué comme « discret ».
+                                            t_html = (
+                                                t.replace("&", "&amp;")
+                                                 .replace("<", "&lt;")
+                                                 .replace(">", "&gt;")
+                                                 .replace("\n", "<br>")
+                                            )
+                                            line = (
+                                                f"<div class=\"jdm-thinking\">"
+                                                f"💭 {t_html}</div>"
+                                            )
+                                            _add_line(line)
+                                        # 2) Texte parlé entre 2 tool_calls (Claude/
+                                        #    GPT le font ; Gemini souvent vide).
+                                        #    Blockquote normal pour le distinguer du
+                                        #    thinking (qui est plus discret).
+                                        spoken = _content_to_text(m.content)
+                                        if tcs and spoken.strip():
+                                            _add_line(f"> 💬 {spoken.strip()}")
+                                        if tcs:
+                                            for tc in tcs:
+                                                name = tc.get("name", "?")
+                                                tc_args = tc.get("args") or {}
+                                                narrated = _narrate_tool_call(name, tc_args)
+                                                if narrated:
+                                                    _add_line(
+                                                        f'<div class="jdm-narration">'
+                                                        f'{narrated}</div>'
+                                                    )
+                                                else:
+                                                    args_str = ", ".join(
+                                                        f"{k}={v!r}"
+                                                        for k, v in tc_args.items()
+                                                    )
+                                                    _add_line(
+                                                        f'<div class="jdm-narration">'
+                                                        f'🔧 `{name}({args_str})`</div>'
+                                                    )
+                                            # Ajoute en bas un indicateur fugace
+                                            # « génération en cours » pour qu'on
+                                            # sache que ça tourne (le LLM peut
+                                            # tarder à produire sa réponse finale
+                                            # ou son prochain tool_call). Cette
+                                            # ligne disparaît au prochain yield
+                                            # ou au yield final.
+                                            live_with_pending = (
+                                                "\n\n".join(progress_live)
+                                                + "\n\n*⏳ Génération en cours…*"
+                                            )
+                                            yield (
+                                                [{"role": "user", "content": user_display},
+                                                 {"role": "assistant",
+                                                  "content": live_with_pending}],
+                                                last_file_path,
+                                                _read_file_preview(last_file_path),
+                                            )
+                                        else:
+                                            # Pas de tool_calls → réponse finale
+                                            final_answer = spoken
+                                    elif isinstance(m, ToolMessage):
+                                        content = _content_to_text(m.content)
+                                        if m.name == "write_submission_file":
+                                            p = _extract_submission_path(content)
+                                            if p:
+                                                last_file_path = p
+                                        narrated_done = _narrate_tool_result(m.name, content)
+                                        if narrated_done:
+                                            _add_line(
+                                                f'<div class="jdm-narration">'
+                                                f'{narrated_done}</div>'
+                                            )
+                                        else:
+                                            preview = content[:120].replace("\n", " ")
+                                            if len(content) > 120:
+                                                preview += "…"
+                                            _add_line(
+                                                f'<div class="jdm-narration">'
+                                                f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
+                                                f'</div>'
+                                            )
                                         live_with_pending = (
                                             "\n\n".join(progress_live)
                                             + "\n\n*⏳ Génération en cours…*"
@@ -1021,88 +1096,96 @@ def run_jarvis_flow(
                                             last_file_path,
                                             _read_file_preview(last_file_path),
                                         )
-                                    else:
-                                        # Pas de tool_calls → réponse finale
-                                        final_answer = spoken
-                                elif isinstance(m, ToolMessage):
-                                    content = _content_to_text(m.content)
-                                    if m.name == "write_submission_file":
-                                        p = _extract_submission_path(content)
-                                        if p:
-                                            last_file_path = p
-                                    narrated_done = _narrate_tool_result(m.name, content)
-                                    if narrated_done:
-                                        _add_line(
-                                            f'<div class="jdm-narration">'
-                                            f'{narrated_done}</div>'
-                                        )
-                                    else:
-                                        preview = content[:120].replace("\n", " ")
-                                        if len(content) > 120:
-                                            preview += "…"
-                                        _add_line(
-                                            f'<div class="jdm-narration">'
-                                            f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
-                                            f'</div>'
-                                        )
-                                    live_with_pending = (
-                                        "\n\n".join(progress_live)
-                                        + "\n\n*⏳ Génération en cours…*"
-                                    )
-                                    yield (
-                                        [{"role": "user", "content": user_display},
-                                         {"role": "assistant",
-                                          "content": live_with_pending}],
-                                        last_file_path,
-                                        _read_file_preview(last_file_path),
-                                    )
-                    # Sortie normale de la boucle for chunk → quitter while
-                    break
-                except Exception as e:
-                    # Quota PerMinute Gemini ET premier essai : on attend
-                    # le délai, on AFFICHE un message d'attente, et on
-                    # CONTINUE le travail en cours — on ne reset PAS les
-                    # progress lists, et on relance agent.stream() en
-                    # passant les `accumulated_messages` pour que langgraph
-                    # reprenne là où il en était (les messages déjà
-                    # produits = HumanMessage + AIMessages + ToolMessages).
-                    retry_delay = detect_rate_limit_retry(e)
-                    if retry_delay is not None and rate_limit_attempts == 0:
-                        rate_limit_attempts += 1
-                        wait_msg = (
-                            f"*⏳ Quota Gemini free tier atteint — j'attends "
-                            f"{retry_delay:.0f}s puis je CONTINUE le travail "
-                            f"en cours (pas de redémarrage).*"
-                        )
-                        current_progress = "\n\n".join(progress_live)
+                        # Sortie normale de la boucle for chunk → quitter while
+                        break
+                    except Exception as e:
+                        # Quota PerMinute Gemini ET premier essai : on attend
+                        # le délai, on AFFICHE un message d'attente, et on
+                        # CONTINUE le travail en cours — on ne reset PAS les
+                        # progress lists, et on relance agent.stream() en
+                        # passant les `accumulated_messages` pour que langgraph
+                        # reprenne là où il en était (les messages déjà
+                        # produits = HumanMessage + AIMessages + ToolMessages).
+                        retry_delay = detect_rate_limit_retry(e)
+                        if retry_delay is not None and rate_limit_attempts == 0:
+                            rate_limit_attempts += 1
+                            wait_msg = (
+                                f"*⏳ Quota Gemini free tier atteint — j'attends "
+                                f"{retry_delay:.0f}s puis je CONTINUE le travail "
+                                f"en cours (pas de redémarrage).*"
+                            )
+                            current_progress = "\n\n".join(progress_live)
+                            yield (
+                                [{"role": "user", "content": user_display},
+                                 {"role": "assistant",
+                                  "content": current_progress + "\n\n" + wait_msg}],
+                                last_file_path, _read_file_preview(last_file_path),
+                            )
+                            _time.sleep(retry_delay)
+                            # PAS de reset : progress_live / progress_full /
+                            # last_file_path / accumulated_messages restent
+                            # intacts. Le while continue → restart agent.stream
+                            # avec accumulated_messages (cf. le for chunk plus
+                            # haut qui passe {"messages": accumulated_messages}).
+                            continue
+                        # Pas un quota retryable, ou déjà tenté : erreur finale
+                        err_block = ""
+                        if progress_full:
+                            err_block = (
+                                f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
+                                f"({len(progress_full)})</summary>\n\n"
+                                f"{(chr(10)*2).join(progress_full)}\n\n</details>"
+                            )
                         yield (
                             [{"role": "user", "content": user_display},
                              {"role": "assistant",
-                              "content": current_progress + "\n\n" + wait_msg}],
+                              "content": f"❌ Erreur agent : {e}" + err_block}],
                             last_file_path, _read_file_preview(last_file_path),
                         )
-                        _time.sleep(retry_delay)
-                        # PAS de reset : progress_live / progress_full /
-                        # last_file_path / accumulated_messages restent
-                        # intacts. Le while continue → restart agent.stream
-                        # avec accumulated_messages (cf. le for chunk plus
-                        # haut qui passe {"messages": accumulated_messages}).
-                        continue
-                    # Pas un quota retryable, ou déjà tenté : erreur finale
-                    err_block = ""
-                    if progress_full:
-                        err_block = (
-                            f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
-                            f"({len(progress_full)})</summary>\n\n"
-                            f"{(chr(10)*2).join(progress_full)}\n\n</details>"
-                        )
-                    yield (
-                        [{"role": "user", "content": user_display},
-                         {"role": "assistant",
-                          "content": f"❌ Erreur agent : {e}" + err_block}],
-                        last_file_path, _read_file_preview(last_file_path),
-                    )
-                    return
+                        return
+
+            # Sortie normale du with → check persistance.
+            # Si le LLM a finalisé prématurément (consolidés < target)
+            # et qu'on a encore des relances disponibles, on injecte un
+            # nudge et on relance le with (= nouveau budget_context,
+            # mais accumulated_messages conservé donc l'agent reprend
+            # avec tout son contexte).
+            if consolidation_target is None:
+                persistence_done = True
+                continue
+            n_done = count_consolidated_in_messages(accumulated_messages)
+            if n_done >= consolidation_target:
+                persistence_done = True
+                continue
+            if persistence_relances >= max_persistence_relances:
+                persistence_done = True
+                continue
+            # On relance avec un nudge fort
+            persistence_relances += 1
+            still_needed = consolidation_target - n_done
+            nudge = (
+                f"⛔ STOP. Tu as produit {n_done} triplet(s) consolidé(s) "
+                f"sur les {consolidation_target} demandés par l'utilisateur "
+                f"(il en manque {still_needed}). Tu N'AS PAS terminé. "
+                f"Recommence IMMÉDIATEMENT à proposer de NOUVEAUX "
+                f"candidats — d'AUTRES relations, d'AUTRES cibles, hors "
+                f"des exclusion_set déjà obtenues. NE rends ta réponse "
+                f"finale QUE quand tu auras atteint le compte cible. "
+                f"(Relance automatique {persistence_relances}/{max_persistence_relances}.)"
+            )
+            accumulated_messages.append(HumanMessage(content=nudge))
+            _add_line(
+                f"*🔁 Relance automatique {persistence_relances}/"
+                f"{max_persistence_relances} — {n_done}/{consolidation_target} "
+                f"consolidés, on continue.*"
+            )
+            yield (
+                [{"role": "user", "content": user_display},
+                 {"role": "assistant", "content": "\n\n".join(progress_live)}],
+                last_file_path, _read_file_preview(last_file_path),
+            )
+            # Boucle continue → nouveau with budget_context + nouvelle
+            # invocation agent.stream avec accumulated_messages enrichi.
 
         # Réponse finale : on remplace les progress_lines par la réponse
         # définitive du modèle, suivie d'un footer avec compteur (limite

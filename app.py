@@ -2117,6 +2117,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
+                            # Fix structurel de l'abandon : si l'utilisateur
+                            # a coché « itérer », on passe le nombre cible
+                            # à run_jarvis_flow qui relance le LLM via un
+                            # HumanMessage si finalisation prématurée.
+                            consolidation_target=(
+                                int(target_n) if bool(iterate) else None
+                            ),
                         ):
                             yield (
                                 messages,
