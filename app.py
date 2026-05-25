@@ -295,6 +295,43 @@ ALL_MODELS = {
     **ANTHROPIC_MODELS, **OPENAI_MODELS,
 }
 
+# Modèles qui supportent un chain-of-thought explicite contrôlable depuis
+# le code :
+#   - Gemini 3.x natifs (include_thoughts + thinking_level)
+#   - Claude Sonnet/Haiku 4.5 (thinking={"type":"enabled","budget_tokens":N})
+# GPT-4o et Gemini 2.x n'ont PAS de raisonnement natif → la case
+# « Raisonnement » est grisée + décochée + tooltip explicite.
+THINKING_SUPPORTED_MODELS = GEMINI_NATIVE_REQUIRED | set(ANTHROPIC_MODELS.keys())
+
+
+def _toggle_thinking_for_model(model: str):
+    """Handler Gradio : appelé sur model_in.change() / jarvis_model.change().
+    Renvoie un gr.update pour la checkbox Raisonnement : interactive si
+    le modèle supporte le thinking, sinon décoché + grisé."""
+    if model in THINKING_SUPPORTED_MODELS:
+        return gr.update(interactive=True)
+    return gr.update(interactive=False, value=False)
+
+
+def _thinking_tooltip_js(checkbox_elem_id: str) -> str:
+    """Génère le JS qui met à jour le tooltip de la checkbox selon le
+    modèle sélectionné. Reçoit le model_id en argument (1er input)."""
+    return (
+        "(model) => {"
+        f"  const el = document.getElementById('{checkbox_elem_id}');"
+        "  if (!el) return;"
+        f"  const supported = {sorted(THINKING_SUPPORTED_MODELS)!r}.includes(model);"
+        "  const tip = supported"
+        "    ? 'Active le chain-of-thought sur ce modèle. Décoché : démarrage '"
+        "      + 'plus rapide, comportement fonctionnel strictement identique '"
+        "      + '(mêmes outils, mêmes sorties).'"
+        "    : 'Non disponible pour ' + model;"
+        "  el.title = tip;"
+        "  el.querySelectorAll('label, input, span').forEach(c => c.title = tip);"
+        "  el.dataset.tipApplied = '1';"  # éviter que le MutationObserver l'écrase
+        "}"
+    )
+
 
 def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
     """Instancie le ChatModel selon le modèle choisi.
@@ -1762,6 +1799,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 inputs=[model_in],
                 outputs=[key_in],
             )
+            # Grise + décoche la case « Raisonnement » quand le modèle
+            # choisi ne supporte pas le thinking, puis met à jour le
+            # tooltip avec « Non disponible pour {model} ».
+            model_in.change(
+                _toggle_thinking_for_model,
+                inputs=[model_in],
+                outputs=[chat_thinking],
+            ).then(
+                fn=None, inputs=[model_in], outputs=None,
+                js=_thinking_tooltip_js("chat-thinking-cb"),
+            )
             # Composant SÉPARÉ pour la viz : gr.HTML qui embarque un
             # iframe sandbox avec le sous-graphe interactif. Alimenté
             # via additional_outputs de ChatInterface — donc le message
@@ -2644,6 +2692,18 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 _refresh_submit_buttons,
                 inputs=[jarvis_drops_key],
                 outputs=[je_submit, ja_submit, js_submit, jst_submit],
+            )
+
+            # Grise + décoche jarvis_thinking quand le modèle ne supporte
+            # pas le thinking ; met à jour le tooltip avec « Non disponible
+            # pour {model} ».
+            jarvis_model.change(
+                _toggle_thinking_for_model,
+                inputs=[jarvis_model],
+                outputs=[jarvis_thinking],
+            ).then(
+                fn=None, inputs=[jarvis_model], outputs=None,
+                js=_thinking_tooltip_js("jarvis-thinking-cb"),
             )
 
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----
