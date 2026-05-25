@@ -2194,9 +2194,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             jst_relation = gr.Dropdown(
                                 choices=JARVIS_RELATIONS,
                                 value=[],
-                                label="Relation(s) (optionnel — multi-sélection, mode PAR_RELATION)",
+                                label="Relation(s) (à venir)",
                                 allow_custom_value=True,
                                 multiselect=True,
+                                interactive=False,
+                                info=(
+                                    "Restriction du scan à un sous-ensemble "
+                                    "de relations — à venir. Pour l'instant "
+                                    "le LLM choisit lui-même les relations "
+                                    "à examiner."
+                                ),
                             )
                             gr.Markdown(
                                 "<small><em>Si les deux champs sont vides, "
