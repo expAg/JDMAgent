@@ -68,12 +68,24 @@ def exclusion_context():
     `list_existing_for_enrichment` et tout candidat ensuite proposé
     dont la cible est dans la liste est court-circuité immédiatement
     par `validate_candidate`.
+
+    Implémentation : on N'UTILISE PAS `reset(token)` car LangGraph fait
+    tourner l'agent dans un contexte (asyncio/threading) différent de
+    celui où le `with` a démarré → ValueError("Token … was created in a
+    different Context") à la sortie. À la place, on `set(None)` pour
+    invalider le registry — le nouveau set crée une valeur fraîche dans
+    le contexte courant quel qu'il soit.
     """
-    token = _EXCLUSION_REGISTRY.set({})
+    _EXCLUSION_REGISTRY.set({})
     try:
         yield
     finally:
-        _EXCLUSION_REGISTRY.reset(token)
+        try:
+            _EXCLUSION_REGISTRY.set(None)
+        except Exception:
+            # Filet de sécurité : si même set échoue dans un cas exotique,
+            # on n'empêche pas la sortie du context manager.
+            pass
 
 
 def register_exclusion(term: str, relation: str, exclusion_set) -> None:
