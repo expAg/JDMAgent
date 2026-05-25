@@ -158,7 +158,8 @@ def strip_thinking_blocks(messages: list, keep_last: bool = True) -> list:
 
 
 def build_relance_summary(messages: list, n_done: int, target: int,
-                          relance_num: int, max_relances: int) -> str:
+                          relance_num: int,
+                          max_relances: Optional[int] = None) -> str:
     """Construit un résumé condensé pour le HumanMessage de relance.
 
     Au lieu de ré-injecter `accumulated_messages` complet (50-200 messages,
@@ -222,7 +223,8 @@ def build_relance_summary(messages: list, n_done: int, target: int,
     lines.append(
         f"RECOMMENCE avec de NOUVEAUX candidats sur d'AUTRES relations / "
         f"d'AUTRES cibles. Ne rends ta réponse finale QU'APRÈS avoir "
-        f"atteint le compte cible. (Relance auto {relance_num}/{max_relances}.)"
+        f"atteint le compte cible. (Relance auto {relance_num}"
+        + (f"/{max_relances}" if max_relances is not None else "") + ".)"
     )
     return "\n".join(lines)
 
@@ -978,7 +980,7 @@ def run_jarvis_flow(
     get_client_fn,
     use_thinking: bool = True,
     consolidation_target: Optional[int] = None,
-    max_persistence_relances: int = 5,
+    max_persistence_relances: Optional[int] = None,
 ) -> Generator[tuple[list[dict], Optional[str], str], None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -1090,10 +1092,12 @@ def run_jarvis_flow(
         while not persistence_done:
             rate_limit_attempts = 0
             with budget_context(limit=limit) as budget, exclusion_context():
-                # boucle retry quota : on tolère jusqu'à 20 hits de
-                # rate limit consécutifs tant que le délai est court
-                # (cf. detect_rate_limit_retry cap à 120s).
-                while rate_limit_attempts < 20:
+                # boucle retry quota : ILLIMITÉ tant que le délai
+                # retry est court (cf. detect_rate_limit_retry, cap
+                # interne à 120s par hit). Si delay > 120s ou erreur
+                # non-quota, detect_rate_limit_retry renvoie None et on
+                # tombe dans la branche d'erreur finale.
+                while True:
                     try:
                         for chunk in agent.stream(
                             {"messages": accumulated_messages},
@@ -1234,7 +1238,7 @@ def run_jarvis_flow(
                         # reprenne là où il en était (les messages déjà
                         # produits = HumanMessage + AIMessages + ToolMessages).
                         retry_delay = detect_rate_limit_retry(e)
-                        if retry_delay is not None and rate_limit_attempts < 20:
+                        if retry_delay is not None:
                             rate_limit_attempts += 1
                             wait_msg = (
                                 f"*⏳ Quota Gemini free tier atteint — j'attends "
@@ -1289,7 +1293,11 @@ def run_jarvis_flow(
             if n_done >= consolidation_target:
                 persistence_done = True
                 continue
-            if persistence_relances >= max_persistence_relances:
+            # Pas de cap dur sur les relances persistance — on continue
+            # tant que le LLM finalise sans avoir atteint le target.
+            # Si l'utilisateur veut un cap, il passe max_persistence_relances
+            # (par défaut None = illimité).
+            if max_persistence_relances is not None and persistence_relances >= max_persistence_relances:
                 persistence_done = True
                 continue
             # On relance avec un nudge fort.
@@ -1309,10 +1317,13 @@ def run_jarvis_flow(
                 initial_human,
                 HumanMessage(content=summary),
             ]
+            _cap_label = (
+                f"/{max_persistence_relances}"
+                if max_persistence_relances is not None else ""
+            )
             _add_line(
-                f"*🔁 Relance automatique {persistence_relances}/"
-                f"{max_persistence_relances} — {n_done}/{consolidation_target} "
-                f"consolidés, on continue.*"
+                f"*🔁 Relance automatique {persistence_relances}{_cap_label} — "
+                f"{n_done}/{consolidation_target} consolidés, on continue.*"
             )
             yield (
                 [{"role": "user", "content": user_display},

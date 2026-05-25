@@ -631,9 +631,10 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     accumulated_messages = _history_to_lc(history, message)
     rate_limit_attempts = 0
     with exclusion_context():
-        # On tolère jusqu'à 20 hits de rate limit consécutifs tant que
-        # le délai est raisonnable (cf. detect_rate_limit_retry cap 120s).
-        while rate_limit_attempts < 20:
+        # Retry rate limit ILLIMITÉ tant que le délai est court
+        # (cf. detect_rate_limit_retry cap interne à 120s). Si délai
+        # > 120s ou erreur non-quota, on tombe en erreur finale.
+        while True:
             try:
                 for chunk in agent.stream(
                     {"messages": accumulated_messages},
@@ -724,7 +725,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 # quel au prochain agent.stream() pour reprendre là où
                 # on s'est arrêté.
                 retry_delay = detect_rate_limit_retry(e)
-                if retry_delay is not None and rate_limit_attempts < 20:
+                if retry_delay is not None:
                     rate_limit_attempts += 1
                     wait_msg = (
                         f"\n\n*⏳ Quota Gemini free tier atteint — j'attends "
