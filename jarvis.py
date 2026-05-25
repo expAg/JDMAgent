@@ -701,6 +701,7 @@ def run_jarvis_flow(
     build_llm_fn,
     build_agent_fn,
     get_client_fn,
+    use_thinking: bool = True,
 ) -> Generator[tuple[list[dict], Optional[str], str], None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -750,7 +751,7 @@ def run_jarvis_flow(
     try:
         # LLM + agent
         try:
-            llm = build_llm_fn(model, api_key)
+            llm = build_llm_fn(model, api_key, use_thinking=use_thinking)
         except ValueError as e:
             yield (
                 [{"role": "user", "content": user_display},

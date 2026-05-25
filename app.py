@@ -296,7 +296,7 @@ ALL_MODELS = {
 }
 
 
-def _build_llm(model: str, api_key: str):
+def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
     """Instancie le ChatModel selon le modèle choisi.
 
     - claude-*   → Anthropic via clé visiteur (BYOK, sk-ant-...)
@@ -305,6 +305,12 @@ def _build_llm(model: str, api_key: str):
                    (hf_...). Le modèle est routé sur le backend le plus rapide
                    pour son architecture (Cerebras pour Qwen, Together pour
                    Mistral) via le suffixe :provider du nom de modèle.
+
+    `use_thinking` ne s'applique pour l'instant qu'aux modèles Gemini 3.x
+    natifs (les seuls où on active explicitement `include_thoughts` /
+    `thinking_level`). Désactivé (False) : on n'active pas le « thought
+    summary » côté API → première réponse plus rapide, comportement
+    fonctionnel inchangé (tool-calling, sortie texte identiques).
 
     Lève ValueError avec message utilisateur explicite si la clé manque.
     """
@@ -340,7 +346,7 @@ def _build_llm(model: str, api_key: str):
         # 3.x preview → SDK natif Google (préserve thought_signature).
         # 2.x stables → endpoint OpenAI-compat (déjà éprouvé, plus simple).
         if model in GEMINI_NATIVE_REQUIRED:
-            return _build_gemini_native(model)
+            return _build_gemini_native(model, use_thinking=use_thinking)
         return _build_openai_compat(
             model_id=model, label="Google Gemini",
             env_var="GOOGLE_API_KEY",
@@ -388,7 +394,7 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     )
 
 
-def _build_gemini_native(model_id: str):
+def _build_gemini_native(model_id: str, *, use_thinking: bool = True):
     """Builder spécifique pour les Gemini 3.x preview via SDK natif Google.
 
     Le SDK `langchain-google-genai` (qui enveloppe le SDK Python officiel
@@ -438,6 +444,14 @@ def _build_gemini_native(model_id: str):
         "google_api_key": token,
         "temperature": 1.0,
     }
+    if not use_thinking:
+        # Pas de chain-of-thought demandé → on n'active rien. Gemini répond
+        # plus vite (pas de génération du « thought summary »), et le
+        # comportement fonctionnel reste identique (mêmes outils, mêmes
+        # sorties). On laisse aussi `thinking_level` non-défini : selon
+        # la version langchain-google-genai, cela tombe sur le défaut
+        # « no thinking » du SDK.
+        return ChatGoogleGenerativeAI(**base_kwargs)
     try:
         return ChatGoogleGenerativeAI(
             **base_kwargs,
@@ -485,7 +499,8 @@ def _history_to_lc(history: list[dict], current_user_message: str) -> list:
     return lc
 
 
-def chat_with_agent(message: str, history: list[dict], api_key: str, model: str):
+def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
+                    use_thinking: bool = True):
     """Générateur de streaming pour ChatInterface.
 
     Yields la trace progressive (thinking + appels d'outils + résultats)
@@ -503,7 +518,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
         yield "Pose une question sur la langue française.", _NOOP_FILE
         return
     try:
-        llm = _build_llm(model, api_key)
+        llm = _build_llm(model, api_key, use_thinking=use_thinking)
     except ValueError as e:
         yield f"⚠️ {e}", _NOOP_FILE
         return
@@ -1646,6 +1661,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     label="Modèle",
                     scale=2,
                 )
+            chat_thinking = gr.Checkbox(
+                value=False,
+                label="Afficher le raisonnement du LLM (Gemini 3.x)",
+                info=(
+                    "Décoché : démarrage plus rapide, comportement "
+                    "fonctionnel strictement identique (mêmes outils, "
+                    "mêmes sorties — seule la narration interne du "
+                    "raisonnement n'est pas affichée)."
+                ),
+            )
 
             # Toggle dynamique : la clé API n'est saisissable que pour les
             # modèles BYOK (Claude / GPT). Sur un modèle Gemini hébergé,
@@ -1683,7 +1708,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
             chat = gr.ChatInterface(
                 fn=chat_with_agent,
-                additional_inputs=[key_in, model_in],
+                additional_inputs=[key_in, model_in, chat_thinking],
                 additional_outputs=[viz_html_out],
                 # Chatbot agrandi : 780 px de haut (+30 % vs 600).
                 # Tentative d'HTML/<details> abandonnée — gr.Chatbot v5
@@ -1708,11 +1733,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     # Tous les exemples passent par Gemini 3.1 Flash Lite
                     # (quota le plus large : 500 req/jour, le plus rapide).
                     # En cas d'épuisement, BYOK Claude / GPT.
-                    ["Quels sont les synonymes de voiture ?", "", "gemini-3.1-flash-lite"],
-                    ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-3.1-flash-lite"],
-                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3.1-flash-lite"],
-                    ["Que peut faire un chat ?", "", "gemini-3.1-flash-lite"],
-                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-3.1-flash-lite"],
+                    # 4 valeurs par exemple : [message, key, model, use_thinking]
+                    ["Quels sont les synonymes de voiture ?", "", "gemini-3.1-flash-lite", False],
+                    ["Le saumon est-il un mammifère selon JDM ?", "", "gemini-3.1-flash-lite", False],
+                    ["Pour le sens juridique de 'avocat', donne-moi 5 synonymes.", "", "gemini-3.1-flash-lite", False],
+                    ["Que peut faire un chat ?", "", "gemini-3.1-flash-lite", False],
+                    ["Quelles sont les composantes typiques d'un smartphone ?", "", "gemini-3.1-flash-lite", False],
                 ],
                 cache_examples=False,
                 type="messages",
@@ -1767,6 +1793,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     value="illimité",
                     label="Budget d'appels d'outils",
                     scale=1,
+                )
+            with gr.Row():
+                jarvis_thinking = gr.Checkbox(
+                    value=False,
+                    label="Afficher le raisonnement du LLM (Gemini 3.x)",
+                    info=(
+                        "Décoché : démarrage plus rapide, comportement "
+                        "fonctionnel strictement identique (mêmes outils, "
+                        "mêmes sorties — seule la narration interne du "
+                        "raisonnement n'est pas affichée)."
+                    ),
                 )
 
             # ====== Sous-onglets ======
@@ -1848,7 +1885,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     def _run_enrich(term, relations, target_n, vary, iterate, upload,
-                                    drops_key, model, budget_label):
+                                    drops_key, model, budget_label, use_thinking):
                         """Wrapper Gradio : construit le prompt, lance le flow Jarvis.
                         Yield (chatbot, file_update, preview_update)."""
                         from jarvis import build_enrich_prompt, run_jarvis_flow
@@ -1877,6 +1914,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
+                            use_thinking=bool(use_thinking),
                         ):
                             yield (
                                 messages,
@@ -1888,7 +1926,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         _run_enrich,
                         inputs=[je_term, je_relation, je_target_n, je_vary,
                                 je_iterate, je_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                                jarvis_drops_key, jarvis_model, jarvis_budget,
+                                jarvis_thinking],
                         outputs=[je_chat, je_file, je_preview],
                     )
 
@@ -1988,7 +2027,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 visible=False,
                             )
 
-                    def _run_audit(term, relations, upload, drops_key, model, budget_label):
+                    def _run_audit(term, relations, upload, drops_key, model, budget_label,
+                                   use_thinking):
                         from jarvis import build_audit_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_audit_prompt(
@@ -2009,6 +2049,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
+                            use_thinking=bool(use_thinking),
                         ):
                             yield (
                                 messages,
@@ -2019,7 +2060,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     ja_launch.click(
                         _run_audit,
                         inputs=[ja_term, ja_relation, ja_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                                jarvis_drops_key, jarvis_model, jarvis_budget,
+                                jarvis_thinking],
                         outputs=[ja_chat, ja_file, ja_preview],
                     )
 
@@ -2100,7 +2142,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 height=400,
                             )
 
-                    def _run_gap_detection(term, relations, min_pos, drops_key, model, budget_label):
+                    def _run_gap_detection(term, relations, min_pos, drops_key, model,
+                                           budget_label, use_thinking):
                         """Détecte les gaps DIRECTEMENT (rapide, déterministe)
                         puis lance l'agent pour la synthèse narrative."""
                         from jarvis import build_gap_prompt, run_jarvis_flow
@@ -2179,13 +2222,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
+                            use_thinking=bool(use_thinking),
                         ):
                             yield (gr.update(), gr.update(), chat_msgs)
 
                     jg_launch.click(
                         _run_gap_detection,
                         inputs=[jg_term, jg_relations, jg_min_pos,
-                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                                jarvis_drops_key, jarvis_model, jarvis_budget,
+                                jarvis_thinking],
                         outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat],
                     )
 
@@ -2289,7 +2334,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 visible=False,
                             )
 
-                    def _run_signalement(term, relations, upload, drops_key, model, budget_label):
+                    def _run_signalement(term, relations, upload, drops_key, model,
+                                         budget_label, use_thinking):
                         from jarvis import build_signalement_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_signalement_prompt(
@@ -2310,6 +2356,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
+                            use_thinking=bool(use_thinking),
                         ):
                             yield (
                                 messages,
@@ -2320,7 +2367,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     js_launch.click(
                         _run_signalement,
                         inputs=[js_term, js_relation, js_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                                jarvis_drops_key, jarvis_model, jarvis_budget,
+                                jarvis_thinking],
                         outputs=[js_chat, js_file, js_preview],
                     )
 
@@ -2417,7 +2465,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 visible=False,
                             )
 
-                    def _run_stats(term, relations, upload, drops_key, model, budget_label):
+                    def _run_stats(term, relations, upload, drops_key, model,
+                                   budget_label, use_thinking):
                         from jarvis import build_stats_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_stats_prompt(
@@ -2445,6 +2494,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_llm_fn=_build_llm,
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
+                            use_thinking=bool(use_thinking),
                         ):
                             yield (
                                 messages,
@@ -2455,7 +2505,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     jst_launch.click(
                         _run_stats,
                         inputs=[jst_term, jst_relation, jst_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget],
+                                jarvis_drops_key, jarvis_model, jarvis_budget,
+                                jarvis_thinking],
                         outputs=[jst_chat, jst_file, jst_preview],
                     )
 
