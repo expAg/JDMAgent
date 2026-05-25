@@ -249,9 +249,14 @@ ANTHROPIC_MODELS = {
     "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK Anthropic)",
 }
 OPENAI_MODELS = {
+    "gpt-5-mini":  "GPT-5 mini (BYOK OpenAI, raisonnement)",
+    "gpt-5":       "GPT-5 (BYOK OpenAI, raisonnement)",
     "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI)",
     "gpt-4o":      "GPT-4o (BYOK OpenAI)",
 }
+# Modèles OpenAI qui supportent reasoning_effort (raisonnement explicite).
+# gpt-4o / gpt-4o-mini n'ont PAS de reasoning natif → exclus.
+OPENAI_REASONING_MODELS = {"gpt-5", "gpt-5-mini"}
 # Providers gratuits — token côté Space, gratuit pour le visiteur, quota
 # partagé. Le prompt agent + 34 outils sérialisés fait ~19-20 K tokens par
 # appel, ce qui élimine la plupart des free tiers (TPM trop bas).
@@ -299,9 +304,14 @@ ALL_MODELS = {
 # le code :
 #   - Gemini 3.x natifs (include_thoughts + thinking_level)
 #   - Claude Sonnet/Haiku 4.5 (thinking={"type":"enabled","budget_tokens":N})
+#   - GPT-5 / GPT-5 mini (reasoning_effort)
 # GPT-4o et Gemini 2.x n'ont PAS de raisonnement natif → la case
 # « Raisonnement » est grisée + décochée + tooltip explicite.
-THINKING_SUPPORTED_MODELS = GEMINI_NATIVE_REQUIRED | set(ANTHROPIC_MODELS.keys())
+THINKING_SUPPORTED_MODELS = (
+    GEMINI_NATIVE_REQUIRED
+    | set(ANTHROPIC_MODELS.keys())
+    | OPENAI_REASONING_MODELS
+)
 
 
 def _toggle_thinking_for_model(model: str):
@@ -348,6 +358,7 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
       - Gemini 3.x natifs : `include_thoughts=True, thinking_level="low"`
       - Claude Sonnet/Haiku 4.5 : `thinking={"type":"enabled","budget_tokens":1024}`
         (et `temperature=1.0`, requis par l'API)
+      - GPT-5 / GPT-5 mini : `reasoning_effort="low"`
     GPT-4o et Gemini 2.x n'ont pas de raisonnement natif → no-op. Décoché :
     démarrage plus rapide, comportement fonctionnel strictement identique
     (mêmes outils, mêmes sorties).
@@ -384,7 +395,14 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
             )
         os.environ["OPENAI_API_KEY"] = api_key.strip()
         from jdm_agent.tools.llm_factory import get_llm
-        return get_llm(provider="openai", model=model)
+        kwargs: dict = {}
+        if use_thinking and model in OPENAI_REASONING_MODELS:
+            # GPT-5 / GPT-5 mini : reasoning_effort contrôle la profondeur
+            # du chain-of-thought (low/medium/high). 'low' = comportement
+            # raisonné léger, équivalent en intention au thinking_level
+            # 'low' chez Gemini.
+            kwargs["reasoning_effort"] = "low"
+        return get_llm(provider="openai", model=model, **kwargs)
 
     # Gemini = seul provider gratuit avec un quota TPM assez large pour
     # notre prompt agent (~19-20 K tokens / appel à cause des 34 outils).
@@ -1396,11 +1414,11 @@ _HEAD_JS = """
   function applyThinkingTooltip() {
     var ids = ['jarvis-thinking-cb', 'chat-thinking-cb'];
     var tip = 'Active le chain-of-thought sur les modèles qui le supportent '
-            + '(Gemini 3.x, Claude Sonnet/Haiku 4.5). Décoché : démarrage '
-            + 'plus rapide, comportement fonctionnel strictement identique '
-            + '(mêmes outils, mêmes sorties — seule la narration interne du '
-            + 'raisonnement n\\'est pas demandée à l\\'API). Sans effet sur '
-            + 'GPT-4o et Gemini 2.x (pas de raisonnement natif).';
+            + '(Gemini 3.x, Claude Sonnet/Haiku 4.5, GPT-5/mini). Décoché : '
+            + 'démarrage plus rapide, comportement fonctionnel strictement '
+            + 'identique (mêmes outils, mêmes sorties — seule la narration '
+            + 'interne du raisonnement n\\'est pas demandée à l\\'API). Sans '
+            + 'effet sur GPT-4o et Gemini 2.x (pas de raisonnement natif).';
     for (var i = 0; i < ids.length; i++) {
       var el = document.getElementById(ids[i]);
       if (el && !el.dataset.tipApplied) {
