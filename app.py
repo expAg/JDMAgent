@@ -615,7 +615,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
         progress_live.append(line)
         progress_full.append(line)
 
-    yield "\n".join(progress_live), _NOOP_FILE
+    yield "\n\n".join(progress_live), _NOOP_FILE
 
     try:
         agent = build_jdm_agent(client=get_client(), llm=llm)
@@ -652,8 +652,8 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                                 narrated = _narrate_tool_call(name, tc_args)
                                 if narrated:
                                     _add_line(
-                                        f'<span class="jdm-narration">'
-                                        f'{narrated}</span>'
+                                        f'<div class="jdm-narration">'
+                                        f'{narrated}</div>'
                                     )
                                 else:
                                     args_str = ", ".join(
@@ -661,11 +661,11 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                                         for k, v in tc_args.items()
                                     )
                                     _add_line(
-                                        f'<span class="jdm-narration">'
-                                        f'🔧 `{name}({args_str})`</span>'
+                                        f'<div class="jdm-narration">'
+                                        f'🔧 `{name}({args_str})`</div>'
                                     )
                             live_with_pending = (
-                                "\n".join(progress_live)
+                                "\n\n".join(progress_live)
                                 + "\n\n*⏳ Génération en cours…*"
                             )
                             yield live_with_pending, _NOOP_FILE
@@ -680,20 +680,20 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         narrated_done = _narrate_tool_result(m.name, content)
                         if narrated_done:
                             _add_line(
-                                f'<span class="jdm-narration">'
-                                f'{narrated_done}</span>'
+                                f'<div class="jdm-narration">'
+                                f'{narrated_done}</div>'
                             )
                         else:
                             preview = content[:140].replace("\n", " ")
                             if len(content) > 140:
                                 preview += "…"
                             _add_line(
-                                f'<span class="jdm-narration">'
+                                f'<div class="jdm-narration">'
                                 f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
-                                f'</span>'
+                                f'</div>'
                             )
                         live_with_pending = (
-                            "\n".join(progress_live)
+                            "\n\n".join(progress_live)
                             + "\n\n*⏳ Génération en cours…*"
                         )
                         yield live_with_pending, _NOOP_FILE
@@ -703,7 +703,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
             err_block = (
                 f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
                 f"({len(progress_full)})</summary>\n\n"
-                f"{chr(10).join(progress_full)}\n\n</details>"
+                f"{(chr(10)*2).join(progress_full)}\n\n</details>"
             )
         yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
         return
@@ -716,7 +716,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     if viz_path:
         out += "\n\n📊 *Visualisation interactive disponible ci-dessous ↓*"
     if progress_full:
-        full_text = "\n".join(progress_full)
+        full_text = "\n\n".join(progress_full)
         n_steps = len(progress_full)
         plural = "s" if n_steps > 1 else ""
         # Libellé adaptatif selon que le raisonnement LLM a été demandé

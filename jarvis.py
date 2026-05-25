@@ -780,7 +780,7 @@ def run_jarvis_flow(
         # Yield initial : user message + assistant placeholder, pas encore de fichier
         yield (
             [{"role": "user", "content": user_display},
-             {"role": "assistant", "content": "\n".join(progress_live)}],
+             {"role": "assistant", "content": "\n\n".join(progress_live)}],
             None, "",
         )
 
@@ -846,8 +846,8 @@ def run_jarvis_flow(
                                         narrated = _narrate_tool_call(name, tc_args)
                                         if narrated:
                                             _add_line(
-                                                f'<span class="jdm-narration">'
-                                                f'{narrated}</span>'
+                                                f'<div class="jdm-narration">'
+                                                f'{narrated}</div>'
                                             )
                                         else:
                                             args_str = ", ".join(
@@ -855,8 +855,8 @@ def run_jarvis_flow(
                                                 for k, v in tc_args.items()
                                             )
                                             _add_line(
-                                                f'<span class="jdm-narration">'
-                                                f'🔧 `{name}({args_str})`</span>'
+                                                f'<div class="jdm-narration">'
+                                                f'🔧 `{name}({args_str})`</div>'
                                             )
                                     # Ajoute en bas un indicateur fugace
                                     # « génération en cours » pour qu'on
@@ -866,7 +866,7 @@ def run_jarvis_flow(
                                     # ligne disparaît au prochain yield
                                     # ou au yield final.
                                     live_with_pending = (
-                                        "\n".join(progress_live)
+                                        "\n\n".join(progress_live)
                                         + "\n\n*⏳ Génération en cours…*"
                                     )
                                     yield (
@@ -888,20 +888,20 @@ def run_jarvis_flow(
                                 narrated_done = _narrate_tool_result(m.name, content)
                                 if narrated_done:
                                     _add_line(
-                                        f'<span class="jdm-narration">'
-                                        f'{narrated_done}</span>'
+                                        f'<div class="jdm-narration">'
+                                        f'{narrated_done}</div>'
                                     )
                                 else:
                                     preview = content[:120].replace("\n", " ")
                                     if len(content) > 120:
                                         preview += "…"
                                     _add_line(
-                                        f'<span class="jdm-narration">'
+                                        f'<div class="jdm-narration">'
                                         f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
-                                        f'</span>'
+                                        f'</div>'
                                     )
                                 live_with_pending = (
-                                    "\n".join(progress_live)
+                                    "\n\n".join(progress_live)
                                     + "\n\n*⏳ Génération en cours…*"
                                 )
                                 yield (
@@ -918,7 +918,7 @@ def run_jarvis_flow(
                 err_block = (
                     f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
                     f"({len(progress_full)})</summary>\n\n"
-                    f"{chr(10).join(progress_full)}\n\n</details>"
+                    f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                 )
             yield (
                 [{"role": "user", "content": user_display},
@@ -958,7 +958,7 @@ def run_jarvis_flow(
         #     appels d'outils et leurs résultats)
         reasoning_block = ""
         if progress_full:
-            full_text = "\n".join(progress_full)
+            full_text = "\n\n".join(progress_full)
             n_steps = len(progress_full)
             plural = "s" if n_steps > 1 else ""
             if use_thinking:
