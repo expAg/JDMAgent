@@ -1241,27 +1241,27 @@ def audit_workflow() -> dict:
                 "order": 8,
                 "name": "Écriture du fichier .audit",
                 "description": (
-                    "Appelle `write_submission_file(triplets=[...lignes...], "
+                    "Appelle `write_submission_file(triplets=[...], "
                     "path='<term>_audit.audit', upload=...)` en passant "
-                    "une LISTE DE STRINGS — une string par ligne du "
-                    "fichier. Le tool détecte automatiquement que ce "
-                    "sont des lignes brutes (pas des dicts) et les écrit "
-                    "telles quelles. Format à respecter :\n\n"
-                    "  === SENS ===\n"
-                    "  sense_id | poids_r_raff_sem | label\n"
-                    "  ... (une ligne par sens trouvé via disambiguate)\n"
-                    "\n"
-                    "  === SIGNALEMENTS ===\n"
-                    "  term | relation | target | type | sens_concerné | justification\n"
-                    "  ... (une ligne par contamination ou sens-premier-discutable)\n"
-                    "\n"
-                    "  === META ===\n"
-                    "  Score de santé : N/10\n"
-                    "  <commentaire factuel 3-4 lignes max>\n"
-                    "\n"
+                    "une LISTE DE DICTS LIGNES `{\"line\": \"...\"}` — "
+                    "une entrée par ligne du fichier. Format :\n\n"
+                    "  [\n"
+                    "    {\"line\": \"=== SENS ===\"},\n"
+                    "    {\"line\": \"sense_id | poids | label\"},\n"
+                    "    ...,\n"
+                    "    {\"line\": \"\"},\n"
+                    "    {\"line\": \"=== SIGNALEMENTS ===\"},\n"
+                    "    {\"line\": \"term | rel | tgt | type | sens | justif\"},\n"
+                    "    ...,\n"
+                    "    {\"line\": \"\"},\n"
+                    "    {\"line\": \"=== META ===\"},\n"
+                    "    {\"line\": \"Score de santé : N/10\"},\n"
+                    "    {\"line\": \"<commentaire factuel 3-4 lignes max>\"},\n"
+                    "  ]\n\n"
                     "où `type` ∈ { contamination_sens_non_premier, "
-                    "sens_premier_discutable }. Justification = UNE phrase "
-                    "courte. Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
+                    "sens_premier_discutable }. Justification = UNE "
+                    "phrase courte. Les séparateurs `=== … ===` sont "
+                    "OBLIGATOIRES.\n\n"
                     "Si tu n'as rien trouvé (aucun signalement, sens "
                     "tous légitimes), dis-le dans le chat et n'appelle "
                     "PAS le tool — il refusera d'écrire un fichier vide.\n\n"
@@ -1437,13 +1437,15 @@ def signalement_workflow() -> dict:
                 "order": 4,
                 "name": "Écriture du fichier .err",
                 "description": (
-                    "Appelle `write_submission_file(triplets=[...lignes...], "
+                    "Appelle `write_submission_file(triplets=[...], "
                     "path='<term>_signal.err', upload=...)` en passant "
-                    "une LISTE DE STRINGS — une string par ligne du "
-                    "fichier (en-tête puis une ligne par suspect). Le "
-                    "tool écrit les strings telles quelles. Format :\n\n"
-                    "  term | relation | target | catégorie_suspect | justification\n"
-                    "  ... (une ligne par suspect, max ~20) ...\n\n"
+                    "une LISTE DE DICTS LIGNES `{\"line\": \"...\"}` — "
+                    "une entrée par ligne du fichier (en-tête puis "
+                    "une ligne par suspect). Format :\n\n"
+                    "  [\n"
+                    "    {\"line\": \"term | relation | target | catégorie_suspect | justification\"},\n"
+                    "    {\"line\": \"...\"},  # une ligne par suspect, max ~20\n"
+                    "  ]\n\n"
                     "où `catégorie_suspect` ∈ { sémantique, polarité, "
                     "catégorie_cible, annotation_oubliée, duplicate_sens, "
                     "poids_anormal, autre } et `justification` est UNE "
@@ -1551,24 +1553,25 @@ def stats_workflow() -> dict:
                 "order": 5,
                 "name": "Écriture du fichier .stat",
                 "description": (
-                    "Appelle `write_submission_file(triplets=[...lignes...], "
+                    "Appelle `write_submission_file(triplets=[...], "
                     "path='<term>_stats.stat', upload=...)` en passant "
-                    "une LISTE DE STRINGS — une string par ligne du "
-                    "fichier. Le tool écrit les strings telles quelles. "
-                    "Format à respecter, TROIS sections :\n\n"
-                    "  === TABLEAU PAR RELATION ===\n"
-                    "  relation | n_total | n_pos | n_neg | max_w | min_w | mean_w\n"
-                    "  ... (une ligne par relation)\n"
-                    "\n"
-                    "  === TABLEAU PAR TERMES RENCONTRÉS ===\n"
-                    "  target | nb_occurrences | nb_relations_distinctes | poids_total | poids_max\n"
-                    "  ... (top 20 cibles)\n"
-                    "\n"
-                    "  === META ===\n"
-                    "  <3-5 observations clés brèves et factuelles>\n"
-                    "\n"
+                    "une LISTE DE DICTS LIGNES `{\"line\": \"...\"}` — "
+                    "une entrée par ligne du fichier, TROIS sections :\n\n"
+                    "  [\n"
+                    "    {\"line\": \"=== TABLEAU PAR RELATION ===\"},\n"
+                    "    {\"line\": \"relation | n_total | n_pos | n_neg | max_w | min_w | mean_w\"},\n"
+                    "    ...,\n"
+                    "    {\"line\": \"\"},\n"
+                    "    {\"line\": \"=== TABLEAU PAR TERMES RENCONTRÉS ===\"},\n"
+                    "    {\"line\": \"target | nb_occurrences | nb_relations_distinctes | poids_total | poids_max\"},\n"
+                    "    ...,\n"
+                    "    {\"line\": \"\"},\n"
+                    "    {\"line\": \"=== META ===\"},\n"
+                    "    {\"line\": \"<3-5 observations clés brèves et factuelles>\"},\n"
+                    "  ]\n\n"
                     "PAS de dissertation, PAS de redondance avec les "
-                    "tableaux. Les séparateurs `=== … ===` sont OBLIGATOIRES.\n\n"
+                    "tableaux. Les séparateurs `=== … ===` sont "
+                    "OBLIGATOIRES.\n\n"
                     "SOUMISSION optionnelle : `upload=True` si demandé."
                 ),
                 "tool": "write_submission_file",
@@ -1594,7 +1597,7 @@ def stats_workflow() -> dict:
 
 @tool
 def write_submission_file(
-    triplets: list,
+    triplets: list[dict],
     path: str = "soumission_jdm.txt",
     upload: bool = False,
     model_name: str = "",
@@ -1603,42 +1606,50 @@ def write_submission_file(
     """Écrit le fichier de soumission JDM (.txt) et — sur demande — le
     SOUMET automatiquement au endpoint LLMDrops de JDM.
 
-    Le paramètre `triplets` accepte DEUX types d'items, AUTO-DÉTECTÉS
-    par leur type Python — pas besoin de spécifier un mode :
+    Le paramètre `triplets` est une LISTE DE DICTS. Deux schémas de
+    dict acceptés, AUTO-DÉTECTÉS selon les clés présentes :
 
-    1) **dict** `{term, relation, target, annotation, explanation}` →
-       ligne au format pipe canonique :
+    1) **Dict TRIPLET** `{term, relation, target, annotation, explanation}`
+       → ligne au format pipe canonique :
            term | relation | target | annotation < explanation >
        (utilisé pour l'enrichissement, fichier `.enrich`)
 
-    2) **str** → ligne écrite TELLE QUELLE dans le fichier (utilisé
-       pour audit `.audit`, signalement `.err`, stats `.stat`, dont le
-       format est multi-sections avec des séparateurs `=== … ===` que
-       tu construis toi-même)
+    2) **Dict LIGNE** `{"line": "..."}` → la valeur de `line` est
+       écrite TELLE QUELLE dans le fichier (utilisé pour audit
+       `.audit`, signalement `.err`, stats `.stat`, dont le format
+       est multi-sections avec des séparateurs `=== … ===` que tu
+       construis toi-même)
 
-    Tu passes simplement une liste de dicts OU une liste de strings,
-    selon le format attendu par ton workflow. Exemple .audit :
+    Exemple .audit (mode lignes) :
 
         triplets = [
-            "=== SENS ===",
-            "guitare>91594 | 1000 | guitare (instrument de musique)",
-            "",
-            "=== SIGNALEMENTS ===",
-            "guitare | r_isa | poisson | contamination_sens_non_premier | sens minoritaire",
-            "",
-            "=== META ===",
-            "Score de santé : 7/10",
-            "...",
+            {"line": "=== SENS ==="},
+            {"line": "guitare>91594 | 1000 | guitare (instrument de musique)"},
+            {"line": ""},
+            {"line": "=== SIGNALEMENTS ==="},
+            {"line": "guitare | r_isa | poisson | contamination_sens_non_premier | sens minoritaire"},
+            {"line": ""},
+            {"line": "=== META ==="},
+            {"line": "Score de santé : 7/10"},
+            {"line": "..."},
         ]
 
-    ⚠️ **Si `triplets` est vide ou ne contient AUCUN item valide**
-    (ni dict canonique, ni string), AUCUN fichier n'est écrit et le
-    tool retourne `{"error": "..."}`. Si tu n'as vraiment rien à
-    soumettre, dis-le dans le chat — n'appelle PAS ce tool « pour la
-    forme ».
+    Exemple .enrich (mode triplets) :
 
-    Mode dict — les raffinements bruts (`avocat>116477>66699`) sont
-    décodés automatiquement en forme lisible avant écriture.
+        triplets = [
+            {"term": "chat", "relation": "r_syn", "target": "matou",
+             "annotation": "", "explanation": "synonyme courant"},
+            ...
+        ]
+
+    ⚠️ **Si `triplets` est vide ou ne contient AUCUN dict valide**
+    (ni triplet canonique, ni `{line:...}`), AUCUN fichier n'est
+    écrit et le tool retourne `{"error": "..."}`. Si tu n'as vraiment
+    rien à soumettre, dis-le dans le chat — n'appelle PAS ce tool
+    « pour la forme ».
+
+    Mode triplet — les raffinements bruts (`avocat>116477>66699`)
+    sont décodés automatiquement en forme lisible avant écriture.
 
     SOUMISSION AUTOMATIQUE au LLMDrops (opt-in) :
       - `upload=True` : POST le fichier après écriture. Le nom uploadé
@@ -1649,7 +1660,9 @@ def write_submission_file(
       - `api_key`    : clé API LLMDrops. Vide → env `JDM_DROPS_API_KEY`.
 
     Args:
-        triplets: liste de dicts et/ou strings. Type auto-détecté.
+        triplets: liste de dicts. Soit dicts triplets {term, relation,
+            target, annotation, explanation}, soit dicts lignes
+            {line: str}. Type auto-détecté par les clés présentes.
         path: chemin du fichier de sortie (extension détermine le type).
         upload: True pour soumettre au LLMDrops après écriture.
         model_name: nom du LLM source pour le filename uploadé.
@@ -1661,29 +1674,37 @@ def write_submission_file(
     from jdm_agent.enrich import Candidate
     from jdm_agent.enrich.pipeline import _decoded, write_submission as _write_sub
 
-    # Classement par type — auto-détection : pas de mode explicite.
+    # Classement par clés — auto-détection : pas de mode explicite.
+    # Tout est dict (Gemini exige items: {...} pour les arrays JSON Schema,
+    # donc on évite list[Union] qui passe mal). On distingue par les clés.
     items = triplets or []
     str_lines: list[str] = []
     dict_items: list[dict] = []
     for t in items:
-        if isinstance(t, str):
-            str_lines.append(t)
-        elif isinstance(t, dict) and t.get("term") and t.get("relation") and t.get("target"):
+        if not isinstance(t, dict):
+            # Tolérance : si le LLM passe une str malgré tout, on l'accepte
+            if isinstance(t, str):
+                str_lines.append(t)
+            continue
+        if "line" in t and isinstance(t.get("line"), str):
+            # Dict ligne {"line": "..."} → mode raw
+            str_lines.append(t["line"])
+        elif t.get("term") and t.get("relation") and t.get("target"):
+            # Dict triplet canonique
             dict_items.append(t)
-        # Tout autre item (dict mal formé, list imbriquée, None, …) est
-        # ignoré silencieusement ; reflété dans le count final.
+        # Dict avec d'autres clés ou clés vides : ignoré silencieusement.
 
     # Garde-fou : rien à écrire → AUCUN fichier créé, on signale au LLM
     if not str_lines and not dict_items:
         return {
             "path": path, "count": 0,
             "error": (
-                "Aucun contenu valide à écrire. `triplets` doit contenir "
-                "soit des dicts `{term, relation, target, annotation, "
-                "explanation}` (mode .enrich), soit des strings (lignes "
-                "brutes pour .audit/.err/.stat). Si tu n'as rien à "
-                "soumettre, dis-le dans le chat — aucun fichier vide "
-                "n'a été créé."
+                "Aucun contenu valide à écrire. Chaque item de `triplets` "
+                "doit être soit un dict triplet `{term, relation, target, "
+                "annotation, explanation}` (mode .enrich), soit un dict "
+                "ligne `{line: '...'}` (mode .audit/.err/.stat). Si tu "
+                "n'as rien à soumettre, dis-le dans le chat — aucun "
+                "fichier vide n'a été créé."
             ),
         }
 
