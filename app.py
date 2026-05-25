@@ -1396,6 +1396,34 @@ _HEAD_JS = """
 """
 
 _CHATBOT_CSS = """
+/* Checkbox 'Raisonnement' flottante : position absolue dans le coin
+   haut-droit du conteneur de la Column qui contient le dropdown modèle
+   — alignée verticalement avec le label « Modèle » du dropdown, sans
+   prendre de place dans le flux (donc le dropdown garde sa hauteur
+   naturelle). */
+.floating-thinking-wrap {
+  position: relative !important;
+}
+.floating-thinking-wrap .floating-thinking {
+  position: absolute !important;
+  top: 0 !important;
+  right: 0 !important;
+  z-index: 5 !important;
+  /* Compact : pas de padding/marge superflus, juste assez pour la case
+     + son label à droite */
+  min-width: 0 !important;
+  width: auto !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+/* Le label « Raisonnement » à droite de la case, en plus petit pour
+   tenir dans la hauteur du label du dropdown */
+.floating-thinking-wrap .floating-thinking label {
+  font-size: 0.85em !important;
+  white-space: nowrap !important;
+}
+
 /* Chatbot agent : compact quand vide, grandit avec le contenu jusqu'à
    ~85vh (presque la hauteur de la fenêtre). On force min-height à 0 sur
    le wrapper et tous les enfants pour défaire la hauteur fixe par défaut
@@ -1680,16 +1708,9 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
         # ----- Tab 4: Agent (BYOK Anthropic / OpenAI ; HF Inference = gratuit) -----
         with gr.Tab("💬 LLM Chatbot"):
-            # Row haute : checkbox alignée à droite, sur la colonne du dropdown
-            # modèle (en dessous). Spacer gauche pour pousser la case à droite.
-            with gr.Row():
-                gr.Column(scale=3, min_width=0)  # spacer aligné avec key_in
-                chat_thinking = gr.Checkbox(
-                    value=False,
-                    label="Raisonnement",
-                    elem_id="chat-thinking-cb",
-                    scale=2,
-                )
+            # La checkbox 'Raisonnement' est absolument positionnée dans le
+            # coin haut-droit du conteneur du dropdown modèle (cf. CSS sur
+            # .floating-thinking-wrap > .floating-thinking).
             with gr.Row():
                 # Désactivée par défaut (le modèle initial est Gemini hébergé).
                 # Réactivée dynamiquement quand l'utilisateur choisit
@@ -1702,12 +1723,19 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     elem_id="key-in",
                     scale=3,
                 )
-                model_in = gr.Dropdown(
-                    choices=[(label, key) for key, label in ALL_MODELS.items()],
-                    value="gemini-3.1-flash-lite",
-                    label="Modèle",
-                    scale=2,
-                )
+                with gr.Column(scale=2, min_width=0,
+                               elem_classes=["floating-thinking-wrap"]):
+                    chat_thinking = gr.Checkbox(
+                        value=False,
+                        label="Raisonnement",
+                        elem_id="chat-thinking-cb",
+                        elem_classes=["floating-thinking"],
+                    )
+                    model_in = gr.Dropdown(
+                        choices=[(label, key) for key, label in ALL_MODELS.items()],
+                        value="gemini-3.1-flash-lite",
+                        label="Modèle",
+                    )
 
             # Toggle dynamique : la clé API n'est saisissable que pour les
             # modèles BYOK (Claude / GPT). Sur un modèle Gemini hébergé,
@@ -1811,17 +1839,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
 
             # ====== BANDEAU partagé (clé Drops + modèle + budget) ======
-            # Row haute : checkbox 'Raisonnement' alignée sur la colonne du
-            # dropdown modèle (en dessous). Spacers à gauche et à droite.
-            with gr.Row():
-                gr.Column(scale=3, min_width=0)  # spacer aligné sur clé Drops
-                jarvis_thinking = gr.Checkbox(
-                    value=False,
-                    label="Raisonnement",
-                    elem_id="jarvis-thinking-cb",
-                    scale=2,
-                )
-                gr.Column(scale=1, min_width=0)  # spacer aligné sur budget
+            # La checkbox 'Raisonnement' est absolument positionnée dans le
+            # coin haut-droit du conteneur du dropdown modèle (cf. CSS sur
+            # .floating-thinking-wrap > .floating-thinking) — elle s'aligne
+            # visuellement sur le label « Modèle » sans occuper de place
+            # dans le flux.
             with gr.Row():
                 jarvis_drops_key = gr.Textbox(
                     label="Clé LLMDrops",
@@ -1830,12 +1852,19 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     elem_id="jarvis-drops-key",
                     scale=3,
                 )
-                jarvis_model = gr.Dropdown(
-                    choices=[(label, key) for key, label in ALL_MODELS.items()],
-                    value="gemini-3.1-flash-lite",
-                    label="Modèle",
-                    scale=2,
-                )
+                with gr.Column(scale=2, min_width=0,
+                               elem_classes=["floating-thinking-wrap"]):
+                    jarvis_thinking = gr.Checkbox(
+                        value=False,
+                        label="Raisonnement",
+                        elem_id="jarvis-thinking-cb",
+                        elem_classes=["floating-thinking"],
+                    )
+                    jarvis_model = gr.Dropdown(
+                        choices=[(label, key) for key, label in ALL_MODELS.items()],
+                        value="gemini-3.1-flash-lite",
+                        label="Modèle",
+                    )
                 jarvis_budget = gr.Dropdown(
                     choices=["10", "25", "50", "100", "illimité"],
                     value="illimité",
