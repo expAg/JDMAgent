@@ -620,26 +620,28 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
 
     # Retry sur quota PerMinute Gemini — cf. detect_rate_limit_retry
     # dans jarvis.py. Si l'API renvoie 429 PerMinute, on attend le délai
-    # annoncé puis on relance UNE fois en repartant à zéro.
+    # annoncé puis on CONTINUE le travail en cours (les messages déjà
+    # produits par l'agent sont accumulés et re-passés à agent.stream()
+    # pour reprendre là où on s'est arrêté — pas de redémarrage).
+    # exclusion_context vit AUTOUR du while pour être maintenu entre
+    # retries.
     import time as _time
     from jarvis import detect_rate_limit_retry
     agent = build_jdm_agent(client=get_client(), llm=llm)
+    accumulated_messages = _history_to_lc(history, message)
     rate_limit_attempts = 0
-    while rate_limit_attempts < 2:
-        try:
-            # exclusion_context : registry partagé pour le fast-path
-            # anti-doublons (option A — cf. enrich/validators.py). Englobe
-            # toute la boucle de streaming pour que les tools (notamment
-            # list_existing_for_enrichment et validate_candidate) voient le
-            # ContextVar actif pendant toute la durée de l'invocation.
-            with exclusion_context():
+    with exclusion_context():
+        while rate_limit_attempts < 2:
+            try:
                 for chunk in agent.stream(
-                    {"messages": _history_to_lc(history, message)},
+                    {"messages": accumulated_messages},
                     stream_mode="updates",
                 ):
                     for _node_name, payload in chunk.items():
                         msgs = (payload or {}).get("messages") or []
                         for m in msgs:
+                            # Accumulation pour reprise après pause quota.
+                            accumulated_messages.append(m)
                             if isinstance(m, AIMessage):
                                 tcs = getattr(m, "tool_calls", []) or []
                                 # 1) Chain-of-thought (Gemini, Claude Extended)
@@ -711,40 +713,38 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                                 + "\n\n*⏳ Génération en cours…*"
                             )
                             yield live_with_pending, _NOOP_FILE
-            # Sortie normale → on quitte le while
-            break
-        except Exception as e:
-            # Quota PerMinute Gemini : on attend + on relance UNE fois
-            retry_delay = detect_rate_limit_retry(e)
-            if retry_delay is not None and rate_limit_attempts == 0:
-                rate_limit_attempts += 1
-                wait_msg = (
-                    f"\n\n*⏳ Quota Gemini free tier atteint — j'attends "
-                    f"{retry_delay:.0f}s puis je reprends (les étapes "
-                    f"intermédiaires seront refaites).*"
-                )
-                # Affiche le wait avec progress actuel + sleep
-                current_progress = "\n\n".join(progress_live)
-                yield current_progress + wait_msg, _NOOP_FILE
-                _time.sleep(retry_delay)
-                # Reset pour reprise propre
-                progress_live[:] = [
-                    "*🧠 Réflexion en cours (reprise après quota)…*"
-                ]
-                progress_full.clear()
-                viz_path = None
-                final_answer = ""
-                continue
-            # Erreur non-retryable ou déjà tenté
-            err_block = ""
-            if progress_full:
-                err_block = (
-                    f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
-                    f"({len(progress_full)})</summary>\n\n"
-                    f"{(chr(10)*2).join(progress_full)}\n\n</details>"
-                )
-            yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
-            return
+                # Sortie normale → on quitte le while
+                break
+            except Exception as e:
+                # Quota PerMinute Gemini : on attend + on CONTINUE le
+                # travail (pas de reset). accumulated_messages contient
+                # tout ce que l'agent a déjà produit — on le passe tel
+                # quel au prochain agent.stream() pour reprendre là où
+                # on s'est arrêté.
+                retry_delay = detect_rate_limit_retry(e)
+                if retry_delay is not None and rate_limit_attempts == 0:
+                    rate_limit_attempts += 1
+                    wait_msg = (
+                        f"\n\n*⏳ Quota Gemini free tier atteint — j'attends "
+                        f"{retry_delay:.0f}s puis je CONTINUE le travail en "
+                        f"cours (pas de redémarrage).*"
+                    )
+                    current_progress = "\n\n".join(progress_live)
+                    yield current_progress + wait_msg, _NOOP_FILE
+                    _time.sleep(retry_delay)
+                    # PAS de reset des progress / accumulated_messages :
+                    # on veut continuer, pas recommencer.
+                    continue
+                # Erreur non-retryable ou déjà tenté
+                err_block = ""
+                if progress_full:
+                    err_block = (
+                        f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
+                        f"({len(progress_full)})</summary>\n\n"
+                        f"{(chr(10)*2).join(progress_full)}\n\n</details>"
+                    )
+                yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
+                return
 
     # Viz : iframe interactif embarqué dans un gr.HTML séparé.
     viz_html = _stage_viz_html(viz_path) if viz_path else None

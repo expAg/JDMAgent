@@ -895,27 +895,33 @@ def run_jarvis_flow(
         )
 
         # Retry sur quota PerMinute Gemini : on attend le délai annoncé
-        # par l'API, on reset les progress lists, et on relance UNE fois.
-        # Pour les quotas per-day ou tout autre erreur, on tombe sur la
-        # branche `except Exception as e` ci-dessous comme avant.
+        # par l'API et on CONTINUE le travail en cours — on ne repart
+        # PAS de zéro. Les messages déjà produits (HumanMessage,
+        # AIMessage avec tool_calls, ToolMessage de retour) sont
+        # accumulés et passés tel quel à la nouvelle invocation
+        # agent.stream(), qui reprend là où la précédente s'est arrêtée
+        # (langgraph create_agent supporte le restart par history).
+        #
+        # Le budget_context et exclusion_context vivent À L'EXTÉRIEUR
+        # de la boucle de retry → compteur d'outils et registry
+        # d'exclusion MAINTENUS à travers la pause.
         import time as _time
-        budget = None  # accessible hors du with pour le compteur final
+        accumulated_messages: list = [HumanMessage(content=prompt)]
         rate_limit_attempts = 0
-        while rate_limit_attempts < 2:
-            try:
-                # exclusion_context : registry partagé pour le fast-path
-                # anti-doublons (option A). list_existing_for_enrichment
-                # enregistre les cibles déjà connues, validate_candidate
-                # court-circuite sans verify_claim si la cible y figure.
-                with budget_context(limit=limit) as budget, exclusion_context():
+        with budget_context(limit=limit) as budget, exclusion_context():
+            while rate_limit_attempts < 2:
+                try:
                     for chunk in agent.stream(
-                        {"messages": [HumanMessage(content=prompt)]},
+                        {"messages": accumulated_messages},
                         stream_mode="updates",
                     ):
                         # chunk = dict {node_name: {"messages": [msg, ...]}}
                         for _node, payload in chunk.items():
                             msgs = (payload or {}).get("messages") or []
                             for m in msgs:
+                                # Accumulation pour permettre la reprise
+                                # après pause quota (cf. retry plus bas).
+                                accumulated_messages.append(m)
                                 if isinstance(m, AIMessage):
                                     tcs = getattr(m, "tool_calls", []) or []
                                     # 1) Chain-of-thought (Anthropic Extended,
@@ -1033,52 +1039,53 @@ def run_jarvis_flow(
                                         last_file_path,
                                         _read_file_preview(last_file_path),
                                     )
-                # Sortie normale du with : on quitte le while
-                break
-            except Exception as e:
-                # Si c'est un quota PerMinute Gemini ET premier essai :
-                # on attend le délai de retry annoncé par l'API, on reset
-                # les progress lists et on relance.
-                retry_delay = detect_rate_limit_retry(e)
-                if retry_delay is not None and rate_limit_attempts == 0:
-                    rate_limit_attempts += 1
-                    wait_msg = (
-                        f"*⏳ Quota Gemini free tier atteint — j'attends "
-                        f"{retry_delay:.0f}s puis je reprends (les étapes "
-                        f"intermédiaires seront refaites).*"
-                    )
-                    # Affiche le wait — on garde le progress actuel visible
-                    # pour que l'utilisateur voie où ça en était.
-                    current_progress = "\n\n".join(progress_live)
+                    # Sortie normale de la boucle for chunk → quitter while
+                    break
+                except Exception as e:
+                    # Quota PerMinute Gemini ET premier essai : on attend
+                    # le délai, on AFFICHE un message d'attente, et on
+                    # CONTINUE le travail en cours — on ne reset PAS les
+                    # progress lists, et on relance agent.stream() en
+                    # passant les `accumulated_messages` pour que langgraph
+                    # reprenne là où il en était (les messages déjà
+                    # produits = HumanMessage + AIMessages + ToolMessages).
+                    retry_delay = detect_rate_limit_retry(e)
+                    if retry_delay is not None and rate_limit_attempts == 0:
+                        rate_limit_attempts += 1
+                        wait_msg = (
+                            f"*⏳ Quota Gemini free tier atteint — j'attends "
+                            f"{retry_delay:.0f}s puis je CONTINUE le travail "
+                            f"en cours (pas de redémarrage).*"
+                        )
+                        current_progress = "\n\n".join(progress_live)
+                        yield (
+                            [{"role": "user", "content": user_display},
+                             {"role": "assistant",
+                              "content": current_progress + "\n\n" + wait_msg}],
+                            last_file_path, _read_file_preview(last_file_path),
+                        )
+                        _time.sleep(retry_delay)
+                        # PAS de reset : progress_live / progress_full /
+                        # last_file_path / accumulated_messages restent
+                        # intacts. Le while continue → restart agent.stream
+                        # avec accumulated_messages (cf. le for chunk plus
+                        # haut qui passe {"messages": accumulated_messages}).
+                        continue
+                    # Pas un quota retryable, ou déjà tenté : erreur finale
+                    err_block = ""
+                    if progress_full:
+                        err_block = (
+                            f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
+                            f"({len(progress_full)})</summary>\n\n"
+                            f"{(chr(10)*2).join(progress_full)}\n\n</details>"
+                        )
                     yield (
                         [{"role": "user", "content": user_display},
                          {"role": "assistant",
-                          "content": current_progress + "\n\n" + wait_msg}],
+                          "content": f"❌ Erreur agent : {e}" + err_block}],
                         last_file_path, _read_file_preview(last_file_path),
                     )
-                    _time.sleep(retry_delay)
-                    # Reset pour reprise propre
-                    progress_live[:] = [
-                        "*🧠 Réflexion en cours (reprise après quota)…*"
-                    ]
-                    progress_full.clear()
-                    last_file_path = None
-                    continue  # retour en tête du while → re-stream
-                # Pas un quota retryable, ou déjà tenté : erreur finale
-                err_block = ""
-                if progress_full:
-                    err_block = (
-                        f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
-                        f"({len(progress_full)})</summary>\n\n"
-                        f"{(chr(10)*2).join(progress_full)}\n\n</details>"
-                    )
-                yield (
-                    [{"role": "user", "content": user_display},
-                     {"role": "assistant",
-                      "content": f"❌ Erreur agent : {e}" + err_block}],
-                    last_file_path, _read_file_preview(last_file_path),
-                )
-                return
+                    return
 
         # Réponse finale : on remplace les progress_lines par la réponse
         # définitive du modèle, suivie d'un footer avec compteur (limite
