@@ -726,11 +726,11 @@ PROJET_MD = """# JDMAgent — Démo interactive
 - **🤖 Agent** — conversation avec un agent (Gemini hébergé gratuit, ou
   BYOK Claude/GPT) qui n'utilise QUE les outils JDM et cite ses sources.
 - **🦾 Jarvis** — flux guidés par formulaires (zéro prompt à taper) :
-  - *Enrichissement* — propose et consolide de nouveaux triplets (`.enrich`)
-  - *Audit* — détecte les contaminations par les sens non-premiers (`.audit`)
-  - *Détection de trous* — flagge MISSING / NEGATIVE / LOW_COVERAGE
-  - *Signalement* — flagge les triplets suspects au LLM (`.err`)
-  - *Statistiques* — couverture par relation et par termes rencontrés (`.stat`)
+  - <small>🌱</small> *Enrichissement* — propose et consolide de nouveaux triplets (`.enrich`)
+  - <small>🔍</small> *Audit* — détecte les contaminations par les sens non-premiers (`.audit`)
+  - <small>🕳️</small> *Détection de trous* — flagge MISSING / NEGATIVE / LOW_COVERAGE
+  - <small>⚠️</small> *Signalement* — flagge les triplets suspects au LLM (`.err`)
+  - <small>📊</small> *Statistiques* — couverture par relation et par termes rencontrés (`.stat`)
 
 ## Le projet en bref
 
