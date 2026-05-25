@@ -796,28 +796,30 @@ def run_jarvis_flow(
                             if isinstance(m, AIMessage):
                                 tcs = getattr(m, "tool_calls", []) or []
                                 # 1) Chain-of-thought (Anthropic Extended,
-                                #    Gemini avec include_thoughts, o1/o3) —
-                                #    blockquote italique pour le distinguer
-                                #    visuellement. Tronqué côté live (~250
-                                #    chars) pour éviter les blocs énormes,
-                                #    complet dans le <details> final.
+                                #    Gemini avec include_thoughts, o1/o3).
+                                #    Style : blockquote + <small> + couleur
+                                #    grisée + italique pour le distinguer
+                                #    nettement des outils et du texte parlé,
+                                #    et signaler son statut « pensée » plutôt
+                                #    qu'action. Pas de troncature : Gemini
+                                #    renvoie déjà une SYNTHÈSE côté API
+                                #    (jamais les raw thoughts), inutile de
+                                #    re-raboter.
                                 thoughts = _content_to_thoughts(m.content)
                                 if thoughts.strip():
                                     t = thoughts.strip()
-                                    t_live = t if len(t) <= 250 else t[:249] + "…"
-                                    _add_line(
-                                        f"> 💭 *{t_live}*",
-                                        f"> 💭 *{t}*",
+                                    line = (
+                                        f"> <small style=\"color:#999;\">"
+                                        f"<em>💭 {t}</em></small>"
                                     )
+                                    _add_line(line)
                                 # 2) Texte parlé entre 2 tool_calls (Claude/
-                                #    GPT le font, Gemini souvent vide).
+                                #    GPT le font ; Gemini souvent vide).
                                 #    Blockquote normal pour le distinguer du
-                                #    thinking et des outils.
+                                #    thinking (qui est plus discret).
                                 spoken = _content_to_text(m.content)
                                 if tcs and spoken.strip():
-                                    s = spoken.strip()
-                                    s_live = s if len(s) <= 250 else s[:249] + "…"
-                                    _add_line(f"> 💬 {s_live}", f"> 💬 {s}")
+                                    _add_line(f"> 💬 {spoken.strip()}")
                                 if tcs:
                                     for tc in tcs:
                                         name = tc.get("name", "?")
