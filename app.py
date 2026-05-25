@@ -1341,9 +1341,32 @@ _HEAD_JS = """
     }
   }
 
+  // Tooltip natif (attribut title) sur les checkboxes « Raisonnement
+  // Gemini ». Le texte explicite (« comportement identique, démarrage
+  // plus rapide ») apparait au survol — pas de bloc verbeux sous le
+  // label.
+  function applyThinkingTooltip() {
+    var ids = ['jarvis-thinking-cb', 'chat-thinking-cb'];
+    var tip = 'Décoché : démarrage plus rapide. Comportement fonctionnel '
+            + 'strictement identique (mêmes outils, mêmes sorties — seule '
+            + 'la narration interne du raisonnement n\\'est pas affichée).';
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById(ids[i]);
+      if (el && !el.dataset.tipApplied) {
+        el.title = tip;
+        // Et sur tous les enfants (label, input) pour que le hover soit
+        // déclenché partout sur la case.
+        var children = el.querySelectorAll('label, input, span');
+        for (var j = 0; j < children.length; j++) children[j].title = tip;
+        el.dataset.tipApplied = '1';
+      }
+    }
+  }
+
   function applyTabTweaks() {
     pushAideTabRight();
     colorJarvisTab();
+    applyThinkingTooltip();
   }
   document.addEventListener('DOMContentLoaded', applyTabTweaks);
   setTimeout(applyTabTweaks, 400);
@@ -1661,16 +1684,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     label="Modèle",
                     scale=2,
                 )
-            chat_thinking = gr.Checkbox(
-                value=False,
-                label="Afficher le raisonnement du LLM (Gemini 3.x)",
-                info=(
-                    "Décoché : démarrage plus rapide, comportement "
-                    "fonctionnel strictement identique (mêmes outils, "
-                    "mêmes sorties — seule la narration interne du "
-                    "raisonnement n'est pas affichée)."
-                ),
-            )
+                chat_thinking = gr.Checkbox(
+                    value=False,
+                    label="Raisonnement Gemini",
+                    elem_id="chat-thinking-cb",
+                    scale=1,
+                )
 
             # Toggle dynamique : la clé API n'est saisissable que pour les
             # modèles BYOK (Claude / GPT). Sur un modèle Gemini hébergé,
@@ -1788,22 +1807,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     label="Modèle LLM (commun aux sous-onglets)",
                     scale=2,
                 )
+                jarvis_thinking = gr.Checkbox(
+                    value=False,
+                    label="Raisonnement Gemini",
+                    elem_id="jarvis-thinking-cb",
+                    scale=1,
+                )
                 jarvis_budget = gr.Dropdown(
                     choices=["10", "25", "50", "100", "illimité"],
                     value="illimité",
                     label="Budget d'appels d'outils",
                     scale=1,
-                )
-            with gr.Row():
-                jarvis_thinking = gr.Checkbox(
-                    value=False,
-                    label="Afficher le raisonnement du LLM (Gemini 3.x)",
-                    info=(
-                        "Décoché : démarrage plus rapide, comportement "
-                        "fonctionnel strictement identique (mêmes outils, "
-                        "mêmes sorties — seule la narration interne du "
-                        "raisonnement n'est pas affichée)."
-                    ),
                 )
 
             # ====== Sous-onglets ======
