@@ -762,13 +762,24 @@ def run_jarvis_flow(
         agent = build_agent_fn(client=get_client_fn(), llm=llm)
         limit = BUDGET_LABEL_TO_LIMIT.get(budget_label, 25)
 
-        progress_lines: list[str] = ["*🧠 Réflexion en cours…*"]
+        # Deux listes parallèles :
+        #  - progress_live : affichée pendant le streaming, thinking tronqué
+        #    pour éviter les blocs de texte massifs qui noient l'UI.
+        #  - progress_full : version complète sans troncature, montrée à la
+        #    FIN dans un <details> collapsible « Voir le raisonnement ».
+        progress_live: list[str] = ["*🧠 Réflexion en cours…*"]
+        progress_full: list[str] = []
         final_answer: str = ""
+
+        def _add_line(live: str, full: Optional[str] = None) -> None:
+            """Ajoute une ligne aux 2 listes (full = live par défaut)."""
+            progress_live.append(live)
+            progress_full.append(full if full is not None else live)
 
         # Yield initial : user message + assistant placeholder, pas encore de fichier
         yield (
             [{"role": "user", "content": user_display},
-             {"role": "assistant", "content": "\n".join(progress_lines)}],
+             {"role": "assistant", "content": "\n".join(progress_live)}],
             None, "",
         )
 
@@ -784,81 +795,86 @@ def run_jarvis_flow(
                         for m in msgs:
                             if isinstance(m, AIMessage):
                                 tcs = getattr(m, "tool_calls", []) or []
-                                # 1) Chain-of-thought éventuellement exposé
-                                #    par le modèle (Anthropic Extended
-                                #    Thinking, Gemini avec include_thoughts,
-                                #    o1/o3) — affiché avant tout, en italique.
+                                # 1) Chain-of-thought (Anthropic Extended,
+                                #    Gemini avec include_thoughts, o1/o3) —
+                                #    blockquote italique pour le distinguer
+                                #    visuellement. Tronqué côté live (~250
+                                #    chars) pour éviter les blocs énormes,
+                                #    complet dans le <details> final.
                                 thoughts = _content_to_thoughts(m.content)
                                 if thoughts.strip():
-                                    progress_lines.append(
-                                        f"💭 *{thoughts.strip()}*"
+                                    t = thoughts.strip()
+                                    t_live = t if len(t) <= 250 else t[:249] + "…"
+                                    _add_line(
+                                        f"> 💭 *{t_live}*",
+                                        f"> 💭 *{t}*",
                                     )
-                                # 2) Texte parlé du modèle (commentaires
-                                #    intermédiaires de Claude/GPT entre 2
-                                #    tool_calls — Gemini souvent vide ici).
+                                # 2) Texte parlé entre 2 tool_calls (Claude/
+                                #    GPT le font, Gemini souvent vide).
+                                #    Blockquote normal pour le distinguer du
+                                #    thinking et des outils.
                                 spoken = _content_to_text(m.content)
                                 if tcs and spoken.strip():
-                                    progress_lines.append(
-                                        f"💬 {spoken.strip()}"
-                                    )
+                                    s = spoken.strip()
+                                    s_live = s if len(s) <= 250 else s[:249] + "…"
+                                    _add_line(f"> 💬 {s_live}", f"> 💬 {s}")
                                 if tcs:
                                     for tc in tcs:
                                         name = tc.get("name", "?")
                                         tc_args = tc.get("args") or {}
-                                        # Lexicalisation maison si l'outil
-                                        # est connu, sinon fallback technique.
                                         narrated = _narrate_tool_call(name, tc_args)
                                         if narrated:
-                                            progress_lines.append(narrated)
+                                            _add_line(narrated)
                                         else:
                                             args_str = ", ".join(
                                                 f"{k}={v!r}"
                                                 for k, v in tc_args.items()
                                             )
-                                            progress_lines.append(
-                                                f"🔧 `{name}({args_str})`"
-                                            )
+                                            _add_line(f"🔧 `{name}({args_str})`")
                                     yield (
                                         [{"role": "user", "content": user_display},
                                          {"role": "assistant",
-                                          "content": "\n".join(progress_lines)}],
+                                          "content": "\n".join(progress_live)}],
                                         last_file_path, "",
                                     )
                                 else:
-                                    # Pas de tool_calls → c'est la réponse
-                                    # finale (le texte parlé devient la
-                                    # réponse à l'utilisateur).
+                                    # Pas de tool_calls → réponse finale
                                     final_answer = spoken
                             elif isinstance(m, ToolMessage):
                                 content = _content_to_text(m.content)
-                                # Captation du fichier produit par
-                                # write_submission_file (.enrich/.audit/.err)
                                 if m.name == "write_submission_file":
                                     p = _extract_submission_path(content)
                                     if p:
                                         last_file_path = p
-                                # Lexicalisation maison si l'outil est connu,
-                                # sinon fallback technique (preview brute).
                                 narrated_done = _narrate_tool_result(m.name, content)
                                 if narrated_done:
-                                    progress_lines.append(narrated_done)
+                                    _add_line(narrated_done)
                                 else:
                                     preview = content[:120].replace("\n", " ")
                                     if len(content) > 120:
                                         preview += "…"
-                                    progress_lines.append(
+                                    _add_line(
                                         f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
                                     )
                                 yield (
                                     [{"role": "user", "content": user_display},
                                      {"role": "assistant",
-                                      "content": "\n".join(progress_lines)}],
+                                      "content": "\n".join(progress_live)}],
                                     last_file_path, "",
                                 )
         except Exception as e:
+            # Inclut le raisonnement partiel jusqu'à l'erreur pour debug
+            err_block = ""
+            if progress_full:
+                err_block = (
+                    f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
+                    f"({len(progress_full)})</summary>\n\n"
+                    f"{chr(10).join(progress_full)}\n\n</details>"
+                )
             yield (
                 [{"role": "user", "content": user_display},
-                 {"role": "assistant", "content": f"❌ Erreur agent : {e}"}],
+                 {"role": "assistant",
+                  "content": f"❌ Erreur agent : {e}" + err_block}],
                 last_file_path, _read_file_preview(last_file_path),
             )
             return
@@ -879,9 +895,29 @@ def run_jarvis_flow(
                 f"\n\n---\n*Budget illimité — {n} appel{'s' if n > 1 else ''} "
                 f"d'outils consommé{'s' if n > 1 else ''}.*"
             )
+
+        # Bloc collapsible <details> avec le raisonnement complet (full,
+        # non tronqué) : thoughts + spoken + tool_calls + retours dans
+        # l'ordre chronologique. Le user clique « Voir le raisonnement »
+        # pour le déplier — par défaut replié, ne pollue pas la réponse.
+        reasoning_block = ""
+        if progress_full:
+            full_text = "\n".join(progress_full)
+            n_steps = len(progress_full)
+            reasoning_block = (
+                f"\n\n<details><summary>🧠 Voir le raisonnement complet "
+                f"({n_steps} étape{'s' if n_steps > 1 else ''})</summary>\n\n"
+                f"{full_text}\n\n</details>"
+            )
+
+        final_content = (
+            (final_answer or "*(réponse vide)*")
+            + footer
+            + reasoning_block
+        )
         yield (
             [{"role": "user", "content": user_display},
-             {"role": "assistant", "content": (final_answer or "*(réponse vide)*") + footer}],
+             {"role": "assistant", "content": final_content}],
             last_file_path, _read_file_preview(last_file_path),
         )
     finally:
