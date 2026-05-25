@@ -999,6 +999,7 @@ def viz_subgraph(term: str, depth: float,
 # Les données sont lues depuis l'attribut data-viz du #viz-container
 # au moment du clic (toujours synchro avec le DOM actuel).
 _HEAD_JS = """
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>
 (function() {
   // ---------- Style parenthèses des dropdowns (quotas, BYOK) ----------
@@ -1341,6 +1342,29 @@ _CHATBOT_CSS = """
   color: #82aaff !important;
   font-style: italic !important;
   line-height: 1.35 !important;
+}
+
+/* Responsive mobile : sur petits écrans (< 768px), les gr.Row de
+   Gradio v5 gardent leurs colonnes côte à côte avec leur scale, ce
+   qui donne des champs étriqués sur smartphone (cf. screenshot user).
+   On force ici l'empilement vertical : chaque enfant de Row prend la
+   pleine largeur. Couvre plusieurs noms de classes Gradio (varie
+   entre versions). */
+@media (max-width: 768px) {
+  .gradio-container .form,
+  .gradio-container .row,
+  .gradio-container [class*="row"]:not([class*="tab"]),
+  .gradio-container [class*="flex-row"] {
+    flex-direction: column !important;
+    flex-wrap: wrap !important;
+  }
+  .gradio-container .row > *,
+  .gradio-container [class*="row"]:not([class*="tab"]) > *,
+  .gradio-container [class*="flex-row"] > * {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: 1 1 100% !important;
+  }
 }
 
 /* Champ clé API : quand le textbox est interactive=False (i.e. l'input
