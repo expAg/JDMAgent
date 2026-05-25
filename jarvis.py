@@ -423,11 +423,30 @@ def build_enrich_prompt(
             )
         else:
             parts.append(
-                "PERSISTANCE OBLIGATOIRE : itère jusqu'à atteindre le "
-                "nombre cible de consolidés. Recevoir plusieurs « non "
-                "inférable à partir de JDM » est NORMAL — essaie "
-                "d'AUTRES relations et d'AUTRES cibles, ne te résigne "
-                "pas. Continue tant qu'il reste des pistes."
+                "PERSISTANCE ABSOLUE — N'ABANDONNE JAMAIS.\n"
+                "Tu es en BUDGET ILLIMITÉ. La valeur de ce que tu "
+                "produis est PROPORTIONNELLE au nombre de tentatives "
+                "que tu endures avant de trouver des candidats "
+                "consolidés. Recevoir 10, 20, 50 « non inférable à "
+                "partir de JDM » consécutifs est NORMAL et ATTENDU — "
+                "le moteur d'inférence est strict par construction.\n"
+                "RÈGLES :\n"
+                "1. NE JAMAIS s'arrêter après quelques échecs. Un "
+                "résultat à 0 consolidé après 10 essais n'est PAS "
+                "un échec : c'est la BASELINE attendue.\n"
+                "2. Tant que le nombre cible de consolidés n'est PAS "
+                "atteint, GÉNÈRE encore et encore des candidats — "
+                "varie systématiquement les relations, varie les "
+                "cibles, explore des angles obliques (relations "
+                "moins évidentes, sens raffinés, inverses).\n"
+                "3. Un seul triplet réellement consolidé après 30 "
+                "tentatives vaut INFINIMENT plus qu'une réponse "
+                "rapide « rien trouvé ». L'utilisateur a coché "
+                "« itérer » EXPRÈS pour que tu persistes.\n"
+                "4. NE rends ta réponse finale QUE quand tu as atteint "
+                "le nombre cible de consolidés OU quand tu as "
+                "VRAIMENT épuisé toutes les combinaisons relation×"
+                "cible imaginables (= tu en as essayé des dizaines)."
             )
     if bounded:
         parts.append(

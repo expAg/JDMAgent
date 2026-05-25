@@ -110,9 +110,10 @@ def test_enrich_unlimited_skips_budget_mentions():
     p = build_enrich_prompt("chat", budget_label="illimité", iterate=True)
     assert "BUDGET_EXHAUSTED" not in p
     assert "Budget" not in p
-    # iterate doit toujours s'afficher (mot « itère » dans le bloc
-    # PERSISTANCE) mais sans la clause « épuisement du budget »
-    assert "itère" in p.lower()
+    # iterate doit toujours s'afficher (bloc PERSISTANCE ABSOLUE renforcé)
+    # mais sans la clause « épuisement du budget »
+    assert "PERSISTANCE" in p
+    assert "ABANDONNE" in p  # « N'ABANDONNE JAMAIS »
     assert "épuisement du budget" not in p
     assert "épuisé" not in p
 
