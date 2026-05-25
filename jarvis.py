@@ -105,30 +105,49 @@ def build_enrich_prompt(
     else:
         parts.append("Je veux ENRICHIR un terme dans JDM.")
         parts.append(_RANDOM_TERM_INSTRUCTION)
-    # Si l'utilisateur a précisé un terme ET au moins une relation, on
-    # IMPÉRATIF : les triplets proposés doivent porter sur CE terme et
-    # une de CES relations. Pas le droit de partir sur d'autres termes
-    # ou d'autres relations « par diversité » — la diversité ne joue
-    # que sur les CIBLES proposées.
+    # Contrainte de portée selon ce que l'utilisateur a fourni :
+    #   - term + rels  → tous les triplets ont CE terme et UNE de CES
+    #                    relations ; seule la cible varie. (cas A)
+    #   - term seul    → CE terme reste fixe ; relation ET cible varient. (cas B)
+    #   - rels seules  → CES relations restent fixes ; le terme (source)
+    #                    varie pour produire des triplets variés. (cas C)
+    #   - rien         → tout est libre, comportement par défaut. (cas D)
     if term and rels:
         rel_str = ", ".join(f"`{r}`" for r in rels)
         parts.append(
             f"⚠️ IMPÉRATIF : tous les triplets proposés DOIVENT avoir "
             f"« {term} » comme SOURCE et l'une des relations {rel_str} "
-            "comme PRÉDICAT. Tu varies les CIBLES, pas le terme ni la "
-            "relation. NE propose AUCUN triplet sur un autre terme ou "
-            "une autre relation — même si elles paraissent intéressantes."
+            "comme PRÉDICAT. Tu varies les CIBLES uniquement. NE propose "
+            "AUCUN triplet sur un autre terme ou une autre relation — "
+            "même si elles paraissent intéressantes."
         )
-    elif len(rels) == 1:
-        parts.append(f"Relation cible prioritaire : `{rels[0]}`.")
-    elif len(rels) > 1:
+    elif term and not rels:
         parts.append(
-            "Relations cibles prioritaires : "
-            + ", ".join(f"`{r}`" for r in rels) + "."
+            f"⚠️ IMPÉRATIF : tous les triplets proposés DOIVENT avoir "
+            f"« {term} » comme SOURCE. Tu varies les RELATIONS et les "
+            "CIBLES, mais pas le terme."
         )
-    if vary_relations and not (term and rels):
+    elif rels and not term:
+        rel_str = ", ".join(f"`{r}`" for r in rels)
+        if len(rels) == 1:
+            parts.append(
+                f"⚠️ IMPÉRATIF : tous les triplets proposés DOIVENT "
+                f"utiliser la relation {rel_str} comme PRÉDICAT. Tu "
+                "varies les TERMES sources (et les cibles)."
+            )
+        else:
+            parts.append(
+                f"⚠️ IMPÉRATIF : tous les triplets proposés DOIVENT "
+                f"utiliser l'une des relations {rel_str} comme PRÉDICAT. "
+                "Tu varies les TERMES sources (et les cibles)."
+            )
+    # Cas D (ni term ni rels) : aucune contrainte injectée — l'agent
+    # est libre, _RANDOM_TERM_INSTRUCTION (plus haut) suffit pour
+    # orienter le tirage.
+
+    if vary_relations and not rels:
         # 'Varier les relations' ne s'applique que si l'utilisateur n'a
-        # PAS imposé de relations spécifiques.
+        # PAS imposé de relations spécifiques (sinon contradictoire).
         parts.append(
             "Varie explicitement les TYPES de relations explorées — "
             "pas une seule, plusieurs angles."
