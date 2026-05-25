@@ -857,11 +857,23 @@ def run_jarvis_flow(
                                                 f'<span class="jdm-narration">'
                                                 f'🔧 `{name}({args_str})`</span>'
                                             )
+                                    # Ajoute en bas un indicateur fugace
+                                    # « génération en cours » pour qu'on
+                                    # sache que ça tourne (le LLM peut
+                                    # tarder à produire sa réponse finale
+                                    # ou son prochain tool_call). Cette
+                                    # ligne disparaît au prochain yield
+                                    # ou au yield final.
+                                    live_with_pending = (
+                                        "\n".join(progress_live)
+                                        + "\n\n*⏳ Génération en cours…*"
+                                    )
                                     yield (
                                         [{"role": "user", "content": user_display},
                                          {"role": "assistant",
-                                          "content": "\n".join(progress_live)}],
-                                        last_file_path, "",
+                                          "content": live_with_pending}],
+                                        last_file_path,
+                                        _read_file_preview(last_file_path),
                                     )
                                 else:
                                     # Pas de tool_calls → réponse finale
@@ -887,11 +899,16 @@ def run_jarvis_flow(
                                         f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
                                         f'</span>'
                                     )
+                                live_with_pending = (
+                                    "\n".join(progress_live)
+                                    + "\n\n*⏳ Génération en cours…*"
+                                )
                                 yield (
                                     [{"role": "user", "content": user_display},
                                      {"role": "assistant",
-                                      "content": "\n".join(progress_live)}],
-                                    last_file_path, "",
+                                      "content": live_with_pending}],
+                                    last_file_path,
+                                    _read_file_preview(last_file_path),
                                 )
         except Exception as e:
             # Inclut le raisonnement partiel jusqu'à l'erreur pour debug
