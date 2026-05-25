@@ -2466,6 +2466,10 @@ if __name__ == "__main__":
     # Gradio tente un health-check sur localhost qui échoue dans le conteneur
     # HF Spaces ("When localhost is not accessible, a shareable link must be
     # created"). On garde le rendu client classique, ça marche partout.
+    # pwa=True : Progressive Web App — permet au visiteur d'« installer »
+    # la démo (icône bureau / écran d'accueil mobile, plein écran sans
+    # barre URL, cache partiel des assets). Aucun coût si non utilisé.
     demo.launch(server_name="0.0.0.0", server_port=7860,
                 allowed_paths=[str(VIZ_DIR)],
-                ssr_mode=False)
+                ssr_mode=False,
+                pwa=True)
