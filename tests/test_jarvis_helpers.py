@@ -18,7 +18,48 @@ from jarvis import (
     build_gap_prompt,
     build_signalement_prompt,
     build_stats_prompt,
+    detect_rate_limit_retry,
 )
+
+
+# ---------- detect_rate_limit_retry ----------
+
+_GEMINI_429_PERMINUTE = (
+    "Error calling model 'gemini-3.1-flash-lite' (RESOURCE_EXHAUSTED): 429 "
+    "RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded "
+    "your current quota. Quota exceeded for metric: "
+    "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, "
+    "limit: 250000, model: gemini-3.1-flash-lite\\nPlease retry in 44.989s.', "
+    "'status': 'RESOURCE_EXHAUSTED', 'details': [{'quotaId': "
+    "'GenerateContentInputTokensPerModelPerMinute-FreeTier'}, "
+    "{'retryDelay': '44s'}]}}"
+)
+
+
+def test_detect_rate_limit_per_minute_extracts_delay():
+    """Sur un quota PerMinute Gemini, renvoie le délai (+1s de marge)."""
+    delay = detect_rate_limit_retry(Exception(_GEMINI_429_PERMINUTE))
+    assert delay is not None
+    assert 45.0 <= delay <= 46.0  # 44.989 + 1.0 marge
+
+
+def test_detect_rate_limit_per_day_returns_none():
+    """Quota PerDay (pas PerMinute) → on ne retry pas."""
+    msg = _GEMINI_429_PERMINUTE.replace("PerMinute", "PerDay")
+    assert detect_rate_limit_retry(Exception(msg)) is None
+
+
+def test_detect_rate_limit_non_429_returns_none():
+    """Exception non-quota → None."""
+    assert detect_rate_limit_retry(ValueError("invalid input")) is None
+    assert detect_rate_limit_retry(Exception("Connection refused")) is None
+
+
+def test_detect_rate_limit_too_long_returns_none():
+    """Délai > 120s → on n'attend pas (probablement per-day déguisé)."""
+    msg = _GEMINI_429_PERMINUTE.replace("retry in 44.989s", "retry in 600s")
+    msg = msg.replace("'retryDelay': '44s'", "'retryDelay': '600s'")
+    assert detect_rate_limit_retry(Exception(msg)) is None
 
 
 # ---------- _is_bounded_budget ----------

@@ -618,85 +618,92 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
 
     yield "\n\n".join(progress_live), _NOOP_FILE
 
-    try:
-        agent = build_jdm_agent(client=get_client(), llm=llm)
-        # exclusion_context : registry partagé pour le fast-path
-        # anti-doublons (option A — cf. enrich/validators.py). Englobe
-        # toute la boucle de streaming pour que les tools (notamment
-        # list_existing_for_enrichment et validate_candidate) voient le
-        # ContextVar actif pendant toute la durée de l'invocation.
-        with exclusion_context():
-            for chunk in agent.stream(
-                {"messages": _history_to_lc(history, message)},
-                stream_mode="updates",
-            ):
-                for _node_name, payload in chunk.items():
-                    msgs = (payload or {}).get("messages") or []
-                    for m in msgs:
-                        if isinstance(m, AIMessage):
-                            tcs = getattr(m, "tool_calls", []) or []
-                            # 1) Chain-of-thought (Gemini, Claude Extended)
-                            thoughts = _content_to_thoughts(m.content)
-                            if thoughts.strip():
-                                t = thoughts.strip()
-                                t_html = (
-                                    t.replace("&", "&amp;")
-                                     .replace("<", "&lt;")
-                                     .replace(">", "&gt;")
-                                     .replace("\n", "<br>")
-                                )
-                                _add_line(
-                                    f'<div class="jdm-thinking">💭 {t_html}</div>'
-                                )
-                            # 2) Texte parlé entre tool_calls (Claude/GPT)
-                            spoken = _content_to_text(m.content)
-                            if tcs and spoken.strip():
-                                _add_line(f"> 💬 {spoken.strip()}")
-                            if tcs:
-                                for tc in tcs:
-                                    name = tc.get("name", "?")
-                                    tc_args = tc.get("args") or {}
-                                    narrated = _narrate_tool_call(name, tc_args)
-                                    if narrated:
-                                        _add_line(
-                                            f'<div class="jdm-narration">'
-                                            f'{narrated}</div>'
-                                        )
-                                    else:
-                                        args_str = ", ".join(
-                                            f"{k}={v!r}"
-                                            for k, v in tc_args.items()
-                                        )
-                                        _add_line(
-                                            f'<div class="jdm-narration">'
-                                            f'🔧 `{name}({args_str})`</div>'
-                                        )
-                                live_with_pending = (
-                                    "\n\n".join(progress_live)
-                                    + "\n\n*⏳ Génération en cours…*"
-                                )
-                                yield live_with_pending, _NOOP_FILE
-                            else:
-                                # Pas de tool_calls → réponse finale
-                                final_answer = spoken
-                        elif isinstance(m, ToolMessage):
-                            content = _content_to_text(m.content)
-                            # Détecte un retour de build_subgraph_visualization
-                            if m.name == "build_subgraph_visualization":
-                                viz_path = _extract_html_path(content)
-                            narrated_done = _narrate_tool_result(m.name, content)
-                            if narrated_done:
-                                _add_line(
-                                    f'<div class="jdm-narration">'
-                                    f'{narrated_done}</div>'
-                                )
-                            else:
-                                preview = content[:140].replace("\n", " ")
-                                if len(content) > 140:
-                                    preview += "…"
-                                _add_line(
-                                    f'<div class="jdm-narration">'
-                                    f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
+    # Retry sur quota PerMinute Gemini — cf. detect_rate_limit_retry
+    # dans jarvis.py. Si l'API renvoie 429 PerMinute, on attend le délai
+    # annoncé puis on relance UNE fois en repartant à zéro.
+    import time as _time
+    from jarvis import detect_rate_limit_retry
+    agent = build_jdm_agent(client=get_client(), llm=llm)
+    rate_limit_attempts = 0
+    while rate_limit_attempts < 2:
+        try:
+            # exclusion_context : registry partagé pour le fast-path
+            # anti-doublons (option A — cf. enrich/validators.py). Englobe
+            # toute la boucle de streaming pour que les tools (notamment
+            # list_existing_for_enrichment et validate_candidate) voient le
+            # ContextVar actif pendant toute la durée de l'invocation.
+            with exclusion_context():
+                for chunk in agent.stream(
+                    {"messages": _history_to_lc(history, message)},
+                    stream_mode="updates",
+                ):
+                    for _node_name, payload in chunk.items():
+                        msgs = (payload or {}).get("messages") or []
+                        for m in msgs:
+                            if isinstance(m, AIMessage):
+                                tcs = getattr(m, "tool_calls", []) or []
+                                # 1) Chain-of-thought (Gemini, Claude Extended)
+                                thoughts = _content_to_thoughts(m.content)
+                                if thoughts.strip():
+                                    t = thoughts.strip()
+                                    t_html = (
+                                        t.replace("&", "&amp;")
+                                         .replace("<", "&lt;")
+                                         .replace(">", "&gt;")
+                                         .replace("\n", "<br>")
+                                    )
+                                    _add_line(
+                                        f'<div class="jdm-thinking">💭 {t_html}</div>'
+                                    )
+                                # 2) Texte parlé entre tool_calls (Claude/GPT)
+                                spoken = _content_to_text(m.content)
+                                if tcs and spoken.strip():
+                                    _add_line(f"> 💬 {spoken.strip()}")
+                                if tcs:
+                                    for tc in tcs:
+                                        name = tc.get("name", "?")
+                                        tc_args = tc.get("args") or {}
+                                        narrated = _narrate_tool_call(name, tc_args)
+                                        if narrated:
+                                            _add_line(
+                                                f'<div class="jdm-narration">'
+                                                f'{narrated}</div>'
+                                            )
+                                        else:
+                                            args_str = ", ".join(
+                                                f"{k}={v!r}"
+                                                for k, v in tc_args.items()
+                                            )
+                                            _add_line(
+                                                f'<div class="jdm-narration">'
+                                                f'🔧 `{name}({args_str})`</div>'
+                                            )
+                                    live_with_pending = (
+                                        "\n\n".join(progress_live)
+                                        + "\n\n*⏳ Génération en cours…*"
+                                    )
+                                    yield live_with_pending, _NOOP_FILE
+                                else:
+                                    # Pas de tool_calls → réponse finale
+                                    final_answer = spoken
+                            elif isinstance(m, ToolMessage):
+                                content = _content_to_text(m.content)
+                                # Détecte un retour de build_subgraph_visualization
+                                if m.name == "build_subgraph_visualization":
+                                    viz_path = _extract_html_path(content)
+                                narrated_done = _narrate_tool_result(m.name, content)
+                                if narrated_done:
+                                    _add_line(
+                                        f'<div class="jdm-narration">'
+                                        f'{narrated_done}</div>'
+                                    )
+                                else:
+                                    preview = content[:140].replace("\n", " ")
+                                    if len(content) > 140:
+                                        preview += "…"
+                                    _add_line(
+                                        f'<div class="jdm-narration">'
+                                        f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
                                     f'</div>'
                                 )
                             live_with_pending = (
@@ -704,16 +711,40 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                                 + "\n\n*⏳ Génération en cours…*"
                             )
                             yield live_with_pending, _NOOP_FILE
-    except Exception as e:
-        err_block = ""
-        if progress_full:
-            err_block = (
-                f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
-                f"({len(progress_full)})</summary>\n\n"
-                f"{(chr(10)*2).join(progress_full)}\n\n</details>"
-            )
-        yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
-        return
+            # Sortie normale → on quitte le while
+            break
+        except Exception as e:
+            # Quota PerMinute Gemini : on attend + on relance UNE fois
+            retry_delay = detect_rate_limit_retry(e)
+            if retry_delay is not None and rate_limit_attempts == 0:
+                rate_limit_attempts += 1
+                wait_msg = (
+                    f"\n\n*⏳ Quota Gemini free tier atteint — j'attends "
+                    f"{retry_delay:.0f}s puis je reprends (les étapes "
+                    f"intermédiaires seront refaites).*"
+                )
+                # Affiche le wait avec progress actuel + sleep
+                current_progress = "\n\n".join(progress_live)
+                yield current_progress + wait_msg, _NOOP_FILE
+                _time.sleep(retry_delay)
+                # Reset pour reprise propre
+                progress_live[:] = [
+                    "*🧠 Réflexion en cours (reprise après quota)…*"
+                ]
+                progress_full.clear()
+                viz_path = None
+                final_answer = ""
+                continue
+            # Erreur non-retryable ou déjà tenté
+            err_block = ""
+            if progress_full:
+                err_block = (
+                    f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
+                    f"({len(progress_full)})</summary>\n\n"
+                    f"{(chr(10)*2).join(progress_full)}\n\n</details>"
+                )
+            yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
+            return
 
     # Viz : iframe interactif embarqué dans un gr.HTML séparé.
     viz_html = _stage_viz_html(viz_path) if viz_path else None
