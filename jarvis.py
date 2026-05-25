@@ -808,17 +808,27 @@ def run_jarvis_flow(
                                 thoughts = _content_to_thoughts(m.content)
                                 if thoughts.strip():
                                     t = thoughts.strip()
-                                    # Classe CSS plutôt que `style=` inline
-                                    # car Gradio v5 (DOMPurify) filtre les
-                                    # attributs style — la classe passe.
-                                    # Stylage dans _CHATBOT_CSS : 0.72em,
-                                    # grisé, italique. Le blockquote `>` est
-                                    # retiré (il alourdissait visuellement
-                                    # le rendu et écrasait partiellement le
-                                    # style).
+                                    # Le thinking contient souvent des
+                                    # newlines markdown (\n\n) qui REFERMENT
+                                    # le span/div HTML — d'où le bug observé
+                                    # où seule la 1re ligne avait le style.
+                                    # Fix : on convertit tous les retours en
+                                    # <br> HTML pour rester inline-block, et
+                                    # on enveloppe dans un <div> bloc (les
+                                    # styles bloc s'appliquent au tout).
+                                    # Markdown interne au thinking (genre
+                                    # `code` ou *italique*) ne sera pas
+                                    # rendu — acceptable pour un bloc déjà
+                                    # marqué comme « discret ».
+                                    t_html = (
+                                        t.replace("&", "&amp;")
+                                         .replace("<", "&lt;")
+                                         .replace(">", "&gt;")
+                                         .replace("\n", "<br>")
+                                    )
                                     line = (
-                                        f"<span class=\"jdm-thinking\">"
-                                        f"💭 {t}</span>"
+                                        f"<div class=\"jdm-thinking\">"
+                                        f"💭 {t_html}</div>"
                                     )
                                     _add_line(line)
                                 # 2) Texte parlé entre 2 tool_calls (Claude/
