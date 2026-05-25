@@ -488,15 +488,16 @@ def _history_to_lc(history: list[dict], current_user_message: str) -> list:
 def chat_with_agent(message: str, history: list[dict], api_key: str, model: str):
     """Générateur de streaming pour ChatInterface.
 
-    Yields la trace progressive (appels d'outils + résultats) puis le message
-    final. Chaque yield écrase complètement la dernière bulle assistant.
-
-    Le paramètre `history` est passé à l'agent pour conserver le contexte
-    conversationnel (multi-tours).
+    Yields la trace progressive (thinking + appels d'outils + résultats)
+    puis le message final + <details> avec le raisonnement complet.
+    Même format que les flows Jarvis (cf. jarvis.run_jarvis_flow) :
+    helpers de normalisation `_content_to_text` / `_content_to_thoughts`
+    pour éviter de crasher quand m.content est une liste de blocs
+    (Gemini avec include_thoughts=True), narration lexicalisée des
+    outils connus, indicateur fugace « Génération en cours » pendant
+    le silence du LLM, <details> collapsible à la fin pour ne pas
+    polluer la réponse finale.
     """
-    # Avec additional_outputs=[viz_file_out] côté ChatInterface, chaque
-    # yield doit être un tuple (message, viz_file_update). On garde viz à
-    # gr.update() (no-op) pendant le streaming, et on le set au final.
     _NOOP_FILE = gr.update()
     if not message.strip():
         yield "Pose une question sur la langue française.", _NOOP_FILE
@@ -509,13 +510,24 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
 
     from jdm_agent.tools.jdm_agent import build_jdm_agent
     from langchain_core.messages import AIMessage, ToolMessage
+    from jarvis import (
+        _content_to_text, _content_to_thoughts,
+        _narrate_tool_call, _narrate_tool_result,
+    )
 
-    progress_lines: list[str] = ["*🧠 Réflexion en cours…*"]
-    tool_traces: list[str] = []
-    final_answer = ""
-    viz_path: Optional[str] = None  # chemin du fichier HTML viz si l'agent en a généré un
+    # 2 listes parallèles (cf. jarvis.run_jarvis_flow) :
+    # - progress_live : affiché pendant le streaming
+    # - progress_full : version complète pour le <details> final
+    progress_live: list[str] = ["*🧠 Réflexion en cours…*"]
+    progress_full: list[str] = []
+    final_answer: str = ""
+    viz_path: Optional[str] = None
 
-    yield "\n".join(progress_lines), _NOOP_FILE
+    def _add_line(line: str) -> None:
+        progress_live.append(line)
+        progress_full.append(line)
+
+    yield "\n".join(progress_live), _NOOP_FILE
 
     try:
         agent = build_jdm_agent(client=get_client(), llm=llm)
@@ -523,69 +535,106 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str)
             {"messages": _history_to_lc(history, message)},
             stream_mode="updates",
         ):
-            # chunk = dict {node_name: {"messages": [msg, ...]}}
             for _node_name, payload in chunk.items():
                 msgs = (payload or {}).get("messages") or []
                 for m in msgs:
                     if isinstance(m, AIMessage):
                         tcs = getattr(m, "tool_calls", []) or []
+                        # 1) Chain-of-thought (Gemini, Claude Extended)
+                        thoughts = _content_to_thoughts(m.content)
+                        if thoughts.strip():
+                            t = thoughts.strip()
+                            t_html = (
+                                t.replace("&", "&amp;")
+                                 .replace("<", "&lt;")
+                                 .replace(">", "&gt;")
+                                 .replace("\n", "<br>")
+                            )
+                            _add_line(
+                                f'<div class="jdm-thinking">💭 {t_html}</div>'
+                            )
+                        # 2) Texte parlé entre tool_calls (Claude/GPT)
+                        spoken = _content_to_text(m.content)
+                        if tcs and spoken.strip():
+                            _add_line(f"> 💬 {spoken.strip()}")
                         if tcs:
-                            # L'agent décide d'appeler un ou plusieurs outils
                             for tc in tcs:
-                                args = ", ".join(
-                                    f"{k}={v!r}" for k, v in (tc.get("args") or {}).items()
-                                )
-                                line = f"🔧 `{tc['name']}({args})`"
-                                progress_lines.append(line)
-                                tool_traces.append(f"- `{tc['name']}({args})`")
-                            yield "\n".join(progress_lines), _NOOP_FILE
+                                name = tc.get("name", "?")
+                                tc_args = tc.get("args") or {}
+                                narrated = _narrate_tool_call(name, tc_args)
+                                if narrated:
+                                    _add_line(
+                                        f'<span class="jdm-narration">'
+                                        f'{narrated}</span>'
+                                    )
+                                else:
+                                    args_str = ", ".join(
+                                        f"{k}={v!r}"
+                                        for k, v in tc_args.items()
+                                    )
+                                    _add_line(
+                                        f'<span class="jdm-narration">'
+                                        f'🔧 `{name}({args_str})`</span>'
+                                    )
+                            live_with_pending = (
+                                "\n".join(progress_live)
+                                + "\n\n*⏳ Génération en cours…*"
+                            )
+                            yield live_with_pending, _NOOP_FILE
                         else:
-                            # Réponse finale du modèle (pas d'autres tool calls)
-                            final_answer = m.content or ""
+                            # Pas de tool_calls → réponse finale
+                            final_answer = spoken
                     elif isinstance(m, ToolMessage):
-                        content = (m.content or "")
+                        content = _content_to_text(m.content)
                         # Détecte un retour de build_subgraph_visualization
-                        # pour extraire le html_path et l'embarquer plus bas.
                         if m.name == "build_subgraph_visualization":
                             viz_path = _extract_html_path(content)
-                        preview = content[:140].replace("\n", " ")
-                        if len(content) > 140:
-                            preview += "…"
-                        progress_lines.append(
-                            f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
+                        narrated_done = _narrate_tool_result(m.name, content)
+                        if narrated_done:
+                            _add_line(
+                                f'<span class="jdm-narration">'
+                                f'{narrated_done}</span>'
+                            )
+                        else:
+                            preview = content[:140].replace("\n", " ")
+                            if len(content) > 140:
+                                preview += "…"
+                            _add_line(
+                                f'<span class="jdm-narration">'
+                                f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
+                                f'</span>'
+                            )
+                        live_with_pending = (
+                            "\n".join(progress_live)
+                            + "\n\n*⏳ Génération en cours…*"
                         )
-                        yield "\n".join(progress_lines), _NOOP_FILE
+                        yield live_with_pending, _NOOP_FILE
     except Exception as e:
-        yield f"❌ Erreur agent : {e}", _NOOP_FILE
+        err_block = ""
+        if progress_full:
+            err_block = (
+                f"\n\n<details><summary>🧠 Voir les étapes avant erreur "
+                f"({len(progress_full)})</summary>\n\n"
+                f"{chr(10).join(progress_full)}\n\n</details>"
+            )
+        yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
         return
 
-    # Sortie finale :
-    #  - Sur les modèles SAINS (Claude, GPT, Gemini 2.x) : on append la
-    #    liste détaillée des outils + un lien markdown vers la viz, comme
-    #    avant — ça marchait bien et on ne casse pas ce qui marche.
-    #  - Sur Gemini 3.x : on n'append RIEN au message (fragmentation
-    #    systématique du texte ajouté après final_answer). La viz passe
-    #    par le composant gr.File séparé qui ne souffre pas du bug.
-    is_gemini_3x = model.startswith("gemini-3")
-    out = final_answer or "*(réponse vide)*"
-
-    # Viz : iframe interactif embarqué dans un gr.HTML séparé. Robuste
-    # pour tous les modèles (pas d'append dans la bulle chat → pas de
-    # fragmentation Gemini 3.x).
+    # Viz : iframe interactif embarqué dans un gr.HTML séparé.
     viz_html = _stage_viz_html(viz_path) if viz_path else None
 
-    if not is_gemini_3x:
-        # Append détaillé pour les modèles qui supportent — info riche
-        # affichée dans la bulle finale.
-        if viz_path:
-            out += "\n\n📊 *Visualisation interactive disponible ci-dessous ↓*"
-        if tool_traces:
-            clean = [t.replace("`", "") for t in tool_traces]
-            out += (
-                "\n\n---\n"
-                f"**Outils JDM appelés ({len(clean)})**\n"
-                + "\n".join(clean)
-            )
+    # Réponse finale + footer viz éventuel + <details> raisonnement.
+    out = final_answer or "*(réponse vide)*"
+    if viz_path:
+        out += "\n\n📊 *Visualisation interactive disponible ci-dessous ↓*"
+    if progress_full:
+        full_text = "\n".join(progress_full)
+        n_steps = len(progress_full)
+        out += (
+            f"\n\n<details><summary>🧠 Voir le résumé du raisonnement "
+            f"({n_steps} étape{'s' if n_steps > 1 else ''})</summary>\n\n"
+            f"{full_text}\n\n</details>"
+        )
 
     if viz_html:
         yield out, gr.update(value=viz_html, visible=True)
