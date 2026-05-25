@@ -1284,7 +1284,7 @@ _CHATBOT_CSS = """
 
 /* Blocs « thinking » dans les messages Jarvis — rendus discrets :
    très petits, grisés, italiques. La classe `.jdm-thinking` est
-   appliquée par un <span> dans les progress_lines de jarvis.py.
+   appliquée par un <div> dans les progress_lines de jarvis.py.
    On passe par une classe car les attributs `style=` inline sont
    filtrés par DOMPurify de Gradio v5. */
 .jdm-thinking,
@@ -1292,6 +1292,17 @@ _CHATBOT_CSS = """
   font-size: 0.72em !important;
   color: #999 !important;
   font-style: italic !important;
+  line-height: 1.35 !important;
+}
+
+/* Narrations des outils Jarvis (« 📖 Je vérifie l'existence… »,
+   « 🔧 enrichment_workflow(...) », « ✓ outil renvoie N chars »).
+   MÊME TAILLE que thinking (0.72em) pour cohérence visuelle, mais
+   couleur normale (hérite du thème, donc blanc en dark mode) et
+   pas d'italique — ce sont des FAITS techniques, pas du discours. */
+.jdm-narration,
+.jdm-narration * {
+  font-size: 0.72em !important;
   line-height: 1.35 !important;
 }
 

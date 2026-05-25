@@ -844,13 +844,19 @@ def run_jarvis_flow(
                                         tc_args = tc.get("args") or {}
                                         narrated = _narrate_tool_call(name, tc_args)
                                         if narrated:
-                                            _add_line(narrated)
+                                            _add_line(
+                                                f'<span class="jdm-narration">'
+                                                f'{narrated}</span>'
+                                            )
                                         else:
                                             args_str = ", ".join(
                                                 f"{k}={v!r}"
                                                 for k, v in tc_args.items()
                                             )
-                                            _add_line(f"🔧 `{name}({args_str})`")
+                                            _add_line(
+                                                f'<span class="jdm-narration">'
+                                                f'🔧 `{name}({args_str})`</span>'
+                                            )
                                     yield (
                                         [{"role": "user", "content": user_display},
                                          {"role": "assistant",
@@ -868,13 +874,18 @@ def run_jarvis_flow(
                                         last_file_path = p
                                 narrated_done = _narrate_tool_result(m.name, content)
                                 if narrated_done:
-                                    _add_line(narrated_done)
+                                    _add_line(
+                                        f'<span class="jdm-narration">'
+                                        f'{narrated_done}</span>'
+                                    )
                                 else:
                                     preview = content[:120].replace("\n", " ")
                                     if len(content) > 120:
                                         preview += "…"
                                     _add_line(
-                                        f"✓ *{m.name}* renvoie {len(content)} chars : `{preview}`"
+                                        f'<span class="jdm-narration">'
+                                        f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
+                                        f'</span>'
                                     )
                                 yield (
                                     [{"role": "user", "content": user_display},
