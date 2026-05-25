@@ -24,6 +24,14 @@ sys.path.insert(0, str(_root / "src"))
 # du conteneur (les requêtes successives partagent donc le cache).
 os.environ.setdefault("JDM_CACHE_DIR", "/tmp/jdm_cache")
 
+# Cache temporaire Gradio — par défaut /tmp/gradio mais sur HF Spaces ce
+# dossier n'existe pas toujours au boot, ce qui fait crash gr.File et
+# gr.Code en preprocess avec "FileNotFoundError: /tmp/gradio/tmpXXX".
+# On force un dossier qu'on crée nous-même → preprocess fiable.
+_GRADIO_TEMP = "/tmp/jdm_gradio_cache"
+os.makedirs(_GRADIO_TEMP, exist_ok=True)
+os.environ.setdefault("GRADIO_TEMP_DIR", _GRADIO_TEMP)
+
 import gradio as gr
 import pandas as pd
 
