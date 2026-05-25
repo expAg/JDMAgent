@@ -8,7 +8,13 @@ import respx
 from jdm_agent.client import JDMClient
 from jdm_agent.client.cache import DiskJSONCache
 from jdm_agent.enrich import Candidate, GapType, detect_gaps, write_submission
-from jdm_agent.enrich.validators import consolidate_candidate, validate_candidate
+from jdm_agent.enrich.validators import (
+    consolidate_candidate,
+    exclusion_context,
+    is_excluded,
+    register_exclusion,
+    validate_candidate,
+)
 
 
 def test_write_submission_only_consolidated(tmp_path):
@@ -190,3 +196,65 @@ def test_consolidate_candidate_rejected(client):
     assert out.consolidation_status == "rejected"
     assert out.consolidation_schema == "isa_incompatible"
     assert out.confidence <= 0.1
+
+
+# ---------- Option A : registry d'exclusion (fast-path anti-doublons) ----------
+
+
+def test_exclusion_registry_no_context_is_noop():
+    """Hors `exclusion_context()`, register/is_excluded sont des no-ops."""
+    register_exclusion("voiture", "r_has_part", ["roue", "moteur"])
+    assert is_excluded("voiture", "r_has_part", "roue") is None
+
+
+def test_exclusion_registry_basic():
+    """Dans un `exclusion_context()`, register + is_excluded fonctionnent."""
+    with exclusion_context():
+        register_exclusion("voiture", "r_has_part", ["roue", "moteur"])
+        # match exact
+        assert is_excluded("voiture", "r_has_part", "roue") is not None
+        # match insensible à la casse / aux accents
+        assert is_excluded("VOITURE", "r_has_part", "ROUE") is not None
+        # pas dans la liste
+        assert is_excluded("voiture", "r_has_part", "phare") is None
+        # autre relation → pas de match
+        assert is_excluded("voiture", "r_isa", "roue") is None
+
+
+def test_exclusion_context_isolation():
+    """Deux contextes successifs ne partagent pas leur registry."""
+    with exclusion_context():
+        register_exclusion("a", "r_isa", ["b"])
+        assert is_excluded("a", "r_isa", "b") is not None
+    # contexte fermé → no-op
+    assert is_excluded("a", "r_isa", "b") is None
+    # nouveau contexte vide
+    with exclusion_context():
+        assert is_excluded("a", "r_isa", "b") is None
+
+
+def test_validate_candidate_uses_exclusion_fast_path():
+    """validate_candidate court-circuite SANS appeler verify_claim si
+    la cible est dans le registry. On le prouve en NE mockant AUCUN
+    endpoint pour /relations/from/ — si verify_claim était appelé, le
+    test échouerait avec une vraie requête HTTP."""
+    from unittest.mock import MagicMock
+
+    fake_client = MagicMock()
+    # node_by_name réussit (pas de 'unknown_term')
+    fake_client.node_by_name.return_value = {"id": 100, "name": "roue"}
+
+    cand = Candidate(term="voiture", relation="r_has_part", target="roue",
+                     confidence=0.9, rationale="évident", source="llm")
+
+    with exclusion_context():
+        register_exclusion("voiture", "r_has_part", ["roue", "moteur"])
+        out = validate_candidate(fake_client, cand)
+
+    assert out.validation_status == "duplicate"
+    assert "pré-fetch" in out.validation_note.lower()
+    # node_by_name a bien été appelé (étape 1) mais aucun autre appel
+    # côté client (= pas de verify_claim).
+    fake_client.node_by_name.assert_called_once_with("roue")
+    # relations_from N'A PAS été appelé (verify_claim aurait fait ça)
+    fake_client.relations_from.assert_not_called()

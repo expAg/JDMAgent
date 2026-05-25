@@ -869,6 +869,18 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
 
     targets = _resolve_targets(c, term, relation_name, res, incoming=False)
     exclusion = sorted({_norm(t.get("target") or "") for t in targets if t.get("target")})
+
+    # Enregistre cette exclusion dans le registry partagé (ContextVar) :
+    # validate_candidate court-circuitera tout candidat dont la cible y
+    # figure, sans appeler verify_claim → moins d'HTTP, signal direct au
+    # LLM. No-op si aucun `exclusion_context()` n'est actif (CLI, tests
+    # isolés, etc.).
+    try:
+        from jdm_agent.enrich.validators import register_exclusion
+        register_exclusion(term, relation_name, exclusion)
+    except Exception:
+        pass  # n'empêche jamais le tool de réussir
+
     return {
         "term": term,
         "relation": relation_name,
@@ -878,7 +890,9 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
         "note": (
             f"{len(exclusion)} cible(s) existante(s) — propose UNIQUEMENT des "
             "cibles hors de `exclusion_set`. Si tu proposes quand même quelque "
-            "chose qui y figure, tu auras un verdict 'duplicate' en validation."
+            "chose qui y figure, validate_candidate te renverra IMMÉDIATEMENT "
+            "'duplicate' (court-circuit côté Python — pas d'appel HTTP), avec "
+            "un message rappelant que tu avais l'info."
         ),
     }
 

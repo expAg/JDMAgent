@@ -779,6 +779,7 @@ def run_jarvis_flow(
     user_display = headline.strip() or "🚀 Demande envoyée."
     import os
     from jdm_agent.tools.budget import budget_context
+    from jdm_agent.enrich.validators import exclusion_context
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
     # Override env var pour LLMDrops si une clé est fournie côté UI
@@ -826,7 +827,11 @@ def run_jarvis_flow(
         )
 
         try:
-            with budget_context(limit=limit) as budget:
+            # exclusion_context : registry partagé pour le fast-path
+            # anti-doublons (option A). list_existing_for_enrichment
+            # enregistre les cibles déjà connues, validate_candidate
+            # court-circuite sans verify_claim si la cible y figure.
+            with budget_context(limit=limit) as budget, exclusion_context():
                 for chunk in agent.stream(
                     {"messages": [HumanMessage(content=prompt)]},
                     stream_mode="updates",
