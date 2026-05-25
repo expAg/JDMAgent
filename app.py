@@ -1680,12 +1680,22 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
         # ----- Tab 4: Agent (BYOK Anthropic / OpenAI ; HF Inference = gratuit) -----
         with gr.Tab("💬 LLM Chatbot"):
+            # Row haute : checkbox alignée à droite, sur la colonne du dropdown
+            # modèle (en dessous). Spacer gauche pour pousser la case à droite.
+            with gr.Row():
+                gr.Column(scale=3, min_width=0)  # spacer aligné avec key_in
+                chat_thinking = gr.Checkbox(
+                    value=False,
+                    label="Raisonnement",
+                    elem_id="chat-thinking-cb",
+                    scale=2,
+                )
             with gr.Row():
                 # Désactivée par défaut (le modèle initial est Gemini hébergé).
                 # Réactivée dynamiquement quand l'utilisateur choisit
                 # Claude ou GPT via le dropdown ci-dessous.
                 key_in = gr.Textbox(
-                    label="Clé API si modèle Claude ou GPT (sk-ant-… · sk-…)",
+                    label="Clé API",
                     type="password",
                     placeholder="Non requis pour les modèles Gemini hébergés",
                     interactive=False,
@@ -1697,12 +1707,6 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     value="gemini-3.1-flash-lite",
                     label="Modèle",
                     scale=2,
-                )
-                chat_thinking = gr.Checkbox(
-                    value=False,
-                    label="Raisonnement",
-                    elem_id="chat-thinking-cb",
-                    scale=1,
                 )
 
             # Toggle dynamique : la clé API n'est saisissable que pour les
@@ -1807,9 +1811,20 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
 
             # ====== BANDEAU partagé (clé Drops + modèle + budget) ======
+            # Row haute : checkbox 'Raisonnement' alignée sur la colonne du
+            # dropdown modèle (en dessous). Spacers à gauche et à droite.
+            with gr.Row():
+                gr.Column(scale=3, min_width=0)  # spacer aligné sur clé Drops
+                jarvis_thinking = gr.Checkbox(
+                    value=False,
+                    label="Raisonnement",
+                    elem_id="jarvis-thinking-cb",
+                    scale=2,
+                )
+                gr.Column(scale=1, min_width=0)  # spacer aligné sur budget
             with gr.Row():
                 jarvis_drops_key = gr.Textbox(
-                    label="Clé API LLMDrops (override env JDM_DROPS_API_KEY)",
+                    label="Clé LLMDrops",
                     type="password",
                     placeholder="Optionnel — laisse vide pour utiliser la clé d'environnement",
                     elem_id="jarvis-drops-key",
@@ -1818,19 +1833,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 jarvis_model = gr.Dropdown(
                     choices=[(label, key) for key, label in ALL_MODELS.items()],
                     value="gemini-3.1-flash-lite",
-                    label="Modèle LLM (commun aux sous-onglets)",
+                    label="Modèle",
                     scale=2,
-                )
-                jarvis_thinking = gr.Checkbox(
-                    value=False,
-                    label="Raisonnement",
-                    elem_id="jarvis-thinking-cb",
-                    scale=1,
                 )
                 jarvis_budget = gr.Dropdown(
                     choices=["10", "25", "50", "100", "illimité"],
                     value="illimité",
-                    label="Budget d'appels d'outils",
+                    label="Budget",
                     scale=1,
                 )
 
