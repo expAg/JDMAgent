@@ -1246,14 +1246,41 @@ _HEAD_JS = """
     }
     return done;
   }
-  document.addEventListener('DOMContentLoaded', pushAideTabRight);
-  setTimeout(pushAideTabRight, 400);
-  setTimeout(pushAideTabRight, 1200);
-  setTimeout(pushAideTabRight, 2500);
-  // Si l'utilisateur clique sur un autre onglet et revient, Gradio peut
-  // re-render et perdre le margin — on observe le DOM.
-  new MutationObserver(function() {
+
+  // ---------- Tab « Jarvis » coloré ----------
+  // Gradio rend le label de gr.Tab en TEXTE PLAT (pas markdown/HTML).
+  // Pour mettre « Jarvis » en couleur, on cherche le tab contenant
+  // « Jarvis » et on remplace son innerHTML par une version avec span
+  // coloré. Marqueur dataset pour éviter de remplacer plusieurs fois.
+  function colorJarvisTab() {
+    var tabs = document.querySelectorAll('[role="tab"]');
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i];
+      if (t.dataset.jarvisStyled) continue;
+      var txt = (t.textContent || '');
+      if (txt.indexOf('Jarvis') < 0) continue;
+      // Remplace UNIQUEMENT le mot Jarvis par un span coloré, en
+      // préservant le reste (emoji, prefixe « Agent »…).
+      t.innerHTML = t.innerHTML.replace(
+        /Jarvis/g,
+        '<span style="color:#82aaff;font-weight:600;">Jarvis</span>'
+      );
+      t.dataset.jarvisStyled = '1';
+    }
+  }
+
+  function applyTabTweaks() {
     pushAideTabRight();
+    colorJarvisTab();
+  }
+  document.addEventListener('DOMContentLoaded', applyTabTweaks);
+  setTimeout(applyTabTweaks, 400);
+  setTimeout(applyTabTweaks, 1200);
+  setTimeout(applyTabTweaks, 2500);
+  // Si l'utilisateur clique sur un autre onglet et revient, Gradio peut
+  // re-render et perdre les tweaks — on observe le DOM.
+  new MutationObserver(function() {
+    applyTabTweaks();
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
@@ -1520,7 +1547,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             ).then(fn=None, inputs=None, outputs=None, js=_scroll_js)
 
         # ----- Tab 4: Agent (BYOK Anthropic / OpenAI ; HF Inference = gratuit) -----
-        with gr.Tab("🤖 Agent"):
+        with gr.Tab("💬 LLM Chatbot"):
             with gr.Row():
                 # Désactivée par défaut (le modèle initial est Gemini hébergé).
                 # Réactivée dynamiquement quand l'utilisateur choisit
@@ -1631,7 +1658,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
 
         # ----- Tab 5: Jarvis (flows guidés par formulaires — Phase 13) -----
-        with gr.Tab("🦾 Jarvis"):
+        with gr.Tab("🦾 Agent Jarvis"):
             gr.Markdown(
                 "# 🦾 Jarvis — flows guidés JDM\n\n"
                 "Pas de prompt à taper : remplis le formulaire, "
