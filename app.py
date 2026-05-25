@@ -1443,19 +1443,27 @@ _CHATBOT_CSS = """
 }
 .floating-thinking-wrap .floating-thinking {
   position: absolute !important;
-  /* Le label chip « Modèle » de Gradio commence à ~6px du haut de la
-     Column. On aligne dessus pour que les deux textes soient sur la
-     même ligne visuelle. */
-  top: 6px !important;
-  right: 4px !important;
+  /* Aligné verticalement sur le centre du chip « Modèle » du dropdown
+     en dessous. Le chip a un padding-top de ~12-16px dans le wrapper,
+     plus sa demi-hauteur (~10px). On vise ~20px depuis le haut du
+     conteneur de la Column. */
+  top: 20px !important;
+  right: 8px !important;
+  /* Translate -50% pour centrer la case sur cette ligne (la case fait
+     ~20px de haut → on monte de la moitié pour que le CENTRE de la case
+     soit à top:20px). */
+  transform: translateY(-50%) !important;
   z-index: 5 !important;
   min-width: 0 !important;
   width: auto !important;
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
-  /* Taille de texte normale (pas de réduction) */
+  margin: 0 !important;
   font-size: 1em !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  line-height: 1 !important;
 }
 /* Inverse l'ordre interne du label de la checkbox : case à droite,
    texte « Raisonnement » à gauche. Sélecteurs multiples pour couvrir
