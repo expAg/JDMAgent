@@ -420,14 +420,19 @@ def _build_gemini_native(model_id: str):
             "Gemini 3.x preview. Installe-le avec : "
             "pip install langchain-google-genai"
         ) from e
-    # Reasoning conservé sur les 3.x (3.1 Flash Lite reste lent même avec
-    # thinking_budget=0 — pas la peine de sacrifier la qualité).
-    # `include_thoughts=True` expose le résumé de raisonnement dans
-    # `m.content` comme blocs {type:"thinking"} ou {type:"reasoning"} —
-    # consommé par `_content_to_thoughts` côté Jarvis pour afficher le
-    # chain-of-thought de l'agent dans la fenêtre de chat.
-    # On try/except : certains modèles preview (3.1 Flash Lite) peuvent
-    # refuser les kwargs thinking — dans ce cas fallback sans.
+    # `include_thoughts=True` expose le RÉSUMÉ de raisonnement (Google
+    # n'expose JAMAIS les raw thoughts — ce qu'on récupère est déjà un
+    # « thought summary » synthétisé côté API). Arrive dans `m.content`
+    # comme blocs {type:"thinking"} (v0) ou {type:"reasoning"} (v1),
+    # consommés par `_content_to_thoughts`.
+    #
+    # `thinking_level="minimal"` : niveau de raisonnement le PLUS
+    # ÉCONOME pour Gemini 3.x (équivalent « no thinking for most
+    # queries » selon https://ai.google.dev/gemini-api/docs/thinking).
+    # Garde le tool calling sans payer un raisonnement massif.
+    # Exception : Gemini 3.1 Pro ne supporte pas "minimal" — try/except
+    # gère ce cas + le cas où la version de langchain-google-genai ne
+    # connaît pas les kwargs (fallback silencieux sans thinking).
     base_kwargs = {
         "model": routed_model,
         "google_api_key": token,
@@ -437,11 +442,9 @@ def _build_gemini_native(model_id: str):
         return ChatGoogleGenerativeAI(
             **base_kwargs,
             include_thoughts=True,
-            thinking_level="low",  # niveau Gemini 3.x (minimal/low/medium/high)
+            thinking_level="minimal",  # Gemini 3.x — le plus économe
         )
     except (TypeError, ValueError):
-        # kwarg non supporté par cette version de langchain-google-genai
-        # ou ce modèle → fallback silencieux sans thinking exposé.
         return ChatGoogleGenerativeAI(**base_kwargs)
 
 

@@ -898,16 +898,17 @@ def run_jarvis_flow(
                 f"d'outils consommé{'s' if n > 1 else ''}.*"
             )
 
-        # Bloc collapsible <details> avec le raisonnement complet (full,
-        # non tronqué) : thoughts + spoken + tool_calls + retours dans
-        # l'ordre chronologique. Le user clique « Voir le raisonnement »
-        # pour le déplier — par défaut replié, ne pollue pas la réponse.
+        # Bloc collapsible <details> avec la trace complète : résumé de
+        # raisonnement (le « thought summary » de Gemini, déjà condensé
+        # côté API — pas de version raw exposée) + texte parlé +
+        # tool_calls + retours, dans l'ordre chronologique. Replié par
+        # défaut pour ne pas polluer la réponse.
         reasoning_block = ""
         if progress_full:
             full_text = "\n".join(progress_full)
             n_steps = len(progress_full)
             reasoning_block = (
-                f"\n\n<details><summary>🧠 Voir le raisonnement complet "
+                f"\n\n<details><summary>🧠 Voir le résumé du raisonnement "
                 f"({n_steps} étape{'s' if n_steps > 1 else ''})</summary>\n\n"
                 f"{full_text}\n\n</details>"
             )
