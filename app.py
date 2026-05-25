@@ -1658,7 +1658,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
 
         # ----- Tab 5: Jarvis (flows guidés par formulaires — Phase 13) -----
-        with gr.Tab("🦾 Agent Jarvis"):
+        with gr.Tab("🤖 Agent Jarvis"):
             gr.Markdown(
                 "# 🦾 Jarvis — flows guidés JDM\n\n"
                 "Pas de prompt à taper : remplis le formulaire, "
