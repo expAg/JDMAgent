@@ -1265,9 +1265,12 @@ _HEAD_JS = """
       var txt = (t.textContent || '');
       if (txt.indexOf('Jarvis') < 0) continue;
       // Force un espace insécable AVANT Jarvis pour éviter le collage.
+      // Pas de font-weight : il rendait les glyphes visuellement plus
+      // larges → impression de taille différente vs « Agent ». La
+      // couleur seule suffit à distinguer.
       t.innerHTML = t.innerHTML.replace(
         /\\s*Jarvis/g,
-        '&nbsp;<span style="color:#f5b042;font-weight:600;">Jarvis</span>'
+        '&nbsp;<span style="color:#f5b042;">Jarvis</span>'
       );
       t.dataset.jarvisStyled = '1';
     }
