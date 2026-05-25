@@ -965,8 +965,10 @@ def run_jarvis_flow(
         while not persistence_done:
             rate_limit_attempts = 0
             with budget_context(limit=limit) as budget, exclusion_context():
-                # boucle retry quota (intacte)
-                while rate_limit_attempts < 2:
+                # boucle retry quota : on tolère jusqu'à 20 hits de
+                # rate limit consécutifs tant que le délai est court
+                # (cf. detect_rate_limit_retry cap à 120s).
+                while rate_limit_attempts < 20:
                     try:
                         for chunk in agent.stream(
                             {"messages": accumulated_messages},
@@ -1107,7 +1109,7 @@ def run_jarvis_flow(
                         # reprenne là où il en était (les messages déjà
                         # produits = HumanMessage + AIMessages + ToolMessages).
                         retry_delay = detect_rate_limit_retry(e)
-                        if retry_delay is not None and rate_limit_attempts == 0:
+                        if retry_delay is not None and rate_limit_attempts < 20:
                             rate_limit_attempts += 1
                             wait_msg = (
                                 f"*⏳ Quota Gemini free tier atteint — j'attends "
