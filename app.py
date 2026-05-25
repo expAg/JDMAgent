@@ -249,14 +249,16 @@ ANTHROPIC_MODELS = {
     "claude-sonnet-4-5":  "Claude Sonnet 4.5 (BYOK Anthropic)",
 }
 OPENAI_MODELS = {
-    "gpt-5-mini":  "GPT-5 mini (BYOK OpenAI, raisonnement)",
-    "gpt-5":       "GPT-5 (BYOK OpenAI, raisonnement)",
     "gpt-4o-mini": "GPT-4o mini (BYOK OpenAI)",
     "gpt-4o":      "GPT-4o (BYOK OpenAI)",
 }
-# Modèles OpenAI qui supportent reasoning_effort (raisonnement explicite).
-# gpt-4o / gpt-4o-mini n'ont PAS de reasoning natif → exclus.
-OPENAI_REASONING_MODELS = {"gpt-5", "gpt-5-mini"}
+# Modèles OpenAI qui acceptent strictement le kwarg `reasoning_effort`
+# (modèles o-series / GPT-5). Vide actuellement — aucun de ces modèles
+# n'est exposé dans le dropdown. La case « Raisonnement » reste
+# néanmoins cochable sur GPT-4o à titre cosmétique (cf.
+# THINKING_SUPPORTED_MODELS) mais aucun kwarg supplémentaire n'est passé
+# à l'API.
+OPENAI_REASONING_MODELS: set[str] = set()
 # Providers gratuits — token côté Space, gratuit pour le visiteur, quota
 # partagé. Le prompt agent + 34 outils sérialisés fait ~19-20 K tokens par
 # appel, ce qui élimine la plupart des free tiers (TPM trop bas).
@@ -300,17 +302,19 @@ ALL_MODELS = {
     **ANTHROPIC_MODELS, **OPENAI_MODELS,
 }
 
-# Modèles qui supportent un chain-of-thought explicite contrôlable depuis
-# le code :
-#   - Gemini 3.x natifs (include_thoughts + thinking_level)
-#   - Claude Sonnet/Haiku 4.5 (thinking={"type":"enabled","budget_tokens":N})
-#   - GPT-5 / GPT-5 mini (reasoning_effort)
-# GPT-4o et Gemini 2.x n'ont PAS de raisonnement natif → la case
-# « Raisonnement » est grisée + décochée + tooltip explicite.
+# Modèles pour lesquels la case « Raisonnement » est cochable :
+#   - Gemini 3.x natifs : include_thoughts + thinking_level (réel côté API)
+#   - Claude Sonnet/Haiku 4.5 : thinking={"type":"enabled","budget_tokens":N}
+#     (réel côté API, requiert temperature=1.0)
+#   - GPT-4o / GPT-4o-mini : cochable mais aucun kwarg n'est passé à
+#     l'API (gpt-4o ne supporte pas `reasoning_effort` strictement) — la
+#     case y est cosmétique
+# Gemini 2.x : pas de raisonnement → case grisée + décochée + tooltip
+# « Non disponible pour {model} ».
 THINKING_SUPPORTED_MODELS = (
     GEMINI_NATIVE_REQUIRED
     | set(ANTHROPIC_MODELS.keys())
-    | OPENAI_REASONING_MODELS
+    | set(OPENAI_MODELS.keys())
 )
 
 
@@ -358,9 +362,12 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
       - Gemini 3.x natifs : `include_thoughts=True, thinking_level="low"`
       - Claude Sonnet/Haiku 4.5 : `thinking={"type":"enabled","budget_tokens":1024}`
         (et `temperature=1.0`, requis par l'API)
-      - GPT-5 / GPT-5 mini : `reasoning_effort="low"`
-    GPT-4o et Gemini 2.x n'ont pas de raisonnement natif → no-op. Décoché :
-    démarrage plus rapide, comportement fonctionnel strictement identique
+      - GPT-4o / GPT-4o-mini : cochable mais no-op (l'API ne supporte
+        pas `reasoning_effort` strictement)
+      - Modèles dans OPENAI_REASONING_MODELS (vide actuellement) :
+        `reasoning_effort="low"`
+    Gemini 2.x : pas de raisonnement → case grisée. Décoché : démarrage
+    plus rapide, comportement fonctionnel strictement identique
     (mêmes outils, mêmes sorties).
 
     Lève ValueError avec message utilisateur explicite si la clé manque.
@@ -1423,11 +1430,11 @@ _HEAD_JS = """
   function applyThinkingTooltip() {
     var ids = ['jarvis-thinking-cb', 'chat-thinking-cb'];
     var tip = 'Active le chain-of-thought sur les modèles qui le supportent '
-            + '(Gemini 3.x, Claude Sonnet/Haiku 4.5, GPT-5/mini). Décoché : '
-            + 'démarrage plus rapide, comportement fonctionnel strictement '
-            + 'identique (mêmes outils, mêmes sorties — seule la narration '
-            + 'interne du raisonnement n\\'est pas demandée à l\\'API). Sans '
-            + 'effet sur GPT-4o et Gemini 2.x (pas de raisonnement natif).';
+            + '(Gemini 3.x, Claude Sonnet/Haiku 4.5). Décoché : démarrage '
+            + 'plus rapide, comportement fonctionnel strictement identique '
+            + '(mêmes outils, mêmes sorties — seule la narration interne du '
+            + 'raisonnement n\\'est pas demandée à l\\'API). Sans effet sur '
+            + 'Gemini 2.x (pas de raisonnement natif).';
     for (var i = 0; i < ids.length; i++) {
       var el = document.getElementById(ids[i]);
       if (el && !el.dataset.tipApplied) {
