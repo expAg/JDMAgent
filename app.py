@@ -1252,6 +1252,11 @@ _HEAD_JS = """
   // Pour mettre « Jarvis » en couleur, on cherche le tab contenant
   // « Jarvis » et on remplace son innerHTML par une version avec span
   // coloré. Marqueur dataset pour éviter de remplacer plusieurs fois.
+  // L'espace insécable &nbsp; garantit la séparation Agent | Jarvis
+  // (parfois mangée par Gradio quand le label devient innerHTML).
+  // Couleur dorée chaude (#f5b042) qui s'accorde avec l'amber du thème
+  // secondary_hue et fait un contraste agréable avec le gris-bleu du
+  // robot 🤖 (au lieu du cyan bleuté qui rentrait en conflit).
   function colorJarvisTab() {
     var tabs = document.querySelectorAll('[role="tab"]');
     for (var i = 0; i < tabs.length; i++) {
@@ -1259,11 +1264,10 @@ _HEAD_JS = """
       if (t.dataset.jarvisStyled) continue;
       var txt = (t.textContent || '');
       if (txt.indexOf('Jarvis') < 0) continue;
-      // Remplace UNIQUEMENT le mot Jarvis par un span coloré, en
-      // préservant le reste (emoji, prefixe « Agent »…).
+      // Force un espace insécable AVANT Jarvis pour éviter le collage.
       t.innerHTML = t.innerHTML.replace(
-        /Jarvis/g,
-        '<span style="color:#82aaff;font-weight:600;">Jarvis</span>'
+        /\s*Jarvis/g,
+        '&nbsp;<span style="color:#f5b042;font-weight:600;">Jarvis</span>'
       );
       t.dataset.jarvisStyled = '1';
     }
