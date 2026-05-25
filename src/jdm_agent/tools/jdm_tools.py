@@ -864,6 +864,36 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
         s = unicodedata.normalize("NFKD", s)
         return "".join(ch for ch in s if not unicodedata.combining(ch)).lower().strip()
 
+    # Court-circuit : si on a déjà pré-fetché ce couple dans cette
+    # session (registry d'exclusion partagé), on renvoie une réponse
+    # CONCISE qui rappelle au LLM qu'il a déjà fait l'appel. Évite la
+    # répétition des grands payloads de targets qui polluent le
+    # contexte. Le HTTP est déjà gratuit via diskcache, mais le LLM
+    # consomme des tokens pour digérer la liste à nouveau.
+    try:
+        from jdm_agent.enrich.validators import _EXCLUSION_REGISTRY, _norm_key
+        _reg = _EXCLUSION_REGISTRY.get()
+        if _reg is not None:
+            _key = _norm_key(term, relation_name)
+            if _key in _reg:
+                cached_set = sorted(_reg[_key])
+                return {
+                    "term": term,
+                    "relation": relation_name,
+                    "count": len(cached_set),
+                    "exclusion_set": cached_set,
+                    "already_prefetched": True,
+                    "note": (
+                        f"Tu as DÉJÀ pré-fetché ce couple plus tôt dans la "
+                        f"session — {len(cached_set)} cible(s) connue(s). "
+                        "Pas besoin d'appeler list_existing_for_enrichment "
+                        "à nouveau pour ce (term, relation). Propose "
+                        "directement des candidats HORS de exclusion_set."
+                    ),
+                }
+    except Exception:
+        pass  # registry pas dispo → comportement normal
+
     c = _client()
     rid = c.relation_type_id(relation_name)
     if rid is None:

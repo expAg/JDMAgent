@@ -405,14 +405,30 @@ def build_enrich_prompt(
         "CONSOLIDÉS (ready_for_submission=true)."
     )
     if iterate:
+        # Persistance EXPLICITE : sans ce paragraphe, les LLM abandonnent
+        # après 2-3 « non inférable » consécutifs en concluant que rien
+        # n'est consolidable. Or c'est NORMAL d'en avoir beaucoup (le
+        # moteur d'inférence est strict). La règle : tant que budget
+        # restant, GÉNÉRER d'autres candidats avec d'AUTRES relations.
         if bounded:
             parts.append(
-                "Itère jusqu'à atteindre le nombre cible — sauf si le "
-                "budget d'appels d'outils est épuisé, auquel cas rends "
-                "proprement ce qui a déjà été consolidé."
+                "PERSISTANCE OBLIGATOIRE : itère jusqu'à atteindre le "
+                "nombre cible OU jusqu'à épuisement du budget. Recevoir "
+                "plusieurs « non inférable à partir de JDM » de suite "
+                "est NORMAL — le moteur d'inférence est strict et ne "
+                "consolide que ce qu'il peut prouver. Dans ce cas : "
+                "essaie d'AUTRES relations, d'AUTRES cibles, ne te "
+                "résigne pas. N'abandonne JAMAIS avant d'avoir épuisé "
+                "le budget ou atteint le nombre cible de consolidés."
             )
         else:
-            parts.append("Itère jusqu'à atteindre le nombre cible.")
+            parts.append(
+                "PERSISTANCE OBLIGATOIRE : itère jusqu'à atteindre le "
+                "nombre cible de consolidés. Recevoir plusieurs « non "
+                "inférable à partir de JDM » est NORMAL — essaie "
+                "d'AUTRES relations et d'AUTRES cibles, ne te résigne "
+                "pas. Continue tant qu'il reste des pistes."
+            )
     if bounded:
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum. Au-delà, "

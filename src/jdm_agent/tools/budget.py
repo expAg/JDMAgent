@@ -82,14 +82,27 @@ _current_budget: ContextVar[Optional[ToolBudget]] = ContextVar(
     "jdm_tool_budget", default=None
 )
 
+# Fallback module-level : LangGraph peut exécuter les tools dans un
+# sous-contexte asyncio où le ContextVar n'est plus visible (bug
+# documenté). On double avec une variable globale qui survit à ces
+# changements de contexte. Pour le démo Gradio (1 user à la fois côté
+# Space free tier) c'est suffisant ; pour multi-user concurrent, il
+# faudrait threading.local + thread id, mais on n'en est pas là.
+_module_level_budget: Optional[ToolBudget] = None
+
 
 def get_current_budget() -> Optional[ToolBudget]:
     """Renvoie le budget actif, ou None s'il n'y a pas de contexte.
 
-    Utilisé par le wrapper dans `build_jdm_tools()` pour décider si
-    un appel doit être compté ou laissé passer librement.
+    Cherche d'abord dans le ContextVar (cas normal) puis fallback sur la
+    variable module-level (cas LangGraph sub-contexte asyncio). Utilisé
+    par le wrapper dans `build_jdm_tools()` pour décider si un appel
+    doit être compté.
     """
-    return _current_budget.get()
+    b = _current_budget.get()
+    if b is not None:
+        return b
+    return _module_level_budget
 
 
 @contextmanager
@@ -119,10 +132,15 @@ def budget_context(limit: Optional[int]) -> Iterator[ToolBudget]:
     budget = ToolBudget(limit=limit)
     previous = _current_budget.get()
     _current_budget.set(budget)
+    # Double set sur le fallback module-level (cf. get_current_budget)
+    global _module_level_budget
+    previous_module = _module_level_budget
+    _module_level_budget = budget
     try:
         yield budget
     finally:
         _current_budget.set(previous)
+        _module_level_budget = previous_module
 
 
 # Noms (préfixes/suffixes) de tools EXCLUS du compteur — ils sont
