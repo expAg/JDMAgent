@@ -114,8 +114,10 @@ def test_enrich_unlimited_skips_budget_mentions():
     # mais sans la clause « épuisement du budget »
     assert "PERSISTANCE" in p
     assert "ABANDONNE" in p  # « N'ABANDONNE JAMAIS »
+    # Pas de mention de borne/épuisement du budget (le mot « BUDGET
+    # ILLIMITÉ » peut apparaître mais pas « épuisement du budget »).
     assert "épuisement du budget" not in p
-    assert "épuisé" not in p
+    assert "budget d'appels d'outils maximum" not in p
 
 
 def test_enrich_upload_appears_only_if_true():
