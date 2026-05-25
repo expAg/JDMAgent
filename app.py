@@ -1742,6 +1742,20 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         outputs=[je_chat, je_file, je_preview],
                     )
 
+                    # Grisage visuel de « Varier les types de relations »
+                    # quand des relations sont déjà sélectionnées (la case
+                    # devient sans effet — le builder l'ignore déjà dans
+                    # ce cas, on rend juste le visuel cohérent).
+                    def _toggle_vary_state(rels):
+                        has_rels = bool(rels)
+                        return gr.update(interactive=not has_rels)
+
+                    je_relation.change(
+                        _toggle_vary_state,
+                        inputs=[je_relation],
+                        outputs=[je_vary],
+                    )
+
                     # Quand un fichier est produit (je_file devient visible),
                     # on rend visible le bouton « Soumettre » post-hoc.
                     def _show_submit_btn(file_path, drops_key):
