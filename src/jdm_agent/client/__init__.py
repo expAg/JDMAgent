@@ -1,4 +1,4 @@
-from jdm_agent.client.client import JDMClient
+from jdm_agent.client.client import JDMClient, JDMError, JDMNotFoundError
 from jdm_agent.client.models import (
     Annotation,
     DecodedRefinement,
@@ -12,6 +12,8 @@ from jdm_agent.client.models import (
 
 __all__ = [
     "JDMClient",
+    "JDMError",
+    "JDMNotFoundError",
     "Node",
     "Relation",
     "RelationType",

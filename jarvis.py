@@ -214,10 +214,28 @@ TOOL_NARRATION: dict[str, dict] = {
             f"🧪 Je teste le candidat « {_truncate(a.get('term'))} | "
             f"{a.get('relation', '?')} | {_truncate(a.get('target'))} »…"
         ),
+        # Cascade d'affichage du verdict :
+        # 1. consolidation_status (résultat de l'inférence) prime
+        # 2. sinon validation_status (résultat de la validation structurelle)
+        # Note : `not_consolidated` est la VRAIE valeur renvoyée par
+        # consolidate_candidate quand l'inférence est silencieuse — l'ancien
+        # `silent` ne matchait jamais et tombait dans le fallback `→ ok`.
         "done": lambda c: _format_done(c, lambda d: (
-            "✅ consolidé" if d.get("consolidation_status") == "consolidated"
-            else "⏸️ pas concluant" if d.get("consolidation_status") == "silent"
-            else "❌ rejeté par inférence" if d.get("consolidation_status") == "rejected"
+            "✅ consolidé par inférence"
+                if d.get("consolidation_status") == "consolidated"
+            else "⏸️ non inférable à partir de JDM"
+                if d.get("consolidation_status") in ("not_consolidated", "silent")
+            else "❌ rejeté par inférence"
+                if d.get("consolidation_status") == "rejected"
+            # Pas de consolidation tentée → on lit le validation_status seul.
+            else "❌ doublon"
+                if d.get("validation_status") == "duplicate"
+            else "❌ cible inconnue de JDM"
+                if d.get("validation_status") == "unknown_term"
+            else "❌ contradiction directe dans JDM"
+                if d.get("validation_status") == "inconsistent"
+            else "⏸️ non inférable à partir de JDM"
+                if d.get("validation_status") == "ok"
             else f"→ {d.get('validation_status', '?')}"
         )),
     },

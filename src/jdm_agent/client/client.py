@@ -41,6 +41,15 @@ class JDMError(RuntimeError):
     """Erreur retournée par l'API JDM (statut ≠ 200 après retries)."""
 
 
+class JDMNotFoundError(JDMError):
+    """404 sur l'API JDM : nœud / ressource introuvable.
+
+    Sous-classe spécifique pour permettre aux callers de la catcher et
+    traiter comme « résultat vide » (cas typique : `relations_from_to`
+    avec une cible absente du graphe → on veut un RelationsResult vide,
+    pas une erreur remontée jusqu'au LLM)."""
+
+
 def _csv(values: Optional[Iterable[int]]) -> Optional[str]:
     """Sérialise une liste d'ids en query param 'id1,id2,...'."""
     if values is None:
@@ -93,6 +102,15 @@ class JDMClient:
         r = self._http.get(path, params=params)
         if r.status_code == 429 or r.status_code >= 500:
             r.raise_for_status()  # déclenchera un retry via tenacity
+        if r.status_code == 404:
+            # 404 = ressource non trouvée. On lève une exception dédiée
+            # que les callers `relations_*` peuvent catcher pour renvoyer
+            # un résultat vide (cas légitime : nœud absent du graphe).
+            # `node_by_name`, lui, NE catche PAS — son contrat est que
+            # l'absence du terme = erreur de l'appelant.
+            raise JDMNotFoundError(
+                f"GET {path} → 404 : {r.text[:200]}"
+            )
         if r.status_code != 200:
             raise JDMError(f"GET {path} → {r.status_code} : {r.text[:200]}")
         return r.json()
@@ -444,7 +462,10 @@ class JDMClient:
         without_nodes: Optional[bool] = None,
     ) -> RelationsResult:
         params = self._relations_params(types_ids, not_types_ids, min_weight, max_weight, limit, offset, without_nodes)
-        data = self._cached_get(f"/v0/relations/from/{quote(name, safe='')}", ttl=self._ttl_data, params=params)
+        try:
+            data = self._cached_get(f"/v0/relations/from/{quote(name, safe='')}", ttl=self._ttl_data, params=params)
+        except JDMNotFoundError:
+            return RelationsResult()  # nœud absent → résultat vide normal
         return RelationsResult.model_validate(data)
 
     def relations_to(
@@ -459,7 +480,10 @@ class JDMClient:
         without_nodes: Optional[bool] = None,
     ) -> RelationsResult:
         params = self._relations_params(types_ids, not_types_ids, min_weight, max_weight, limit, offset, without_nodes)
-        data = self._cached_get(f"/v0/relations/to/{quote(name, safe='')}", ttl=self._ttl_data, params=params)
+        try:
+            data = self._cached_get(f"/v0/relations/to/{quote(name, safe='')}", ttl=self._ttl_data, params=params)
+        except JDMNotFoundError:
+            return RelationsResult()
         return RelationsResult.model_validate(data)
 
     def relations_between(
@@ -475,7 +499,13 @@ class JDMClient:
             types_ids=types_ids, min_weight=min_weight, limit=limit, without_nodes=without_nodes
         )
         path = f"/v0/relations/from/{quote(name1, safe='')}/to/{quote(name2, safe='')}"
-        data = self._cached_get(path, ttl=self._ttl_data, params=params)
+        try:
+            data = self._cached_get(path, ttl=self._ttl_data, params=params)
+        except JDMNotFoundError:
+            # L'un des deux nœuds n'existe pas dans JDM (par ex. cible
+            # absente). C'est un cas légitime : pas de relations entre
+            # eux = résultat vide, pas une erreur.
+            return RelationsResult()
         return RelationsResult.model_validate(data)
 
     def relations_by_type(
