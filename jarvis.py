@@ -102,16 +102,66 @@ def _truncate(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def _parse_tool_result(content: str) -> dict:
-    """Parse défensif d'un retour de tool — soit JSON soit dict-repr."""
+_PARSE_EMPTY = object()      # sentinelle : contenu vide / blanc
+_PARSE_UNPARSABLE = object() # sentinelle : ni JSON ni Python literal valide
+
+
+def _parse_tool_result(content: str):
+    """Parse défensif d'un retour de tool.
+
+    Retourne :
+      - `_PARSE_EMPTY` si le contenu est vide ou whitespace
+      - l'objet parsé (dict / list / str / int / float / bool / None) si
+        le contenu est du JSON valide
+      - l'objet parsé via `ast.literal_eval` si le contenu est un
+        Python literal valide (dict-repr avec single quotes, etc. —
+        LangChain sérialise parfois ainsi)
+      - `_PARSE_UNPARSABLE` si rien de tout ça ne marche
+
+    Note : ne renvoie PLUS de dict vide `{}` pour signaler une erreur ;
+    on utilise les sentinelles dédiées.
+    """
     import json
-    if not content:
-        return {}
+    import ast
+    if not content or not str(content).strip():
+        return _PARSE_EMPTY
+    s = str(content).strip()
+    # 1) JSON canonique
     try:
-        d = json.loads(content)
-        return d if isinstance(d, dict) else {}
+        return json.loads(s)
     except Exception:
-        return {}
+        pass
+    # 2) Python literal (dict-repr avec single quotes, tuples, etc.)
+    try:
+        return ast.literal_eval(s)
+    except Exception:
+        pass
+    return _PARSE_UNPARSABLE
+
+
+def _format_done(content: str, fmt_dict) -> str:
+    """Helper commun pour les callbacks 'done' du TOOL_NARRATION.
+
+    Parse le contenu, puis dispatche :
+      - vide            → '→ vide'
+      - non parsable    → '→ (résultat non parsable)'
+      - dict            → délègue à `fmt_dict(d)`
+      - list            → '→ N élément(s)'
+      - autre (str/int) → '→ {valeur tronquée}'
+    """
+    parsed = _parse_tool_result(content)
+    if parsed is _PARSE_EMPTY:
+        return "→ vide"
+    if parsed is _PARSE_UNPARSABLE:
+        return "→ (résultat non parsable)"
+    if isinstance(parsed, dict):
+        try:
+            return fmt_dict(parsed)
+        except Exception:
+            return "→ (format inattendu)"
+    if isinstance(parsed, list):
+        return f"→ {len(parsed)} élément(s)"
+    return f"→ {_truncate(str(parsed), 80)}"
 
 
 TOOL_NARRATION: dict[str, dict] = {
@@ -121,61 +171,52 @@ TOOL_NARRATION: dict[str, dict] = {
             f"« {_truncate(a.get('term'))} » pour la relation "
             f"`{a.get('relation_name') or a.get('relation') or '?'}`…"
         ),
-        "done": lambda c: (
-            lambda d: (f"→ {d.get('count', '?')} triplet(s) existant(s) trouvé(s)."
-                      if d else "→ (résultat non parsable)")
-        )(_parse_tool_result(c)),
+        "done": lambda c: _format_done(c, lambda d: (
+            f"→ {d.get('count', '?')} triplet(s) existant(s) trouvé(s)."
+        )),
     },
     "validate_candidate": {
         "start": lambda a: (
             f"🧪 Je teste le candidat « {_truncate(a.get('term'))} | "
             f"{a.get('relation', '?')} | {_truncate(a.get('target'))} »…"
         ),
-        "done": lambda c: (
-            lambda d: (
-                "✅ consolidé" if d.get("consolidation_status") == "consolidated"
-                else "⏸️ pas concluant" if d.get("consolidation_status") == "silent"
-                else "❌ rejeté par inférence" if d.get("consolidation_status") == "rejected"
-                else f"→ {d.get('validation_status', '?')}"
-            ) if d else "→ (résultat non parsable)"
-        )(_parse_tool_result(c)),
+        "done": lambda c: _format_done(c, lambda d: (
+            "✅ consolidé" if d.get("consolidation_status") == "consolidated"
+            else "⏸️ pas concluant" if d.get("consolidation_status") == "silent"
+            else "❌ rejeté par inférence" if d.get("consolidation_status") == "rejected"
+            else f"→ {d.get('validation_status', '?')}"
+        )),
     },
     "disambiguate": {
         "start": lambda a: f"🔎 Je cherche les sens de « {_truncate(a.get('term'))} »…",
-        "done": lambda c: f"→ {len(_parse_tool_result(c).get('senses') or _parse_tool_result(c).get('refinements') or []) or '?'} sens trouvés."
-        if _parse_tool_result(c) else "→ (résultat non parsable)",
+        "done": lambda c: _format_done(c, lambda d: (
+            f"→ {len(d.get('senses') or d.get('refinements') or []) or '?'} sens trouvés."
+        )),
     },
     "lookup_term": {
         "start": lambda a: f"📖 Je vérifie l'existence de « {_truncate(a.get('term'))} » dans JDM…",
-        "done": lambda c: (
-            (lambda d: ("→ trouvé." if d.get("found") or d.get("id") else "→ inconnu."))(
-                _parse_tool_result(c))
-            if _parse_tool_result(c) else "→ (résultat non parsable)"
-        ),
+        "done": lambda c: _format_done(c, lambda d: (
+            "→ trouvé." if d.get("found") or d.get("id") else "→ inconnu."
+        )),
     },
     "get_relations_of_type": {
         "start": lambda a: (
             f"🔗 Je regarde les triplets « {_truncate(a.get('term'))} | "
             f"{a.get('relation_name') or a.get('relation') or '?'} »…"
         ),
-        "done": lambda c: (
-            (lambda d: f"→ {d.get('count', len(d.get('triplets', [])) or '?')} relation(s) trouvée(s).")(
-                _parse_tool_result(c))
-            if _parse_tool_result(c) else "→ (résultat non parsable)"
-        ),
+        "done": lambda c: _format_done(c, lambda d: (
+            f"→ {d.get('count', len(d.get('triplets', [])) or '?')} relation(s) trouvée(s)."
+        )),
     },
     "write_submission_file": {
         "start": lambda a: (
             f"💾 J'écris le fichier de soumission ({len(a.get('triplets') or [])} item(s))"
             + (" et je le pousse à JDM…" if a.get("upload") else "…")
         ),
-        "done": lambda c: (
-            (lambda d: (
-                f"❌ {d['error']}" if d.get("error")
-                else f"→ écrit dans `{d.get('path', '?')}` ({d.get('count', '?')} ligne(s))."
-            ))(_parse_tool_result(c))
-            if _parse_tool_result(c) else "→ (résultat non parsable)"
-        ),
+        "done": lambda c: _format_done(c, lambda d: (
+            f"❌ {d['error']}" if d.get("error")
+            else f"→ écrit dans `{d.get('path', '?')}` ({d.get('count', '?')} ligne(s))."
+        )),
     },
 }
 
