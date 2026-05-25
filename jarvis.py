@@ -808,9 +808,13 @@ def run_jarvis_flow(
                                 thoughts = _content_to_thoughts(m.content)
                                 if thoughts.strip():
                                     t = thoughts.strip()
+                                    # font-size 0.75em + couleur grisée +
+                                    # italique : encore plus discret que
+                                    # <small> seul (qui est ~0.83em par
+                                    # défaut).
                                     line = (
-                                        f"> <small style=\"color:#999;\">"
-                                        f"<em>💭 {t}</em></small>"
+                                        f"> <span style=\"font-size:0.75em;"
+                                        f"color:#999;\"><em>💭 {t}</em></span>"
                                     )
                                     _add_line(line)
                                 # 2) Texte parlé entre 2 tool_calls (Claude/

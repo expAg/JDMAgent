@@ -426,13 +426,13 @@ def _build_gemini_native(model_id: str):
     # comme blocs {type:"thinking"} (v0) ou {type:"reasoning"} (v1),
     # consommés par `_content_to_thoughts`.
     #
-    # `thinking_level="minimal"` : niveau de raisonnement le PLUS
-    # ÉCONOME pour Gemini 3.x (équivalent « no thinking for most
-    # queries » selon https://ai.google.dev/gemini-api/docs/thinking).
-    # Garde le tool calling sans payer un raisonnement massif.
-    # Exception : Gemini 3.1 Pro ne supporte pas "minimal" — try/except
-    # gère ce cas + le cas où la version de langchain-google-genai ne
-    # connaît pas les kwargs (fallback silencieux sans thinking).
+    # `thinking_level="low"` : raisonnement léger sur Gemini 3.x — un cran
+    # au-dessus de "minimal" (qui équivaut à « no thinking »), donne un
+    # vrai chain-of-thought lisible sans coût massif. Niveaux dispo selon
+    # https://ai.google.dev/gemini-api/docs/thinking :
+    # minimal/low/medium/high. Exception : Gemini 3.1 Pro ne supporte pas
+    # "minimal" mais accepte "low". try/except gère aussi le cas où la
+    # version de langchain-google-genai ne connaît pas ces kwargs.
     base_kwargs = {
         "model": routed_model,
         "google_api_key": token,
@@ -442,7 +442,7 @@ def _build_gemini_native(model_id: str):
         return ChatGoogleGenerativeAI(
             **base_kwargs,
             include_thoughts=True,
-            thinking_level="minimal",  # Gemini 3.x — le plus économe
+            thinking_level="low",
         )
     except (TypeError, ValueError):
         return ChatGoogleGenerativeAI(**base_kwargs)
