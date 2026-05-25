@@ -306,11 +306,14 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
                    pour son architecture (Cerebras pour Qwen, Together pour
                    Mistral) via le suffixe :provider du nom de modèle.
 
-    `use_thinking` ne s'applique pour l'instant qu'aux modèles Gemini 3.x
-    natifs (les seuls où on active explicitement `include_thoughts` /
-    `thinking_level`). Désactivé (False) : on n'active pas le « thought
-    summary » côté API → première réponse plus rapide, comportement
-    fonctionnel inchangé (tool-calling, sortie texte identiques).
+    `use_thinking` contrôle le chain-of-thought sur les modèles qui
+    supportent un raisonnement explicite (« thought summary ») :
+      - Gemini 3.x natifs : `include_thoughts=True, thinking_level="low"`
+      - Claude Sonnet/Haiku 4.5 : `thinking={"type":"enabled","budget_tokens":1024}`
+        (et `temperature=1.0`, requis par l'API)
+    GPT-4o et Gemini 2.x n'ont pas de raisonnement natif → no-op. Décoché :
+    démarrage plus rapide, comportement fonctionnel strictement identique
+    (mêmes outils, mêmes sorties).
 
     Lève ValueError avec message utilisateur explicite si la clé manque.
     """
@@ -324,7 +327,15 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
             )
         os.environ["ANTHROPIC_API_KEY"] = api_key.strip()
         from jdm_agent.tools.llm_factory import get_llm
-        return get_llm(provider="anthropic", model=model)
+        kwargs: dict = {}
+        if use_thinking:
+            # Extended thinking Anthropic — Claude Sonnet 4.5 / Haiku 4.5
+            # le supportent (cf. https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking).
+            # budget_tokens=1024 : minimum officiel, raisonnement léger.
+            # temperature=1.0 est requis par l'API quand thinking est activé.
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+            kwargs["temperature"] = 1.0
+        return get_llm(provider="anthropic", model=model, **kwargs)
 
     if model.startswith("gpt-"):
         if not api_key.strip():
@@ -1347,9 +1358,12 @@ _HEAD_JS = """
   // label.
   function applyThinkingTooltip() {
     var ids = ['jarvis-thinking-cb', 'chat-thinking-cb'];
-    var tip = 'Décoché : démarrage plus rapide. Comportement fonctionnel '
-            + 'strictement identique (mêmes outils, mêmes sorties — seule '
-            + 'la narration interne du raisonnement n\\'est pas affichée).';
+    var tip = 'Active le chain-of-thought sur les modèles qui le supportent '
+            + '(Gemini 3.x, Claude Sonnet/Haiku 4.5). Décoché : démarrage '
+            + 'plus rapide, comportement fonctionnel strictement identique '
+            + '(mêmes outils, mêmes sorties — seule la narration interne du '
+            + 'raisonnement n\\'est pas demandée à l\\'API). Sans effet sur '
+            + 'GPT-4o et Gemini 2.x (pas de raisonnement natif).';
     for (var i = 0; i < ids.length; i++) {
       var el = document.getElementById(ids[i]);
       if (el && !el.dataset.tipApplied) {
@@ -1686,7 +1700,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 )
                 chat_thinking = gr.Checkbox(
                     value=False,
-                    label="Raisonnement Gemini",
+                    label="Raisonnement",
                     elem_id="chat-thinking-cb",
                     scale=1,
                 )
@@ -1809,7 +1823,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 )
                 jarvis_thinking = gr.Checkbox(
                     value=False,
-                    label="Raisonnement Gemini",
+                    label="Raisonnement",
                     elem_id="jarvis-thinking-cb",
                     scale=1,
                 )
