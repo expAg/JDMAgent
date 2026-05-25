@@ -11,7 +11,9 @@ from jdm_agent.enrich import Candidate, GapType, detect_gaps, write_submission
 from jdm_agent.enrich.validators import (
     consolidate_candidate,
     exclusion_context,
+    get_consolidation,
     is_excluded,
+    register_consolidation,
     register_exclusion,
     validate_candidate,
 )
@@ -231,6 +233,29 @@ def test_exclusion_context_isolation():
     # nouveau contexte vide
     with exclusion_context():
         assert is_excluded("a", "r_isa", "b") is None
+
+
+def test_consolidation_registry_no_context_is_noop():
+    """Hors `exclusion_context()`, register/get sont des no-ops."""
+    register_consolidation("a", "r_isa", "b", "Oui, déductible (transitivité)")
+    assert get_consolidation("a", "r_isa", "b") is None
+
+
+def test_consolidation_registry_basic():
+    """Dans un `exclusion_context()`, register + get fonctionnent."""
+    with exclusion_context():
+        register_consolidation("voiture", "r_has_part", "roue",
+                               "Oui, déductible (transitivité) : voiture r_isa véhicule ; véhicule r_has_part roue.",
+                               schema="transitivity")
+        got = get_consolidation("voiture", "r_has_part", "roue")
+        assert got is not None
+        assert "transitivité" in got["explanation"]
+        assert got["schema"] == "transitivity"
+        # Match insensible à la casse et accents
+        got2 = get_consolidation("VOITURE", "r_has_part", "ROUE")
+        assert got2 is not None
+        # Pas dans le registry → None
+        assert get_consolidation("vélo", "r_has_part", "selle") is None
 
 
 def test_validate_candidate_uses_exclusion_fast_path():

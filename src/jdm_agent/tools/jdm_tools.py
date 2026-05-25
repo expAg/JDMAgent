@@ -1790,10 +1790,28 @@ def write_submission_file(
             out["ignored_dicts"] = len(dict_items)
     else:
         # Mode TRIPLETS canonique (que des dicts)
+        # Pour chaque triplet, on OVERRIDE l'explanation passée par le
+        # LLM par celle stockée dans le registry de consolidation (mise
+        # là par consolidate_candidate quand le triplet a été inféré).
+        # Le LLM a tendance à inventer ses propres formulations
+        # naturelles (« trait constitutif de... ») au lieu de citer la
+        # chaîne d'inférence formelle. Ici on force l'usage de
+        # l'explication PROUVÉE par le moteur.
+        from jdm_agent.enrich.validators import get_consolidation
+        def _resolve_explanation(t: dict) -> str:
+            from_registry = get_consolidation(
+                str(t["term"]), str(t["relation"]), str(t["target"])
+            )
+            if from_registry and from_registry.get("explanation"):
+                return from_registry["explanation"]
+            # Fallback : ce que le LLM a passé (cas standalone /
+            # invocation hors session agent, ou triplet non passé par
+            # consolidate_candidate). Mieux que rien.
+            return str(t.get("explanation") or "")
         cands = [Candidate(
             term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
             annotation=str(t.get("annotation") or ""),
-            consolidation_explanation=str(t.get("explanation") or ""),
+            consolidation_explanation=_resolve_explanation(t),
             confidence=0.7, source="agent",
             validation_status="ok", consolidation_status="consolidated",
         ) for t in dict_items]

@@ -45,6 +45,16 @@ _EXCLUSION_REGISTRY: contextvars.ContextVar[Optional[dict]] = contextvars.Contex
     "jdm_enrich_exclusion", default=None
 )
 
+# Registry des explications de consolidation produites par `infer()`.
+# Indexé par (term_normé, relation_normée, target_normée). Rempli par
+# `consolidate_candidate` quand status="consolidated". Re-lu par
+# `write_submission_file` pour OVERRIDER une éventuelle explanation
+# custom passée par le LLM (qui aurait tendance à mettre sa propre
+# formulation naturelle au lieu de la chaîne d'inférence formelle).
+_CONSOLIDATION_REGISTRY: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "jdm_enrich_consolidation", default=None
+)
+
 
 def _norm_target(s: str) -> str:
     """Normalisation cohérente avec `jdm_tools._norm` utilisé dans
@@ -60,32 +70,68 @@ def _norm_key(term: str, relation: str) -> tuple[str, str]:
 
 @contextmanager
 def exclusion_context():
-    """Crée un registry frais pour la durée d'une invocation agent.
+    """Crée des registries frais (exclusion + consolidation) pour la
+    durée d'une invocation agent.
 
-    Sans ce contexte, `register_exclusion` et `is_excluded` sont des
-    no-ops — le comportement précédent (verify_claim a posteriori) est
-    préservé. Avec ce contexte, le LLM peut faire un pré-fetch via
-    `list_existing_for_enrichment` et tout candidat ensuite proposé
-    dont la cible est dans la liste est court-circuité immédiatement
-    par `validate_candidate`.
+    Sans ce contexte, les helpers sont des no-ops — le comportement
+    précédent (verify_claim a posteriori, explanation custom du LLM)
+    est préservé.
 
     Implémentation : on N'UTILISE PAS `reset(token)` car LangGraph fait
     tourner l'agent dans un contexte (asyncio/threading) différent de
     celui où le `with` a démarré → ValueError("Token … was created in a
     different Context") à la sortie. À la place, on `set(None)` pour
-    invalider le registry — le nouveau set crée une valeur fraîche dans
-    le contexte courant quel qu'il soit.
+    invalider le registry.
     """
     _EXCLUSION_REGISTRY.set({})
+    _CONSOLIDATION_REGISTRY.set({})
     try:
         yield
     finally:
         try:
             _EXCLUSION_REGISTRY.set(None)
         except Exception:
-            # Filet de sécurité : si même set échoue dans un cas exotique,
-            # on n'empêche pas la sortie du context manager.
             pass
+        try:
+            _CONSOLIDATION_REGISTRY.set(None)
+        except Exception:
+            pass
+
+
+# ---------- Registry de consolidation ----------
+
+def _norm_consolidation_key(term: str, relation: str, target: str) -> tuple[str, str, str]:
+    return (
+        _norm_target(term),
+        (relation or "").strip().lower(),
+        _norm_target(target),
+    )
+
+
+def register_consolidation(term: str, relation: str, target: str,
+                            explanation: str, schema: Optional[str] = None) -> None:
+    """Stocke l'explication d'inférence produite par `infer()` pour ce
+    triplet. Appelé par `consolidate_candidate` quand le triplet est
+    confirmé. No-op si aucun `exclusion_context()` actif."""
+    reg = _CONSOLIDATION_REGISTRY.get()
+    if reg is None:
+        return
+    key = _norm_consolidation_key(term, relation, target)
+    reg[key] = {
+        "explanation": (explanation or "").strip(),
+        "schema": (schema or "").strip(),
+    }
+
+
+def get_consolidation(term: str, relation: str, target: str) -> Optional[dict]:
+    """Récupère l'explication d'inférence stockée pour ce triplet, si
+    elle existe. None si pas trouvée. Utilisé par `write_submission_file`
+    pour OVERRIDER une éventuelle explanation custom du LLM."""
+    reg = _CONSOLIDATION_REGISTRY.get()
+    if reg is None:
+        return None
+    key = _norm_consolidation_key(term, relation, target)
+    return reg.get(key)
 
 
 def register_exclusion(term: str, relation: str, exclusion_set) -> None:
@@ -202,6 +248,13 @@ def consolidate_candidate(client: JDMClient, candidate: Candidate, *,
         candidate.consolidation_status = "consolidated"
         candidate.consolidation_schema = res.fired_schema.value
         candidate.consolidation_explanation = res.explanation
+        # Enregistre dans le registry partagé pour que write_submission_file
+        # puisse OVERRIDER une éventuelle explanation custom du LLM par
+        # cette explication formelle issue du moteur d'inférence.
+        register_consolidation(
+            candidate.term, candidate.relation, candidate.target,
+            res.explanation, res.fired_schema.value,
+        )
     elif res.is_false:
         candidate.consolidation_status = "rejected"
         candidate.consolidation_schema = res.fired_schema.value
