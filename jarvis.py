@@ -360,8 +360,12 @@ def build_stats_prompt(
     parts: list[str] = []
     if term and rels:
         parts.append(
-            f"Je veux des STATISTIQUES JDM sur le terme « {term} » et "
-            f"sur la/les relation(s) {rel_label} (deux modes en séquence)."
+            f"Je veux des STATISTIQUES JDM sur le terme « {term} », "
+            f"RESTREINTES à la/aux relation(s) {rel_label}."
+        )
+        parts.append(
+            "⚠️ Limite-toi STRICTEMENT à cette/ces relation(s) — n'en "
+            "examine aucune autre, même par souci de couverture."
         )
     elif term:
         parts.append(
@@ -374,6 +378,10 @@ def build_stats_prompt(
             f"{rel_label} (mode PAR_RELATION : distribution sur "
             "termes-pivots variés)."
         )
+        parts.append(
+            "⚠️ Limite-toi STRICTEMENT à cette/ces relation(s) — "
+            "n'en examine aucune autre."
+        )
     else:
         parts.append(
             "Je veux des STATISTIQUES JDM mais je n'ai pas précisé "
@@ -385,10 +393,13 @@ def build_stats_prompt(
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum."
         )
-    parts.append(
-        "Couvre un nombre SUFFISANT de types de relations (au moins "
-        "8-12 différents si pas de relation imposée — qualité statistique)."
-    )
+    # La consigne 'couvre N types' ne s'applique QUE si aucune relation
+    # n'est imposée — sinon contradictoire avec la restriction stricte.
+    if not rels:
+        parts.append(
+            "Couvre un nombre SUFFISANT de types de relations (au moins "
+            "8-12 différents) — qualité statistique."
+        )
     parts.append(
         "Rends DEUX vues complémentaires :\n"
         "  1) TABLEAU par RELATION : une ligne par relation (n_total, "

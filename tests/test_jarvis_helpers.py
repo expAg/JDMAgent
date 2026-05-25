@@ -205,9 +205,11 @@ def test_stats_per_relation_mode():
     assert "r_isa" in p
 
 
-def test_stats_both_modes():
+def test_stats_term_plus_relation_restricts():
+    """term + relation → stats RESTREINTES à la relation, pas un balayage."""
     p = build_stats_prompt(term="chat", relation="r_isa")
-    assert "deux modes" in p or "PAR_TERME" in p
+    assert "chat" in p and "r_isa" in p
+    assert "RESTREINTES" in p or "Limite-toi" in p
 
 
 def test_stats_no_args_fallback():
