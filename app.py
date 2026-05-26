@@ -464,16 +464,17 @@ def _refresh_dropdown_wrap(fn):
 
 
 def build_model_choices() -> list[tuple[str, str]]:
-    """Construit la liste de (label, value) du dropdown des modèles,
-    avec marquage visuel BASÉ SUR LA CLÉ COURANTE :
-      - ✅ pour les modèles disponibles sur la clé active
-      - ❌ pour les Gemini natifs blown sur la clé active (PerDay
-        sur cette clé OU clé invalide). On remplace le suffixe
-        `(X req/jour)` par `— épuisé sur cette clé`.
+    """Construit la liste de (label, value) du dropdown des modèles.
+
+    Marquage visuel minimal :
+      - Modèle disponible → label original (le ✓ natif de Gradio sur
+        la gauche suffit comme indicateur de « disponible »).
+      - Modèle blown sur la clé courante → préfixe ❌ + remplacement
+        du suffixe « (X req/jour) » par « — épuisé sur cette clé ».
 
     Quand on bascule de clé (3.1 hit PerDay → switch), set_current_
     gemini_key est appelée et le dropdown se re-rendre avec les
-    statuts connus de la NOUVELLE clé (qui peuvent être différents).
+    statuts connus de la NOUVELLE clé.
     """
     import re as _re
     out: list[tuple[str, str]] = []
@@ -482,7 +483,7 @@ def build_model_choices() -> list[tuple[str, str]]:
             base = _re.sub(r"\s*\(.*?\)\s*$", "", label).strip()
             decorated = f"❌ {base} — épuisé sur cette clé"
         else:
-            decorated = f"✅ {label}"
+            decorated = label
         out.append((decorated, key))
     return out
 
