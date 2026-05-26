@@ -1012,7 +1012,7 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
     # Safety net : si le modèle n'est PAS dans GEMINI_THINKING_SUPPORTED
     # (ex: 2.5-flash-lite), on n'envoie pas thinking_level — sinon l'API
     # renvoie 400 INVALID_ARGUMENT « Thinking level is not supported ».
-    if model not in GEMINI_THINKING_SUPPORTED:
+    if model_id not in GEMINI_THINKING_SUPPORTED:
         return ChatGoogleGenerativeAI(**base_kwargs)
     try:
         return ChatGoogleGenerativeAI(
