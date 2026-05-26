@@ -369,19 +369,45 @@ def build_pool_diag_md() -> str:
       - Couples (clé, modèle) blown aujourd'hui
       - Clés invalides de la session
     """
+    import traceback
     lines = ["**État du pool Gemini** :"]
-    if _CURRENT_GEMINI_KEY:
-        lines.append(f"- Clé courante : `{_masked_key(_CURRENT_GEMINI_KEY)}`")
-    else:
-        lines.append("- Clé courante : *(aucune — pool exhausted ou modèle non Gemini natif)*")
-    lines.append(f"- Modèle actif : `{_CURRENT_MODEL or '(aucun)'}`")
+    # Inspect types — révèle si _CURRENT_GEMINI_KEY ou _CURRENT_MODEL
+    # est devenu un Button (ou autre composant Gradio) au lieu d'une str.
+    try:
+        _ck = _CURRENT_GEMINI_KEY
+        lines.append(f"- type(_CURRENT_GEMINI_KEY)=`{type(_ck).__name__}`")
+    except Exception as e:
+        lines.append(f"- ❌ inspect _CURRENT_GEMINI_KEY: {type(e).__name__}: {e}")
+    try:
+        _cm = _CURRENT_MODEL
+        lines.append(f"- type(_CURRENT_MODEL)=`{type(_cm).__name__}` repr=`{_cm!r}`")
+    except Exception as e:
+        lines.append(f"- ❌ inspect _CURRENT_MODEL: {type(e).__name__}: {e}")
+    try:
+        if _CURRENT_GEMINI_KEY:
+            lines.append(f"- Clé courante : `{_masked_key(_CURRENT_GEMINI_KEY)}`")
+        else:
+            lines.append("- Clé courante : *(aucune)*")
+    except Exception as e:
+        lines.append(f"- ❌ Clé courante step: {type(e).__name__}: {e}\n  TB: {traceback.format_exc()[-500:]}")
+    try:
+        lines.append(f"- Modèle actif : `{_CURRENT_MODEL or '(aucun)'}`")
+    except Exception as e:
+        lines.append(f"- ❌ Modèle actif step: {type(e).__name__}: {e}\n  TB: {traceback.format_exc()[-500:]}")
     today = _today_utc_str()
-    blown_today = [(k, m) for (k, m, d), v in _BLOWN_TODAY.items()
-                   if d == today and v]
+    try:
+        blown_today = [(k, m) for (k, m, d), v in _BLOWN_TODAY.items()
+                       if d == today and v]
+    except Exception as e:
+        blown_today = []
+        lines.append(f"- ❌ blown_today comprehension: {type(e).__name__}: {e}\n  TB: {traceback.format_exc()[-500:]}")
     if blown_today:
         lines.append("- **Blown aujourd'hui** :")
         for k, m in blown_today:
-            lines.append(f"  - `{_masked_key(k)}` / `{m}`")
+            try:
+                lines.append(f"  - `{_masked_key(k)}` / `{m}`")
+            except Exception as e:
+                lines.append(f"  - ❌ blown entry: {type(e).__name__}: {e}")
     else:
         lines.append("- **Blown aujourd'hui** : *(aucun)*")
     if _INVALID_KEYS:
