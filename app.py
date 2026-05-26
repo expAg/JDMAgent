@@ -2262,42 +2262,11 @@ _HEAD_JS = """
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
       btn.setAttribute('role', 'button');
-      // mousedown.preventDefault() empêche le browser de transférer le
-      // focus depuis l'input listbox (qui a actuellement le focus
-      // puisque le dropdown est ouvert) → handle_blur NE FIRE PAS →
-      // show_options reste true → le dropdown ne se ferme JAMAIS.
-      btn.addEventListener('mousedown', function(ev) {
-        ev.preventDefault();
-      });
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        var liInput = null;
-        try {
-          liInput = ul.closest('.form, [class*="block"]')
-                       ?.querySelector('input[role="listbox"]');
-        } catch (e) {}
         if (btn.parentNode) btn.parentNode.removeChild(btn);
         hidden.click();
-        // Après le roundtrip Gradio, le reactive block L94-108 de
-        // Dropdown.svelte va appeler handle_filter(choices, input_text)
-        // → filtered_indices restreint à 1 option (le label courant
-        // matche exactement 1 choice). Pour rétablir TOUTES les options
-        // visibles, on dispatch un FocusEvent qui déclenche handle_focus
-        // → filtered_indices = choices.map((_,i)=>i). Le focus du browser
-        // n'a JAMAIS changé (mousedown.preventDefault) donc aucun blur,
-        // aucun flash, le menu reste ouvert en continu.
-        var trySync = function() {
-          if (liInput) {
-            liInput.dispatchEvent(new FocusEvent('focus', {bubbles: true}));
-          }
-        };
-        // Plusieurs timings : on couvre la fenêtre du roundtrip Gradio
-        // sans connaître sa durée exacte. Les dispatchs redondants sont
-        // des no-ops (handle_focus est idempotent).
-        setTimeout(trySync, 80);
-        setTimeout(trySync, 250);
-        setTimeout(trySync, 600);
       });
       ul.appendChild(btn);
     });
@@ -3885,23 +3854,48 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
         _switch_outputs = [model_in, jarvis_model,
                            chat_switch_key_btn, jarvis_switch_key_btn]
-        # Pas de .then(js=...) ici : dispatch un focus pour reset le
-        # filtre FAISAIT FLASHER le dropdown (focus le ré-ouvre alors
-        # que Gradio vient de le fermer → MutationObserver → re-render
-        # → close → reopen…). À la place : on ferme proprement le
-        # dropdown via blur dans le click handler de injectSwitchKeyButton
-        # (cf. _HEAD_JS). Au prochain user-click pour ouvrir, Svelte
-        # appelle handle_focus → filtered_indices = all → menu complet.
+        _reset_filter_js = """
+        () => {
+          // Reset du filter de Dropdown.svelte SANS flash : on utilise
+          // le setter natif de HTMLInputElement.value qui propage à
+          // bind:value={input_text} de Svelte uniquement quand on
+          // dispatch un 'input' event. Stratégie en 2 temps :
+          //   1) setter('') + dispatch input → Svelte voit input_text=''
+          //      → handle_filter('', choices) → filtered_indices = all
+          //   2) setter(savedLabel) SANS dispatch → DOM input.value est
+          //      visuellement restauré au label courant, mais input_text
+          //      en Svelte reste '' → filtered_indices reste = all.
+          // Pas de focus shift → pas de flash. Le trigger affiche le
+          // bon label, et toutes les options sont visibles.
+          setTimeout(function() {
+            var inputs = document.querySelectorAll('input[role="listbox"]');
+            inputs.forEach(function(inp) {
+              if (inp.offsetParent === null) return;
+              var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
+              if (!root) return;
+              if ((root.textContent || '').indexOf('Modèle') === -1) return;
+              var savedLabel = inp.value;
+              var setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+              ).set;
+              setter.call(inp, '');
+              inp.dispatchEvent(new Event('input', {bubbles: true}));
+              // Restore le label visible sans notifier Svelte
+              if (savedLabel) setter.call(inp, savedLabel);
+            });
+          }, 120);
+        }
+        """
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
         jarvis_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
         # ---- Handlers consolidés .change pour les deux dropdowns ----
         # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
         # - set_current_model(_CURRENT_MODEL tracking)
