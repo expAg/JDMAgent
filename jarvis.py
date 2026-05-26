@@ -283,30 +283,19 @@ def _extract_quota_model(exc) -> Optional[str]:
 def is_per_day_quota_exhausted(exc, expected_model: Optional[str] = None) -> bool:
     """Détecte les quotas QUOTIDIENS épuisés sur Gemini.
 
-    Le retryDelay annoncé par l'API est trompeur sur ce type de quota
-    (souvent ~25-60s alors que le vrai reset est à minuit UTC). On
-    détecte EN AMONT pour ne pas boucler.
-
-    Signatures matchées (l'une OU l'autre) :
-      - quotaId contient `PerDay`
-        (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`)
-      - métrique contient `free_tier_requests` ou `requests_per_day`
-        (Gemini 3.5/2.5 utilisent souvent ce format au lieu du PerDay
-        explicite dans le quotaId)
+    Match STRICT sur quotaId contenant `PerDay` (typiquement
+    `GenerateRequestsPerDayPerProjectPerModel-FreeTier`). On évite les
+    heuristiques sur metric names — `free_tier_requests` apparaît AUSSI
+    dans les payloads PerMinute (le même metric existe pour les
+    fenêtres minute ET jour), faux positifs assurés.
 
     Si `expected_model` est fourni, on ne renvoie True QUE si le quota
     concerne exactement ce modèle (extrait via quotaDimensions).
     """
     msg = str(exc)
-    msg_lc = msg.lower()
     if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
         return False
-    is_per_day = (
-        "PerDay" in msg
-        or "free_tier_requests" in msg_lc
-        or "requests_per_day" in msg_lc
-    )
-    if not is_per_day:
+    if "PerDay" not in msg:
         return False
     if expected_model is None:
         return True
@@ -1566,10 +1555,15 @@ def run_jarvis_flow(
                                 f"({len(progress_full)})</summary>\n\n"
                                 f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                             )
+                        try:
+                            from app import build_pool_diag_md as _pool_diag
+                            diag = "\n\n---\n" + _pool_diag()
+                        except Exception:
+                            diag = ""
                         yield (
                             [{"role": "user", "content": user_display},
                              {"role": "assistant",
-                              "content": f"❌ Erreur agent : {e}" + err_block}],
+                              "content": f"❌ Erreur agent : {e}" + diag + err_block}],
                             last_file_path, _read_file_preview(last_file_path),
                         )
                         return

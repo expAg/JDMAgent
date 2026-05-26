@@ -69,20 +69,6 @@ def test_is_per_day_quota_exhausted_false_on_non_quota():
     assert is_per_day_quota_exhausted(ValueError("foo")) is False
 
 
-def test_is_per_day_quota_exhausted_via_metric_name():
-    """Gemini 3.5/2.5 utilisent souvent un quotaId sans 'PerDay' mais
-    avec un metric name `free_tier_requests` (= daily quota)."""
-    msg = (
-        "Error calling model 'gemini-3.5-flash' (RESOURCE_EXHAUSTED): "
-        "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, "
-        "'message': 'Quota exceeded for metric: generativelanguage."
-        "googleapis.com/generate_content_free_tier_requests, "
-        "limit: 20, model: gemini-3.5-flash\\nPlease retry in 35s.', "
-        "'status': 'RESOURCE_EXHAUSTED'}}"
-    )
-    assert is_per_day_quota_exhausted(Exception(msg)) is True
-
-
 _GEMINI_400_INVALID_KEY = (
     "Error calling model 'gemini-3.1-flash-lite' (INVALID_ARGUMENT): 400 "
     "INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key not "

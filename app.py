@@ -359,6 +359,38 @@ def _masked_key(key: str) -> str:
     return f"{key[:4]}…{key[-4:]} ({len(key)} chars)"
 
 
+def build_pool_diag_md() -> str:
+    """Bloc Markdown de DIAGNOSTIC du pool — affiché dans le chatbot
+    pour que l'utilisateur voie l'état interne sans accès aux logs.
+
+    Contenu :
+      - Clé Gemini courante (masquée)
+      - Modèle actif
+      - Couples (clé, modèle) blown aujourd'hui
+      - Clés invalides de la session
+    """
+    lines = ["**État du pool Gemini** :"]
+    if _CURRENT_GEMINI_KEY:
+        lines.append(f"- Clé courante : `{_masked_key(_CURRENT_GEMINI_KEY)}`")
+    else:
+        lines.append("- Clé courante : *(aucune — pool exhausted ou modèle non Gemini natif)*")
+    lines.append(f"- Modèle actif : `{_CURRENT_MODEL or '(aucun)'}`")
+    today = _today_utc_str()
+    blown_today = [(k, m) for (k, m, d), v in _BLOWN_TODAY.items()
+                   if d == today and v]
+    if blown_today:
+        lines.append("- **Blown aujourd'hui** :")
+        for k, m in blown_today:
+            lines.append(f"  - `{_masked_key(k)}` / `{m}`")
+    else:
+        lines.append("- **Blown aujourd'hui** : *(aucun)*")
+    if _INVALID_KEYS:
+        lines.append("- **Clés marquées invalides (session)** :")
+        for k in _INVALID_KEYS:
+            lines.append(f"  - `{_masked_key(k)}`")
+    return "\n".join(lines)
+
+
 # Marquage in-memory **par (clé, modèle)** : chaque modèle Gemini a
 # son propre quota PerDay → une clé peut être blown pour
 # gemini-3.1-flash-lite mais OK pour gemini-3.5-flash. Format :
@@ -1139,7 +1171,11 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         f"({len(progress_full)})</summary>\n\n"
                         f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                     )
-                yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
+                try:
+                    diag = "\n\n---\n" + build_pool_diag_md()
+                except Exception:
+                    diag = ""
+                yield f"❌ Erreur agent : {e}" + diag + err_block, _NOOP_FILE
                 return
 
     # Viz : iframe interactif embarqué dans un gr.HTML séparé.
