@@ -1823,8 +1823,24 @@ def write_submission_file(
         # dans `skipped_no_inference_proof` pour que l'agent les voie
         # et puisse soit les ré-inférer, soit les retirer de sa pile.
         # Pour .audit / .err / .stat (si schéma triplet) : texte libre OK.
-        from jdm_agent.enrich.validators import get_consolidation
+        from jdm_agent.enrich.validators import (
+            get_consolidation, _CONSOLIDATION_REGISTRY,
+        )
         is_enrich_file = str(path).lower().endswith(".enrich")
+        # DIAGNOSTIC : capture l'état du registry au moment de l'appel
+        # pour distinguer (a) context isolation cassé (registry=None) de
+        # (b) keys manquantes (normalisation différente / consolidate pas
+        # appelé). Visible dans la sortie du tool si tous les triplets
+        # sont skippés.
+        _reg_snapshot = _CONSOLIDATION_REGISTRY.get()
+        _reg_status = (
+            "None (exclusion_context inactif ou ContextVar cassé "
+            "entre threads — consolidate_candidate a pu tourner mais "
+            "register_consolidation a été un no-op)"
+            if _reg_snapshot is None
+            else (f"{len(_reg_snapshot)} entrée(s)"
+                  if _reg_snapshot else "vide ({})")
+        )
         cands: list[Candidate] = []
         skipped_no_proof: list[dict] = []
         for t in dict_items:
@@ -1851,7 +1867,8 @@ def write_submission_file(
             ))
         n = _write_sub(path, cands, client=c) if cands else 0
         out = {
-            "path": path, "count": n,
+            "path": path if cands else "",  # path vide si rien écrit
+            "count": n,
             "lines": [
                 f"{_decoded(cd.term, c)} | {cd.relation} | {_decoded(cd.target, c)} | "
                 f"{cd.annotation} < {' '.join(cd.consolidation_explanation.split())} >"
@@ -1859,6 +1876,17 @@ def write_submission_file(
             ],
             "mode": "triplets",
         }
+        if not cands:
+            # Aucun triplet n'a passé le filtre (tous skipped faute de
+            # preuve d'inférence pour un .enrich). PAS de path retourné
+            # → Gradio ne tente pas d'ouvrir un fichier inexistant.
+            out["error"] = (
+                f"Aucun triplet n'a pu être écrit. Tous skipped car "
+                f"absents du registry d'inférence. État du registry au "
+                f"moment de l'appel : {_reg_status}. "
+                f"Re-passe-les par validate_candidate avant de rappeler ce tool."
+            )
+            out["_registry_diag"] = _reg_status
         if skipped_no_proof:
             out["skipped_no_inference_proof"] = skipped_no_proof
             out["skipped_count"] = len(skipped_no_proof)

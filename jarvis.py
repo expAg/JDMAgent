@@ -965,21 +965,45 @@ def _extract_submission_path(tool_message_content: str) -> Optional[str]:
     """Extrait le chemin du fichier produit par write_submission_file.
 
     Le ToolMessage contient un dict sérialisé en JSON (ou en repr Python).
-    On regarde la clé `path`.
+    On regarde la clé `path` MAIS on retourne None si :
+      - `error` est présent dans le dict (l'écriture a échoué)
+      - `path` est vide
+      - le fichier n'existe pas physiquement (filet anti-régression
+        contre les chemins valides retournés sans fichier derrière)
     """
     import json
     import re
+    from pathlib import Path
     if not tool_message_content:
         return None
+
+    def _validate(p: str) -> Optional[str]:
+        if not p:
+            return None
+        try:
+            if Path(p).exists():
+                return p
+        except Exception:
+            pass
+        return None
+
     try:
         d = json.loads(tool_message_content)
-        if isinstance(d, dict) and d.get("path"):
-            return str(d["path"])
+        if isinstance(d, dict):
+            if d.get("error"):
+                return None
+            p = d.get("path")
+            if p:
+                return _validate(str(p))
     except Exception:
         pass
+    # Fallback regex : si on ne peut pas parser le JSON, on extrait la
+    # valeur de path mais on valide quand même l'existence du fichier.
+    if "'error'" in tool_message_content or '"error"' in tool_message_content:
+        return None
     m = re.search(r"['\"]path['\"]\s*:\s*['\"]([^'\"]+)['\"]", tool_message_content)
     if m:
-        return m.group(1)
+        return _validate(m.group(1))
     return None
 
 
