@@ -1737,6 +1737,16 @@ def write_submission_file(
     from jdm_agent.enrich import Candidate
     from jdm_agent.enrich.pipeline import _decoded, write_submission as _write_sub
 
+    # IMPORTANT : convertir path en ABSOLU dès maintenant. Le LLM passe
+    # souvent un nom relatif (ex: "enrichment.enrich") qui se résout
+    # contre le CWD du moment de l'écriture. Plus tard, le composant
+    # gr.File de Gradio fait Path(value).stat() qui résout encore une
+    # fois contre le CWD — qui peut différer (thread worker différent,
+    # CWD changé entre temps) → FileNotFoundError. Force l'absolu via
+    # .resolve() pour que tous les consommateurs en aval (Gradio,
+    # uploader, _read_file_preview) trouvent le fichier sans surprise.
+    path = str(_Path(path).resolve())
+
     # Classement par clés — auto-détection : pas de mode explicite.
     # Tout est dict (Gemini exige items: {...} pour les arrays JSON Schema,
     # donc on évite list[Union] qui passe mal). On distingue par les clés.

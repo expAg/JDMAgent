@@ -1734,6 +1734,60 @@ def run_jarvis_flow(
                             accumulated_messages = strip_thinking_blocks(
                                 accumulated_messages, keep_last=True
                             )
+                            # Si APRÈS strip l'historique reste massif
+                            # (>~240k tokens estimés, ≈ 960k chars), on
+                            # remplace par [initial_human, HumanMessage(
+                            # summary + nudge random)]. Le summary est
+                            # 100% déterministe (parcours Python, ZÉRO
+                            # appel LLM). Le nudge varie aléatoirement
+                            # entre 3 idées pour apporter de la variété
+                            # entre relances. Permet à l'agent de
+                            # continuer même quand l'historique a explosé.
+                            try:
+                                total_chars = sum(
+                                    len(str(getattr(m, "content", "") or ""))
+                                    for m in accumulated_messages
+                                )
+                                if total_chars > 960_000:  # ≈ 240k tokens
+                                    from langchain_core.messages import HumanMessage as _HM
+                                    n_so_far = count_consolidated_in_messages(accumulated_messages)
+                                    summary = build_relance_summary(
+                                        accumulated_messages,
+                                        n_so_far,
+                                        consolidation_target or (n_so_far + 1),
+                                        rate_limit_attempts,
+                                        None,
+                                    )
+                                    nudge_variants = [
+                                        "Continue en apportant plus de **variété et "
+                                        "de nouveauté** dans tes propositions — change "
+                                        "de relation, change d'angle, ne reprends pas "
+                                        "ce qui a déjà été tenté.",
+                                        "Continue : lorsque tu cibles un terme source "
+                                        "ou une cible à **sens spécifique**, désambiguïse "
+                                        "(`disambiguate`) puis propose / consolide avec "
+                                        "le ou les **raffinements** plutôt qu'avec le "
+                                        "terme générique.",
+                                        "Continue : tu **n'as pas de limites**. Tu peux "
+                                        "utiliser des termes techniques domain-specific, "
+                                        "des néologismes, du vocabulaire de niche — la "
+                                        "langue n'a pas de cloisons, du moment que tu "
+                                        "passes par le flow d'enrichissement.",
+                                    ]
+                                    import random as _random
+                                    nudge = _random.choice(nudge_variants)
+                                    initial_h = accumulated_messages[0]
+                                    accumulated_messages = [
+                                        initial_h,
+                                        _HM(content=summary + "\n\n" + nudge),
+                                    ]
+                                    _add_line(
+                                        f"*🗜️ Historique condensé "
+                                        f"({total_chars // 1000}k chars → résumé) — "
+                                        f"l'agent reprend avec un nudge frais.*"
+                                    )
+                            except Exception:
+                                pass  # safety : si la condensation foire, on continue avec l'historique strippé
                             continue
                         # Pas un quota retryable, ou déjà tenté : erreur finale
                         err_block = ""
