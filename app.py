@@ -2218,11 +2218,15 @@ _HEAD_JS = """
     });
   }
 
-  // Injection d'un bouton stylé « Rotation clés gemini (clé X/N) » JUSTE
-  // APRÈS la liste d'options du dropdown modèle (PAS dans le ul lui-
-  // même : sinon Gradio réconcilie le ul après un click et vire/casse
-  // nos enfants → options BYOK et 2.5 qui disparaissent visuellement).
-  // On insère dans le PARENT du ul, après le ul.
+  // Injection d'un bouton stylé « Rotation clés gemini (clé X/N) » à
+  // la FIN de la liste d'options du dropdown modèle. On l'ajoute DANS
+  // le ul (sinon caché par overflow du conteneur Gradio).
+  //
+  // ASTUCE pour ne pas casser la reconciliation Gradio sur click :
+  // on RETIRE le bouton du DOM JUSTE AVANT de dispatch le click sur
+  // le bouton Gradio caché. Gradio diff son ul avec 7 enfants (ses
+  // 7 options), pas 8. Notre MutationObserver re-injecte le bouton
+  // après que Gradio ait fini sa MAJ.
   function injectSwitchKeyButton() {
     var hidden = document.getElementById('jarvis-switch-key-btn')
               || document.getElementById('chat-switch-key-btn');
@@ -2232,33 +2236,25 @@ _HEAD_JS = """
     var lists = document.querySelectorAll('ul[role="listbox"]');
     lists.forEach(function(ul) {
       var optsTxt = (ul.textContent || '');
-      if (optsTxt.indexOf('Gemini') === -1) return;  // pas notre dropdown
-      var parent = ul.parentElement;
-      if (!parent) return;
-      // Pas déjà injecté juste après ce ul ?
-      var existing = parent.querySelector(':scope > .jdm-switch-key-injected');
+      if (optsTxt.indexOf('Gemini') === -1) return;
+      var existing = ul.querySelector('.jdm-switch-key-injected');
       if (existing) {
-        // Update du label si changé
         if (existing.textContent !== btnLabel) existing.textContent = btnLabel;
         return;
       }
-      var btn = document.createElement('div');
+      var btn = document.createElement('li');
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
       btn.setAttribute('role', 'button');
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
+        // CRITIQUE : retire le bouton du DOM AVANT de trigger Gradio,
+        // sinon le diff de l'ul casse les options voisines (BYOK, 2.5).
+        if (btn.parentNode) btn.parentNode.removeChild(btn);
         hidden.click();
       });
-      // Insertion APRÈS le ul, dans le parent. Gradio ne touche que
-      // ses propres enfants (les li du ul) → nos div en frère du ul
-      // restent stables.
-      if (ul.nextSibling) {
-        parent.insertBefore(btn, ul.nextSibling);
-      } else {
-        parent.appendChild(btn);
-      }
+      ul.appendChild(btn);
     });
   }
 
