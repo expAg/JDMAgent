@@ -1378,9 +1378,39 @@ def run_jarvis_flow(
                         # logique que PerDay (rebuild LLM + agent +
                         # continue), mais marquage différent (permanent).
                         if is_invalid_api_key(e):
+                            # On NE MARQUE INVALIDE que si c'est le modèle
+                            # protégé (3.1) qui rejette la clé. Pour les
+                            # autres modèles (2.5, 3.5), un INVALID_KEY
+                            # peut être trompeur (endpoint OpenAI-compat
+                            # qui retourne ce code pour d'autres raisons
+                            # — modèle non dispo, version, etc.). Marquer
+                            # globalement invalide pourrait gâcher une
+                            # clé pourtant valide pour 3.1.
+                            _app = _get_app_module()
+                            _PROTECTED = (getattr(_app, 'GEMINI_POOL_PROTECTED_MODEL',
+                                                  "gemini-3.1-flash-lite")
+                                          if _app else "gemini-3.1-flash-lite")
+                            if model != _PROTECTED:
+                                # Abort propre sans toucher au pool
+                                yield (
+                                    [{"role": "user", "content": user_display},
+                                     {"role": "assistant",
+                                      "content": (
+                                        f"⚠️ La clé Google a renvoyé "
+                                        f"`API_KEY_INVALID` pour `{model}`. "
+                                        f"Cela peut indiquer un problème "
+                                        f"spécifique à ce modèle (pas dispo "
+                                        f"sur cette clé / endpoint OpenAI-"
+                                        f"compat capricieux). La clé n'est "
+                                        f"PAS marquée invalide globalement. "
+                                        f"➡️ Bascule sur `{_PROTECTED}` ou "
+                                        f"un BYOK Claude/GPT.")}],
+                                    last_file_path,
+                                    _read_file_preview(last_file_path),
+                                )
+                                return
                             switched = False
                             try:
-                                _app = _get_app_module()
                                 if _app is None:
                                     raise RuntimeError("app module unavailable")
                                 mark_gemini_key_invalid = _app.mark_gemini_key_invalid

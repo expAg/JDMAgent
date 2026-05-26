@@ -444,7 +444,11 @@ _POOL_STATE_FILE = "pool_state.json"
 
 def _save_pool_state() -> None:
     """Persiste sur disque l'état blown/invalid + clé/modèle courants.
-    Best-effort, jamais bloquant (try/except global)."""
+    Best-effort, jamais bloquant (try/except global).
+    Désactivé pendant pytest pour ne pas polluer le repo entre tests."""
+    import os as _os
+    if _os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     try:
         import json
         today = _today_utc_str()
@@ -470,8 +474,12 @@ def _save_pool_state() -> None:
 def _load_pool_state() -> None:
     """Restaure l'état blown/invalid + clé/modèle courants depuis le
     disque au démarrage du module. Filtre par date courante (Pacific
-    Time) pour ignorer les blown des jours précédents (= reset Gemini)."""
+    Time) pour ignorer les blown des jours précédents (= reset Gemini).
+    Désactivé pendant pytest pour repartir d'un état propre."""
     global _CURRENT_GEMINI_KEY, _CURRENT_MODEL
+    import os as _os
+    if _os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     try:
         import json
         import os
@@ -488,9 +496,14 @@ def _load_pool_state() -> None:
             m = entry.get("model")
             if d == today and k and m:
                 _BLOWN_TODAY[(k, m, d)] = True
-        for k in payload.get("invalid_keys", []):
-            if k:
-                _INVALID_KEYS.add(k)
+        # NOTE : on N'IMPORTE PLUS les invalid_keys d'une session
+        # précédente. Trop de risque qu'elles aient été marquées à tort
+        # (cas 2.5 qui renvoie INVALID_KEY alors que la clé est valide
+        # pour 3.1). Au prochain démarrage, on repart avec un pool
+        # propre — si une clé est vraiment invalide pour 3.1, elle
+        # sera re-marquée à la 1ʳᵉ tentative.
+        # for k in payload.get("invalid_keys", []):
+        #     if k: _INVALID_KEYS.add(k)
         # Restore la clé courante SEULEMENT si elle est encore utilisable
         # (présente dans le pool, non invalide, et pas blown pour le
         # modèle protégé — sinon on laissera pick_unblown_gemini_key
@@ -805,6 +818,9 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
             ),
             base_url=GEMINI_BASE_URL, routing=GEMINI_MODEL_ROUTING,
             api_key=api_key,
+            # Pool override : si on a rotated le pool Gemini, on veut
+            # utiliser CETTE clé pour 2.5 aussi (pas la 1ère env-seule).
+            override_token=gemini_key_override,
         )
 
     raise ValueError(f"Modèle inconnu : {model!r}")
@@ -812,13 +828,19 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
 
 def _build_openai_compat(*, model_id: str, label: str, env_var: str,
                          env_var_help: str, base_url: str, routing: dict,
-                         api_key: str = ""):
+                         api_key: str = "", override_token: Optional[str] = None):
     """Builder commun pour les endpoints OpenAI-compatibles (HF / Groq / Gemini).
 
     Le token vient de l'env (côté Space), pas du champ BYOK. Le visiteur ne
     fournit rien — c'est gratuit pour lui, quota partagé.
+
+    `override_token` : utilisé en PRIORITÉ sur l'env (cas du pool Gemini
+    où on veut forcer une clé spécifique pour ce call).
     """
-    token = os.environ.get(env_var, "").strip()
+    if override_token and override_token.strip():
+        token = override_token.strip()
+    else:
+        token = os.environ.get(env_var, "").strip()
     if not token:
         raise ValueError(
             f"Ce modèle nécessite un token {label} côté Space (variable "
@@ -1124,9 +1146,25 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 # Sortie normale → on quitte le while
                 break
             except Exception as e:
-                # 0) Clé API invalide → marque + switch.
+                # 0) Clé API invalide → marque + switch UNIQUEMENT si
+                # c'est le modèle protégé (3.1) qui rejette. Sinon
+                # (2.5 / 3.5), INVALID_KEY peut être trompeur (modèle
+                # pas dispo sur cette clé, endpoint OpenAI-compat
+                # capricieux). On abort proprement sans toucher au pool.
                 from jarvis import is_invalid_api_key
                 if is_invalid_api_key(e):
+                    if model != GEMINI_POOL_PROTECTED_MODEL:
+                        yield (
+                            f"⚠️ La clé Google a renvoyé `API_KEY_INVALID` "
+                            f"pour `{model}`. Cela peut indiquer un problème "
+                            f"spécifique à ce modèle (pas dispo sur cette clé, "
+                            f"endpoint OpenAI-compat capricieux). La clé n'est "
+                            f"**PAS** marquée invalide globalement. ➡️ Bascule "
+                            f"sur `{GEMINI_POOL_PROTECTED_MODEL}` ou un BYOK "
+                            f"Claude/GPT.",
+                            _NOOP_FILE,
+                        )
+                        return
                     switched = False
                     try:
                         if current_gemini_key:
