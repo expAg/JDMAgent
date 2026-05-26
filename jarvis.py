@@ -1555,30 +1555,24 @@ def run_jarvis_flow(
                                 f"({len(progress_full)})</summary>\n\n"
                                 f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                             )
-                        # MARQUEUR HARDCODÉ : pour vérifier qu'on est bien
-                        # dans ce code path (et que HF déploie bien).
-                        diag = "\n\n---\n🔎 **[MARKER-JARVIS-FINAL-YIELD]** (Phase 13 debug)"
-                        # Sépare IMPORT vs CALL pour discriminer.
-                        _pd_fn = None
+                        # Diag : on récupère app via sys.modules (déjà
+                        # chargé par le processus principal Gradio). PAS
+                        # de `from app import` qui re-déclenche l'évaluation
+                        # du module dans un worker fork → bug Gradio
+                        # 'Button' has no '_id' à l'instanciation des
+                        # composants (problème connu fork+gradio context).
+                        diag = ""
                         try:
-                            from app import build_pool_diag_md as _pd_imp
-                            _pd_fn = _pd_imp
-                            diag += "\n\n*[IMPORT OK]*"
-                        except Exception as _ie:
-                            import traceback as _tb
-                            _full_tb = _tb.format_exc()
-                            # On veut le DÉBUT du traceback (notre code),
-                            # pas seulement la fin (Gradio internals).
-                            diag += (f"\n\n*[IMPORT raised : {type(_ie).__name__}: {_ie}]*"
-                                     f"\n**Début TB (notre code) :**\n```\n{_full_tb[:1800]}\n```"
-                                     f"\n**Fin TB :**\n```\n{_full_tb[-800:]}\n```")
-                        if _pd_fn is not None:
-                            try:
-                                diag += "\n\n" + _pd_fn()
-                            except Exception as _ce:
-                                import traceback as _tb
-                                diag += (f"\n\n*[CALL raised : {type(_ce).__name__}: {_ce}]*"
-                                         f"\n```\n{_tb.format_exc()[-800:]}\n```")
+                            import sys as _sys
+                            app_mod = _sys.modules.get('app')
+                            if app_mod is None:
+                                diag = "\n\n---\n*(diag indisponible : app pas chargé dans sys.modules)*"
+                            elif not hasattr(app_mod, 'build_pool_diag_md'):
+                                diag = "\n\n---\n*(diag indisponible : build_pool_diag_md introuvable)*"
+                            else:
+                                diag = "\n\n---\n" + app_mod.build_pool_diag_md()
+                        except Exception as _ce:
+                            diag = f"\n\n---\n*(diag raised : {type(_ce).__name__}: {_ce})*"
                         yield (
                             [{"role": "user", "content": user_display},
                              {"role": "assistant",
