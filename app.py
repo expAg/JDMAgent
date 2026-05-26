@@ -2248,10 +2248,16 @@ _HEAD_JS = """
       var optsTxt = (ul.textContent || '');
       if (optsTxt.indexOf('Gemini') === -1) return;
       var existing = ul.querySelector('.jdm-switch-key-injected');
-      if (existing) {
+      // Si le bouton existe DÉJÀ et est EN DERNIÈRE POSITION, on
+      // update juste le label. Sinon, on le retire et recrée à la
+      // fin : après reset du filter, Svelte ajoute des nouveaux <li>
+      // (les options 2.5, 3.5, BYOK) APRÈS notre bouton → faut le
+      // déplacer en queue pour respecter « last in list ».
+      if (existing && existing === ul.lastElementChild) {
         if (existing.textContent !== btnLabel) existing.textContent = btnLabel;
         return;
       }
+      if (existing) existing.remove();
       var btn = document.createElement('li');
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
@@ -2259,8 +2265,6 @@ _HEAD_JS = """
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        // Retire le bouton AVANT de trigger Gradio pour ne pas casser
-        // le diff de l'ul. La MutationObserver re-injecte après MAJ.
         if (btn.parentNode) btn.parentNode.removeChild(btn);
         hidden.click();
       });
