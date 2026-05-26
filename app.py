@@ -317,26 +317,33 @@ GEMINI_POOL_PROTECTED_MODEL = "gemini-3.1-flash-lite"
 def _parse_google_keys() -> list[str]:
     """Renvoie la liste ordonnée de clés Google API disponibles.
 
-    Priorité 1 : variable `GOOGLE_API_KEYS` (CSV, sep `,`).
+    Priorité 1 : variable `GOOGLE_API_KEYS` (multi-clés, séparateurs
+        autorisés : `,`, `;`, `|`, retour à la ligne).
     Priorité 2 : variable `GOOGLE_API_KEY` (singulière, rétro-compat).
     Renvoie [] si aucune.
 
-    Parsing robuste : strip whitespace, BOM, CR/LF, guillemets optionnels
-    autour de chaque clé (les secrets HF Spaces ou .env mal collés
-    peuvent contenir ces parasites).
+    Parsing robuste :
+    - Strip BOM UTF-8 + whitespace en début/fin
+    - Multi-séparateurs (regex `[,;|\\n\\r]+`) — HF Spaces stocke
+      parfois les secrets avec newlines, certains users utilisent `;`
+    - Strip guillemets autour de chaque clé
+    - Strip espaces internes (les clés Google ne contiennent jamais
+      de whitespace interne)
     """
+    import re
     raw = os.environ.get("GOOGLE_API_KEYS", "")
     csv = raw.lstrip("﻿").strip()  # ﻿ = BOM UTF-8
     if csv:
         out: list[str] = []
-        for chunk in csv.split(","):
-            k = chunk.strip().strip("\r\n\t ").strip()
-            # Strip guillemets simples / doubles autour
+        for chunk in re.split(r"[,;|\n\r]+", csv):
+            k = chunk.strip()
             if len(k) >= 2 and (
                 (k[0] == '"' and k[-1] == '"')
                 or (k[0] == "'" and k[-1] == "'")
             ):
                 k = k[1:-1].strip()
+            # Strip whitespace interne (tabs, espaces) — bruit potentiel
+            k = re.sub(r"\s+", "", k)
             if k:
                 out.append(k)
         return out
