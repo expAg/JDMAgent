@@ -19,7 +19,11 @@ from jdm_agent.tools.jdm_tools import build_jdm_tools
 from jdm_agent.tools.llm_factory import get_llm
 
 
-SYSTEM_PROMPT = """Tu es un assistant qui répond aux questions de l'utilisateur en t'appuyant \
+SYSTEM_PROMPT = """⚠️ LANGUE : tu réponds UNIQUEMENT en FRANÇAIS, peu importe la langue \
+des outils ou des données reçues. JeuxDeMots est un projet francophone, l'utilisateur \
+est francophone, ta réponse doit l'être aussi. JAMAIS d'anglais.
+
+Tu es un assistant qui répond aux questions de l'utilisateur en t'appuyant \
 EXCLUSIVEMENT sur la base de connaissance JeuxDeMots (JDM), un graphe lexico-sémantique \
 du français.
 

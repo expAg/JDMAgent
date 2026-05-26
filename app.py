@@ -977,31 +977,40 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
 
     Passe par l'API OpenAI-compatible exposée par Ollama (mapping
     standard `/v1/chat/completions` ↔ `/api/chat`). Tool calling
-    supporté côté Ollama pour les modèles compatibles.
+    supporté côté Ollama pour les modèles dont les `capabilities`
+    incluent `tools` (vérifié via /api/show, cf. LIQUID_MODELS).
 
     Spécificités du déploiement LIRMM :
       - Pas de clé API → on passe `"ollama"` (string non-vide requise
         par le SDK OpenAI mais ignorée côté serveur)
-      - Modèle 1.2B → temperature modérée (1.0) pour éviter incohérences
-      - Timeout long (120s) car un 1.2B sur CPU peut être lent sur les
-        longs prompts (notre system prompt fait ~20k tokens)
+      - Modèles avec `thinking` capability (lfm2.5-thinking, qwen3) :
+        on DÉSACTIVE la génération de chain-of-thought via le paramètre
+        Ollama-spécifique `think=false` (extension extra_body) → gain
+        ~30-50% de latence sur CPU, le CoT était de toute façon ignoré
+        par notre pipeline (pas de parsing du champ `reasoning`).
+      - Pin LANGUE : `extra_body={"options":{"system":"…"}}` n'existe
+        pas dans l'API OpenAI-compat → on injecte la consigne FR
+        dans le prompt au niveau du tool calling pour les petits
+        modèles 1.2B-7B qui dérivent en anglais. Pour 32B+ pas
+        nécessaire (qwen3:32b parle français nativement).
+      - Timeout long (120s) car CPU lent sur longs prompts (~20k tokens
+        avec 27 outils).
 
-    `use_thinking` est sans effet (le 1.2B n'expose pas de chain-of-thought
-    formel). Présent pour homogénéité de signature avec les autres builders.
-
-    Cert TLS : on garde la vérif par défaut (LIRMM est CNRS-géré, cert
-    a priori valide). Si le déploiement utilise un cert self-signed,
-    on le verra dans l'erreur SSL et on ajoutera un `httpx.Client(
-    verify=False)` ciblé à ce moment-là.
+    `use_thinking` est ignoré (on désactive toujours côté Ollama pour
+    perf — le CoT n'est pas exposé à l'utilisateur de toute façon).
     """
     routed = LIQUID_MODEL_ROUTING.get(model_id, model_id)
     from langchain_openai import ChatOpenAI
+    # extra_body = passé tel quel dans le JSON body de la requête à
+    # /v1/chat/completions. Ollama l'utilise pour ses paramètres
+    # propriétaires (`think`, `keep_alive`, `num_ctx`, etc.).
     return ChatOpenAI(
         model=routed,
         base_url=LIQUID_BASE_URL,
         api_key="ollama",  # placeholder — Ollama ne vérifie pas
         temperature=1.0,
         timeout=120.0,
+        extra_body={"think": False},  # skip chain-of-thought → ~30-50% plus rapide
     )
 
 
