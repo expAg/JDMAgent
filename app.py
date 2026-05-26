@@ -308,12 +308,20 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # self-signed → verify=False côté httpx (injecté dans le build).
 # Pas de clé API requise (Ollama LIRMM est en accès libre).
 LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/v1/"
+# Seuls les modèles Ollama dont les `capabilities` incluent `tools`
+# peuvent être utilisés ici (l'agent JDM dépend de 27+ tools). Vérifié
+# via `curl /api/show -d '{"name":"..."}'`. Modèles SANS tools dans
+# leurs capabilities (ex: lfm2.5-1.2b-instruct vanilla, phi3:mini)
+# sont volontairement exclus — Ollama rejette toute requête avec
+# `tools=[...]` sur eux (400 « does not support tools »).
 LIQUID_MODELS = {
-    "lfm2.5-1.2b-instruct": "Liquid LFM 2.5 1.2B Instruct (LIRMM, gratuit)",
+    "lfm2.5-thinking-1.2b": "Liquid LFM 2.5 Thinking 1.2B (LIRMM, tools)",
+    "qwen3-32b": "Qwen3 32B (LIRMM, tools, ~slow CPU)",
 }
-# Routing model_id → identifiant exact côté Ollama (préfixe org/).
+# Routing model_id (clean, Dropdown-friendly) → tag exact côté Ollama.
 LIQUID_MODEL_ROUTING = {
-    "lfm2.5-1.2b-instruct": "LiquidAI/lfm2.5-1.2b-instruct",
+    "lfm2.5-thinking-1.2b": "lfm2.5-thinking:1.2b",
+    "qwen3-32b": "qwen3:32b",
 }
 
 # Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
