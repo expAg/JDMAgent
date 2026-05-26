@@ -1047,9 +1047,20 @@ def run_jarvis_flow(
     last_file_path: Optional[str] = None
 
     try:
-        # LLM + agent
+        # LLM + agent — pool Gemini : on track la clé courante pour
+        # pouvoir basculer sur quota PerDay (cf. retry plus bas).
+        current_gemini_key: Optional[str] = None
         try:
-            llm = build_llm_fn(model, api_key, use_thinking=use_thinking)
+            # Si modèle Gemini natif, on pick une clé du pool en explicite
+            # pour pouvoir la marquer "blown" plus tard si nécessaire.
+            try:
+                from app import GEMINI_NATIVE_REQUIRED, pick_unblown_gemini_key
+                if model in GEMINI_NATIVE_REQUIRED:
+                    current_gemini_key = pick_unblown_gemini_key()
+            except Exception:
+                pass  # app pas importable (test mode) → comportement standard
+            llm = build_llm_fn(model, api_key, use_thinking=use_thinking,
+                               gemini_key_override=current_gemini_key)
         except ValueError as e:
             yield (
                 [{"role": "user", "content": user_display},
@@ -1265,14 +1276,63 @@ def run_jarvis_flow(
                         # passant les `accumulated_messages` pour que langgraph
                         # reprenne là où il en était (les messages déjà
                         # produits = HumanMessage + AIMessages + ToolMessages).
-                        # 1) Quota QUOTIDIEN épuisé → on ne retry PAS,
-                        # on signale clairement et on remonte.
+                        # 1) Quota QUOTIDIEN épuisé.
+                        # Si on a un POOL de clés (GOOGLE_API_KEYS CSV),
+                        # on marque la clé courante comme blown et on
+                        # tente de basculer sur la suivante non-blown.
+                        # Sinon (pool vide / toutes blown), on signale
+                        # et on stop.
                         if is_per_day_quota_exhausted(e):
+                            switched = False
+                            try:
+                                from app import (
+                                    mark_gemini_key_blown,
+                                    pick_unblown_gemini_key,
+                                    gemini_pool_size,
+                                )
+                                if current_gemini_key:
+                                    mark_gemini_key_blown(current_gemini_key)
+                                next_key = pick_unblown_gemini_key(
+                                    skip=current_gemini_key
+                                )
+                                if next_key:
+                                    # Rebuild LLM + agent avec la nouvelle clé.
+                                    # accumulated_messages reste intact →
+                                    # langgraph reprend là où il en était.
+                                    pool_n = gemini_pool_size()
+                                    current_gemini_key = next_key
+                                    llm = build_llm_fn(
+                                        model, api_key,
+                                        use_thinking=use_thinking,
+                                        gemini_key_override=current_gemini_key,
+                                    )
+                                    agent = build_agent_fn(
+                                        client=get_client_fn(), llm=llm
+                                    )
+                                    _add_line(
+                                        f"*🔄 Quota quotidien atteint sur "
+                                        f"cette clé Google — bascule sur "
+                                        f"une autre clé du pool "
+                                        f"(pool : {pool_n} clés).*"
+                                    )
+                                    yield (
+                                        [{"role": "user", "content": user_display},
+                                         {"role": "assistant",
+                                          "content": "\n\n".join(progress_live)}],
+                                        last_file_path,
+                                        _read_file_preview(last_file_path),
+                                    )
+                                    switched = True
+                            except Exception:
+                                pass  # bascule indisponible → on raise comme avant
+                            if switched:
+                                continue  # reprend la boucle avec la nouvelle clé
                             raise RuntimeError(
-                                "Quota quotidien Gemini free tier épuisé "
-                                "(PerDay). Le quota se réinitialise à "
-                                "minuit UTC. Réessaie demain ou bascule "
-                                "sur un modèle BYOK (Claude / GPT)."
+                                "Quota quotidien Gemini free tier épuisé sur "
+                                "TOUTES les clés du pool (ou pool vide). Le "
+                                "quota se réinitialise à minuit UTC. Réessaie "
+                                "demain ou bascule sur un modèle BYOK "
+                                "(Claude / GPT)."
                             ) from e
                         # 2) Rate limit PerMinute → retry avec attente
                         retry_delay = detect_rate_limit_retry(e)

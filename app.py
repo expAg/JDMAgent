@@ -297,6 +297,64 @@ GEMINI_MODEL_ROUTING = {
 GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite", "gemini-3.5-flash"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+
+# ---------- Pool de clés Google API (rotation sur PerDay) ----------
+# Plusieurs clés Google AI Studio peuvent être fournies via la variable
+# d'env CSV `GOOGLE_API_KEYS` (séparées par virgules). Quand une clé
+# hit un quota PerDay (épuisée pour la journée UTC), on bascule sur la
+# suivante dans la liste. Reset automatique à minuit UTC car la marque
+# « blown » est indexée par (key, date).
+# Fallback : si `GOOGLE_API_KEYS` vide, on lit `GOOGLE_API_KEY` (singulier).
+
+def _parse_google_keys() -> list[str]:
+    """Renvoie la liste ordonnée de clés Google API disponibles.
+
+    Priorité 1 : variable `GOOGLE_API_KEYS` (CSV, sep `,`).
+    Priorité 2 : variable `GOOGLE_API_KEY` (singulière, rétro-compat).
+    Renvoie [] si aucune.
+    """
+    csv = os.environ.get("GOOGLE_API_KEYS", "").strip()
+    if csv:
+        return [k.strip() for k in csv.split(",") if k.strip()]
+    single = os.environ.get("GOOGLE_API_KEY", "").strip()
+    return [single] if single else []
+
+
+# Marquage in-memory des clés épuisées par jour UTC.
+# Format : {(api_key, "YYYY-MM-DD"): True}
+# Reset implicite : à minuit UTC, la clé `(key, today)` n'existe plus.
+_BLOWN_TODAY: dict[tuple[str, str], bool] = {}
+
+
+def _today_utc_str() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def mark_gemini_key_blown(key: str) -> None:
+    """Marque une clé comme épuisée pour aujourd'hui UTC."""
+    if key:
+        _BLOWN_TODAY[(key, _today_utc_str())] = True
+
+
+def pick_unblown_gemini_key(skip: Optional[str] = None) -> Optional[str]:
+    """Renvoie la première clé non-épuisée du pool (en ordre liste),
+    ou None si toutes blown / pool vide. `skip` exclut une clé donnée
+    (utilisé pour ne pas re-choisir celle qui vient de hit le PerDay)."""
+    keys = _parse_google_keys()
+    today = _today_utc_str()
+    for k in keys:
+        if k == skip:
+            continue
+        if not _BLOWN_TODAY.get((k, today), False):
+            return k
+    return None
+
+
+def gemini_pool_size() -> int:
+    """Nombre total de clés dans le pool (utilisé pour les messages UX)."""
+    return len(_parse_google_keys())
+
 ALL_MODELS = {
     **GEMINI_MODELS,
     **ANTHROPIC_MODELS, **OPENAI_MODELS,
@@ -347,7 +405,8 @@ def _thinking_tooltip_js(checkbox_elem_id: str) -> str:
     )
 
 
-def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
+def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
+               gemini_key_override: Optional[str] = None):
     """Instancie le ChatModel selon le modèle choisi.
 
     - claude-*   → Anthropic via clé visiteur (BYOK, sk-ant-...)
@@ -419,7 +478,10 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
         # 3.x preview → SDK natif Google (préserve thought_signature).
         # 2.x stables → endpoint OpenAI-compat (déjà éprouvé, plus simple).
         if model in GEMINI_NATIVE_REQUIRED:
-            return _build_gemini_native(model, use_thinking=use_thinking)
+            return _build_gemini_native(
+                model, use_thinking=use_thinking,
+                api_key_override=gemini_key_override,
+            )
         return _build_openai_compat(
             model_id=model, label="Google Gemini",
             env_var="GOOGLE_API_KEY",
@@ -467,7 +529,8 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     )
 
 
-def _build_gemini_native(model_id: str, *, use_thinking: bool = True):
+def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
+                         api_key_override: Optional[str] = None):
     """Builder spécifique pour les Gemini 3.x preview via SDK natif Google.
 
     Le SDK `langchain-google-genai` (qui enveloppe le SDK Python officiel
@@ -478,14 +541,21 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True):
     Le token GOOGLE_API_KEY (côté Space, gratuit pour le visiteur) est lu
     automatiquement par le SDK depuis l'env.
     """
-    token = os.environ.get("GOOGLE_API_KEY", "").strip()
+    # Priorité : override explicite (cas rotation pool) → première
+    # clé non-blown du pool → GOOGLE_API_KEY singulier (rétro-compat).
+    if api_key_override:
+        token = api_key_override.strip()
+    else:
+        picked = pick_unblown_gemini_key()
+        token = picked or os.environ.get("GOOGLE_API_KEY", "").strip()
     if not token:
         raise ValueError(
             "Ce modèle Gemini 3.x preview nécessite un token Google côté "
-            "Space (variable d'environnement GOOGLE_API_KEY). L'admin du "
-            "Space doit créer une clé sur https://aistudio.google.com/apikey "
-            "(sans CB), et l'ajouter dans Settings → Variables & secrets. "
-            "En cas d'épuisement du quota partagé, bascule sur un modèle "
+            "Space (variable d'environnement GOOGLE_API_KEY ou pool "
+            "GOOGLE_API_KEYS). L'admin du Space doit créer une clé sur "
+            "https://aistudio.google.com/apikey (sans CB), et l'ajouter "
+            "dans Settings → Variables & secrets. Si toutes les clés du "
+            "pool sont épuisées pour aujourd'hui, bascule sur un modèle "
             "BYOK Claude ou GPT."
         )
     routed_model = GEMINI_MODEL_ROUTING.get(model_id)
@@ -590,8 +660,13 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     if not message.strip():
         yield "Pose une question sur la langue française.", _NOOP_FILE
         return
+    # Pool Gemini : on track la clé courante pour bascule sur PerDay.
+    current_gemini_key: Optional[str] = (
+        pick_unblown_gemini_key() if model in GEMINI_NATIVE_REQUIRED else None
+    )
     try:
-        llm = _build_llm(model, api_key, use_thinking=use_thinking)
+        llm = _build_llm(model, api_key, use_thinking=use_thinking,
+                          gemini_key_override=current_gemini_key)
     except ValueError as e:
         yield f"⚠️ {e}", _NOOP_FILE
         return
@@ -724,14 +799,46 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 # Sortie normale → on quitte le while
                 break
             except Exception as e:
-                # 1) Quota QUOTIDIEN épuisé → signaler et stop, pas de retry.
+                # 1) Quota QUOTIDIEN épuisé.
+                # Si pool de clés disponible → on bascule. Sinon stop.
                 from jarvis import is_per_day_quota_exhausted
                 if is_per_day_quota_exhausted(e):
+                    switched = False
+                    try:
+                        if current_gemini_key:
+                            mark_gemini_key_blown(current_gemini_key)
+                        next_key = pick_unblown_gemini_key(
+                            skip=current_gemini_key
+                        )
+                        if next_key:
+                            pool_n = gemini_pool_size()
+                            current_gemini_key = next_key
+                            llm = _build_llm(
+                                model, api_key,
+                                use_thinking=use_thinking,
+                                gemini_key_override=current_gemini_key,
+                            )
+                            agent = build_jdm_agent(
+                                client=get_client(), llm=llm
+                            )
+                            switch_msg = (
+                                f"\n\n*🔄 Quota quotidien atteint sur cette "
+                                f"clé Google — bascule sur une autre clé du "
+                                f"pool (pool : {pool_n} clés).*"
+                            )
+                            current_progress = "\n\n".join(progress_live)
+                            yield current_progress + switch_msg, _NOOP_FILE
+                            switched = True
+                    except Exception:
+                        pass
+                    if switched:
+                        continue
                     raise RuntimeError(
-                        "Quota quotidien Gemini free tier épuisé "
-                        "(PerDay). Le quota se réinitialise à minuit "
-                        "UTC. Réessaie demain ou bascule sur un modèle "
-                        "BYOK (Claude / GPT)."
+                        "Quota quotidien Gemini free tier épuisé sur "
+                        "TOUTES les clés du pool (ou pool vide). Le "
+                        "quota se réinitialise à minuit UTC. Réessaie "
+                        "demain ou bascule sur un modèle BYOK "
+                        "(Claude / GPT)."
                     ) from e
                 # 2) Quota PerMinute Gemini : on attend + on CONTINUE le
                 # travail (pas de reset). accumulated_messages contient

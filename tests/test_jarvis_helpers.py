@@ -67,6 +67,68 @@ def test_is_per_day_quota_exhausted_false_on_non_quota():
     assert is_per_day_quota_exhausted(ValueError("foo")) is False
 
 
+# ---------- Pool de clés Google API ----------
+
+
+def test_google_api_keys_pool_csv():
+    """Parse CSV de GOOGLE_API_KEYS."""
+    import os
+    import importlib
+    saved_csv = os.environ.get("GOOGLE_API_KEYS")
+    saved_single = os.environ.get("GOOGLE_API_KEY")
+    try:
+        os.environ.pop("GOOGLE_API_KEY", None)
+        os.environ["GOOGLE_API_KEYS"] = "key_aaa,key_bbb,  key_ccc  "
+        import app
+        importlib.reload(app)
+        keys = app._parse_google_keys()
+        assert keys == ["key_aaa", "key_bbb", "key_ccc"]
+        assert app.gemini_pool_size() == 3
+        # Pick : première par défaut
+        assert app.pick_unblown_gemini_key() == "key_aaa"
+        # Skip : suivante
+        assert app.pick_unblown_gemini_key(skip="key_aaa") == "key_bbb"
+        # Mark blown : la pick suivante saute
+        app.mark_gemini_key_blown("key_aaa")
+        assert app.pick_unblown_gemini_key() == "key_bbb"
+        app.mark_gemini_key_blown("key_bbb")
+        assert app.pick_unblown_gemini_key() == "key_ccc"
+        app.mark_gemini_key_blown("key_ccc")
+        assert app.pick_unblown_gemini_key() is None  # tout blown
+    finally:
+        if saved_csv is not None:
+            os.environ["GOOGLE_API_KEYS"] = saved_csv
+        else:
+            os.environ.pop("GOOGLE_API_KEYS", None)
+        if saved_single is not None:
+            os.environ["GOOGLE_API_KEY"] = saved_single
+
+
+def test_google_api_keys_fallback_singular():
+    """Si GOOGLE_API_KEYS vide, on lit GOOGLE_API_KEY singulier."""
+    import os
+    import importlib
+    saved_csv = os.environ.get("GOOGLE_API_KEYS")
+    saved_single = os.environ.get("GOOGLE_API_KEY")
+    try:
+        os.environ.pop("GOOGLE_API_KEYS", None)
+        os.environ["GOOGLE_API_KEY"] = "lonely_key"
+        import app
+        importlib.reload(app)
+        keys = app._parse_google_keys()
+        assert keys == ["lonely_key"]
+        assert app.gemini_pool_size() == 1
+    finally:
+        if saved_csv is not None:
+            os.environ["GOOGLE_API_KEYS"] = saved_csv
+        else:
+            os.environ.pop("GOOGLE_API_KEYS", None)
+        if saved_single is not None:
+            os.environ["GOOGLE_API_KEY"] = saved_single
+        else:
+            os.environ.pop("GOOGLE_API_KEY", None)
+
+
 def test_detect_rate_limit_non_429_returns_none():
     """Exception non-quota → None."""
     assert detect_rate_limit_retry(ValueError("invalid input")) is None
