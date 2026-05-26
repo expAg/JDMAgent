@@ -3880,21 +3880,60 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     gr.Markdown(
                         "**Tous les fichiers produits** par l'agent (sous-graphes, "
                         "enrichissements, audits, signalements, stats) sont listés "
-                        "ici. Aucun écrasement : les collisions de nom sont suffixées "
-                        "automatiquement (`_2`, `_3`…)."
+                        "ici, du PLUS RÉCENT au PLUS ANCIEN. Aucun écrasement : les "
+                        "collisions de nom sont suffixées automatiquement (`_2`, `_3`…). "
+                        "La liste se rafraîchit toute seule toutes les 3 secondes."
                     )
+
+                    def _scan_productions_choices():
+                        """Liste (label, path) triée par mtime DESC. Label format
+                        '<nom> — <KB>KB · <âge>s' pour scan visuel rapide."""
+                        if not PRODUCTIONS_DIR.exists():
+                            return []
+                        import time as _t_prod
+                        now = _t_prod.time()
+                        files = []
+                        for p in PRODUCTIONS_DIR.iterdir():
+                            if not p.is_file():
+                                continue
+                            try:
+                                st = p.stat()
+                                files.append((p, st.st_size, st.st_mtime))
+                            except OSError:
+                                continue
+                        files.sort(key=lambda x: -x[2])
+                        out = []
+                        for p, sz, mt in files:
+                            age = int(now - mt)
+                            if age < 60:
+                                age_s = f"{age}s"
+                            elif age < 3600:
+                                age_s = f"{age // 60}min"
+                            elif age < 86400:
+                                age_s = f"{age // 3600}h"
+                            else:
+                                age_s = f"{age // 86400}j"
+                            sz_kb = sz / 1024
+                            label = f"{p.name} — {sz_kb:.1f}KB · {age_s}"
+                            out.append((label, str(p)))
+                        return out
+
                     with gr.Row():
-                        with gr.Column(scale=1, min_width=280):
-                            prod_file_explorer = gr.FileExplorer(
-                                root_dir=str(PRODUCTIONS_DIR),
-                                glob="*",
-                                label="Fichiers",
-                                file_count="single",
+                        with gr.Column(scale=1, min_width=320):
+                            prod_file_dropdown = gr.Dropdown(
+                                choices=_scan_productions_choices(),
+                                label="📂 Fichiers (du plus récent au plus ancien)",
+                                value=None,
                                 interactive=True,
-                                every=5,  # auto-refresh toutes les 5s
+                                filterable=True,
                             )
                             prod_refresh_btn = gr.Button("🔄 Rafraîchir maintenant",
                                                           size="sm")
+                            # Timer de re-scan : tick toutes les 3s, met à jour
+                            # les choices du Dropdown sans toucher à la sélection
+                            # courante de l'utilisateur (gr.update(choices=…)
+                            # préserve value si toujours présente).
+                            prod_timer = gr.Timer(3.0, active=True)
                         with gr.Column(scale=3):
                             prod_status = gr.Markdown(
                                 "*Sélectionne un fichier à gauche pour le visualiser.*"
@@ -3988,21 +4027,31 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 gr.update(visible=False, value=None),
                             )
 
-                    prod_file_explorer.change(
+                    prod_file_dropdown.change(
                         _render_production_file,
-                        inputs=[prod_file_explorer],
+                        inputs=[prod_file_dropdown],
                         outputs=[prod_status, prod_html_viewer,
                                  prod_text_viewer, prod_download],
                     )
 
-                    def _refresh_explorer():
-                        """Force un rafraîchissement de l'arborescence."""
-                        return gr.update(root_dir=str(PRODUCTIONS_DIR))
+                    def _refresh_choices():
+                        """Re-scanne PRODUCTIONS_DIR et met à jour les choices
+                        du Dropdown. Préserve la sélection courante si le
+                        fichier existe encore (Gradio gère ça nativement)."""
+                        return gr.update(choices=_scan_productions_choices())
 
                     prod_refresh_btn.click(
-                        _refresh_explorer,
+                        _refresh_choices,
                         inputs=None,
-                        outputs=[prod_file_explorer],
+                        outputs=[prod_file_dropdown],
+                    )
+                    # Auto-refresh via Timer : tick toutes les 3s → re-scan
+                    # du dir → mise à jour silencieuse des choices. Le user
+                    # voit apparaître les nouveaux fichiers sans clic.
+                    prod_timer.tick(
+                        _refresh_choices,
+                        inputs=None,
+                        outputs=[prod_file_dropdown],
                     )
 
             # ---- Câblage transverse : quand la clé LLMDrops change dans
