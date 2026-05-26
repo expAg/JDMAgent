@@ -360,77 +360,27 @@ def _masked_key(key: str) -> str:
 
 
 def build_pool_diag_md() -> str:
-    """Bloc Markdown de DIAGNOSTIC du pool — affiché dans le chatbot
-    pour que l'utilisateur voie l'état interne sans accès aux logs.
-
-    Contenu :
-      - Clé Gemini courante (masquée)
-      - Modèle actif
-      - Couples (clé, modèle) blown aujourd'hui
-      - Clés invalides de la session
-    """
-    import traceback
+    """Bloc Markdown de DIAGNOSTIC du pool — utilisable pour debug.
+    Non injecté dans les erreurs UI par défaut."""
     lines = ["**État du pool Gemini** :"]
-    # Inspect types — révèle si _CURRENT_GEMINI_KEY ou _CURRENT_MODEL
-    # est devenu un Button (ou autre composant Gradio) au lieu d'une str.
-    try:
-        _ck = _CURRENT_GEMINI_KEY
-        lines.append(f"- type(_CURRENT_GEMINI_KEY)=`{type(_ck).__name__}`")
-    except Exception as e:
-        lines.append(f"- ❌ inspect _CURRENT_GEMINI_KEY: {type(e).__name__}: {e}")
-    try:
-        _cm = _CURRENT_MODEL
-        lines.append(f"- type(_CURRENT_MODEL)=`{type(_cm).__name__}` repr=`{_cm!r}`")
-    except Exception as e:
-        lines.append(f"- ❌ inspect _CURRENT_MODEL: {type(e).__name__}: {e}")
-    try:
-        if _CURRENT_GEMINI_KEY:
-            lines.append(f"- Clé courante : `{_masked_key(_CURRENT_GEMINI_KEY)}`")
-        else:
-            lines.append("- Clé courante : *(aucune)*")
-    except Exception as e:
-        lines.append(f"- ❌ Clé courante step: {type(e).__name__}: {e}\n  TB: {traceback.format_exc()[-500:]}")
-    try:
-        lines.append(f"- Modèle actif : `{_CURRENT_MODEL or '(aucun)'}`")
-    except Exception as e:
-        lines.append(f"- ❌ Modèle actif step: {type(e).__name__}: {e}\n  TB: {traceback.format_exc()[-500:]}")
+    if _CURRENT_GEMINI_KEY:
+        lines.append(f"- Clé courante : `{_masked_key(_CURRENT_GEMINI_KEY)}`")
+    else:
+        lines.append("- Clé courante : *(aucune)*")
+    lines.append(f"- Modèle actif : `{_CURRENT_MODEL or '(aucun)'}`")
     today = _today_utc_str()
-    try:
-        blown_today = [(k, m) for (k, m, d), v in _BLOWN_TODAY.items()
-                       if d == today and v]
-    except Exception as e:
-        blown_today = []
-        lines.append(f"- ❌ blown_today comprehension: {type(e).__name__}: {e}\n  TB: {traceback.format_exc()[-500:]}")
+    blown_today = [(k, m) for (k, m, d), v in _BLOWN_TODAY.items()
+                   if d == today and v]
     if blown_today:
         lines.append("- **Blown aujourd'hui** :")
         for k, m in blown_today:
-            try:
-                lines.append(f"  - `{_masked_key(k)}` / `{m}`")
-            except Exception as e:
-                lines.append(f"  - ❌ blown entry: {type(e).__name__}: {e}")
+            lines.append(f"  - `{_masked_key(k)}` / `{m}`")
     else:
         lines.append("- **Blown aujourd'hui** : *(aucun)*")
     if _INVALID_KEYS:
         lines.append("- **Clés marquées invalides (session)** :")
         for k in _INVALID_KEYS:
             lines.append(f"  - `{_masked_key(k)}`")
-    # DIAG : état in-memory par modèle Gemini (rapide, sûr)
-    today = _today_utc_str()
-    lines.append("- **État par modèle Gemini** (debug) :")
-    for key in GEMINI_NATIVE_REQUIRED:
-        if _CURRENT_GEMINI_KEY:
-            blown = _BLOWN_TODAY.get((_CURRENT_GEMINI_KEY, key, today), False)
-        else:
-            blown = False
-        lines.append(f"  - `{key}` : blown_on_current_key={blown}")
-    # DIAG : résultat de build_model_choices() — chaque étape wrappée,
-    # un [ERR ...] indique la step qui foire dans le contexte Jarvis.
-    try:
-        lines.append("- **build_model_choices() output** :")
-        for lbl, k in build_model_choices():
-            lines.append(f"  - `{k}` → `{lbl}`")
-    except Exception as exc:
-        lines.append(f"- *(build_model_choices raised : {type(exc).__name__}: {exc})*")
     return "\n".join(lines)
 
 
@@ -564,53 +514,20 @@ def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
 
     Marquage server-side (les deux dropdowns) :
       - ✅ devant le modèle courant (_CURRENT_MODEL)
-      - suffixe `— épuisé sur cette clé` pour les modèles blown sur
-        la clé Gemini courante (le JS ajoute ❌ + grisage CSS)
-
-    DIAG (Phase 13) : chaque étape est wrappée en try/except pour
-    identifier le coupable du mystérieux 'Button' has no attribute
-    '_id' qui empêche le refresh des dropdowns Jarvis.
+      - suffixe `— épuisé sur cette clé` pour les modèles Gemini natifs
+        blown sur la clé courante (le JS ajoute ❌ + grisage CSS)
     """
     import re as _re
     out: list[tuple[str, str]] = []
-    try:
-        items = list(ALL_MODELS.items())
-    except Exception as e:
-        return [(f"[ERR ALL_MODELS.items: {type(e).__name__}: {e}]", "err")]
-    for i, item in enumerate(items):
-        try:
-            key, label = item
-        except Exception as e:
-            out.append((f"[ERR unpack #{i}: {type(e).__name__}: {e}]", f"err{i}"))
-            continue
-        try:
-            # Étape 1 : check si modèle Gemini natif
-            is_gemini = key in GEMINI_NATIVE_REQUIRED
-        except Exception as e:
-            out.append((f"[ERR is_gemini {key!r}: {type(e).__name__}: {e}]", str(key)))
-            continue
-        try:
-            # Étape 2 : check si blown sur clé courante
-            is_blown = is_gemini and is_model_blown_on_current_key(key)
-        except Exception as e:
-            out.append((f"[ERR is_blown {key!r}: {type(e).__name__}: {e}]", str(key)))
-            continue
-        try:
-            # Étape 3 : décoration label
-            if is_blown:
-                base = _re.sub(r"\s*\(.*?\)\s*$", "", str(label)).strip()
-                decorated = f"{base} — épuisé sur cette clé"
-            elif key == _CURRENT_MODEL:
-                decorated = f"✅ {label}"
-            else:
-                decorated = label
-        except Exception as e:
-            out.append((f"[ERR decorate {key!r}: {type(e).__name__}: {e}]", str(key)))
-            continue
-        try:
-            out.append((decorated, key))
-        except Exception as e:
-            out.append((f"[ERR append {key!r}: {type(e).__name__}: {e}]", str(key)))
+    for key, label in ALL_MODELS.items():
+        if key in GEMINI_NATIVE_REQUIRED and is_model_blown_on_current_key(key):
+            base = _re.sub(r"\s*\(.*?\)\s*$", "", str(label)).strip()
+            decorated = f"{base} — épuisé sur cette clé"
+        elif key == _CURRENT_MODEL:
+            decorated = f"✅ {label}"
+        else:
+            decorated = label
+        out.append((decorated, key))
     return out
 
 
@@ -1181,6 +1098,35 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 if is_per_day_quota_exhausted(e, expected_model=model):
                     if current_gemini_key:
                         mark_gemini_key_blown(current_gemini_key, model)
+                # AUTO-BASCULE vers le modèle protégé (3.1, 500 req/j)
+                # quand un modèle non-protégé est épuisé.
+                if (model != GEMINI_POOL_PROTECTED_MODEL
+                        and is_per_day_quota_exhausted(e, expected_model=model)):
+                    try:
+                        next_key_for_protected = pick_unblown_gemini_key(GEMINI_POOL_PROTECTED_MODEL)
+                        if next_key_for_protected:
+                            current_gemini_key = next_key_for_protected
+                            model = GEMINI_POOL_PROTECTED_MODEL
+                            set_current_gemini_key(current_gemini_key)
+                            set_current_model(model)
+                            llm = _build_llm(
+                                model, api_key,
+                                use_thinking=use_thinking,
+                                gemini_key_override=current_gemini_key,
+                            )
+                            agent = build_jdm_agent(
+                                client=get_client(), llm=llm
+                            )
+                            switch_msg = (
+                                f"\n\n*🔄 Quota quotidien épuisé sur ce "
+                                f"modèle — bascule automatique sur "
+                                f"`{GEMINI_POOL_PROTECTED_MODEL}` (500 req/j).*"
+                            )
+                            current_progress = "\n\n".join(progress_live)
+                            yield current_progress + switch_msg, _NOOP_FILE
+                            continue
+                    except Exception:
+                        pass
                 if (model == GEMINI_POOL_PROTECTED_MODEL
                         and is_per_day_quota_exhausted(e, expected_model=model)):
                     switched = False
@@ -1265,11 +1211,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         f"({len(progress_full)})</summary>\n\n"
                         f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                     )
-                try:
-                    diag = "\n\n---\n" + build_pool_diag_md()
-                except Exception:
-                    diag = ""
-                yield f"❌ Erreur agent : {e}" + diag + err_block, _NOOP_FILE
+                yield f"❌ Erreur agent : {e}" + err_block, _NOOP_FILE
                 return
 
     # Viz : iframe interactif embarqué dans un gr.HTML séparé.

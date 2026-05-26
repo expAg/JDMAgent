@@ -1467,6 +1467,52 @@ def run_jarvis_flow(
                         if is_per_day_quota_exhausted(e, expected_model=model):
                             if _mark_blown_fn and current_gemini_key:
                                 _mark_blown_fn(current_gemini_key, model)
+                        # AUTO-BASCULE vers le modèle protégé (3.1, 500 req/j)
+                        # quand un modèle non-protégé est épuisé. L'utilisateur
+                        # continue son flow sans interruption — on rebuild
+                        # LLM + agent avec _PROTECTED et la même clé (ou une
+                        # autre si celle-ci est aussi blown pour 3.1).
+                        if (model != _PROTECTED
+                                and is_per_day_quota_exhausted(e, expected_model=model)
+                                and _app is not None):
+                            try:
+                                pick_fn = _app.pick_unblown_gemini_key
+                                # Cherche une clé utilisable pour _PROTECTED
+                                # (peut être la même que current_gemini_key
+                                # car le quota est par-modèle).
+                                next_key_for_protected = pick_fn(_PROTECTED)
+                                if next_key_for_protected:
+                                    current_gemini_key = next_key_for_protected
+                                    model = _PROTECTED  # mute le modèle local
+                                    try:
+                                        _app.set_current_gemini_key(current_gemini_key)
+                                        _app.set_current_model(model)
+                                    except Exception:
+                                        pass
+                                    llm = build_llm_fn(
+                                        model, api_key,
+                                        use_thinking=use_thinking,
+                                        gemini_key_override=current_gemini_key,
+                                    )
+                                    agent = build_agent_fn(
+                                        client=get_client_fn(), llm=llm
+                                    )
+                                    _add_line(
+                                        f"*🔄 Quota quotidien épuisé sur ce "
+                                        f"modèle — bascule automatique sur "
+                                        f"`{_PROTECTED}` (500 req/j) pour "
+                                        f"continuer le travail.*"
+                                    )
+                                    yield (
+                                        [{"role": "user", "content": user_display},
+                                         {"role": "assistant",
+                                          "content": "\n\n".join(progress_live)}],
+                                        last_file_path,
+                                        _read_file_preview(last_file_path),
+                                    )
+                                    continue
+                            except Exception:
+                                pass  # bascule indisponible → erreur finale
                         if (model == _PROTECTED
                                 and is_per_day_quota_exhausted(e, expected_model=model)):
                             switched = False
@@ -1572,32 +1618,10 @@ def run_jarvis_flow(
                                 f"({len(progress_full)})</summary>\n\n"
                                 f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                             )
-                        # Diag : on récupère app via sys.modules (déjà
-                        # chargé par le processus principal Gradio). PAS
-                        # de `from app import` qui re-déclenche l'évaluation
-                        # du module dans un worker fork → bug Gradio
-                        # 'Button' has no '_id' à l'instanciation des
-                        # composants (problème connu fork+gradio context).
-                        diag = ""
-                        try:
-                            import sys as _sys
-                            # Sur HF Spaces, app.py est lancé comme __main__,
-                            # pas 'app'. On cherche les deux.
-                            app_mod = _sys.modules.get('__main__')
-                            if app_mod is None or not hasattr(app_mod, 'build_pool_diag_md'):
-                                app_mod = _sys.modules.get('app')
-                            if app_mod is None:
-                                diag = "\n\n---\n*(diag : ni __main__ ni app dans sys.modules)*"
-                            elif not hasattr(app_mod, 'build_pool_diag_md'):
-                                diag = "\n\n---\n*(diag : module trouvé mais sans build_pool_diag_md)*"
-                            else:
-                                diag = "\n\n---\n" + app_mod.build_pool_diag_md()
-                        except Exception as _ce:
-                            diag = f"\n\n---\n*(diag raised : {type(_ce).__name__}: {_ce})*"
                         yield (
                             [{"role": "user", "content": user_display},
                              {"role": "assistant",
-                              "content": f"❌ Erreur agent : {e}" + diag + err_block}],
+                              "content": f"❌ Erreur agent : {e}" + err_block}],
                             last_file_path, _read_file_preview(last_file_path),
                         )
                         return
