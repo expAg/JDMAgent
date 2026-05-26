@@ -1095,18 +1095,28 @@ def run_jarvis_flow(
         budget = None  # accessible hors du with pour le compteur final
         while not persistence_done:
             rate_limit_attempts = 0
+            # Hits de rate limit CONSÉCUTIFS sans aucun chunk reçu
+            # entre. Cap dur à 3 = quotas Google croisés bloqués,
+            # inutile de boucler. Reset à 0 dès qu'on reçoit un chunk
+            # (= du vrai progrès LLM s'est produit).
+            consecutive_rate_limit_hits = 0
+            MAX_CONSECUTIVE_RATE_LIMIT = 3
             with budget_context(limit=limit) as budget, exclusion_context():
                 # boucle retry quota : ILLIMITÉ tant que le délai
                 # retry est court (cf. detect_rate_limit_retry, cap
-                # interne à 120s par hit). Si delay > 120s ou erreur
-                # non-quota, detect_rate_limit_retry renvoie None et on
-                # tombe dans la branche d'erreur finale.
+                # interne à 120s par hit) ET qu'on fait du progrès
+                # entre deux hits. Si quotas croisés (3 hits sans
+                # progrès), on tombe en erreur finale.
                 while True:
                     try:
                         for chunk in agent.stream(
                             {"messages": accumulated_messages},
                             stream_mode="updates",
                         ):
+                            # Reset du compteur de rate limit consécutifs :
+                            # on a reçu un chunk = vrai progrès LLM, donc
+                            # le quota a libéré quelque chose entre temps.
+                            consecutive_rate_limit_hits = 0
                             # chunk = dict {node_name: {"messages": [msg, ...]}}
                             for _node, payload in chunk.items():
                                 msgs = (payload or {}).get("messages") or []
@@ -1243,6 +1253,25 @@ def run_jarvis_flow(
                         # produits = HumanMessage + AIMessages + ToolMessages).
                         retry_delay = detect_rate_limit_retry(e)
                         if retry_delay is not None:
+                            consecutive_rate_limit_hits += 1
+                            # Si 3 hits consécutifs SANS aucun chunk reçu
+                            # entre temps → quotas Google croisés bloqués
+                            # (typique : RequestsPerMinute libère mais
+                            # InputTokensPerMinute reste bouché). Inutile
+                            # de boucler, on tombe en erreur explicite.
+                            if consecutive_rate_limit_hits >= MAX_CONSECUTIVE_RATE_LIMIT:
+                                raise RuntimeError(
+                                    f"Quotas Gemini free tier croisés "
+                                    f"({consecutive_rate_limit_hits} hits "
+                                    f"de rate limit consécutifs sans "
+                                    f"aucun progrès). Les fenêtres "
+                                    f"glissantes des différents quotas "
+                                    f"(requests/min, tokens/min, "
+                                    f"requests/day) ne s'ouvrent jamais "
+                                    f"en même temps. Réessaie dans "
+                                    f"quelques minutes ou bascule sur "
+                                    f"un modèle BYOK (Claude / GPT)."
+                                ) from e
                             rate_limit_attempts += 1
                             wait_msg = (
                                 f"*⏳ Quota Gemini free tier atteint — j'attends "

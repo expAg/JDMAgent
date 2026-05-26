@@ -630,16 +630,21 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     agent = build_jdm_agent(client=get_client(), llm=llm)
     accumulated_messages = _history_to_lc(history, message)
     rate_limit_attempts = 0
+    consecutive_rate_limit_hits = 0
+    MAX_CONSECUTIVE_RATE_LIMIT = 3
     with exclusion_context():
         # Retry rate limit ILLIMITÉ tant que le délai est court
-        # (cf. detect_rate_limit_retry cap interne à 120s). Si délai
-        # > 120s ou erreur non-quota, on tombe en erreur finale.
+        # ET qu'on fait du progrès entre deux hits (cf. cap consécutifs
+        # ci-dessous). Si quotas croisés Google free tier, on remonte.
         while True:
             try:
                 for chunk in agent.stream(
                     {"messages": accumulated_messages},
                     stream_mode="updates",
                 ):
+                    # Reset compteur de hits consécutifs : on a reçu
+                    # un chunk = du progrès LLM réel.
+                    consecutive_rate_limit_hits = 0
                     for _node_name, payload in chunk.items():
                         msgs = (payload or {}).get("messages") or []
                         for m in msgs:
@@ -726,6 +731,16 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 # on s'est arrêté.
                 retry_delay = detect_rate_limit_retry(e)
                 if retry_delay is not None:
+                    consecutive_rate_limit_hits += 1
+                    if consecutive_rate_limit_hits >= MAX_CONSECUTIVE_RATE_LIMIT:
+                        raise RuntimeError(
+                            f"Quotas Gemini free tier croisés "
+                            f"({consecutive_rate_limit_hits} hits consécutifs "
+                            f"sans progrès). Les fenêtres glissantes des "
+                            f"différents quotas ne s'ouvrent jamais en "
+                            f"même temps. Réessaie dans quelques minutes "
+                            f"ou bascule sur un modèle BYOK (Claude / GPT)."
+                        ) from e
                     rate_limit_attempts += 1
                     wait_msg = (
                         f"\n\n*⏳ Quota Gemini free tier atteint — j'attends "
