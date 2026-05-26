@@ -308,26 +308,23 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # self-signed → verify=False côté httpx (injecté dans le build).
 # Pas de clé API requise (Ollama LIRMM est en accès libre).
 LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/v1/"
-# Seuls les modèles Ollama dont les `capabilities` incluent `tools`
-# peuvent être utilisés ici (l'agent JDM dépend de 27+ tools). Vérifié
-# via `curl /api/show -d '{"name":"..."}'`. Modèles SANS tools dans
-# leurs capabilities (ex: lfm2.5-1.2b-instruct vanilla, phi3:mini)
-# sont volontairement exclus — Ollama rejette toute requête avec
-# `tools=[...]` sur eux (400 « does not support tools »).
-#
-# Les deux tags `*-tools` ci-dessous sont CUSTOM cote LIRMM : ils
-# reutilisent le blob du modele vanilla + ajoutent RENDERER/PARSER
-# `lfm2-thinking` au Modelfile, ce qui declenche les capabilities
-# `['completion', 'tools', 'thinking']`. Cf. notes d'install dans
-# AIDE / Installation.
+# Modèles Ollama LIRMM. CUSTOM côté serveur : on a écrit un Modelfile
+# qui réutilise le blob du vanilla + un TEMPLATE custom qui inclut
+# `{{ if .Tools }}` pour qu'Ollama détecte la capability `tools`
+# SANS engager le PARSER `lfm2-thinking` (qui forçait la génération
+# d'un long CoT et faisait passer le temps de réponse de ~2s à ~75s).
+# Résultat : tools natifs + vitesse normale + content dans `content`
+# (pas dans `reasoning`). Tags custom :
+#   - lfm2.5-1.2b-fast-tools  (1.2B Instruct, rapide)
+#   - lfm2-24b-a2b-fast-tools (24B-A2B MoE, plus capable)
 LIQUID_MODELS = {
-    "lfm2.5-1.2b-instruct-tools": "Liquid LFM 2.5 1.2B Instruct (LIRMM, rapide)",
-    "lfm2-24b-a2b-tools": "Liquid LFM 2 24B-A2B MoE (LIRMM, puissant)",
+    "lfm2.5-1.2b-fast-tools": "Liquid LFM 2.5 1.2B Instruct (LIRMM, rapide)",
+    "lfm2-24b-a2b-fast-tools": "Liquid LFM 2 24B-A2B MoE (LIRMM, capable)",
 }
 # Routing model_id (clean, Dropdown-friendly) → tag exact côté Ollama.
 LIQUID_MODEL_ROUTING = {
-    "lfm2.5-1.2b-instruct-tools": "lfm2.5-1.2b-instruct-tools",
-    "lfm2-24b-a2b-tools": "lfm2-24b-a2b-tools",
+    "lfm2.5-1.2b-fast-tools": "lfm2.5-1.2b-fast-tools",
+    "lfm2-24b-a2b-fast-tools": "lfm2-24b-a2b-fast-tools",
 }
 
 # Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
