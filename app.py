@@ -388,10 +388,7 @@ def build_pool_diag_md() -> str:
         lines.append("- **Clés marquées invalides (session)** :")
         for k in _INVALID_KEYS:
             lines.append(f"  - `{_masked_key(k)}`")
-    # DIAG : on N'APPELLE PAS build_model_choices() ici (Gradio 5.50 lève
-    # 'Button' object has no attribute '_id' quand on construit des
-    # choices hors contexte Blocks/event). On lit DIRECTEMENT l'état
-    # in-memory pour chaque modèle Gemini.
+    # DIAG : état in-memory par modèle Gemini (rapide, sûr)
     today = _today_utc_str()
     lines.append("- **État par modèle Gemini** (debug) :")
     for key in GEMINI_NATIVE_REQUIRED:
@@ -400,6 +397,14 @@ def build_pool_diag_md() -> str:
         else:
             blown = False
         lines.append(f"  - `{key}` : blown_on_current_key={blown}")
+    # DIAG : résultat de build_model_choices() — chaque étape wrappée,
+    # un [ERR ...] indique la step qui foire dans le contexte Jarvis.
+    try:
+        lines.append("- **build_model_choices() output** :")
+        for lbl, k in build_model_choices():
+            lines.append(f"  - `{k}` → `{lbl}`")
+    except Exception as exc:
+        lines.append(f"- *(build_model_choices raised : {type(exc).__name__}: {exc})*")
     return "\n".join(lines)
 
 
@@ -535,18 +540,51 @@ def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
       - ✅ devant le modèle courant (_CURRENT_MODEL)
       - suffixe `— épuisé sur cette clé` pour les modèles blown sur
         la clé Gemini courante (le JS ajoute ❌ + grisage CSS)
+
+    DIAG (Phase 13) : chaque étape est wrappée en try/except pour
+    identifier le coupable du mystérieux 'Button' has no attribute
+    '_id' qui empêche le refresh des dropdowns Jarvis.
     """
     import re as _re
     out: list[tuple[str, str]] = []
-    for key, label in ALL_MODELS.items():
-        if key in GEMINI_NATIVE_REQUIRED and is_model_blown_on_current_key(key):
-            base = _re.sub(r"\s*\(.*?\)\s*$", "", label).strip()
-            decorated = f"{base} — épuisé sur cette clé"
-        elif key == _CURRENT_MODEL:
-            decorated = f"✅ {label}"
-        else:
-            decorated = label
-        out.append((decorated, key))
+    try:
+        items = list(ALL_MODELS.items())
+    except Exception as e:
+        return [(f"[ERR ALL_MODELS.items: {type(e).__name__}: {e}]", "err")]
+    for i, item in enumerate(items):
+        try:
+            key, label = item
+        except Exception as e:
+            out.append((f"[ERR unpack #{i}: {type(e).__name__}: {e}]", f"err{i}"))
+            continue
+        try:
+            # Étape 1 : check si modèle Gemini natif
+            is_gemini = key in GEMINI_NATIVE_REQUIRED
+        except Exception as e:
+            out.append((f"[ERR is_gemini {key!r}: {type(e).__name__}: {e}]", str(key)))
+            continue
+        try:
+            # Étape 2 : check si blown sur clé courante
+            is_blown = is_gemini and is_model_blown_on_current_key(key)
+        except Exception as e:
+            out.append((f"[ERR is_blown {key!r}: {type(e).__name__}: {e}]", str(key)))
+            continue
+        try:
+            # Étape 3 : décoration label
+            if is_blown:
+                base = _re.sub(r"\s*\(.*?\)\s*$", "", str(label)).strip()
+                decorated = f"{base} — épuisé sur cette clé"
+            elif key == _CURRENT_MODEL:
+                decorated = f"✅ {label}"
+            else:
+                decorated = label
+        except Exception as e:
+            out.append((f"[ERR decorate {key!r}: {type(e).__name__}: {e}]", str(key)))
+            continue
+        try:
+            out.append((decorated, key))
+        except Exception as e:
+            out.append((f"[ERR append {key!r}: {type(e).__name__}: {e}]", str(key)))
     return out
 
 
