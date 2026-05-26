@@ -1099,10 +1099,13 @@ def run_jarvis_flow(
                 from app import (
                     GEMINI_NATIVE_REQUIRED, pick_unblown_gemini_key,
                     set_current_gemini_key as _set_current_key,
+                    set_current_model as _set_current_model,
                 )
                 if model in GEMINI_NATIVE_REQUIRED:
                     current_gemini_key = pick_unblown_gemini_key(model)
                     _set_current_key(current_gemini_key)
+                # Annonce le modèle actif → préfixe ✅ dans le dropdown.
+                _set_current_model(model)
             except Exception:
                 pass  # app pas importable (test mode) → comportement standard
             llm = build_llm_fn(model, api_key, use_thinking=use_thinking,

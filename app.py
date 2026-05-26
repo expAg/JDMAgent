@@ -425,6 +425,20 @@ def set_current_gemini_key(key: Optional[str]) -> None:
         _bump_registry_version()
 
 
+# Modèle actuellement sélectionné (utilisé pour préfixer ✅ devant
+# l'option courante dans le dropdown).
+_CURRENT_MODEL: Optional[str] = None
+
+
+def set_current_model(model: Optional[str]) -> None:
+    """Déclare le modèle actif. Bumpe la version → le dropdown se
+    rafraîchit avec ✅ devant cette option."""
+    global _CURRENT_MODEL
+    if _CURRENT_MODEL != model:
+        _CURRENT_MODEL = model
+        _bump_registry_version()
+
+
 def is_model_blown_on_current_key(model: str) -> bool:
     """True si le modèle est épuisé SUR LA CLÉ COURANTE (blown today
     ou invalide). C'est ça qui détermine si le dropdown affiche
@@ -466,15 +480,12 @@ def _refresh_dropdown_wrap(fn):
 def build_model_choices() -> list[tuple[str, str]]:
     """Construit la liste de (label, value) du dropdown des modèles.
 
-    Marquage visuel minimal :
-      - Modèle disponible → label original (le ✓ natif de Gradio sur
-        la gauche suffit comme indicateur de « disponible »).
-      - Modèle blown sur la clé courante → préfixe ❌ + remplacement
-        du suffixe « (X req/jour) » par « — épuisé sur cette clé ».
-
-    Quand on bascule de clé (3.1 hit PerDay → switch), set_current_
-    gemini_key est appelée et le dropdown se re-rendre avec les
-    statuts connus de la NOUVELLE clé.
+    Marquage visuel :
+      - Modèle blown sur la clé courante → préfixe `❌ ` (et JS dans
+        `_HEAD_JS` masque le ✓ natif Gradio pour ces items).
+      - Modèle actuellement sélectionné → préfixe `✅ ` (en plus du
+        ✓ natif Gradio).
+      - Autres modèles disponibles → label original sans préfixe.
     """
     import re as _re
     out: list[tuple[str, str]] = []
@@ -482,6 +493,8 @@ def build_model_choices() -> list[tuple[str, str]]:
         if key in GEMINI_NATIVE_REQUIRED and is_model_blown_on_current_key(key):
             base = _re.sub(r"\s*\(.*?\)\s*$", "", label).strip()
             decorated = f"❌ {base} — épuisé sur cette clé"
+        elif key == _CURRENT_MODEL:
+            decorated = f"✅ {label}"
         else:
             decorated = label
         out.append((decorated, key))
@@ -827,6 +840,8 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     # Annonce au registry quelle clé est active → le dropdown
     # reflètera ce qui est blown SUR CETTE CLÉ.
     set_current_gemini_key(current_gemini_key)
+    # Annonce le modèle actif → préfixe ✅ devant lui dans le dropdown.
+    set_current_model(model)
     try:
         llm = _build_llm(model, api_key, use_thinking=use_thinking,
                           gemini_key_override=current_gemini_key)
@@ -1859,10 +1874,28 @@ _HEAD_JS = """
     }
   }
 
+  // Masquer le ✓ natif Gradio sur les items du dropdown contenant
+  // ❌ (= modèle blown sur la clé courante) — pour que ❌ "remplace"
+  // visuellement le check natif au lieu de cohabiter avec lui.
+  function hideNativeCheckOnBlownOptions() {
+    // Cible large : tous les items de toutes les listbox Gradio
+    var options = document.querySelectorAll('[role="option"], .options li, ul[role="listbox"] li');
+    options.forEach(function(opt) {
+      var text = opt.textContent || '';
+      var hasX = text.indexOf('❌') !== -1;
+      // Trouve l'éventuel SVG / icône de check natif Gradio dans cet item
+      var icons = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+      icons.forEach(function(ic) {
+        ic.style.display = hasX ? 'none' : '';
+      });
+    });
+  }
+
   function applyTabTweaks() {
     pushAideTabRight();
     colorJarvisTab();
     applyThinkingTooltip();
+    hideNativeCheckOnBlownOptions();
   }
   document.addEventListener('DOMContentLoaded', applyTabTweaks);
   setTimeout(applyTabTweaks, 400);
@@ -2251,6 +2284,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 _toggle_key_field,
                 inputs=[model_in],
                 outputs=[key_in],
+            )
+            # Met à jour _CURRENT_MODEL + refresh choices pour préfixer
+            # ✅ devant l'option qu'on vient de sélectionner.
+            def _on_model_change_refresh(m: str):
+                set_current_model(m)
+                return gr.update(choices=build_model_choices(), value=m)
+            model_in.change(
+                _on_model_change_refresh,
+                inputs=[model_in],
+                outputs=[model_in],
             )
             # Grise + décoche la case « Raisonnement » quand le modèle
             # choisi ne supporte pas le thinking, puis met à jour le
@@ -3179,6 +3222,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             ).then(
                 fn=None, inputs=[jarvis_model], outputs=None,
                 js=_thinking_tooltip_js("jarvis-thinking-cb"),
+            )
+            # Met à jour _CURRENT_MODEL + refresh choices (✅ devant
+            # l'option sélectionnée).
+            def _on_jarvis_model_change_refresh(m: str):
+                set_current_model(m)
+                return gr.update(choices=build_model_choices(), value=m)
+            jarvis_model.change(
+                _on_jarvis_model_change_refresh,
+                inputs=[jarvis_model],
+                outputs=[jarvis_model],
             )
 
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----
