@@ -3803,98 +3803,29 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             show_progress="hidden",
         )
 
-        # Bouton « Rotation clés gemini » : approche purement DOM côté JS,
-        # ZÉRO touche au dropdown via Gradio (sinon mode filter).
-        # 1) Python : update _CURRENT_GEMINI_KEY + label des boutons
-        #    + encode dans le label des boutons les modèles blown pour
-        #    la NOUVELLE clé sous forme « ...|BLOWN:k1,k2 » (caché en CSS).
-        # 2) JS chaîné via .then : lit ce suffix, retire/ajoute le
-        #    « épuisé sur cette clé » sur les <li> du dropdown
-        #    directement dans le DOM. Aucune réconciliation Gradio.
+        # Bouton « Rotation clés gemini » : update _CURRENT_GEMINI_KEY
+        # + label des 2 boutons (nouvel index « clé X/N »). Le suffix
+        # « épuisé » sera rafraîchi au prochain refresh naturel du
+        # dropdown (fin de flow, tab switch).
         def _switch_api_key():
-            import json as _json
             cur_key = _CURRENT_GEMINI_KEY
             cur_mod = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             next_key = pick_unblown_gemini_key(cur_mod, skip=cur_key)
             if next_key and next_key != cur_key:
                 set_current_gemini_key(next_key)
-            # Liste des modèles blown sur la NOUVELLE clé courante
-            today = _today_utc_str()
-            ckey = _CURRENT_GEMINI_KEY
-            blown_models = [m for m in GEMINI_MODELS
-                            if ckey and _BLOWN_TODAY.get((ckey, m, today), False)]
-            # Label visible + payload caché en CSS via classname pour
-            # transmission au JS (le ::before en CSS clip le suffix)
-            new_label = (
-                f"{_switch_key_btn_label()}|BLOWN:{','.join(blown_models)}"
-            )
+            new_label = _switch_key_btn_label()
             return gr.update(value=new_label), gr.update(value=new_label)
         _switch_outputs = [chat_switch_key_btn, jarvis_switch_key_btn]
-        # JS chaîné APRÈS la MAJ Python : extrait BLOWN:..., applique
-        # les marqueurs « épuisé sur cette clé » directement dans le DOM.
-        _reopen_js = """
-        () => {
-          var hidden = document.getElementById('jarvis-switch-key-btn')
-                    || document.getElementById('chat-switch-key-btn');
-          if (!hidden) return;
-          var fullLabel = (hidden.textContent || '').trim();
-          var m = fullLabel.match(/\\|BLOWN:([^|]*)$/);
-          var blownList = m ? m[1].split(',').filter(Boolean) : [];
-          var mapping = [
-            ['Gemini 3.1 Flash Lite', 'gemini-3.1-flash-lite'],
-            ['Gemini 2.5 Flash Lite', 'gemini-2.5-flash-lite'],
-            ['Gemini 3.5 Flash', 'gemini-3.5-flash']
-          ];
-          var lists = document.querySelectorAll('ul[role="listbox"]');
-          lists.forEach(function(ul) {
-            ul.querySelectorAll('li').forEach(function(li) {
-              if (li.classList.contains('jdm-switch-key-injected')) return;
-              var txt = (li.textContent || '');
-              var modelKey = null;
-              for (var i = 0; i < mapping.length; i++) {
-                if (txt.indexOf(mapping[i][0]) !== -1) { modelKey = mapping[i][1]; break; }
-              }
-              if (!modelKey) return;
-              var nowBlown = blownList.indexOf(modelKey) !== -1;
-              var hadBlown = txt.indexOf('épuisé sur cette clé') !== -1;
-              if (nowBlown && !hadBlown) {
-                var tn = [].slice.call(li.childNodes).filter(function(n) {
-                  return n.nodeType === 3 && n.textContent.trim();
-                });
-                if (tn.length > 0) {
-                  tn[0].textContent = tn[0].textContent.replace(
-                    /\\s*\\(.*?\\)\\s*$/, ''
-                  ).trim() + ' — épuisé sur cette clé ';
-                }
-              } else if (!nowBlown && hadBlown) {
-                [].slice.call(li.childNodes).filter(function(n) {
-                  return n.nodeType === 3;
-                }).forEach(function(t) {
-                  t.textContent = t.textContent.replace(
-                    /\\s*—\\s*épuisé sur cette clé\\s*/, ' '
-                  );
-                });
-              }
-            });
-          });
-          // Nettoie le label visible du bouton hidden (retire payload)
-          var clean = fullLabel.replace(/\\|BLOWN:.*$/, '');
-          hidden.textContent = clean;
-          // Force le re-render des markers ❌/🔑/etc en touchant le DOM
-          // (le MutationObserver dans _HEAD_JS captera ça)
-          document.body.setAttribute('data-jdm-tick', Date.now());
-        }
-        """
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        ).then(fn=None, inputs=None, outputs=None, js=_reopen_js)
+        )
         jarvis_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        ).then(fn=None, inputs=None, outputs=None, js=_reopen_js)
+        )
         # ---- Handlers consolidés .change pour les deux dropdowns ----
         # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
         # - set_current_model(_CURRENT_MODEL tracking)
