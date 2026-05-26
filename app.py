@@ -1096,13 +1096,32 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     """
     routed = LIQUID_MODEL_ROUTING.get(model_id, model_id)
     from langchain_openai import ChatOpenAI
+    # Timeout 600s (10 min) : le PREFILL d'un prompt de ~20k tokens
+    # (system + 27 outils) sur CPU prend deja 60-90s avant le 1er
+    # token sur un 1.2B (ratio prefill ~300 tok/s sur 12 coeurs). Plus
+    # marge confortable pour les tours longs et le 24B-A2B (prefill plus
+    # lent encore).
+    #
+    # keep_alive=30m : garde le modele en RAM ET son KV cache entre
+    # les calls successifs. Les tours suivants reutilisent le prefix
+    # cache → enorme gain (le system prompt n'est plus re-prefille).
+    # Sans ca, Ollama decharge apres ~5min d'inactivite par defaut.
+    #
+    # streaming=True : Ollama streame les tokens des qu'ils sortent →
+    # la connexion HTTP reste vivante, pas de coupure middleware sur
+    # les longues generations. langchain_openai sait gerer le streaming
+    # avec tool calling.
     inner = ChatOpenAI(
         model=routed,
         base_url=LIQUID_BASE_URL,
         api_key="ollama",  # placeholder — Ollama ne vérifie pas
         temperature=0.1,   # recommandé Liquid AI (cf. model card HF)
-        timeout=120.0,
-        extra_body={"think": False},
+        timeout=600.0,     # 10 min, large pour prefill 20k tokens + reponse
+        streaming=True,    # tokens en streaming → keepalive reseau
+        extra_body={
+            "think": False,
+            "keep_alive": "30m",  # garde modele + KV cache 30 min
+        },
     )
     return _LiquidChatOpenAI(inner)
 
