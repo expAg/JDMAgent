@@ -724,7 +724,16 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 # Sortie normale → on quitte le while
                 break
             except Exception as e:
-                # Quota PerMinute Gemini : on attend + on CONTINUE le
+                # 1) Quota QUOTIDIEN épuisé → signaler et stop, pas de retry.
+                from jarvis import is_per_day_quota_exhausted
+                if is_per_day_quota_exhausted(e):
+                    raise RuntimeError(
+                        "Quota quotidien Gemini free tier épuisé "
+                        "(PerDay). Le quota se réinitialise à minuit "
+                        "UTC. Réessaie demain ou bascule sur un modèle "
+                        "BYOK (Claude / GPT)."
+                    ) from e
+                # 2) Quota PerMinute Gemini : on attend + on CONTINUE le
                 # travail (pas de reset). accumulated_messages contient
                 # tout ce que l'agent a déjà produit — on le passe tel
                 # quel au prochain agent.stream() pour reprendre là où
@@ -735,11 +744,11 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                     if consecutive_rate_limit_hits >= MAX_CONSECUTIVE_RATE_LIMIT:
                         raise RuntimeError(
                             f"Quotas Gemini free tier croisés "
-                            f"({consecutive_rate_limit_hits} hits consécutifs "
-                            f"sans progrès). Les fenêtres glissantes des "
-                            f"différents quotas ne s'ouvrent jamais en "
-                            f"même temps. Réessaie dans quelques minutes "
-                            f"ou bascule sur un modèle BYOK (Claude / GPT)."
+                            f"({consecutive_rate_limit_hits} hits PerMinute "
+                            f"consécutifs sans progrès). Les fenêtres "
+                            f"glissantes ne s'ouvrent jamais en même temps. "
+                            f"Réessaie dans quelques minutes ou bascule sur "
+                            f"un modèle BYOK (Claude / GPT)."
                         ) from e
                     rate_limit_attempts += 1
                     wait_msg = (

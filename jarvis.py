@@ -253,32 +253,46 @@ def count_consolidated_in_messages(messages: list) -> int:
     return n
 
 
-def detect_rate_limit_retry(exc) -> Optional[float]:
-    """Détecte les erreurs 429 quota Gemini et extrait le délai de
-    retry recommandé par l'API.
+def is_per_day_quota_exhausted(exc) -> bool:
+    """Détecte les quotas QUOTIDIENS épuisés (PerDay) sur Gemini.
 
-    On fait CONFIANCE au `retryDelay` de l'API : si elle dit « retry
-    in Xs » et que X est raisonnable (<= 120s), on attend X+1s. Peu
-    importe le type de quota :
-      - `PerMinute` : régénère vite, typique
-      - `PerDay` : normalement délai très long (h), mais en pratique
-        Google renvoie parfois un délai court (rafale qui se débloque)
-        → on attend si l'API le suggère
-      - autres : pareil
+    Le retryDelay annoncé par l'API est trompeur sur ce type de quota
+    (souvent ~25-60s alors que le vrai reset est à minuit UTC). On
+    veut détecter ce cas EN AMONT du retry pour signaler clairement
+    que c'est terminé pour la journée, sans tenter de boucler.
+
+    Match sur quotaId contenant `PerDay` (typiquement
+    `GenerateRequestsPerDayPerProjectPerModel-FreeTier`).
+    """
+    msg = str(exc)
+    if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
+        return False
+    return "PerDay" in msg
+
+
+def detect_rate_limit_retry(exc) -> Optional[float]:
+    """Détecte les erreurs 429 quota PerMinute Gemini (transients) et
+    extrait le délai de retry recommandé par l'API.
+
+    Ne renvoie un délai QUE pour les quotas PerMinute (fenêtres
+    glissantes qui se régénèrent vite). Les quotas PerDay sont
+    explicitement exclus → cf. `is_per_day_quota_exhausted` qui les
+    intercepte en amont pour signaler une exhaustion réelle.
 
     Renvoie None si :
       - pas un 429 / RESOURCE_EXHAUSTED
+      - pas un PerMinute (PerDay traité ailleurs)
       - pas de retryDelay parseable
-      - délai > 120s (clairement un reset quotidien, on n'attend pas)
+      - délai > 120s
     """
     import re
     msg = str(exc)
     if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
         return None
-    # Format prioritaire : « Please retry in 44.989851353s. »
+    if "PerMinute" not in msg:
+        return None  # PerDay ou autre → pas de retry ici
     m = re.search(r"retry in ([\d.]+)s", msg)
     if not m:
-        # Alt : « 'retryDelay': '44s' »
         m = re.search(r"retryDelay['\"]?\s*:\s*['\"]?(\d+)s", msg)
     if not m:
         return None
@@ -1251,26 +1265,30 @@ def run_jarvis_flow(
                         # passant les `accumulated_messages` pour que langgraph
                         # reprenne là où il en était (les messages déjà
                         # produits = HumanMessage + AIMessages + ToolMessages).
+                        # 1) Quota QUOTIDIEN épuisé → on ne retry PAS,
+                        # on signale clairement et on remonte.
+                        if is_per_day_quota_exhausted(e):
+                            raise RuntimeError(
+                                "Quota quotidien Gemini free tier épuisé "
+                                "(PerDay). Le quota se réinitialise à "
+                                "minuit UTC. Réessaie demain ou bascule "
+                                "sur un modèle BYOK (Claude / GPT)."
+                            ) from e
+                        # 2) Rate limit PerMinute → retry avec attente
                         retry_delay = detect_rate_limit_retry(e)
                         if retry_delay is not None:
                             consecutive_rate_limit_hits += 1
-                            # Si 3 hits consécutifs SANS aucun chunk reçu
-                            # entre temps → quotas Google croisés bloqués
-                            # (typique : RequestsPerMinute libère mais
-                            # InputTokensPerMinute reste bouché). Inutile
-                            # de boucler, on tombe en erreur explicite.
+                            # Filet : 3 hits PerMinute consécutifs sans
+                            # progrès = quotas glissants croisés bloqués.
                             if consecutive_rate_limit_hits >= MAX_CONSECUTIVE_RATE_LIMIT:
                                 raise RuntimeError(
                                     f"Quotas Gemini free tier croisés "
                                     f"({consecutive_rate_limit_hits} hits "
-                                    f"de rate limit consécutifs sans "
-                                    f"aucun progrès). Les fenêtres "
-                                    f"glissantes des différents quotas "
-                                    f"(requests/min, tokens/min, "
-                                    f"requests/day) ne s'ouvrent jamais "
-                                    f"en même temps. Réessaie dans "
-                                    f"quelques minutes ou bascule sur "
-                                    f"un modèle BYOK (Claude / GPT)."
+                                    f"PerMinute consécutifs sans progrès). "
+                                    f"Les fenêtres glissantes ne s'ouvrent "
+                                    f"jamais en même temps. Réessaie dans "
+                                    f"quelques minutes ou bascule sur un "
+                                    f"modèle BYOK (Claude / GPT)."
                                 ) from e
                             rate_limit_attempts += 1
                             wait_msg = (

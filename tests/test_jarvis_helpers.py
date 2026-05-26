@@ -19,6 +19,7 @@ from jarvis import (
     build_signalement_prompt,
     build_stats_prompt,
     detect_rate_limit_retry,
+    is_per_day_quota_exhausted,
 )
 
 
@@ -43,14 +44,27 @@ def test_detect_rate_limit_per_minute_extracts_delay():
     assert 45.0 <= delay <= 46.0  # 44.989 + 1.0 marge
 
 
-def test_detect_rate_limit_per_day_with_short_delay_retries():
-    """Quota PerDay avec délai court (rafale qui se débloque) → on retry.
-    On fait confiance au retryDelay de l'API, peu importe le type de quota.
-    Le seul filtre est délai <= 120s (cf. test_detect_rate_limit_too_long)."""
+def test_detect_rate_limit_per_day_returns_none():
+    """Quota PerDay : detect_rate_limit_retry renvoie None (pas de
+    retry, on traite via is_per_day_quota_exhausted en amont)."""
     msg = _GEMINI_429_PERMINUTE.replace("PerMinute", "PerDay")
-    delay = detect_rate_limit_retry(Exception(msg))
-    assert delay is not None
-    assert 45.0 <= delay <= 46.0
+    assert detect_rate_limit_retry(Exception(msg)) is None
+
+
+def test_is_per_day_quota_exhausted_detects_per_day():
+    """Detect du quota quotidien épuisé."""
+    msg = _GEMINI_429_PERMINUTE.replace("PerMinute", "PerDay")
+    assert is_per_day_quota_exhausted(Exception(msg)) is True
+
+
+def test_is_per_day_quota_exhausted_false_on_per_minute():
+    """PerMinute n'est PAS un quota quotidien."""
+    assert is_per_day_quota_exhausted(Exception(_GEMINI_429_PERMINUTE)) is False
+
+
+def test_is_per_day_quota_exhausted_false_on_non_quota():
+    """Erreur générique : pas un quota."""
+    assert is_per_day_quota_exhausted(ValueError("foo")) is False
 
 
 def test_detect_rate_limit_non_429_returns_none():
