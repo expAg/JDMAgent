@@ -372,12 +372,25 @@ _BLOWN_TODAY: dict[tuple[str, str, str], bool] = {}
 # l'API Google quand on tente d'utiliser une clé bidon.
 _INVALID_KEYS: set[str] = set()
 
+# Version counter incrémenté à chaque mark blown / invalid. Le wrapper
+# `_refresh_dropdown_wrap` ne yield un `gr.update(choices=...)` QUE si
+# la version a changé depuis le dernier tour — sinon il yield
+# `gr.update()` (no-op). Évite de spammer Gradio avec des choices
+# identiques à chaque chunk pendant le streaming.
+_REGISTRY_VERSION: int = 0
+
+
+def _bump_registry_version() -> None:
+    global _REGISTRY_VERSION
+    _REGISTRY_VERSION += 1
+
 
 def mark_gemini_key_invalid(key: str) -> None:
     """Marque une clé comme définitivement invalide pour la session
     (typo, révoquée, jamais activée pour Gemini, etc.)."""
-    if key:
+    if key and key not in _INVALID_KEYS:
         _INVALID_KEYS.add(key)
+        _bump_registry_version()
 
 
 def _today_utc_str() -> str:
@@ -388,7 +401,10 @@ def _today_utc_str() -> str:
 def mark_gemini_key_blown(key: str, model: str) -> None:
     """Marque une (clé, modèle) comme épuisée pour aujourd'hui UTC."""
     if key and model:
-        _BLOWN_TODAY[(key, model, _today_utc_str())] = True
+        cell = (key, model, _today_utc_str())
+        if not _BLOWN_TODAY.get(cell, False):
+            _BLOWN_TODAY[cell] = True
+            _bump_registry_version()
 
 
 def is_model_fully_blown(model: str) -> bool:
@@ -405,16 +421,27 @@ def is_model_fully_blown(model: str) -> bool:
 
 
 def _refresh_dropdown_wrap(fn):
-    """Decorator/wrapper qui ajoute `gr.update(choices=build_model_choices())`
-    en DERNIÈRE position des tuples yieldés par un generator Gradio.
-    Permet de refresh dynamiquement le dropdown modèle à chaque tour
-    sans toucher au code interne du runner. L'appelant doit ajouter
-    le composant dropdown en dernier dans `outputs=[...]` du .click().
+    """Decorator/wrapper qui ajoute en DERNIÈRE position des tuples
+    yieldés un update du dropdown modèle — MAIS seulement quand
+    l'état du pool change (registry version bumpée).
+
+    Si rien n'a changé depuis le dernier yield, on envoie un
+    `gr.update()` no-op qui ne traverse pas la frontière réseau
+    pour rebuild le dropdown. Premier tour : on snapshot la version
+    courante et on yield un update initial (pour synchroniser après
+    une rebuild de page).
     """
     def wrapped(*args, **kwargs):
+        last_seen = -1  # force un update au premier tour
         for chunk in fn(*args, **kwargs):
             t = chunk if isinstance(chunk, tuple) else (chunk,)
-            yield (*t, gr.update(choices=build_model_choices()))
+            current = _REGISTRY_VERSION
+            if current != last_seen:
+                last_seen = current
+                yield (*t, gr.update(choices=build_model_choices()))
+            else:
+                # No-op : le dropdown reste tel quel, pas de bande passante gaspillée
+                yield (*t, gr.update())
     return wrapped
 
 
@@ -2226,14 +2253,20 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 visible=False,
                 render=False,
             )
-            # Wrapper qui ajoute un 3e yield (refresh des choices du
-            # dropdown modèle) à chaque tour de chat_with_agent —
-            # permet d'afficher dynamiquement « ❌ épuisé aujourd'hui »
-            # quand toutes les clés du pool sont blown pour ce modèle.
+            # Wrapper qui ajoute un 3e yield (refresh du dropdown modèle).
+            # Optimisé : ne yield un vrai gr.update(choices=...) QUE si la
+            # version du registry des clés a changé depuis le dernier tour.
+            # Sinon : gr.update() no-op (pas de bande passante gaspillée).
             def _chat_with_agent_with_dropdown_refresh(*args, **kwargs):
+                last_seen = -1
                 for chunk in chat_with_agent(*args, **kwargs):
                     text, viz_update = chunk
-                    yield text, viz_update, gr.update(choices=build_model_choices())
+                    current = _REGISTRY_VERSION
+                    if current != last_seen:
+                        last_seen = current
+                        yield text, viz_update, gr.update(choices=build_model_choices())
+                    else:
+                        yield text, viz_update, gr.update()
 
             chat = gr.ChatInterface(
                 fn=_chat_with_agent_with_dropdown_refresh,
