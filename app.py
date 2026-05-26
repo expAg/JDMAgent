@@ -3826,31 +3826,37 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
         _switch_outputs = [model_in, jarvis_model,
                            chat_switch_key_btn, jarvis_switch_key_btn]
-        # JS chaîné APRÈS la réponse Python : ferme le dropdown ouvert
-        # puis le ré-ouvre → re-render frais avec les nouveaux labels.
+        # JS chaîné APRÈS la réponse Python : trouve TOUS les inputs
+        # combobox visibles, force close (body.click), puis re-open via
+        # ArrowDown (protocole combobox standard, plus robuste que
+        # .click() qui ne marche pas toujours sur les dropdowns Gradio).
         _reopen_js = """
         () => {
-          // Trouve la listbox Gemini actuellement visible
-          var lists = document.querySelectorAll('ul[role="listbox"]');
-          var target = null;
-          lists.forEach(function(ul) {
-            if ((ul.textContent || '').indexOf('Gemini') === -1) return;
-            var r = ul.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0) target = ul;
+          // Tous les inputs combobox visibles
+          var inputs = document.querySelectorAll('input[role="combobox"], input[aria-haspopup="listbox"]');
+          var visible = [];
+          inputs.forEach(function(inp) {
+            if (inp.offsetParent !== null) visible.push(inp);
           });
-          if (!target) return;
-          var root = target.closest('[class*="dropdown"]');
-          if (!root) return;
-          var trigger = root.querySelector('input');
-          if (!trigger) return;
-          // Close
-          trigger.blur();
+          // Close any open dropdown
           document.body.click();
-          // Re-open
+          // Re-open via ArrowDown sur le dernier input qui avait le focus
           setTimeout(function() {
-            trigger.focus();
-            trigger.click();
-          }, 150);
+            // On essaye d'abord celui qui contient « Modèle » dans son label
+            var target = null;
+            visible.forEach(function(inp) {
+              var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
+              if (!root) return;
+              var txt = root.textContent || '';
+              if (txt.indexOf('Modèle') !== -1 && !target) target = inp;
+            });
+            if (!target && visible.length > 0) target = visible[0];
+            if (!target) return;
+            target.focus();
+            target.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'ArrowDown', code: 'ArrowDown', bubbles: true,
+            }));
+          }, 100);
         }
         """
         chat_switch_key_btn.click(
