@@ -441,6 +441,12 @@ def _today_utc_str() -> str:
 # à minuit Pacific Time, comme Gemini lui-même).
 _POOL_STATE_FILE = "pool_state.json"
 
+# DIAG : capture le dernier appel à _build_openai_compat / _build_gemini_native
+# (model, source de la clé, base_url, token masqué). Utilisé pour afficher
+# dans le chatbot ce qui a été effectivement envoyé à Gemini quand on
+# reçoit un INVALID_KEY inattendu.
+_DEBUG_LAST_BUILD: dict = {}
+
 
 def _save_pool_state() -> None:
     """Persiste sur disque l'état blown/invalid + clé/modèle courants.
@@ -837,10 +843,30 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     `override_token` : utilisé en PRIORITÉ sur l'env (cas du pool Gemini
     où on veut forcer une clé spécifique pour ce call).
     """
+    env_token = os.environ.get(env_var, "").strip()
     if override_token and override_token.strip():
         token = override_token.strip()
+        token_source = "override_token (pool)"
     else:
-        token = os.environ.get(env_var, "").strip()
+        token = env_token
+        token_source = f"env {env_var}"
+    # DIAG : enregistre l'état exact du build pour pouvoir diagnostiquer.
+    _DEBUG_LAST_BUILD.clear()
+    _DEBUG_LAST_BUILD.update({
+        "builder": "_build_openai_compat",
+        "model_id_requested": model_id,
+        "env_var": env_var,
+        "env_var_set": bool(env_token),
+        "env_var_masked": _masked_key(env_token) if env_token else "(vide)",
+        "override_token_provided": bool(override_token),
+        "override_token_masked": (_masked_key(override_token.strip())
+                                  if override_token and override_token.strip()
+                                  else "(non fourni)"),
+        "token_source": token_source,
+        "token_used_masked": _masked_key(token) if token else "(vide)",
+        "base_url": base_url,
+        "routed_model": routing.get(model_id, "(routing manquant)"),
+    })
     if not token:
         raise ValueError(
             f"Ce modèle nécessite un token {label} côté Space (variable "

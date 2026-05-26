@@ -1391,20 +1391,35 @@ def run_jarvis_flow(
                                                   "gemini-3.1-flash-lite")
                                           if _app else "gemini-3.1-flash-lite")
                             if model != _PROTECTED:
-                                # Abort propre sans toucher au pool
+                                # Abort + DIAG complet pour pouvoir tracer
+                                # honnêtement (cas 2.5 qui renvoie INVALID
+                                # alors que clé valide pour 3.1).
+                                diag_lines = [
+                                    f"⚠️ **`API_KEY_INVALID` pour `{model}`** "
+                                    f"alors que clé attendue valide pour `{_PROTECTED}`."
+                                    f"\n\n**Diagnostic du dernier build LLM** :",
+                                ]
+                                try:
+                                    db = getattr(_app, '_DEBUG_LAST_BUILD', {}) or {}
+                                    if not db:
+                                        diag_lines.append("- *(_DEBUG_LAST_BUILD vide)*")
+                                    for k, v in db.items():
+                                        diag_lines.append(f"- `{k}` : `{v}`")
+                                except Exception as _ex:
+                                    diag_lines.append(f"- *(diag indisponible : {_ex})*")
+                                diag_lines.append(
+                                    "\n**Exception brute Gemini** (premiers 1500 chars) :"
+                                )
+                                diag_lines.append(f"```\n{str(e)[:1500]}\n```")
+                                diag_lines.append(
+                                    f"\n➡️ Pour l'instant, bascule sur "
+                                    f"`{_PROTECTED}` ou un BYOK. La clé n'est "
+                                    f"PAS marquée invalide globalement."
+                                )
                                 yield (
                                     [{"role": "user", "content": user_display},
                                      {"role": "assistant",
-                                      "content": (
-                                        f"⚠️ La clé Google a renvoyé "
-                                        f"`API_KEY_INVALID` pour `{model}`. "
-                                        f"Cela peut indiquer un problème "
-                                        f"spécifique à ce modèle (pas dispo "
-                                        f"sur cette clé / endpoint OpenAI-"
-                                        f"compat capricieux). La clé n'est "
-                                        f"PAS marquée invalide globalement. "
-                                        f"➡️ Bascule sur `{_PROTECTED}` ou "
-                                        f"un BYOK Claude/GPT.")}],
+                                      "content": "\n".join(diag_lines)}],
                                     last_file_path,
                                     _read_file_preview(last_file_path),
                                 )
