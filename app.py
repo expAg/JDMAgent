@@ -481,8 +481,10 @@ def build_model_choices() -> list[tuple[str, str]]:
     """Construit la liste de (label, value) du dropdown des modèles.
 
     Marquage visuel :
-      - Modèle blown sur la clé courante → préfixe `❌ ` (et JS dans
-        `_HEAD_JS` masque le ✓ natif Gradio pour ces items).
+      - Modèle blown sur la clé courante → suffixe `— épuisé sur cette
+        clé`. PAS de ❌ dans le label : le JS dans `_HEAD_JS` détecte
+        ce suffixe et REMPLACE le ✓ natif Gradio par ❌ à la même
+        position (insertion d'un span avant le SVG + masquage du SVG).
       - Modèle actuellement sélectionné → préfixe `✅ ` (en plus du
         ✓ natif Gradio).
       - Autres modèles disponibles → label original sans préfixe.
@@ -492,7 +494,7 @@ def build_model_choices() -> list[tuple[str, str]]:
     for key, label in ALL_MODELS.items():
         if key in GEMINI_NATIVE_REQUIRED and is_model_blown_on_current_key(key):
             base = _re.sub(r"\s*\(.*?\)\s*$", "", label).strip()
-            decorated = f"❌ {base} — épuisé sur cette clé"
+            decorated = f"{base} — épuisé sur cette clé"
         elif key == _CURRENT_MODEL:
             decorated = f"✅ {label}"
         else:
@@ -1874,19 +1876,48 @@ _HEAD_JS = """
     }
   }
 
-  // Masquer le ✓ natif Gradio sur les items du dropdown contenant
-  // ❌ (= modèle blown sur la clé courante) — pour que ❌ "remplace"
-  // visuellement le check natif au lieu de cohabiter avec lui.
-  function hideNativeCheckOnBlownOptions() {
-    // Cible large : tous les items de toutes les listbox Gradio
+  // REMPLACE le ✓ natif Gradio par ❌ pour les items dont le label
+  // contient « épuisé sur cette clé » (= modèle blown). Le remplacement
+  // se fait à la position EXACTE du ✓ natif :
+  //   1. Détecte l'item via son texte
+  //   2. Trouve le SVG/checkmark natif Gradio
+  //   3. Insert un <span class="jdm-x-marker">❌</span> juste avant
+  //   4. Masque le SVG natif
+  // Si l'item N'EST PAS blown, on remet le SVG visible et retire notre
+  // span (cas où l'état a basculé blown -> dispo entre deux yields).
+  function replaceCheckOnBlownOptions() {
     var options = document.querySelectorAll('[role="option"], .options li, ul[role="listbox"] li');
     options.forEach(function(opt) {
       var text = opt.textContent || '';
-      var hasX = text.indexOf('❌') !== -1;
-      // Trouve l'éventuel SVG / icône de check natif Gradio dans cet item
+      // Détection par le suffixe distinctif posé dans build_model_choices
+      var isBlown = text.indexOf('épuisé sur cette clé') !== -1;
       var icons = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
       icons.forEach(function(ic) {
-        ic.style.display = hasX ? 'none' : '';
+        // Le span de remplacement, s'il a déjà été inséré, est
+        // marqué via dataset.jdmX
+        var prev = ic.previousElementSibling;
+        var hasMarker = prev && prev.dataset && prev.dataset.jdmX === '1';
+        if (isBlown) {
+          if (!hasMarker) {
+            var x = document.createElement('span');
+            x.textContent = '❌';
+            x.className = 'jdm-x-marker';
+            x.dataset.jdmX = '1';
+            // Match approximatif des dimensions du SVG natif pour ne
+            // pas casser l'alignement
+            x.style.display = 'inline-block';
+            x.style.width = ic.offsetWidth ? (ic.offsetWidth + 'px') : '1em';
+            x.style.textAlign = 'center';
+            ic.parentNode.insertBefore(x, ic);
+          }
+          ic.style.display = 'none';
+        } else {
+          // Pas blown → restore SVG et retire notre marker s'il existe
+          if (hasMarker) {
+            prev.remove();
+          }
+          ic.style.display = '';
+        }
       });
     });
   }
@@ -1895,7 +1926,7 @@ _HEAD_JS = """
     pushAideTabRight();
     colorJarvisTab();
     applyThinkingTooltip();
-    hideNativeCheckOnBlownOptions();
+    replaceCheckOnBlownOptions();
   }
   document.addEventListener('DOMContentLoaded', applyTabTweaks);
   setTimeout(applyTabTweaks, 400);
