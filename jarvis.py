@@ -300,29 +300,43 @@ def _extract_quota_model(exc) -> Optional[str]:
 def is_per_day_quota_exhausted(exc, expected_model: Optional[str] = None) -> bool:
     """Détecte les quotas QUOTIDIENS épuisés sur Gemini.
 
-    Match STRICT sur quotaId contenant `PerDay` (typiquement
-    `GenerateRequestsPerDayPerProjectPerModel-FreeTier`). On évite les
-    heuristiques sur metric names — `free_tier_requests` apparaît AUSSI
-    dans les payloads PerMinute (le même metric existe pour les
-    fenêtres minute ET jour), faux positifs assurés.
+    Logique STRICTE en deux temps :
+      1. PAS un 429 / RESOURCE_EXHAUSTED → False
+      2. PAS un PerDay → False :
+         - si le message contient « PerMinute » sans « PerDay » dans un
+           quotaId de violation → PerMinute, jamais PerDay.
+         - on regarde UNIQUEMENT le quotaId à l'intérieur de la première
+           « violations: [...] » de l'erreur (les autres quotaId qui
+           pourraient apparaître ailleurs — limits configurées,
+           messages de doc — sont ignorés).
+      3. si expected_model fourni : le quota doit cibler exactement
+         ce modèle (extrait via quotaDimensions).
 
-    DURCISSEMENT : on cherche `PerDay` UNIQUEMENT à l'intérieur d'un
-    `quotaId` (pas n'importe où dans le message). L'ancien check naïf
-    `'PerDay' in msg` matchait à tort quand un payload PerMinute
-    embarquait une mention « PerDay » dans une description de quota
-    secondaire ou un lien de doc.
-
-    Si `expected_model` est fourni, on ne renvoie True QUE si le quota
-    concerne exactement ce modèle (extrait via quotaDimensions).
+    Cible : éviter les faux positifs PerDay observés quand le payload
+    PerMinute contenait par ailleurs une mention « PerDay » dans une
+    description secondaire.
     """
     import re
     msg = str(exc)
     if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
         return False
-    # quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'
-    # quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
-    # On cherche PerDay STRICTEMENT à l'intérieur d'une valeur de quotaId.
-    if not re.search(r"['\"]quotaId['\"]?\s*:\s*['\"][^'\"]*PerDay", msg):
+    # Extrait le bloc 'violations: [...]' si présent. Le quotaId du
+    # quota EFFECTIVEMENT violé y est. Hors de ce bloc on peut trouver
+    # des quotaId informatifs (limits configurées, autres infos) qui
+    # ne doivent PAS déclencher la détection.
+    m = re.search(r"['\"]?violations['\"]?\s*:\s*\[(.*?)\]", msg, re.DOTALL)
+    block = m.group(1) if m else msg  # fallback : tout le msg si pas trouvé
+    if not re.search(r"['\"]quotaId['\"]?\s*:\s*['\"][^'\"]*PerDay", block):
+        return False
+    # Sanity check final : si le bloc contient AUSSI un PerMinute
+    # violation mais pas un PerDay isolé → c'est PerMinute, pas PerDay.
+    has_perminute_violation = bool(re.search(
+        r"['\"]quotaId['\"]?\s*:\s*['\"][^'\"]*PerMinute", block))
+    has_perday_violation = bool(re.search(
+        r"['\"]quotaId['\"]?\s*:\s*['\"][^'\"]*PerDay", block))
+    if has_perminute_violation and not has_perday_violation:
+        return False
+    if not has_perday_violation:
         return False
     if expected_model is None:
         return True

@@ -1328,6 +1328,9 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         set_current_model(GEMINI_POOL_PROTECTED_MODEL)
                     except Exception:
                         pass
+                    # Extrait un snippet du message API réel pour
+                    # transparence (cas où la détection a tort).
+                    err_snippet = str(e)[:500].replace("`", "ʼ")
                     switch_msg = (
                         f"⚠️ **Modèle `{model}` épuisé pour aujourd'hui** "
                         f"(quota quotidien).\n\n"
@@ -1335,7 +1338,9 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         f"`{GEMINI_POOL_PROTECTED_MODEL}` (500 req/j).\n\n"
                         f"➡️ **Renvoie ton message** pour continuer avec "
                         f"`{GEMINI_POOL_PROTECTED_MODEL}`, ou choisis un "
-                        f"autre modèle BYOK (Claude / GPT)."
+                        f"autre modèle BYOK (Claude / GPT).\n\n"
+                        f"<details><summary>Erreur API brute (debug)</summary>\n\n"
+                        f"```\n{err_snippet}\n```\n</details>"
                     )
                     yield switch_msg, _NOOP_FILE
                     return
