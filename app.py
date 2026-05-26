@@ -539,9 +539,17 @@ def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
 
 def pick_unblown_gemini_key(model: str,
                              skip: Optional[str] = None) -> Optional[str]:
-    """Renvoie la première clé du pool non-épuisée pour `model`, ou
-    None si toutes blown / pool vide. `skip` exclut une clé donnée
-    (utilisé pour ne pas re-choisir celle qui vient de hit le PerDay).
+    """Renvoie une clé du pool non-épuisée pour `model`, ou None si
+    toutes blown / pool vide. `skip` exclut une clé donnée (utilisé pour
+    ne pas re-choisir celle qui vient de hit le PerDay).
+
+    PRIORITÉ STICKY : si `_CURRENT_GEMINI_KEY` est déjà fixée pour cette
+    session ET qu'elle reste utilisable (présente dans le pool, non
+    invalide, non blown pour `model`), on la réutilise. Sans ça, chaque
+    onglet (LLM Chatbot vs Jarvis) piquait une clé différente, et les
+    marquages « blown » de l'un n'étaient pas visibles sur l'autre. Avec
+    le sticky, toute la session partage la même clé courante tant qu'elle
+    n'est pas épuisée.
 
     `model` est requis : chaque modèle Gemini a son propre quota PerDay,
     donc une clé peut être blown pour un modèle et OK pour un autre.
@@ -550,6 +558,13 @@ def pick_unblown_gemini_key(model: str,
     pour la session courante."""
     keys = _parse_google_keys()
     today = _today_utc_str()
+    # 1) Sticky : réutilise _CURRENT_GEMINI_KEY si encore utilisable
+    cur = _CURRENT_GEMINI_KEY
+    if (cur and cur != skip and cur in keys
+            and cur not in _INVALID_KEYS
+            and not _BLOWN_TODAY.get((cur, model, today), False)):
+        return cur
+    # 2) Sinon, pique la première dispo dans l'ordre du pool
     for k in keys:
         if k == skip:
             continue
@@ -3312,15 +3327,18 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             gr.Markdown(AIDE_MD)
 
         # ----- Sync des dropdowns modèle entre onglets -----
-        # Quand un modèle est blown (PerDay) sur LLM Chatbot, le suffixe
-        # « épuisé sur cette clé » n'apparaissait pas sur Jarvis tant
-        # qu'on ne lançait pas un flow Jarvis. On rafraîchit les DEUX
-        # dropdowns à chaque changement d'onglet (cheap, déclenché par
-        # interaction utilisateur uniquement).
+        # 1) Le marquage « épuisé » d'un modèle (blown PerDay) doit être
+        #    visible sur les DEUX dropdowns sans avoir à lancer un flow.
+        # 2) Le modèle courant (_CURRENT_MODEL, session-wide) doit être
+        #    affiché par les DEUX dropdowns à chaque retour d'onglet —
+        #    pas le `value` initial hardcodé du composant.
+        # → À chaque changement d'onglet : on refresh choices + on force
+        #   value=_CURRENT_MODEL pour persister la sélection session-wide.
         def _refresh_both_dropdowns():
+            cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             return (
-                gr.update(choices=build_model_choices()),
-                gr.update(choices=build_model_choices()),
+                gr.update(choices=build_model_choices(), value=cur),
+                gr.update(choices=build_model_choices(), value=cur),
             )
         main_tabs.select(
             _refresh_both_dropdowns,
