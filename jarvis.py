@@ -246,6 +246,87 @@ def build_relance_summary(messages: list, n_done: int, target: int,
     return "\n".join(lines)
 
 
+# Seuil de condensation proactive de l'historique. Au-delà, l'historique
+# devient trop coûteux à ré-envoyer à chaque chunk → on remplace par
+# [HumanMessage initial, HumanMessage(summary+nudge)] avant que le LLM
+# n'explose le contexte. ~240k tokens ≈ 960k chars (heuristique simple
+# « 1 token ≈ 4 chars ») — Gemini 3.x supporte 1M tokens, on coupe bien
+# avant pour garder de la marge.
+HISTORY_CONDENSE_THRESHOLD_CHARS = 960_000
+
+# Nudges aléatoires injectés après un résumé condensé pour apporter de
+# la variété et de la nouveauté entre relances. Trois variantes
+# tirées au sort (random.choice) → l'agent ne reproduit pas le même
+# ton ni la même stratégie deux fois de suite.
+_CONDENSE_NUDGE_VARIANTS = [
+    "Continue en apportant plus de **variété et de nouveauté** dans tes "
+    "propositions — change de relation, change d'angle, ne reprends pas "
+    "ce qui a déjà été tenté.",
+    "Continue : lorsque tu cibles un terme source ou une cible à "
+    "**sens spécifique**, désambiguïse (`disambiguate`) puis propose / "
+    "consolide avec le ou les **raffinements** plutôt qu'avec le "
+    "terme générique.",
+    "Continue : tu **n'as pas de limites**. Tu peux utiliser des termes "
+    "techniques domain-specific, des néologismes, du vocabulaire de "
+    "niche — la langue n'a pas de cloisons, du moment que tu passes "
+    "par le flow d'enrichissement.",
+]
+
+
+def _history_total_chars(messages: list) -> int:
+    """Estimation grossière du poids de l'historique en chars.
+    Sum(len(content)) sur tous les messages. Pas un comptage de tokens
+    précis mais suffisant pour le seuil de condensation (heuristique
+    1 token ≈ 4 chars)."""
+    return sum(len(str(getattr(m, "content", "") or "")) for m in messages)
+
+
+def condense_history_with_nudge(
+    messages: list,
+    *,
+    consolidation_target: Optional[int],
+    attempt: int = 0,
+) -> Optional[list]:
+    """Condense `messages` en `[HumanMessage initial, HumanMessage(summary
+    + nudge aléatoire)]` SI son poids dépasse `HISTORY_CONDENSE_THRESHOLD_CHARS`.
+
+    Retourne la nouvelle liste si la condensation a eu lieu, `None` sinon
+    (poids sous le seuil ou erreur).
+
+    Le summary est 100% déterministe (parcours Python — zéro appel LLM).
+    Le nudge est tiré aléatoirement parmi `_CONDENSE_NUDGE_VARIANTS` pour
+    apporter de la variété entre relances. La source de vérité du compteur
+    est `count_consolidations()` (registry cumulatif, survit aux resets).
+
+    Utilisé en DEUX endroits :
+      1. Après attente PerMinute (cf. except dans run_jarvis_flow)
+      2. Proactivement en cours de streaming dès que le seuil est atteint
+         (évite que le contexte LLM n'explose même sans rate-limit)
+    """
+    total_chars = _history_total_chars(messages)
+    if total_chars <= HISTORY_CONDENSE_THRESHOLD_CHARS:
+        return None
+    try:
+        from langchain_core.messages import HumanMessage as _HM
+        from jdm_agent.enrich import count_consolidations
+        import random as _random
+        n_so_far = count_consolidations()
+        summary = build_relance_summary(
+            messages,
+            n_so_far,
+            consolidation_target or (n_so_far + 1),
+            attempt,
+            None,
+        )
+        nudge = _random.choice(_CONDENSE_NUDGE_VARIANTS)
+        return [
+            messages[0],  # HumanMessage initial (le prompt original)
+            _HM(content=summary + "\n\n" + nudge),
+        ]
+    except Exception:
+        return None
+
+
 def count_consolidated_in_messages(messages: list) -> int:
     """Compte les triplets consolidés en parcourant les ToolMessages
     `validate_candidate` accumulés pendant l'invocation agent.
@@ -1265,6 +1346,7 @@ def run_jarvis_flow(
             # (= du vrai progrès LLM s'est produit).
             consecutive_rate_limit_hits = 0
             MAX_CONSECUTIVE_RATE_LIMIT = 3
+            proactive_condense_count = 0
             with budget_context(limit=limit) as budget, exclusion_context():
                 # boucle retry quota : ILLIMITÉ tant que le délai
                 # retry est court (cf. detect_rate_limit_retry, cap
@@ -1272,6 +1354,7 @@ def run_jarvis_flow(
                 # entre deux hits. Si quotas croisés (3 hits sans
                 # progrès), on tombe en erreur finale.
                 while True:
+                    _need_restart_after_condense = False
                     try:
                         for chunk in agent.stream(
                             {"messages": accumulated_messages},
@@ -1405,6 +1488,40 @@ def run_jarvis_flow(
                                             last_file_path,
                                             _read_file_preview(last_file_path),
                                         )
+                            # FIN DE CHUNK : check si historique
+                            # dépasse le seuil → condensation proactive
+                            # (mêmes conditions que post-PerMinute :
+                            # build_relance_summary + nudge random).
+                            # Si condensé, on BREAK le for chunk et on
+                            # CONTINUE le while True pour relancer
+                            # agent.stream avec les messages condensés.
+                            chars_before = _history_total_chars(accumulated_messages)
+                            if chars_before > HISTORY_CONDENSE_THRESHOLD_CHARS:
+                                condensed = condense_history_with_nudge(
+                                    accumulated_messages,
+                                    consolidation_target=consolidation_target,
+                                    attempt=proactive_condense_count,
+                                )
+                                if condensed is not None:
+                                    proactive_condense_count += 1
+                                    accumulated_messages = condensed
+                                    _add_line(
+                                        f"*🗜️ Historique condensé "
+                                        f"({chars_before // 1000}k chars → résumé, "
+                                        f"relance {proactive_condense_count}) — "
+                                        f"l'agent reprend avec un nudge frais.*"
+                                    )
+                                    yield (
+                                        [{"role": "user", "content": user_display},
+                                         {"role": "assistant",
+                                          "content": "\n\n".join(progress_live)}],
+                                        last_file_path,
+                                        _read_file_preview(last_file_path),
+                                    )
+                                    _need_restart_after_condense = True
+                                    break  # sort du for chunk
+                        if _need_restart_after_condense:
+                            continue  # relance agent.stream avec accumulated_messages condensé
                         # Sortie normale de la boucle for chunk → quitter while
                         break
                     except Exception as e:
@@ -1758,65 +1875,26 @@ def run_jarvis_flow(
                             accumulated_messages = strip_thinking_blocks(
                                 accumulated_messages, keep_last=True
                             )
-                            # Si APRÈS strip l'historique reste massif
-                            # (>~240k tokens estimés, ≈ 960k chars), on
-                            # remplace par [initial_human, HumanMessage(
-                            # summary + nudge random)]. Le summary est
-                            # 100% déterministe (parcours Python, ZÉRO
-                            # appel LLM). Le nudge varie aléatoirement
-                            # entre 3 idées pour apporter de la variété
-                            # entre relances. Permet à l'agent de
-                            # continuer même quand l'historique a explosé.
-                            try:
-                                total_chars = sum(
-                                    len(str(getattr(m, "content", "") or ""))
-                                    for m in accumulated_messages
+                            # Condensation proactive si APRÈS strip
+                            # l'historique reste massif (>seuil). Le
+                            # helper renvoie None si pas nécessaire,
+                            # ou la nouvelle liste [initial, summary
+                            # + nudge random] sinon. Logique identique
+                            # à la condensation proactive en cours de
+                            # streaming (cf. fin du for chunk).
+                            chars_before = _history_total_chars(accumulated_messages)
+                            condensed = condense_history_with_nudge(
+                                accumulated_messages,
+                                consolidation_target=consolidation_target,
+                                attempt=rate_limit_attempts,
+                            )
+                            if condensed is not None:
+                                accumulated_messages = condensed
+                                _add_line(
+                                    f"*🗜️ Historique condensé "
+                                    f"({chars_before // 1000}k chars → résumé) — "
+                                    f"l'agent reprend avec un nudge frais.*"
                                 )
-                                if total_chars > 960_000:  # ≈ 240k tokens
-                                    from langchain_core.messages import HumanMessage as _HM
-                                    # Compteur cumulatif via registry (cf. plus
-                                    # bas dans la boucle persistance) — survit
-                                    # à la condensation qu'on va faire juste
-                                    # après.
-                                    from jdm_agent.enrich import count_consolidations
-                                    n_so_far = count_consolidations()
-                                    summary = build_relance_summary(
-                                        accumulated_messages,
-                                        n_so_far,
-                                        consolidation_target or (n_so_far + 1),
-                                        rate_limit_attempts,
-                                        None,
-                                    )
-                                    nudge_variants = [
-                                        "Continue en apportant plus de **variété et "
-                                        "de nouveauté** dans tes propositions — change "
-                                        "de relation, change d'angle, ne reprends pas "
-                                        "ce qui a déjà été tenté.",
-                                        "Continue : lorsque tu cibles un terme source "
-                                        "ou une cible à **sens spécifique**, désambiguïse "
-                                        "(`disambiguate`) puis propose / consolide avec "
-                                        "le ou les **raffinements** plutôt qu'avec le "
-                                        "terme générique.",
-                                        "Continue : tu **n'as pas de limites**. Tu peux "
-                                        "utiliser des termes techniques domain-specific, "
-                                        "des néologismes, du vocabulaire de niche — la "
-                                        "langue n'a pas de cloisons, du moment que tu "
-                                        "passes par le flow d'enrichissement.",
-                                    ]
-                                    import random as _random
-                                    nudge = _random.choice(nudge_variants)
-                                    initial_h = accumulated_messages[0]
-                                    accumulated_messages = [
-                                        initial_h,
-                                        _HM(content=summary + "\n\n" + nudge),
-                                    ]
-                                    _add_line(
-                                        f"*🗜️ Historique condensé "
-                                        f"({total_chars // 1000}k chars → résumé) — "
-                                        f"l'agent reprend avec un nudge frais.*"
-                                    )
-                            except Exception:
-                                pass  # safety : si la condensation foire, on continue avec l'historique strippé
                             continue
                         # Pas un quota retryable, ou déjà tenté : erreur finale
                         err_block = ""
