@@ -929,17 +929,19 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     if not routed_model:
         raise ValueError(f"Modèle inconnu pour {label} : {model_id!r}")
     from langchain_openai import ChatOpenAI
+    # temperature : 1.5 sur Gemini OpenAI-compat (échelle 0..2).
+    # Variété forte pour l'enrichissement/audit — 1.0 produisait
+    # systématiquement les mêmes mots (« voiture », « chat »,
+    # « manger »…) sur les tirages random côté LLM, 1.5 ouvre
+    # significativement l'espace de choix sans rendre incohérent.
+    # GPT (autres endpoints OpenAI-compat) tolère 0..2 aussi → on
+    # met 1.3 pour eux, un peu moins agressif (GPT plus instable au-dessus).
+    temp = 1.5 if "gemini" in routed_model.lower() else 1.3
     return ChatOpenAI(
         model=routed_model,
         base_url=base_url,
         api_key=token,
-        # temperature=1.0 (au lieu de 0) : sinon Gemini est totalement
-        # déterministe et choisit toujours le même mot quand on lui demande
-        # de « tirer un mot français au hasard » (bug observé : plateau à
-        # chaque fois sur l'audit). 1.0 = défaut Google AI Studio (échelle
-        # 0..2). On garde 1.0 conservateur — si pas assez varié, monter
-        # progressivement.
-        temperature=1.0,
+        temperature=temp,
     )
 
 
@@ -999,7 +1001,12 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
     base_kwargs = {
         "model": routed_model,
         "google_api_key": token,
-        "temperature": 1.0,
+        # temperature=1.5 sur Gemini natif (échelle 0..2). Variété
+        # forte pour l'enrichissement : 1.0 collait aux mots les
+        # plus fréquents (« voiture », « chat »…), 1.5 ouvre
+        # significativement l'espace de tirage sans casser la
+        # cohérence des tool_calls.
+        "temperature": 1.5,
     }
     if not use_thinking:
         # Pas de chain-of-thought demandé → on n'active rien. Gemini répond
