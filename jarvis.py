@@ -1558,11 +1558,23 @@ def run_jarvis_flow(
                         # MARQUEUR HARDCODÉ : pour vérifier qu'on est bien
                         # dans ce code path (et que HF déploie bien).
                         diag = "\n\n---\n🔎 **[MARKER-JARVIS-FINAL-YIELD]** (Phase 13 debug)"
+                        # Sépare IMPORT vs CALL pour discriminer.
+                        _pd_fn = None
                         try:
-                            from app import build_pool_diag_md as _pool_diag
-                            diag += "\n\n" + _pool_diag()
-                        except Exception as _diag_exc:
-                            diag += f"\n\n*(build_pool_diag_md raised : {_diag_exc})*"
+                            from app import build_pool_diag_md as _pd_imp
+                            _pd_fn = _pd_imp
+                            diag += "\n\n*[IMPORT OK]*"
+                        except Exception as _ie:
+                            import traceback as _tb
+                            diag += (f"\n\n*[IMPORT raised : {type(_ie).__name__}: {_ie}]*"
+                                     f"\n```\n{_tb.format_exc()[-600:]}\n```")
+                        if _pd_fn is not None:
+                            try:
+                                diag += "\n\n" + _pd_fn()
+                            except Exception as _ce:
+                                import traceback as _tb
+                                diag += (f"\n\n*[CALL raised : {type(_ce).__name__}: {_ce}]*"
+                                         f"\n```\n{_tb.format_exc()[-800:]}\n```")
                         yield (
                             [{"role": "user", "content": user_display},
                              {"role": "assistant",
