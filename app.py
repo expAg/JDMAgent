@@ -407,17 +407,35 @@ def mark_gemini_key_blown(key: str, model: str) -> None:
             _bump_registry_version()
 
 
-def is_model_fully_blown(model: str) -> bool:
-    """True si TOUTES les clés du pool sont blown ou invalides pour ce
-    modèle aujourd'hui. Utilisé pour griser dans le dropdown UI."""
-    keys = _parse_google_keys()
-    if not keys:
+# Clé Gemini ACTIVE dans la session courante (= celle dans laquelle
+# tournent les requêtes en ce moment). Mise à jour quand on pick une
+# nouvelle clé (init) ou quand on bascule (PerDay/invalid sur 3.1).
+# Le dropdown affiche le status « épuisé » selon ce qui est blown
+# POUR CETTE CLÉ — pas pour tout le pool.
+_CURRENT_GEMINI_KEY: Optional[str] = None
+
+
+def set_current_gemini_key(key: Optional[str]) -> None:
+    """Déclare la clé Gemini active. Bumpe le registry version pour
+    que le dropdown se rafraîchisse au prochain yield (le label
+    « ✅/❌ épuisé sur cette clé » dépend de la clé courante)."""
+    global _CURRENT_GEMINI_KEY
+    if _CURRENT_GEMINI_KEY != key:
+        _CURRENT_GEMINI_KEY = key
+        _bump_registry_version()
+
+
+def is_model_blown_on_current_key(model: str) -> bool:
+    """True si le modèle est épuisé SUR LA CLÉ COURANTE (blown today
+    ou invalide). C'est ça qui détermine si le dropdown affiche
+    « ❌ épuisé ». Si on n'a pas encore de clé active, on retourne
+    False (état neutre)."""
+    key = _CURRENT_GEMINI_KEY
+    if not key:
         return False
-    today = _today_utc_str()
-    return all(
-        (k in _INVALID_KEYS) or _BLOWN_TODAY.get((k, model, today), False)
-        for k in keys
-    )
+    if key in _INVALID_KEYS:
+        return True
+    return _BLOWN_TODAY.get((key, model, _today_utc_str()), False)
 
 
 def _refresh_dropdown_wrap(fn):
@@ -447,19 +465,22 @@ def _refresh_dropdown_wrap(fn):
 
 def build_model_choices() -> list[tuple[str, str]]:
     """Construit la liste de (label, value) du dropdown des modèles,
-    avec marquage visuel :
-      - ✅ pour les modèles disponibles (label complet conservé)
-      - ❌ pour les Gemini natifs dont TOUTES les clés du pool sont
-        blown aujourd'hui : on remplace le suffixe `(X req/jour)`
-        par `— épuisé aujourd'hui`.
+    avec marquage visuel BASÉ SUR LA CLÉ COURANTE :
+      - ✅ pour les modèles disponibles sur la clé active
+      - ❌ pour les Gemini natifs blown sur la clé active (PerDay
+        sur cette clé OU clé invalide). On remplace le suffixe
+        `(X req/jour)` par `— épuisé sur cette clé`.
+
+    Quand on bascule de clé (3.1 hit PerDay → switch), set_current_
+    gemini_key est appelée et le dropdown se re-rendre avec les
+    statuts connus de la NOUVELLE clé (qui peuvent être différents).
     """
     import re as _re
     out: list[tuple[str, str]] = []
     for key, label in ALL_MODELS.items():
-        if key in GEMINI_NATIVE_REQUIRED and is_model_fully_blown(key):
-            # Strip un suffixe parenthésé en fin de label (« (500 req/jour) »)
+        if key in GEMINI_NATIVE_REQUIRED and is_model_blown_on_current_key(key):
             base = _re.sub(r"\s*\(.*?\)\s*$", "", label).strip()
-            decorated = f"❌ {base} — épuisé aujourd'hui"
+            decorated = f"❌ {base} — épuisé sur cette clé"
         else:
             decorated = f"✅ {label}"
         out.append((decorated, key))
@@ -802,6 +823,9 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     current_gemini_key: Optional[str] = (
         pick_unblown_gemini_key(model) if model in GEMINI_NATIVE_REQUIRED else None
     )
+    # Annonce au registry quelle clé est active → le dropdown
+    # reflètera ce qui est blown SUR CETTE CLÉ.
+    set_current_gemini_key(current_gemini_key)
     try:
         llm = _build_llm(model, api_key, use_thinking=use_thinking,
                           gemini_key_override=current_gemini_key)
@@ -950,6 +974,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         if next_key:
                             pool_n = gemini_pool_size()
                             current_gemini_key = next_key
+                            set_current_gemini_key(current_gemini_key)
                             llm = _build_llm(
                                 model, api_key,
                                 use_thinking=use_thinking,
@@ -1018,6 +1043,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         if next_key:
                             pool_n = gemini_pool_size()
                             current_gemini_key = next_key
+                            set_current_gemini_key(current_gemini_key)
                             llm = _build_llm(
                                 model, api_key,
                                 use_thinking=use_thinking,

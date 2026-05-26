@@ -1096,9 +1096,13 @@ def run_jarvis_flow(
             # Si modèle Gemini natif, on pick une clé du pool en explicite
             # pour pouvoir la marquer "blown" plus tard si nécessaire.
             try:
-                from app import GEMINI_NATIVE_REQUIRED, pick_unblown_gemini_key
+                from app import (
+                    GEMINI_NATIVE_REQUIRED, pick_unblown_gemini_key,
+                    set_current_gemini_key as _set_current_key,
+                )
                 if model in GEMINI_NATIVE_REQUIRED:
                     current_gemini_key = pick_unblown_gemini_key(model)
+                    _set_current_key(current_gemini_key)
             except Exception:
                 pass  # app pas importable (test mode) → comportement standard
             llm = build_llm_fn(model, api_key, use_thinking=use_thinking,
@@ -1345,6 +1349,11 @@ def run_jarvis_flow(
                                 if next_key:
                                     pool_n = gemini_pool_size()
                                     current_gemini_key = next_key
+                                    try:
+                                        from app import set_current_gemini_key as _set_cur
+                                        _set_cur(current_gemini_key)
+                                    except Exception:
+                                        pass
                                     llm = build_llm_fn(
                                         model, api_key,
                                         use_thinking=use_thinking,
@@ -1453,6 +1462,11 @@ def run_jarvis_flow(
                                     # langgraph reprend là où il en était.
                                     pool_n = gemini_pool_size()
                                     current_gemini_key = next_key
+                                    try:
+                                        from app import set_current_gemini_key as _set_cur
+                                        _set_cur(current_gemini_key)
+                                    except Exception:
+                                        pass
                                     llm = build_llm_fn(
                                         model, api_key,
                                         use_thinking=use_thinking,
