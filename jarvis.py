@@ -1226,15 +1226,16 @@ def run_jarvis_flow(
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
     def _pending_line() -> str:
-        """Ligne « génération en cours » avec compteur cumulatif des
-        triplets consolidés (lu depuis le registry global, donc
-        cumulatif sur tout le flow y compris les relances). Format :
-        « ⏳ Génération en cours… (X/Y consolidés) » si target fixé,
-        sinon « ⏳ Génération en cours… (X consolidés) »."""
-        n = count_consolidations()
+        """Ligne « génération en cours ». Le compteur cumulatif des
+        triplets consolidés est affiché UNIQUEMENT pour l'enrichissement
+        (= seul flow où consolidation_target est défini). Les autres
+        flows (audit, gap, signalement, stats) n'ont pas la sémantique
+        de « consolidation » → on n'expose pas un compteur trompeur.
+        """
         if consolidation_target:
+            n = count_consolidations()
             return f"*⏳ Génération en cours… ({n}/{consolidation_target} consolidés)*"
-        return f"*⏳ Génération en cours… ({n} consolidés)*"
+        return "*⏳ Génération en cours…*"
 
     def _current_file_path() -> Optional[str]:
         """Renvoie canonical_path dès qu'il existe sur disque (auto-append
@@ -1979,11 +1980,16 @@ def run_jarvis_flow(
                                 f"({len(progress_full)})</summary>\n\n"
                                 f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                             )
+                        # PRÉSERVATION DU FICHIER SUR ERREUR : on yield
+                        # _current_file_path() (priorité canonical_path
+                        # si auto-append a écrit quelque chose) pour
+                        # que l'utilisateur garde son fichier de
+                        # consolidation même quand l'API LLM crashe.
                         yield (
                             [{"role": "user", "content": user_display},
                              {"role": "assistant",
                               "content": f"❌ Erreur agent : {e}" + err_block}],
-                            last_file_path, _read_file_preview(last_file_path),
+                            _current_file_path(), _read_file_preview(_current_file_path()),
                         )
                         return
 

@@ -177,8 +177,7 @@ def _append_consolidation_to_file(term: str, relation: str, target: str,
         with p.open("a", encoding="utf-8") as f:
             if write_header:
                 f.write(
-                    "# Soumission JeuxDeMots — fichier d'enrichissement "
-                    "(append-only, mis à jour à chaque consolidation).\n"
+                    "# Soumission JeuxDeMots — fichier d'enrichissement.\n"
                     "# Format : terme | relation | cible | annotation < explication >\n\n"
                 )
                 _CONSOLIDATION_OUTPUT_HEADER_WRITTEN = True

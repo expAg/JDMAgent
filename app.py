@@ -2127,18 +2127,24 @@ _HEAD_JS = """
   setTimeout(bindChatbotObserver, 800);
   setTimeout(bindChatbotObserver, 2000);
 
-  // ---------- Onglet Aide flush à droite ----------
+  // ---------- Onglets « Aide » et « Drops » flush à droite ----------
   // CSS pur ne marche pas de façon fiable (structure DOM Gradio v5
   // varie). On cherche tous les boutons role="tab" qui contiennent
-  // « Aide » dans leur texte et on leur applique margin-left:auto.
+  // un des labels cibles (Aide en top-level, Drops en sous-onglet
+  // Jarvis) et on leur applique margin-left:auto pour les pousser
+  // au bout à droite de leur tablist parent.
   function pushAideTabRight() {
     var tabs = document.querySelectorAll('[role="tab"]');
     var done = false;
+    var targets = ['Aide', 'Drops'];
     for (var i = 0; i < tabs.length; i++) {
       var label = (tabs[i].textContent || '').trim();
-      if (label.indexOf('Aide') >= 0) {
-        tabs[i].style.marginLeft = 'auto';
-        done = true;
+      for (var t = 0; t < targets.length; t++) {
+        if (label.indexOf(targets[t]) >= 0) {
+          tabs[i].style.marginLeft = 'auto';
+          done = true;
+          break;
+        }
       }
     }
     return done;
@@ -3876,13 +3882,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 # viewer adaptatif à droite (iframe pour HTML, code pour text,
                 # télécharge pour le reste). Pas d'écrasement : tout file producer
                 # détecte les collisions et suffixe (_2, _3…).
-                with gr.Tab("📁 Productions", id="jarvis-productions"):
+                with gr.Tab("📥 Drops", id="jarvis-drops"):
                     gr.Markdown(
                         "**Tous les fichiers produits** par l'agent (sous-graphes, "
                         "enrichissements, audits, signalements, stats) sont listés "
                         "ici, du PLUS RÉCENT au PLUS ANCIEN. Aucun écrasement : les "
                         "collisions de nom sont suffixées automatiquement (`_2`, `_3`…). "
-                        "La liste se rafraîchit toute seule toutes les 3 secondes."
+                        "La liste se rafraîchit toute seule toutes les 3 secondes. "
+                        "Sélectionne un fichier puis **📤 Soumettre à JDM** pour le "
+                        "pousser au LLMDrops directement depuis ici."
                     )
 
                     def _scan_productions_choices():
@@ -3947,6 +3955,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 visible=False, label="📥 Télécharger ce fichier",
                                 interactive=False,
                             )
+                            # Bouton soumission JDM — actif si fichier
+                            # sélectionné ET clé LLMDrops dispo (env ou
+                            # input). Sinon dégrise pour signaler.
+                            with gr.Row():
+                                prod_submit_btn = gr.Button(
+                                    "📤 Soumettre ce fichier à JDM (LLMDrops)",
+                                    variant="primary",
+                                    interactive=False,
+                                )
+                            prod_submit_status = gr.Markdown(visible=False)
 
                     def _render_production_file(selected_path):
                         """Affiche le fichier selon son extension :
@@ -4032,6 +4050,64 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[prod_file_dropdown],
                         outputs=[prod_status, prod_html_viewer,
                                  prod_text_viewer, prod_download],
+                    )
+
+                    def _toggle_submit_btn(selected_path, drops_key):
+                        """Active le bouton submit si fichier sélectionné
+                        ET (clé fournie dans le bandeau OU env active)."""
+                        from jarvis import has_drops_key as _hk
+                        ok = bool(selected_path) and _hk(drops_key)
+                        return gr.update(interactive=ok)
+
+                    # Réactive à chaque changement de sélection OU de clé
+                    prod_file_dropdown.change(
+                        _toggle_submit_btn,
+                        inputs=[prod_file_dropdown, jarvis_drops_key],
+                        outputs=[prod_submit_btn],
+                    )
+                    jarvis_drops_key.change(
+                        _toggle_submit_btn,
+                        inputs=[prod_file_dropdown, jarvis_drops_key],
+                        outputs=[prod_submit_btn],
+                    )
+
+                    def _submit_production_file(selected_path, drops_key, jarvis_model_v):
+                        """Upload le fichier sélectionné vers LLMDrops via
+                        jarvis.submit_existing_file (gère env override de
+                        JDM_DROPS_API_KEY le temps de l'appel)."""
+                        if not selected_path:
+                            return gr.update(visible=True,
+                                             value="⚠️ Aucun fichier sélectionné.")
+                        try:
+                            from jarvis import submit_existing_file
+                            res = submit_existing_file(
+                                file_path=selected_path,
+                                drops_key=(drops_key or ""),
+                                model_name=(jarvis_model_v or "manual_submission"),
+                            )
+                            if isinstance(res, dict) and res.get("ok"):
+                                uploaded = res.get("uploaded_as") or Path(selected_path).name
+                                return gr.update(
+                                    visible=True,
+                                    value=f"✅ **Soumis avec succès** sous le nom "
+                                          f"`{uploaded}`. Réponse serveur : "
+                                          f"`{str(res.get('response') or '')[:200]}`",
+                                )
+                            err = (res or {}).get("error") if isinstance(res, dict) else str(res)
+                            return gr.update(
+                                visible=True,
+                                value=f"❌ **Échec de soumission** : {err}",
+                            )
+                        except Exception as e:
+                            return gr.update(
+                                visible=True,
+                                value=f"❌ Erreur soumission : {e}",
+                            )
+
+                    prod_submit_btn.click(
+                        _submit_production_file,
+                        inputs=[prod_file_dropdown, jarvis_drops_key, jarvis_model],
+                        outputs=[prod_submit_status],
                     )
 
                     def _refresh_choices():
