@@ -1107,6 +1107,16 @@ def run_jarvis_flow(
                 )
                 if model in GEMINI_NATIVE_REQUIRED:
                     current_gemini_key = pick_unblown_gemini_key(model)
+                    # Fallback : si toutes les clés du pool sont blown/
+                    # invalides pour ce modèle, on retombe sur la
+                    # variable d'env singulière GOOGLE_API_KEY (qui
+                    # peut être utilisée même hors pool). On la track
+                    # quand même comme current_gemini_key → mark_blown
+                    # ultérieur fonctionne et le dropdown reflète l'état.
+                    if not current_gemini_key:
+                        env_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+                        if env_key:
+                            current_gemini_key = env_key
                     _set_current_key(current_gemini_key)
                 # Annonce le modèle actif → préfixe ✅ dans le dropdown.
                 _set_current_model(model)

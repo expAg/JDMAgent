@@ -401,18 +401,11 @@ def _today_utc_str() -> str:
 def mark_gemini_key_blown(key: str, model: str) -> None:
     """Marque une (clé, modèle) comme épuisée pour aujourd'hui UTC."""
     if not key or not model:
-        print(f"[POOL-DEBUG] mark_blown NOOP : key={key!r} model={model!r}",
-              flush=True)
         return
     cell = (key, model, _today_utc_str())
     if not _BLOWN_TODAY.get(cell, False):
         _BLOWN_TODAY[cell] = True
         _bump_registry_version()
-        print(f"[POOL-DEBUG] mark BLOWN : ({key[:4]}…{key[-4:]}, {model}) "
-              f"→ version={_REGISTRY_VERSION}", flush=True)
-    else:
-        print(f"[POOL-DEBUG] deja blown : ({key[:4]}…{key[-4:]}, {model})",
-              flush=True)
 
 
 # Clé Gemini ACTIVE dans la session courante (= celle dans laquelle
@@ -431,9 +424,6 @@ def set_current_gemini_key(key: Optional[str]) -> None:
     if _CURRENT_GEMINI_KEY != key:
         _CURRENT_GEMINI_KEY = key
         _bump_registry_version()
-        masked = f"{key[:4]}…{key[-4:]}" if key else "None"
-        print(f"[POOL-DEBUG] set_current_gemini_key={masked} "
-              f"→ version={_REGISTRY_VERSION}", flush=True)
 
 
 # Modèle actuellement sélectionné (utilisé pour préfixer ✅ devant
@@ -475,16 +465,15 @@ def _refresh_dropdown_wrap(fn):
     une rebuild de page).
     """
     def wrapped(*args, **kwargs):
-        last_seen = -1  # force un update au premier tour
         for chunk in fn(*args, **kwargs):
             t = chunk if isinstance(chunk, tuple) else (chunk,)
-            current = _REGISTRY_VERSION
-            if current != last_seen:
-                last_seen = current
-                yield (*t, gr.update(choices=build_model_choices()))
-            else:
-                # No-op : le dropdown reste tel quel, pas de bande passante gaspillée
-                yield (*t, gr.update())
+            # On envoie TOUJOURS le refresh : l'optimisation par version
+            # counter peut rater des changements quand build_model_choices
+            # est recalculé entre deux yields (ex. _CURRENT_GEMINI_KEY
+            # changé par un set_current_gemini_key dans le retry handler).
+            # Mieux vaut un peu de bande passante en plus qu'un dropdown
+            # qui ne se met pas à jour.
+            yield (*t, gr.update(choices=build_model_choices()))
     return wrapped
 
 
@@ -847,11 +836,17 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
         yield "Pose une question sur la langue française.", _NOOP_FILE
         return
     # Pool Gemini : on track la clé courante pour bascule sur PerDay.
-    current_gemini_key: Optional[str] = (
-        pick_unblown_gemini_key(model) if model in GEMINI_NATIVE_REQUIRED else None
-    )
-    # Annonce au registry quelle clé est active → le dropdown
-    # reflètera ce qui est blown SUR CETTE CLÉ.
+    # Si toutes les clés du pool sont blown/invalides pour ce modèle,
+    # on retombe sur la variable d'env singulière GOOGLE_API_KEY (qui
+    # peut être utilisée même hors pool) et on la track quand même —
+    # mark_blown ultérieur fonctionne et le dropdown reflète l'état.
+    current_gemini_key: Optional[str] = None
+    if model in GEMINI_NATIVE_REQUIRED:
+        current_gemini_key = pick_unblown_gemini_key(model)
+        if not current_gemini_key:
+            env_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+            if env_key:
+                current_gemini_key = env_key
     set_current_gemini_key(current_gemini_key)
     # Annonce le modèle actif → préfixe ✅ devant lui dans le dropdown.
     set_current_model(model)
@@ -2366,19 +2361,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 render=False,
             )
             # Wrapper qui ajoute un 3e yield (refresh du dropdown modèle).
-            # Optimisé : ne yield un vrai gr.update(choices=...) QUE si la
-            # version du registry des clés a changé depuis le dernier tour.
-            # Sinon : gr.update() no-op (pas de bande passante gaspillée).
+            # On envoie TOUJOURS un gr.update(choices=...) pour garantir
+            # que l'UI reflète l'état courant (l'optimisation par version
+            # counter ratait des changements dans certains chemins).
             def _chat_with_agent_with_dropdown_refresh(*args, **kwargs):
-                last_seen = -1
                 for chunk in chat_with_agent(*args, **kwargs):
                     text, viz_update = chunk
-                    current = _REGISTRY_VERSION
-                    if current != last_seen:
-                        last_seen = current
-                        yield text, viz_update, gr.update(choices=build_model_choices())
-                    else:
-                        yield text, viz_update, gr.update()
+                    yield text, viz_update, gr.update(choices=build_model_choices())
 
             chat = gr.ChatInterface(
                 fn=_chat_with_agent_with_dropdown_refresh,
