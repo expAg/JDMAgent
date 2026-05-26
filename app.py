@@ -3838,16 +3838,26 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                            chat_switch_key_btn, jarvis_switch_key_btn]
         _reset_filter_js = """
         () => {
-          // Reset filtered_indices via focus event sur l'input du
-          // dropdown Modèle visible (cf. Dropdown.svelte L152).
-          var inputs = document.querySelectorAll('input[role="combobox"], input[aria-haspopup="listbox"]');
+          // L'input du Dropdown.svelte a role='listbox' (PAS combobox !)
+          // et bind:value={input_text}. Pour reset filtered_indices :
+          // on vide inp.value via le SETTER NATIF (sinon Svelte's
+          // bind:value ne capte pas le changement) et on dispatch un
+          // 'input' event. handle_filter(choices, "") matche tous
+          // les choices → liste complète visible.
+          var inputs = document.querySelectorAll('input[role="listbox"]');
           inputs.forEach(function(inp) {
             if (inp.offsetParent === null) return;
             var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
             if (!root) return;
             if ((root.textContent || '').indexOf('Modèle') === -1) return;
-            inp.focus();
-            inp.dispatchEvent(new FocusEvent('focus', {bubbles: true}));
+            // Setter natif HTMLInputElement.value pour propager à
+            // bind:value={input_text} de Svelte (sinon le binding
+            // ne se met pas à jour avec inp.value = '' tout seul).
+            var setter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype, 'value'
+            ).set;
+            setter.call(inp, '');
+            inp.dispatchEvent(new Event('input', {bubbles: true}));
           });
         }
         """
