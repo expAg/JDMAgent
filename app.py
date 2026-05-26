@@ -2643,13 +2643,14 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     je_launch.click(
-                        _refresh_dropdown_wrap(_run_enrich),
+                        _run_enrich,
                         inputs=[je_term, je_relation, je_target_n, je_vary,
                                 je_iterate, je_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
                         outputs=[je_chat, je_file, je_preview],
-                    ).then(
+                    )
+                    je_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
                         outputs=[model_in, jarvis_model],
@@ -2783,12 +2784,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     ja_launch.click(
-                        _refresh_dropdown_wrap(_run_audit),
+                        _run_audit,
                         inputs=[ja_term, ja_relation, ja_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
                         outputs=[ja_chat, ja_file, ja_preview],
-                    ).then(
+                    )
+                    ja_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
                         outputs=[model_in, jarvis_model],
@@ -2957,12 +2959,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             yield (gr.update(), gr.update(), chat_msgs)
 
                     jg_launch.click(
-                        _refresh_dropdown_wrap(_run_gap_detection),
+                        _run_gap_detection,
                         inputs=[jg_term, jg_relations, jg_min_pos,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
                         outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat],
-                    ).then(
+                    )
+                    jg_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
                         outputs=[model_in, jarvis_model],
@@ -3100,12 +3103,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     js_launch.click(
-                        _refresh_dropdown_wrap(_run_signalement),
+                        _run_signalement,
                         inputs=[js_term, js_relation, js_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
                         outputs=[js_chat, js_file, js_preview],
-                    ).then(
+                    )
+                    js_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
                         outputs=[model_in, jarvis_model],
@@ -3243,12 +3247,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     jst_launch.click(
-                        _refresh_dropdown_wrap(_run_stats),
+                        _run_stats,
                         inputs=[jst_term, jst_relation, jst_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
                         outputs=[jst_chat, jst_file, jst_preview],
-                    ).then(
+                    )
+                    jst_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
                         outputs=[model_in, jarvis_model],
