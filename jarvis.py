@@ -281,34 +281,38 @@ def _extract_quota_model(exc) -> Optional[str]:
 
 
 def is_per_day_quota_exhausted(exc, expected_model: Optional[str] = None) -> bool:
-    """Détecte les quotas QUOTIDIENS épuisés (PerDay) sur Gemini.
+    """Détecte les quotas QUOTIDIENS épuisés sur Gemini.
 
     Le retryDelay annoncé par l'API est trompeur sur ce type de quota
     (souvent ~25-60s alors que le vrai reset est à minuit UTC). On
-    veut détecter ce cas EN AMONT du retry pour signaler clairement
-    que c'est terminé pour la journée, sans tenter de boucler.
+    détecte EN AMONT pour ne pas boucler.
 
-    Match sur quotaId contenant `PerDay` (typiquement
-    `GenerateRequestsPerDayPerProjectPerModel-FreeTier`).
+    Signatures matchées (l'une OU l'autre) :
+      - quotaId contient `PerDay`
+        (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`)
+      - métrique contient `free_tier_requests` ou `requests_per_day`
+        (Gemini 3.5/2.5 utilisent souvent ce format au lieu du PerDay
+        explicite dans le quotaId)
 
     Si `expected_model` est fourni, on ne renvoie True QUE si le quota
-    PerDay concerne exactement ce modèle (extrait via quotaDimensions
-    dans le payload d'erreur). Permet d'ignorer un PerDay sur un autre
-    modèle (ex : on est sur gemini-3.1-flash-lite, un quota historique
-    sur gemini-2.5-flash-lite ne nous concerne pas pour la bascule).
+    concerne exactement ce modèle (extrait via quotaDimensions).
     """
     msg = str(exc)
+    msg_lc = msg.lower()
     if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
         return False
-    if "PerDay" not in msg:
+    is_per_day = (
+        "PerDay" in msg
+        or "free_tier_requests" in msg_lc
+        or "requests_per_day" in msg_lc
+    )
+    if not is_per_day:
         return False
     if expected_model is None:
         return True
     quota_model = _extract_quota_model(exc)
     if quota_model is None:
-        # Pas pu extraire → on est conservateur : on considère que ça
-        # concerne le modèle courant (sinon on perd la détection).
-        return True
+        return True  # conservateur : on considère que ça concerne le modèle courant
     return quota_model == expected_model
 
 
