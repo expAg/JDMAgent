@@ -296,6 +296,10 @@ GEMINI_MODEL_ROUTING = {
 # discrimine 2.5 dans certains cas. SDK natif pour TOUS.
 GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite", "gemini-3.5-flash",
                           "gemini-2.5-flash-lite"}
+# Sous-ensemble des Gemini natifs qui supportent le raisonnement
+# (`thinking_level`). 2.5 ne le supporte PAS — l'API renvoie 400
+# INVALID_ARGUMENT « Thinking level is not supported for this model ».
+GEMINI_THINKING_SUPPORTED = {"gemini-3.1-flash-lite", "gemini-3.5-flash"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
@@ -751,7 +755,7 @@ if _CURRENT_GEMINI_KEY is None:
 # Gemini 2.x : pas de raisonnement → case grisée + décochée + tooltip
 # « Non disponible pour {model} ».
 THINKING_SUPPORTED_MODELS = (
-    GEMINI_NATIVE_REQUIRED
+    GEMINI_THINKING_SUPPORTED
     | set(ANTHROPIC_MODELS.keys())
     | set(OPENAI_MODELS.keys())
 )
@@ -1004,6 +1008,11 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
         # sorties). On laisse aussi `thinking_level` non-défini : selon
         # la version langchain-google-genai, cela tombe sur le défaut
         # « no thinking » du SDK.
+        return ChatGoogleGenerativeAI(**base_kwargs)
+    # Safety net : si le modèle n'est PAS dans GEMINI_THINKING_SUPPORTED
+    # (ex: 2.5-flash-lite), on n'envoie pas thinking_level — sinon l'API
+    # renvoie 400 INVALID_ARGUMENT « Thinking level is not supported ».
+    if model not in GEMINI_THINKING_SUPPORTED:
         return ChatGoogleGenerativeAI(**base_kwargs)
     try:
         return ChatGoogleGenerativeAI(

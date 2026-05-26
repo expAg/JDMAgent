@@ -306,13 +306,23 @@ def is_per_day_quota_exhausted(exc, expected_model: Optional[str] = None) -> boo
     dans les payloads PerMinute (le même metric existe pour les
     fenêtres minute ET jour), faux positifs assurés.
 
+    DURCISSEMENT : on cherche `PerDay` UNIQUEMENT à l'intérieur d'un
+    `quotaId` (pas n'importe où dans le message). L'ancien check naïf
+    `'PerDay' in msg` matchait à tort quand un payload PerMinute
+    embarquait une mention « PerDay » dans une description de quota
+    secondaire ou un lien de doc.
+
     Si `expected_model` est fourni, on ne renvoie True QUE si le quota
     concerne exactement ce modèle (extrait via quotaDimensions).
     """
+    import re
     msg = str(exc)
     if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
         return False
-    if "PerDay" not in msg:
+    # quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'
+    # quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+    # On cherche PerDay STRICTEMENT à l'intérieur d'une valeur de quotaId.
+    if not re.search(r"['\"]quotaId['\"]?\s*:\s*['\"][^'\"]*PerDay", msg):
         return False
     if expected_model is None:
         return True
