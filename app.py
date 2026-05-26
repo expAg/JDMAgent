@@ -404,18 +404,38 @@ def is_model_fully_blown(model: str) -> bool:
     )
 
 
+def _refresh_dropdown_wrap(fn):
+    """Decorator/wrapper qui ajoute `gr.update(choices=build_model_choices())`
+    en DERNIÈRE position des tuples yieldés par un generator Gradio.
+    Permet de refresh dynamiquement le dropdown modèle à chaque tour
+    sans toucher au code interne du runner. L'appelant doit ajouter
+    le composant dropdown en dernier dans `outputs=[...]` du .click().
+    """
+    def wrapped(*args, **kwargs):
+        for chunk in fn(*args, **kwargs):
+            t = chunk if isinstance(chunk, tuple) else (chunk,)
+            yield (*t, gr.update(choices=build_model_choices()))
+    return wrapped
+
+
 def build_model_choices() -> list[tuple[str, str]]:
     """Construit la liste de (label, value) du dropdown des modèles,
-    avec suffixe « (épuisé) » pour les Gemini natifs dont toutes les
-    clés du pool sont blown aujourd'hui. Les modèles non-Gemini et
-    Gemini compat-OpenAI restent sans suffixe (pas de tracking).
+    avec marquage visuel :
+      - ✅ pour les modèles disponibles (label complet conservé)
+      - ❌ pour les Gemini natifs dont TOUTES les clés du pool sont
+        blown aujourd'hui : on remplace le suffixe `(X req/jour)`
+        par `— épuisé aujourd'hui`.
     """
+    import re as _re
     out: list[tuple[str, str]] = []
     for key, label in ALL_MODELS.items():
-        suffix = ""
         if key in GEMINI_NATIVE_REQUIRED and is_model_fully_blown(key):
-            suffix = " — ⛔ épuisé aujourd'hui"
-        out.append((label + suffix, key))
+            # Strip un suffixe parenthésé en fin de label (« (500 req/jour) »)
+            base = _re.sub(r"\s*\(.*?\)\s*$", "", label).strip()
+            decorated = f"❌ {base} — épuisé aujourd'hui"
+        else:
+            decorated = f"✅ {label}"
+        out.append((decorated, key))
     return out
 
 
@@ -2206,10 +2226,19 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 visible=False,
                 render=False,
             )
+            # Wrapper qui ajoute un 3e yield (refresh des choices du
+            # dropdown modèle) à chaque tour de chat_with_agent —
+            # permet d'afficher dynamiquement « ❌ épuisé aujourd'hui »
+            # quand toutes les clés du pool sont blown pour ce modèle.
+            def _chat_with_agent_with_dropdown_refresh(*args, **kwargs):
+                for chunk in chat_with_agent(*args, **kwargs):
+                    text, viz_update = chunk
+                    yield text, viz_update, gr.update(choices=build_model_choices())
+
             chat = gr.ChatInterface(
-                fn=chat_with_agent,
+                fn=_chat_with_agent_with_dropdown_refresh,
                 additional_inputs=[key_in, model_in, chat_thinking],
-                additional_outputs=[viz_html_out],
+                additional_outputs=[viz_html_out, model_in],
                 # Chatbot agrandi : 780 px de haut (+30 % vs 600).
                 # Tentative d'HTML/<details> abandonnée — gr.Chatbot v5
                 # fragmente tout tag inconnu en un caractère par ligne ;
@@ -2431,12 +2460,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     je_launch.click(
-                        _run_enrich,
+                        _refresh_dropdown_wrap(_run_enrich),
                         inputs=[je_term, je_relation, je_target_n, je_vary,
                                 je_iterate, je_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[je_chat, je_file, je_preview],
+                        outputs=[je_chat, je_file, je_preview, jarvis_model],
                     )
 
                     # Grisage visuel de « Varier les types de relations »
@@ -2566,11 +2595,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     ja_launch.click(
-                        _run_audit,
+                        _refresh_dropdown_wrap(_run_audit),
                         inputs=[ja_term, ja_relation, ja_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[ja_chat, ja_file, ja_preview],
+                        outputs=[ja_chat, ja_file, ja_preview, jarvis_model],
                     )
 
                     def _show_audit_submit(file_path, drops_key):
@@ -2735,11 +2764,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             yield (gr.update(), gr.update(), chat_msgs)
 
                     jg_launch.click(
-                        _run_gap_detection,
+                        _refresh_dropdown_wrap(_run_gap_detection),
                         inputs=[jg_term, jg_relations, jg_min_pos,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat],
+                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat, jarvis_model],
                     )
 
                     # Routage du gap sélectionné → onglet Enrichissement,
@@ -2873,11 +2902,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     js_launch.click(
-                        _run_signalement,
+                        _refresh_dropdown_wrap(_run_signalement),
                         inputs=[js_term, js_relation, js_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[js_chat, js_file, js_preview],
+                        outputs=[js_chat, js_file, js_preview, jarvis_model],
                     )
 
                     def _show_signal_submit(file_path, drops_key):
@@ -3011,11 +3040,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             )
 
                     jst_launch.click(
-                        _run_stats,
+                        _refresh_dropdown_wrap(_run_stats),
                         inputs=[jst_term, jst_relation, jst_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[jst_chat, jst_file, jst_preview],
+                        outputs=[jst_chat, jst_file, jst_preview, jarvis_model],
                     )
 
                     def _show_stats_submit(file_path, drops_key):
