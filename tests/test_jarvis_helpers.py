@@ -32,7 +32,8 @@ _GEMINI_429_PERMINUTE = (
     "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, "
     "limit: 250000, model: gemini-3.1-flash-lite\\nPlease retry in 44.989s.', "
     "'status': 'RESOURCE_EXHAUSTED', 'details': [{'quotaId': "
-    "'GenerateContentInputTokensPerModelPerMinute-FreeTier'}, "
+    "'GenerateContentInputTokensPerModelPerMinute-FreeTier', "
+    "'quotaDimensions': {'location': 'global', 'model': 'gemini-3.1-flash-lite'}}, "
     "{'retryDelay': '44s'}]}}"
 )
 
