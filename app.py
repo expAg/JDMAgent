@@ -2448,7 +2448,11 @@ _CHATBOT_CSS = """
 }
 
 /* Style du bouton clone INJECTÉ par JS à la fin de la liste d'options
-   du dropdown modèle. Format = bouton standard, distinct des options. */
+   du dropdown modèle. Format = bouton standard, distinct des options.
+   `order: 999` + flex sur ul (règle suivante) → le bouton apparaît
+   TOUJOURS visuellement en dernier, quelle que soit sa position dans
+   le DOM (Svelte peut le faire remonter après un re-render, il reste
+   visuellement en bas). */
 .jdm-switch-key-injected {
   display: block !important;
   width: calc(100% - 16px) !important;
@@ -2463,9 +2467,19 @@ _CHATBOT_CSS = """
   cursor: pointer !important;
   user-select: none !important;
   transition: background 0.15s ease !important;
+  order: 999 !important;
 }
 .jdm-switch-key-injected:hover {
   background: var(--button-secondary-background-fill-hover, #5d5d70) !important;
+}
+
+/* Active le layout flex column sur l'ul de listbox UNIQUEMENT s'il
+   contient notre bouton (donc le dropdown modèle). Ainsi le bouton
+   avec order:999 est toujours visuellement en bas, même si Svelte
+   réordonne les <li> du each block autour. */
+ul[role="listbox"]:has(.jdm-switch-key-injected) {
+  display: flex !important;
+  flex-direction: column !important;
 }
 
 /* Placeholder utilisé comme valeur visible (post-rotation) — ressemble
