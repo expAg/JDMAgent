@@ -381,7 +381,7 @@ def test_write_submission_file_local_only_default(tmp_path, monkeypatch):
             "term": "chat", "relation": "r_isa", "target": "mammifère",
             "annotation": "constitutif", "explanation": "trivialement",
         }],
-        "path": str(tmp_path / "sub.enrich"),
+        "path": str(tmp_path / "sub.txt"),
     })
     assert out["count"] == 1
     assert "upload" not in out  # pas tenté
@@ -402,7 +402,7 @@ def test_write_submission_file_with_upload_success(tmp_path, monkeypatch):
             "term": "chat", "relation": "r_isa", "target": "mammifère",
             "annotation": "", "explanation": "trivialement",
         }],
-        "path": str(tmp_path / "sub.enrich"),
+        "path": str(tmp_path / "sub.txt"),
         "upload": True,
         "model_name": "claude-sonnet-4-7",
         "api_key": "explicit-key",
@@ -426,7 +426,7 @@ def test_write_submission_file_upload_without_api_key(tmp_path, monkeypatch):
             "term": "chat", "relation": "r_isa", "target": "mammifère",
             "annotation": "", "explanation": "trivialement",
         }],
-        "path": str(tmp_path / "sub.enrich"),
+        "path": str(tmp_path / "sub.txt"),
         "upload": True,
         "model_name": "claude-haiku",
     })

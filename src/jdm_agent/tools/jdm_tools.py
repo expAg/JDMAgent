@@ -1792,35 +1792,39 @@ def write_submission_file(
         # Mode TRIPLETS canonique (que des dicts).
         # Pour .enrich : l'explication DOIT venir du registry de
         # consolidation (mise là par consolidate_candidate après inférence).
-        # Toute formulation libre du LLM est REJETÉE — on n'écrit que
-        # ce qui a été PROUVÉ par le moteur d'inférence. Si le triplet
-        # n'est pas dans le registry, on met « non inférable depuis JDM »
-        # (explicite, ne laisse pas croire à une preuve).
-        # Pour les autres extensions (.audit, .err, .stat) qui utiliseraient
-        # quand même le schéma triplet : le texte libre du LLM est accepté
-        # (fallback registry → LLM text).
+        # Si le triplet N'EST PAS dans le registry → on le SKIP entièrement.
+        # Un .enrich ne doit contenir QUE des triplets prouvés par
+        # inférence — pas de garbage à JDM. Les skipped sont remontés
+        # dans `skipped_no_inference_proof` pour que l'agent les voie
+        # et puisse soit les ré-inférer, soit les retirer de sa pile.
+        # Pour .audit / .err / .stat (si schéma triplet) : texte libre OK.
         from jdm_agent.enrich.validators import get_consolidation
         is_enrich_file = str(path).lower().endswith(".enrich")
-        def _resolve_explanation(t: dict) -> str:
-            from_registry = get_consolidation(
-                str(t["term"]), str(t["relation"]), str(t["target"])
-            )
+        cands: list[Candidate] = []
+        skipped_no_proof: list[dict] = []
+        for t in dict_items:
+            term_v = str(t.get("term") or "")
+            rel_v = str(t.get("relation") or "")
+            tgt_v = str(t.get("target") or "")
+            from_registry = get_consolidation(term_v, rel_v, tgt_v)
             if from_registry and from_registry.get("explanation"):
-                return from_registry["explanation"]
-            # Pas dans le registry.
-            if is_enrich_file:
-                # STRICT : pas de texte libre LLM pour .enrich.
-                return "non inférable depuis JDM"
-            # Autres extensions : le texte libre LLM est OK.
-            return str(t.get("explanation") or "")
-        cands = [Candidate(
-            term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
-            annotation=str(t.get("annotation") or ""),
-            consolidation_explanation=_resolve_explanation(t),
-            confidence=0.7, source="agent",
-            validation_status="ok", consolidation_status="consolidated",
-        ) for t in dict_items]
-        n = _write_sub(path, cands, client=c)
+                explanation = from_registry["explanation"]
+            elif is_enrich_file:
+                # Pas de preuve d'inférence pour un .enrich → SKIP.
+                skipped_no_proof.append({
+                    "term": term_v, "relation": rel_v, "target": tgt_v,
+                })
+                continue
+            else:
+                explanation = str(t.get("explanation") or "")
+            cands.append(Candidate(
+                term=term_v, relation=rel_v, target=tgt_v,
+                annotation=str(t.get("annotation") or ""),
+                consolidation_explanation=explanation,
+                confidence=0.7, source="agent",
+                validation_status="ok", consolidation_status="consolidated",
+            ))
+        n = _write_sub(path, cands, client=c) if cands else 0
         out = {
             "path": path, "count": n,
             "lines": [
@@ -1830,6 +1834,13 @@ def write_submission_file(
             ],
             "mode": "triplets",
         }
+        if skipped_no_proof:
+            out["skipped_no_inference_proof"] = skipped_no_proof
+            out["skipped_count"] = len(skipped_no_proof)
+            out["skipped_note"] = (
+                "Triplets non écrits car absents du registry d'inférence. "
+                "Re-passe-les par consolidate_candidate avant write_submission_file."
+            )
 
     if upload:
         from jdm_agent.enrich.uploader import submit_to_jdm
