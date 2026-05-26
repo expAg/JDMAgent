@@ -1467,47 +1467,35 @@ def run_jarvis_flow(
                         if is_per_day_quota_exhausted(e, expected_model=model):
                             if _mark_blown_fn and current_gemini_key:
                                 _mark_blown_fn(current_gemini_key, model)
-                        # AUTO-BASCULE vers le modèle protégé (3.1, 500 req/j)
-                        # quand un modèle non-protégé est épuisé. Le quota
-                        # PerDay est PAR-MODÈLE → la clé courante reste
-                        # parfaitement utilisable pour 3.1 (on vient de
-                        # marquer blown sur model != 3.1, donc 3.1 sur
-                        # cette même clé n'est pas blown). Pas besoin de
-                        # re-pick une clé.
+                        # PerDay sur modèle non-protégé : on bascule le
+                        # dropdown sur 3.1 (set_current_model) et on ABORT
+                        # le flow. L'utilisateur re-clique « Lancer » s'il
+                        # veut retry avec 3.1 (équivalent à « oui »),
+                        # sinon il ne fait rien (« non »). Pas d'auto-
+                        # retry silencieux — l'utilisateur garde la main.
                         if (model != _PROTECTED
                                 and is_per_day_quota_exhausted(e, expected_model=model)
-                                and _app is not None
-                                and current_gemini_key):
+                                and _app is not None):
                             try:
-                                model = _PROTECTED  # mute le modèle local
-                                try:
-                                    _app.set_current_model(model)
-                                except Exception:
-                                    pass
-                                llm = build_llm_fn(
-                                    model, api_key,
-                                    use_thinking=use_thinking,
-                                    gemini_key_override=current_gemini_key,
-                                )
-                                agent = build_agent_fn(
-                                    client=get_client_fn(), llm=llm
-                                )
-                                _add_line(
-                                    f"*🔄 Quota quotidien épuisé sur ce "
-                                    f"modèle — bascule automatique sur "
-                                    f"`{_PROTECTED}` (500 req/j) pour "
-                                    f"continuer le travail.*"
-                                )
-                                yield (
-                                    [{"role": "user", "content": user_display},
-                                     {"role": "assistant",
-                                      "content": "\n\n".join(progress_live)}],
-                                    last_file_path,
-                                    _read_file_preview(last_file_path),
-                                )
-                                continue
+                                _app.set_current_model(_PROTECTED)
                             except Exception:
-                                pass  # bascule indisponible → erreur finale
+                                pass
+                            switch_msg = (
+                                f"⚠️ **Modèle `{model}` épuisé pour "
+                                f"aujourd'hui** (quota quotidien).\n\n"
+                                f"Le sélecteur est passé sur "
+                                f"`{_PROTECTED}` (500 req/j).\n\n"
+                                f"➡️ **Re-clique « Lancer »** pour reprendre "
+                                f"avec `{_PROTECTED}`, ou choisis un autre "
+                                f"modèle BYOK (Claude / GPT)."
+                            )
+                            yield (
+                                [{"role": "user", "content": user_display},
+                                 {"role": "assistant", "content": switch_msg}],
+                                last_file_path,
+                                _read_file_preview(last_file_path),
+                            )
+                            return
                         if (model == _PROTECTED
                                 and is_per_day_quota_exhausted(e, expected_model=model)):
                             switched = False

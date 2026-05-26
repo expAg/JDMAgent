@@ -1098,33 +1098,27 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 if is_per_day_quota_exhausted(e, expected_model=model):
                     if current_gemini_key:
                         mark_gemini_key_blown(current_gemini_key, model)
-                # AUTO-BASCULE vers le modèle protégé (3.1, 500 req/j)
-                # quand un modèle non-protégé est épuisé. La clé courante
-                # reste utilisable pour 3.1 (quota PerDay par-modèle).
+                # PerDay sur modèle non-protégé : on bascule le dropdown
+                # sur 3.1 et on ABORT. L'utilisateur ré-envoie son message
+                # s'il veut retry avec 3.1 (« oui »), sinon il choisit
+                # autre chose (« non »). Pas d'auto-retry silencieux.
                 if (model != GEMINI_POOL_PROTECTED_MODEL
-                        and is_per_day_quota_exhausted(e, expected_model=model)
-                        and current_gemini_key):
+                        and is_per_day_quota_exhausted(e, expected_model=model)):
                     try:
-                        model = GEMINI_POOL_PROTECTED_MODEL
-                        set_current_model(model)
-                        llm = _build_llm(
-                            model, api_key,
-                            use_thinking=use_thinking,
-                            gemini_key_override=current_gemini_key,
-                        )
-                        agent = build_jdm_agent(
-                            client=get_client(), llm=llm
-                        )
-                        switch_msg = (
-                            f"\n\n*🔄 Quota quotidien épuisé sur ce "
-                            f"modèle — bascule automatique sur "
-                            f"`{GEMINI_POOL_PROTECTED_MODEL}` (500 req/j).*"
-                        )
-                        current_progress = "\n\n".join(progress_live)
-                        yield current_progress + switch_msg, _NOOP_FILE
-                        continue
+                        set_current_model(GEMINI_POOL_PROTECTED_MODEL)
                     except Exception:
                         pass
+                    switch_msg = (
+                        f"⚠️ **Modèle `{model}` épuisé pour aujourd'hui** "
+                        f"(quota quotidien).\n\n"
+                        f"Le sélecteur est passé sur "
+                        f"`{GEMINI_POOL_PROTECTED_MODEL}` (500 req/j).\n\n"
+                        f"➡️ **Renvoie ton message** pour reprendre avec "
+                        f"`{GEMINI_POOL_PROTECTED_MODEL}`, ou choisis un "
+                        f"autre modèle BYOK (Claude / GPT)."
+                    )
+                    yield switch_msg, _NOOP_FILE
+                    return
                 if (model == GEMINI_POOL_PROTECTED_MODEL
                         and is_per_day_quota_exhausted(e, expected_model=model)):
                     switched = False
