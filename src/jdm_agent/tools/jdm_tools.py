@@ -1734,18 +1734,33 @@ def write_submission_file(
     Renvoie {path, count, mode, lines?, upload?, error?}.
     """
     from pathlib import Path as _Path
+    import os as _os
     from jdm_agent.enrich import Candidate
     from jdm_agent.enrich.pipeline import _decoded, write_submission as _write_sub
 
-    # IMPORTANT : convertir path en ABSOLU dès maintenant. Le LLM passe
-    # souvent un nom relatif (ex: "enrichment.enrich") qui se résout
-    # contre le CWD du moment de l'écriture. Plus tard, le composant
-    # gr.File de Gradio fait Path(value).stat() qui résout encore une
-    # fois contre le CWD — qui peut différer (thread worker différent,
-    # CWD changé entre temps) → FileNotFoundError. Force l'absolu via
-    # .resolve() pour que tous les consommateurs en aval (Gradio,
-    # uploader, _read_file_preview) trouvent le fichier sans surprise.
-    path = str(_Path(path).resolve())
+    # IMPORTANT : force le fichier dans un répertoire PERSISTANT et
+    # ÉCRITURE FIABLE. Sur HF Spaces, /app/ peut être lu comme writable
+    # mais les écritures runtime ne persistent pas (Docker overlay fs
+    # ou tmpfs nettoyé entre requêtes). Le SEUL répertoire fiable est
+    # /tmp/ (utilisé déjà pour le cache JDM cf. log « dir=/tmp/jdm_cache
+    # writable=True »).
+    #
+    # Stratégie :
+    #   - si le path passé pointe DÉJÀ dans /tmp/ → on garde
+    #   - sinon (relatif, ou absolu hors /tmp) → on prépend
+    #     /tmp/jdm_outputs/ en gardant juste le NOM de fichier
+    #
+    # Crée le répertoire si absent.
+    _OUTPUTS_DIR = _Path("/tmp/jdm_outputs")
+    _p = _Path(path)
+    if not (str(_p.resolve()).startswith("/tmp/") or str(_p).startswith("/tmp/")):
+        # nom de fichier seulement (jette les composants de chemin amont)
+        _p = _OUTPUTS_DIR / _p.name
+    try:
+        _p.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    path = str(_p.resolve())
 
     # Classement par clés — auto-détection : pas de mode explicite.
     # Tout est dict (Gemini exige items: {...} pour les arrays JSON Schema,
