@@ -2237,16 +2237,7 @@ _HEAD_JS = """
   // le bouton Gradio caché. Gradio diff son ul avec 7 enfants (ses
   // 7 options), pas 8. Notre MutationObserver re-injecte le bouton
   // après que Gradio ait fini sa MAJ.
-  // Drapeau global : pendant un cycle de rotation (clic sur le bouton
-  // -> Gradio update -> Svelte re-render x2), on bloque les re-injections
-  // intermédiaires du bouton. Le bouton reste affiché tel quel pendant
-  // le cycle (Svelte le supprime du DOM mais on ne le remet pas tout
-  // de suite). À la fin du cycle (resetObs disconnect via setTimeout),
-  // on relâche le drapeau et applyTabTweaks ré-injecte UNE SEULE FOIS.
-  window.__jdmRotationInProgress = false;
-
   function injectSwitchKeyButton() {
-    if (window.__jdmRotationInProgress) return;
     var hidden = document.getElementById('jarvis-switch-key-btn')
               || document.getElementById('chat-switch-key-btn');
     if (!hidden) return;
@@ -2257,11 +2248,15 @@ _HEAD_JS = """
       var optsTxt = (ul.textContent || '');
       if (optsTxt.indexOf('Gemini') === -1) return;
       var existing = ul.querySelector('.jdm-switch-key-injected');
-      if (existing && existing === ul.lastElementChild) {
+      if (existing) {
+        // Update juste le label si nécessaire — pas de remove/recreate
         if (existing.textContent !== btnLabel) existing.textContent = btnLabel;
         return;
       }
-      if (existing) existing.remove();
+      // Création UNIQUE : le bouton reste en place pendant les
+      // re-renders Svelte de ul, car {#each filtered_indices as index}
+      // ne diff que les <li data-index=...> qu'il a créés. Notre <li>
+      // sans data-index est invisible pour Svelte → jamais touché.
       var btn = document.createElement('li');
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
@@ -2269,12 +2264,9 @@ _HEAD_JS = """
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        if (btn.parentNode) btn.parentNode.removeChild(btn);
-        // ROTATION IN PROGRESS : empêche injectSwitchKeyButton de
-        // ré-injecter le bouton sur chaque mutation intermédiaire de
-        // ul (sinon flash 2 fois). Le drapeau est levé à la fin du
-        // cycle (après disconnect du resetObs).
-        window.__jdmRotationInProgress = true;
+        // PAS de removeChild ici — le bouton reste dans le DOM
+        // pendant toute la rotation. Comme Svelte ne le track pas
+        // dans son {#each}, il survit aux re-renders intermédiaires.
         var liInput = null;
         try {
           liInput = ul.closest('.form, [class*="block"]')
@@ -2294,23 +2286,7 @@ _HEAD_JS = """
             }
           });
           resetObs.observe(ul, { childList: true });
-          // Fin du cycle : on déconnecte resetObs ET on relâche le
-          // drapeau. La prochaine mutation (la nôtre ou de l'user)
-          // déclenche applyTabTweaks qui injecte le bouton UNE seule
-          // fois → 0 flash supplémentaire.
-          setTimeout(function() {
-            resetObs.disconnect();
-            window.__jdmRotationInProgress = false;
-            // Force une ré-injection immédiate pour ne pas attendre
-            // une autre mutation
-            injectSwitchKeyButton();
-          }, 700);
-        } else {
-          // Fallback si liInput introuvable : relâche tout de suite
-          setTimeout(function() {
-            window.__jdmRotationInProgress = false;
-            injectSwitchKeyButton();
-          }, 200);
+          setTimeout(function() { resetObs.disconnect(); }, 2000);
         }
         hidden.click();
       });
