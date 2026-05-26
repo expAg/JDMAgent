@@ -302,6 +302,20 @@ GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite", "gemini-3.5-flash",
 GEMINI_THINKING_SUPPORTED = {"gemini-3.1-flash-lite", "gemini-3.5-flash"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+# ---------- LLMs hébergés sur Ollama LIRMM (portail-aren) ----------
+# Modèles locaux exposés par le LIRMM via Ollama. Endpoint OpenAI-compat
+# du serveur Ollama (mappage standard /v1/ ↔ /api/ en interne). Cert
+# self-signed → verify=False côté httpx (injecté dans le build).
+# Pas de clé API requise (Ollama LIRMM est en accès libre).
+LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/v1/"
+LIQUID_MODELS = {
+    "lfm2.5-1.2b-instruct": "Liquid LFM 2.5 1.2B Instruct (LIRMM, gratuit)",
+}
+# Routing model_id → identifiant exact côté Ollama (préfixe org/).
+LIQUID_MODEL_ROUTING = {
+    "lfm2.5-1.2b-instruct": "LiquidAI/lfm2.5-1.2b-instruct",
+}
+
 # Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
 # `gemini-3.1-flash-lite` a un quota PerDay généreux (500 req/jour) →
 # ça vaut le coup de multiplier par N clés. Les autres modèles ont
@@ -730,6 +744,7 @@ def gemini_pool_size() -> int:
 ALL_MODELS = {
     **GEMINI_MODELS,
     **ANTHROPIC_MODELS, **OPENAI_MODELS,
+    **LIQUID_MODELS,
 }
 
 # Charge l'état persisté du pool depuis le disque (crashs, restarts).
@@ -859,6 +874,10 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
     # notre prompt agent (~19-20 K tokens / appel à cause des 34 outils).
     # Token côté Space, gratuit pour le visiteur. Si épuisement → BYOK
     # Claude / GPT.
+    # Liquid LFM 2.5 — Ollama LIRMM, gratuit (cert self-signed → verify=False)
+    if model in LIQUID_MODELS:
+        return _build_liquid_ollama(model, use_thinking=use_thinking)
+
     if model.startswith("gemini-"):
         # 3.x preview → SDK natif Google (préserve thought_signature).
         # 2.x stables → endpoint OpenAI-compat (déjà éprouvé, plus simple).
@@ -942,6 +961,38 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
         base_url=base_url,
         api_key=token,
         temperature=temp,
+    )
+
+
+def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
+    """Builder pour les modèles Ollama hébergés au LIRMM (portail-aren).
+
+    Passe par l'API OpenAI-compatible exposée par Ollama (mapping
+    standard `/v1/chat/completions` ↔ `/api/chat`). Tool calling
+    supporté côté Ollama pour les modèles compatibles.
+
+    Spécificités du déploiement LIRMM :
+      - Cert TLS self-signed → `verify=False` côté httpx
+      - Pas de clé API → on passe `"ollama"` (string non-vide requise
+        par le SDK OpenAI mais ignorée côté serveur)
+      - Modèle 1.2B → temperature modérée (1.0) pour éviter incohérences
+
+    `use_thinking` est sans effet (le 1.2B n'expose pas de chain-of-thought
+    formel). Présent pour homogénéité de signature avec les autres builders.
+    """
+    import httpx as _httpx
+    routed = LIQUID_MODEL_ROUTING.get(model_id, model_id)
+    from langchain_openai import ChatOpenAI
+    # http_client custom : verify=False pour accepter le cert self-signed
+    # LIRMM. Timeout long (120s) car un 1.2B sur CPU peut être lent sur
+    # les longs prompts (notre system prompt fait ~20k tokens).
+    _client = _httpx.Client(verify=False, timeout=120.0)
+    return ChatOpenAI(
+        model=routed,
+        base_url=LIQUID_BASE_URL,
+        api_key="ollama",  # placeholder — Ollama ne vérifie pas
+        temperature=1.0,
+        http_client=_client,
     )
 
 
