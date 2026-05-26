@@ -459,8 +459,9 @@ def set_current_gemini_key(key: Optional[str]) -> None:
 
 
 # Modèle actuellement sélectionné (utilisé pour préfixer ✅ devant
-# l'option courante dans le dropdown).
-_CURRENT_MODEL: Optional[str] = None
+# l'option courante dans le dropdown). Init = défaut des deux dropdowns
+# pour que le ✅ apparaisse sans avoir besoin de re-cliquer.
+_CURRENT_MODEL: Optional[str] = "gemini-3.1-flash-lite"
 
 
 def set_current_model(model: Optional[str]) -> None:
@@ -2136,7 +2137,7 @@ _CHATBOT_CSS = """
 with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_CSS,
                fill_width=True) as demo:
 
-    with gr.Tabs():
+    with gr.Tabs() as main_tabs:
 
         # ----- Tab 0: Projet (description et liens) -----
         with gr.Tab("📋 Projet"):
@@ -3309,6 +3310,23 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----
         with gr.Tab("🛠️ Aide / Installation"):
             gr.Markdown(AIDE_MD)
+
+        # ----- Sync des dropdowns modèle entre onglets -----
+        # Quand un modèle est blown (PerDay) sur LLM Chatbot, le suffixe
+        # « épuisé sur cette clé » n'apparaissait pas sur Jarvis tant
+        # qu'on ne lançait pas un flow Jarvis. On rafraîchit les DEUX
+        # dropdowns à chaque changement d'onglet (cheap, déclenché par
+        # interaction utilisateur uniquement).
+        def _refresh_both_dropdowns():
+            return (
+                gr.update(choices=build_model_choices()),
+                gr.update(choices=build_model_choices()),
+            )
+        main_tabs.select(
+            _refresh_both_dropdowns,
+            inputs=None,
+            outputs=[model_in, jarvis_model],
+        )
 
     gr.Markdown(
         "---\n*Données : [JeuxDeMots](https://www.jeuxdemots.org) — "
