@@ -2446,6 +2446,17 @@ _CHATBOT_CSS = """
   background: var(--button-secondary-background-fill-hover, #5d5d70) !important;
 }
 
+/* Placeholder utilisé comme valeur visible (post-rotation) — ressemble
+   à une vraie value pour que l'utilisateur ne voie pas un trigger vide.
+   Couleur body-text (au lieu du gris standard), opacité 1, pas
+   d'italique. Disparaît automatiquement dès que l'input.value devient
+   non-vide (next user-interaction). */
+input.jdm-placeholder-as-value::placeholder {
+  color: var(--body-text-color, #e0e0e0) !important;
+  opacity: 1 !important;
+  font-style: normal !important;
+}
+
 /* Gradio v5 cache le ✓ sur les options non sélectionnées via
    .inner-item.hide { visibility: hidden }. On le rend VISIBLE en gris
    pour que chaque option ait son check (gris si non sélectionné,
@@ -3856,17 +3867,18 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                            chat_switch_key_btn, jarvis_switch_key_btn]
         _reset_filter_js = """
         () => {
-          // Reset du filter de Dropdown.svelte SANS flash : on utilise
-          // le setter natif de HTMLInputElement.value qui propage à
-          // bind:value={input_text} de Svelte uniquement quand on
-          // dispatch un 'input' event. Stratégie en 2 temps :
-          //   1) setter('') + dispatch input → Svelte voit input_text=''
-          //      → handle_filter('', choices) → filtered_indices = all
-          //   2) setter(savedLabel) SANS dispatch → DOM input.value est
-          //      visuellement restauré au label courant, mais input_text
-          //      en Svelte reste '' → filtered_indices reste = all.
-          // Pas de focus shift → pas de flash. Le trigger affiche le
-          // bon label, et toutes les options sont visibles.
+          // Stratégie sans flash : reset du filter via setter('') +
+          // dispatch input, MAIS on rend le label visible via le
+          // placeholder de l'input (qui est totalement indépendant
+          // de l'état Svelte input_text → pas de race avec le tick
+          // Svelte qui re-syncrait la value). CSS plus bas force le
+          // placeholder à RESSEMBLER à une vraie valeur (couleur
+          // body-text au lieu de gris, pas d'italique).
+          //
+          // Quand l'utilisateur ouvre/ferme le dropdown manuellement
+          // ou pick une option, Svelte set value via input_text →
+          // input.value devient non-vide → placeholder disparait
+          // naturellement (CSS standard).
           setTimeout(function() {
             var inputs = document.querySelectorAll('input[role="listbox"]');
             inputs.forEach(function(inp) {
@@ -3875,13 +3887,16 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
               if (!root) return;
               if ((root.textContent || '').indexOf('Modèle') === -1) return;
               var savedLabel = inp.value;
+              if (!savedLabel) return;
               var setter = Object.getOwnPropertyDescriptor(
                 window.HTMLInputElement.prototype, 'value'
               ).set;
               setter.call(inp, '');
               inp.dispatchEvent(new Event('input', {bubbles: true}));
-              // Restore le label visible sans notifier Svelte
-              if (savedLabel) setter.call(inp, savedLabel);
+              // Placeholder reflète le label courant — visuellement
+              // identique à une vraie valeur grâce au CSS .jdm-placeholder-as-value
+              inp.placeholder = savedLabel;
+              inp.classList.add('jdm-placeholder-as-value');
             });
           }, 120);
         }
