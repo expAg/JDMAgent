@@ -2362,44 +2362,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         label="Modèle",
                     )
 
-            # Toggle dynamique : la clé API n'est saisissable que pour les
-            # modèles BYOK (Claude / GPT). Sur un modèle Gemini hébergé,
-            # le champ est grisé même s'il contient déjà du texte — pour
-            # éviter toute confusion sur le fait que la clé serait utilisée.
-            def _toggle_key_field(model: str):
-                needs_key = model.startswith("claude-") or model.startswith("gpt-")
-                return gr.update(
-                    interactive=needs_key,
-                    placeholder=("sk-ant-… ou sk-…" if needs_key
-                                 else "Non requis pour les modèles Gemini hébergés"),
-                )
-
-            model_in.change(
-                _toggle_key_field,
-                inputs=[model_in],
-                outputs=[key_in],
-            )
-            # Met à jour _CURRENT_MODEL + refresh choices pour préfixer
-            # ✅ devant l'option qu'on vient de sélectionner.
-            def _on_model_change_refresh(m: str):
-                set_current_model(m)
-                return gr.update(choices=build_model_choices(), value=m)
-            model_in.change(
-                _on_model_change_refresh,
-                inputs=[model_in],
-                outputs=[model_in],
-            )
-            # Grise + décoche la case « Raisonnement » quand le modèle
-            # choisi ne supporte pas le thinking, puis met à jour le
-            # tooltip avec « Non disponible pour {model} ».
-            model_in.change(
-                _toggle_thinking_for_model,
-                inputs=[model_in],
-                outputs=[chat_thinking],
-            ).then(
-                fn=None, inputs=[model_in], outputs=None,
-                js=_thinking_tooltip_js("chat-thinking-cb"),
-            )
+            # Handler model_in.change : binding différé à la fin du
+            # Blocks (jarvis_model n'existe pas encore ici).
             # Composant SÉPARÉ pour la viz : gr.HTML qui embarque un
             # iframe sandbox avec le sous-graphe interactif. Alimenté
             # via additional_outputs de ChatInterface — donc le message
@@ -3300,27 +3264,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 outputs=[je_submit, ja_submit, js_submit, jst_submit],
             )
 
-            # Grise + décoche jarvis_thinking quand le modèle ne supporte
-            # pas le thinking ; met à jour le tooltip avec « Non disponible
-            # pour {model} ».
-            jarvis_model.change(
-                _toggle_thinking_for_model,
-                inputs=[jarvis_model],
-                outputs=[jarvis_thinking],
-            ).then(
-                fn=None, inputs=[jarvis_model], outputs=None,
-                js=_thinking_tooltip_js("jarvis-thinking-cb"),
-            )
-            # Met à jour _CURRENT_MODEL + refresh choices (✅ devant
-            # l'option sélectionnée).
-            def _on_jarvis_model_change_refresh(m: str):
-                set_current_model(m)
-                return gr.update(choices=build_model_choices(), value=m)
-            jarvis_model.change(
-                _on_jarvis_model_change_refresh,
-                inputs=[jarvis_model],
-                outputs=[jarvis_model],
-            )
+            # Handler jarvis_model.change : binding différé à la fin
+            # du Blocks (handler consolidé avec model_in).
 
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----
         with gr.Tab("🛠️ Aide / Installation"):
@@ -3345,23 +3290,56 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             inputs=None,
             outputs=[model_in, jarvis_model],
         )
-        # Cross-sync direct : pick d'un modèle dans l'un → l'autre suit
-        # immédiatement. set_current_model est déjà fait par les
-        # _on_*_model_change_refresh locaux ; ici on ne fait que pousser
-        # value vers le dropdown jumeau.
-        def _sync_jarvis_from_chatbot(m: str):
-            return gr.update(choices=build_model_choices(), value=m)
-        def _sync_chatbot_from_jarvis(m: str):
-            return gr.update(choices=build_model_choices(), value=m)
+        # ---- Handlers consolidés .change pour les deux dropdowns ----
+        # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
+        # - set_current_model(_CURRENT_MODEL tracking)
+        # - key_in (model_in seulement) : interactive si BYOK
+        # - thinking checkbox : interactive si supporté
+        # - sync de la VALUE du dropdown jumeau (pas des choices →
+        #   pas de rebuild de liste = pas de progress bar).
+        # Le ✅ ne suit pas instantanément (recalc seulement aux flow
+        # yields + tab.select), c'est cosmétique pur — Gradio affiche
+        # déjà la valeur sélectionnée dans la case fermée.
+        def _on_model_change_chat(m: str):
+            set_current_model(m)
+            needs_key = m.startswith("claude-") or m.startswith("gpt-")
+            thinking_update = (gr.update(interactive=True)
+                               if m in THINKING_SUPPORTED_MODELS
+                               else gr.update(interactive=False, value=False))
+            return (
+                gr.update(  # key_in
+                    interactive=needs_key,
+                    placeholder=("sk-ant-… ou sk-…" if needs_key
+                                 else "Non requis pour les modèles Gemini hébergés"),
+                ),
+                thinking_update,  # chat_thinking
+                gr.update(value=m),  # jarvis_model — value uniquement
+            )
         model_in.change(
-            _sync_jarvis_from_chatbot,
+            _on_model_change_chat,
             inputs=[model_in],
-            outputs=[jarvis_model],
+            outputs=[key_in, chat_thinking, jarvis_model],
+        ).then(
+            fn=None, inputs=[model_in], outputs=None,
+            js=_thinking_tooltip_js("chat-thinking-cb"),
         )
+
+        def _on_jarvis_model_change(m: str):
+            set_current_model(m)
+            thinking_update = (gr.update(interactive=True)
+                               if m in THINKING_SUPPORTED_MODELS
+                               else gr.update(interactive=False, value=False))
+            return (
+                thinking_update,  # jarvis_thinking
+                gr.update(value=m),  # model_in — value uniquement
+            )
         jarvis_model.change(
-            _sync_chatbot_from_jarvis,
+            _on_jarvis_model_change,
             inputs=[jarvis_model],
-            outputs=[model_in],
+            outputs=[jarvis_thinking, model_in],
+        ).then(
+            fn=None, inputs=[jarvis_model], outputs=None,
+            js=_thinking_tooltip_js("jarvis-thinking-cb"),
         )
 
     gr.Markdown(
