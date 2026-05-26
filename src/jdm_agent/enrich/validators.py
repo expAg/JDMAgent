@@ -144,6 +144,41 @@ def get_consolidation(term: str, relation: str, target: str) -> Optional[dict]:
         return _CONSOLIDATION_REGISTRY.get(key)
 
 
+def count_consolidations() -> int:
+    """Renvoie le NOMBRE CUMULATIF de triplets consolidés depuis l'entrée
+    dans `exclusion_context()` — incluant TOUTES les relances persistance.
+
+    Source de vérité pour le compteur de progression du flow d'enrichissement.
+    À PRÉFÉRER à `count_consolidated_in_messages(accumulated_messages)` qui
+    ne voit que les ToolMessages du tour COURANT (l'accumulated_messages
+    étant reset à chaque relance via `build_relance_summary`).
+
+    Renvoie 0 hors `exclusion_context()` (registry None)."""
+    with _REGISTRY_LOCK:
+        if _CONSOLIDATION_REGISTRY is None:
+            return 0
+        return len(_CONSOLIDATION_REGISTRY)
+
+
+def list_consolidations() -> list[dict]:
+    """Renvoie la LISTE des triplets consolidés depuis l'entrée dans
+    `exclusion_context()` (incluant toutes les relances). Format :
+    [{term, relation, target, explanation, schema}, ...]. Liste vide
+    hors contexte. Utile pour une fusion finale (option B) ou un dump
+    complet en fin de flow."""
+    with _REGISTRY_LOCK:
+        if _CONSOLIDATION_REGISTRY is None:
+            return []
+        return [
+            {
+                "term": k[0], "relation": k[1], "target": k[2],
+                "explanation": v.get("explanation", ""),
+                "schema": v.get("schema", ""),
+            }
+            for k, v in _CONSOLIDATION_REGISTRY.items()
+        ]
+
+
 def register_exclusion(term: str, relation: str, exclusion_set) -> None:
     """Stocke la liste de cibles déjà présentes pour (term, relation).
     Appelé par `list_existing_for_enrichment` après son fetch.

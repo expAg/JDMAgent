@@ -7,7 +7,10 @@ en lecture seule, on ne pousse pas directement dans JDM).
 from jdm_agent.enrich.models import Gap, Candidate, GapType
 from jdm_agent.enrich.detectors import detect_gaps, DEFAULT_TARGET_RELATIONS
 from jdm_agent.enrich.proposers import propose_candidates
-from jdm_agent.enrich.validators import validate_candidate, consolidate_candidate
+from jdm_agent.enrich.validators import (
+    validate_candidate, consolidate_candidate,
+    count_consolidations, list_consolidations,
+)
 from jdm_agent.enrich.pipeline import (
     enrich, write_candidates_csv, write_submission,
     compute_submission_filename,
@@ -18,6 +21,7 @@ __all__ = [
     "Gap", "Candidate", "GapType",
     "detect_gaps", "DEFAULT_TARGET_RELATIONS",
     "propose_candidates", "validate_candidate", "consolidate_candidate",
+    "count_consolidations", "list_consolidations",
     "enrich", "write_candidates_csv", "write_submission",
     "compute_submission_filename", "submit_to_jdm", "DEFAULT_ENDPOINT_URL",
 ]

@@ -1774,7 +1774,12 @@ def run_jarvis_flow(
                                 )
                                 if total_chars > 960_000:  # ≈ 240k tokens
                                     from langchain_core.messages import HumanMessage as _HM
-                                    n_so_far = count_consolidated_in_messages(accumulated_messages)
+                                    # Compteur cumulatif via registry (cf. plus
+                                    # bas dans la boucle persistance) — survit
+                                    # à la condensation qu'on va faire juste
+                                    # après.
+                                    from jdm_agent.enrich import count_consolidations
+                                    n_so_far = count_consolidations()
                                     summary = build_relance_summary(
                                         accumulated_messages,
                                         n_so_far,
@@ -1838,7 +1843,17 @@ def run_jarvis_flow(
             if consolidation_target is None:
                 persistence_done = True
                 continue
-            n_done = count_consolidated_in_messages(accumulated_messages)
+            # Source de vérité = registry GLOBAL des consolidations
+            # (cumulatif depuis l'entrée dans exclusion_context, survit
+            # aux RESET de accumulated_messages opérés par les relances
+            # persistance). count_consolidated_in_messages() était
+            # défaillant ici car il ne voyait que les ToolMessages du
+            # tour COURANT — chaque relance était comptée from scratch
+            # → boucle infinie possible si le LLM consolide < target
+            # par tour. Cf. bug observé : « il a déjà ses 15 mais il
+            # pense être à deux ».
+            from jdm_agent.enrich import count_consolidations
+            n_done = count_consolidations()
             if n_done >= consolidation_target:
                 persistence_done = True
                 continue
