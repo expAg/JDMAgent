@@ -291,10 +291,11 @@ GEMINI_MODEL_ROUTING = {
     "gemini-3.5-flash":        "gemini-3.5-flash",
 }
 # Modèles qui exigent le SDK natif Google (`langchain-google-genai`)
-# au lieu de l'endpoint OpenAI-compatible, pour préserver thought_signature.
-# Tous les Gemini 3.x ont le reasoning activé par défaut → thought_signature
-# rejeté sur l'endpoint OpenAI-compat. SDK natif obligatoire pour ces modèles.
-GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite", "gemini-3.5-flash"}
+# au lieu de l'endpoint OpenAI-compatible. Tous les Gemini natifs
+# y vont — l'endpoint OpenAI-compat de Gemini est capricieux et
+# discrimine 2.5 dans certains cas. SDK natif pour TOUS.
+GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite", "gemini-3.5-flash",
+                          "gemini-2.5-flash-lite"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
@@ -368,8 +369,8 @@ def _current_key_index_label() -> str:
 
 
 def _switch_key_btn_label() -> str:
-    """Label du bouton « Changer de clé API » avec index courant."""
-    return f"🔄 Changer de clé API {_current_key_index_label()}"
+    """Label du bouton « Rotation clés gemini » avec index courant."""
+    return f"🔄 Rotation clés gemini {_current_key_index_label()}"
 
 
 def _masked_key(key: str) -> str:
@@ -2172,7 +2173,7 @@ _HEAD_JS = """
           opt.insertBefore(x, opt.firstChild);
         }
         // Masque ✓ natif Gradio (svg, .checkmark, etc.)
-        var ticks = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+        var ticks = opt.querySelectorAll('svg.checkmark, span.checkmark, .check-icon');
         ticks.forEach(function(ic) { ic.style.display = 'none'; });
       } else if (opt.dataset.jdmBlown === '1') {
         // Reset (cas où l'état a basculé blown -> dispo)
@@ -2180,7 +2181,7 @@ _HEAD_JS = """
         opt.style.color = '';
         delete opt.dataset.jdmBlown;
         if (existing) existing.remove();
-        var ticks2 = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+        var ticks2 = opt.querySelectorAll('svg.checkmark, span.checkmark, .check-icon');
         ticks2.forEach(function(ic) { ic.style.display = ''; });
       }
 
@@ -2198,7 +2199,7 @@ _HEAD_JS = """
           k.style.display = 'inline-block';
           opt.insertBefore(k, opt.firstChild);
         }
-        var ticks3 = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+        var ticks3 = opt.querySelectorAll('svg.checkmark, span.checkmark, .check-icon');
         ticks3.forEach(function(ic) { ic.style.display = 'none'; });
       } else if (opt.dataset.jdmByok === '1' && !isByok) {
         delete opt.dataset.jdmByok;
