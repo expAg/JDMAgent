@@ -249,10 +249,13 @@ def build_relance_summary(messages: list, n_done: int, target: int,
 # Seuil de condensation proactive de l'historique. Au-delà, l'historique
 # devient trop coûteux à ré-envoyer à chaque chunk → on remplace par
 # [HumanMessage initial, HumanMessage(summary+nudge)] avant que le LLM
-# n'explose le contexte. ~240k tokens ≈ 960k chars (heuristique simple
-# « 1 token ≈ 4 chars ») — Gemini 3.x supporte 1M tokens, on coupe bien
-# avant pour garder de la marge.
-HISTORY_CONDENSE_THRESHOLD_CHARS = 960_000
+# n'explose le contexte. ~230k tokens ≈ 920k chars (heuristique simple
+# « 1 token ≈ 4 chars »). On vise 230k au lieu de 240k pour garder une
+# marge plus confortable sous le plafond effectif de ~250k tokens souvent
+# touché en pratique sur Gemini free tier (limite serveur, pas la limite
+# nominale 1M qui n'est pas toujours servie au free tier). Préfère
+# condenser un peu plus tôt et plus souvent que rater des appels.
+HISTORY_CONDENSE_THRESHOLD_CHARS = 920_000
 
 # Nudges aléatoires injectés après un résumé condensé pour apporter de
 # la variété et de la nouveauté entre relances. Trois variantes
