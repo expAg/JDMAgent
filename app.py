@@ -509,17 +509,18 @@ def _refresh_dropdown_wrap(fn):
     return wrapped
 
 
-def build_model_choices() -> list[tuple[str, str]]:
+def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
     """Construit la liste de (label, value) du dropdown des modèles.
 
-    Marquage visuel :
+    Marquage visuel (les DEUX dropdowns — LLM Chatbot ET Jarvis) :
       - Modèle blown sur la clé courante → suffixe `— épuisé sur cette
-        clé`. PAS de ❌ dans le label : le JS dans `_HEAD_JS` détecte
-        ce suffixe et REMPLACE le ✓ natif Gradio par ❌ à la même
-        position (insertion d'un span avant le SVG + masquage du SVG).
-      - Modèle actuellement sélectionné → préfixe `✅ ` (en plus du
-        ✓ natif Gradio).
-      - Autres modèles disponibles → label original sans préfixe.
+        clé`. Le JS dans `_HEAD_JS` détecte ce suffixe pour ajouter
+        ❌ + grisage CSS.
+      - Modèle actuellement sélectionné → préfixe `✅ `.
+      - Autres modèles → label original.
+
+    Le paramètre `for_chatbot` est conservé pour compat mais n'a plus
+    d'effet (toutes les dropdowns ont le même marquage).
     """
     import re as _re
     out: list[tuple[str, str]] = []
@@ -1918,49 +1919,53 @@ _HEAD_JS = """
     }
   }
 
-  // REMPLACE le ✓ natif Gradio par ❌ pour les items dont le label
-  // contient « épuisé sur cette clé » (= modèle blown). Le remplacement
-  // se fait à la position EXACTE du ✓ natif :
-  //   1. Détecte l'item via son texte
-  //   2. Trouve le SVG/checkmark natif Gradio
-  //   3. Insert un <span class="jdm-x-marker">❌</span> juste avant
-  //   4. Masque le SVG natif
-  // Si l'item N'EST PAS blown, on remet le SVG visible et retire notre
-  // span (cas où l'état a basculé blown -> dispo entre deux yields).
+  // Pour chaque option de dropdown dont le label contient
+  // « épuisé sur cette clé » :
+  //   - insère un ❌ devant le ✓ natif Gradio (ou en début d'option si
+  //     le ✓ n'est pas trouvé) ;
+  //   - masque le ✓ natif (display:none) pour éviter ❌ et ✓ côte à côte ;
+  //   - applique opacity 0.45 + couleur grisée à l'option entière pour
+  //     marquer visuellement « non utilisable ».
+  // S'applique à TOUS les dropdowns (LLM Chatbot + Jarvis) — la
+  // détection se fait par texte, peu importe l'arbre DOM.
   function replaceCheckOnBlownOptions() {
-    var options = document.querySelectorAll('[role="option"], .options li, ul[role="listbox"] li');
-    options.forEach(function(opt) {
-      var text = opt.textContent || '';
-      // Détection par le suffixe distinctif posé dans build_model_choices
+    // Sélecteurs très larges : Gradio v5 rend les options dans des
+    // portails (souvent attachés au body) avec des marqueurs variables.
+    var nodes = document.querySelectorAll(
+      '[role="option"], li[role="option"], ul[role="listbox"] li, ' +
+      '.options li, .options [data-value], [data-testid="dropdown"] li'
+    );
+    nodes.forEach(function(opt) {
+      var text = (opt.textContent || '').trim();
       var isBlown = text.indexOf('épuisé sur cette clé') !== -1;
-      var icons = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
-      icons.forEach(function(ic) {
-        // Le span de remplacement, s'il a déjà été inséré, est
-        // marqué via dataset.jdmX
-        var prev = ic.previousElementSibling;
-        var hasMarker = prev && prev.dataset && prev.dataset.jdmX === '1';
-        if (isBlown) {
-          if (!hasMarker) {
-            var x = document.createElement('span');
-            x.textContent = '❌';
-            x.className = 'jdm-x-marker';
-            x.dataset.jdmX = '1';
-            // Match approximatif des dimensions du SVG natif pour ne
-            // pas casser l'alignement
-            x.style.display = 'inline-block';
-            x.style.width = ic.offsetWidth ? (ic.offsetWidth + 'px') : '1em';
-            x.style.textAlign = 'center';
-            ic.parentNode.insertBefore(x, ic);
-          }
-          ic.style.display = 'none';
-        } else {
-          // Pas blown → restore SVG et retire notre marker s'il existe
-          if (hasMarker) {
-            prev.remove();
-          }
-          ic.style.display = '';
+      // Marker existant ?
+      var existing = opt.querySelector('.jdm-x-marker');
+      if (isBlown) {
+        // Grisage de l'option
+        opt.style.opacity = '0.45';
+        opt.style.color = '#9aa0a6';
+        opt.dataset.jdmBlown = '1';
+        if (!existing) {
+          var x = document.createElement('span');
+          x.textContent = '❌ ';
+          x.className = 'jdm-x-marker';
+          x.style.marginRight = '4px';
+          x.style.display = 'inline-block';
+          // Insertion au début de l'option (avant ✓ et label)
+          opt.insertBefore(x, opt.firstChild);
         }
-      });
+        // Masque ✓ natif Gradio (svg, .checkmark, etc.)
+        var ticks = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+        ticks.forEach(function(ic) { ic.style.display = 'none'; });
+      } else if (opt.dataset.jdmBlown === '1') {
+        // Reset (cas où l'état a basculé blown -> dispo)
+        opt.style.opacity = '';
+        opt.style.color = '';
+        delete opt.dataset.jdmBlown;
+        if (existing) existing.remove();
+        var ticks2 = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+        ticks2.forEach(function(ic) { ic.style.display = ''; });
+      }
     });
   }
 
