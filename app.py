@@ -400,11 +400,19 @@ def _today_utc_str() -> str:
 
 def mark_gemini_key_blown(key: str, model: str) -> None:
     """Marque une (clé, modèle) comme épuisée pour aujourd'hui UTC."""
-    if key and model:
-        cell = (key, model, _today_utc_str())
-        if not _BLOWN_TODAY.get(cell, False):
-            _BLOWN_TODAY[cell] = True
-            _bump_registry_version()
+    if not key or not model:
+        print(f"[POOL-DEBUG] mark_blown NOOP : key={key!r} model={model!r}",
+              flush=True)
+        return
+    cell = (key, model, _today_utc_str())
+    if not _BLOWN_TODAY.get(cell, False):
+        _BLOWN_TODAY[cell] = True
+        _bump_registry_version()
+        print(f"[POOL-DEBUG] mark BLOWN : ({key[:4]}…{key[-4:]}, {model}) "
+              f"→ version={_REGISTRY_VERSION}", flush=True)
+    else:
+        print(f"[POOL-DEBUG] deja blown : ({key[:4]}…{key[-4:]}, {model})",
+              flush=True)
 
 
 # Clé Gemini ACTIVE dans la session courante (= celle dans laquelle
@@ -423,6 +431,9 @@ def set_current_gemini_key(key: Optional[str]) -> None:
     if _CURRENT_GEMINI_KEY != key:
         _CURRENT_GEMINI_KEY = key
         _bump_registry_version()
+        masked = f"{key[:4]}…{key[-4:]}" if key else "None"
+        print(f"[POOL-DEBUG] set_current_gemini_key={masked} "
+              f"→ version={_REGISTRY_VERSION}", flush=True)
 
 
 # Modèle actuellement sélectionné (utilisé pour préfixer ✅ devant
