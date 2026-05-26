@@ -892,11 +892,23 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         pass
                     if switched:
                         continue
-                    raise RuntimeError(
-                        "Toutes les clés du pool Google sont soit "
-                        "invalides, soit épuisées pour aujourd'hui. "
-                        "Vérifie GOOGLE_API_KEYS."
-                    ) from e
+                    # Toutes les clés ont échoué — yield un message
+                    # clair au chatbot (pas raise, sinon Gradio crash
+                    # et l'erreur ne s'affiche QUE dans la console).
+                    yield (
+                        "❌ **Toutes les clés Google du pool ont échoué**.\n\n"
+                        "Causes possibles :\n"
+                        "1. Les clés ne sont pas **activées pour l'API "
+                        "Generative Language** (active-la sur Google "
+                        "Cloud Console → APIs & Services → Library).\n"
+                        "2. Les clés viennent d'un **projet sans facturation** "
+                        "qui n'a pas accès aux modèles Gemini 3.x.\n"
+                        "3. Quotas PerDay tous épuisés pour aujourd'hui "
+                        "(reset à minuit UTC).\n\n"
+                        "Bascule sur un modèle BYOK (Claude / GPT) "
+                        "pour continuer dès maintenant."
+                    ), _NOOP_FILE
+                    return
                 # 1) Quota QUOTIDIEN épuisé.
                 # On TRACE TOUJOURS la clé courante comme blown pour
                 # ce modèle (UI dropdown : « épuisé » quand toutes les

@@ -1370,11 +1370,28 @@ def run_jarvis_flow(
                                 pass
                             if switched:
                                 continue
-                            raise RuntimeError(
-                                "Toutes les clés du pool Google sont soit "
-                                "invalides, soit épuisées pour aujourd'hui. "
-                                "Vérifie GOOGLE_API_KEYS dans tes secrets / .env."
-                            ) from e
+                            # Yield au chatbot, pas raise (sinon Gradio
+                            # crash et l'erreur ne va qu'en console).
+                            err_msg = (
+                                "❌ **Toutes les clés Google du pool ont "
+                                "échoué**.\n\n"
+                                "Causes possibles :\n"
+                                "1. Clés non activées pour l'**API "
+                                "Generative Language** (active-la sur "
+                                "Google Cloud Console → APIs & Services).\n"
+                                "2. Clés d'un projet sans accès aux "
+                                "modèles Gemini 3.x.\n"
+                                "3. Quotas PerDay tous épuisés (reset "
+                                "à minuit UTC).\n\n"
+                                "Bascule sur un modèle BYOK Claude / GPT."
+                            )
+                            yield (
+                                [{"role": "user", "content": user_display},
+                                 {"role": "assistant", "content": err_msg}],
+                                last_file_path,
+                                _read_file_preview(last_file_path),
+                            )
+                            return
                         # PerDay : on TRACE TOUJOURS la clé courante
                         # comme blown pour ce modèle (visuel dropdown
                         # « épuisé »). On ne BASCULE de clé que si on
