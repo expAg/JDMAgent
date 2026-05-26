@@ -297,6 +297,14 @@ GEMINI_MODEL_ROUTING = {
 GEMINI_NATIVE_REQUIRED = {"gemini-3.1-flash-lite", "gemini-3.5-flash"}
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+# Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
+# `gemini-3.1-flash-lite` a un quota PerDay généreux (500 req/jour) →
+# ça vaut le coup de multiplier par N clés. Les autres modèles ont
+# des quotas chiches (~20 req/jour) qui ne justifient PAS de griller
+# une clé du pool. Sur PerDay d'un autre modèle, on remonte l'erreur
+# (l'utilisateur bascule manuellement via le dropdown).
+GEMINI_POOL_PROTECTED_MODEL = "gemini-3.1-flash-lite"
+
 
 # ---------- Pool de clés Google API (rotation sur PerDay) ----------
 # Plusieurs clés Google AI Studio peuvent être fournies via la variable
@@ -861,14 +869,19 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         "invalides, soit épuisées pour aujourd'hui. "
                         "Vérifie GOOGLE_API_KEYS."
                     ) from e
-                # 1) Quota QUOTIDIEN épuisé SUR LE MODÈLE COURANT.
-                # On filtre par expected_model pour ignorer les PerDay
-                # parasites venant d'un autre modèle (ex : un quota
-                # historique sur gemini-2.5 ne doit pas mark blown
-                # gemini-3.1). Si pool de clés disponible pour ce
-                # modèle → on bascule. Sinon stop.
+                # 1) Quota QUOTIDIEN épuisé SUR LE MODÈLE PROTÉGÉ.
+                # On bascule UNIQUEMENT si :
+                # (a) on est sur gemini-3.1-flash-lite (le seul modèle
+                #     dont le quota PerDay généreux — 500 req/jour —
+                #     justifie de griller une clé du pool), ET
+                # (b) le PerDay concerne bien ce modèle (filtre
+                #     expected_model contre les PerDay parasites).
+                # Pour les autres modèles (quotas ~20 req/jour), on
+                # remonte l'erreur — c'est trop chiche pour justifier
+                # de griller une clé.
                 from jarvis import is_per_day_quota_exhausted
-                if is_per_day_quota_exhausted(e, expected_model=model):
+                if (model == GEMINI_POOL_PROTECTED_MODEL
+                        and is_per_day_quota_exhausted(e, expected_model=model)):
                     switched = False
                     try:
                         if current_gemini_key:

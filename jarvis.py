@@ -1375,11 +1375,20 @@ def run_jarvis_flow(
                                 "invalides, soit épuisées pour aujourd'hui. "
                                 "Vérifie GOOGLE_API_KEYS dans tes secrets / .env."
                             ) from e
-                        # On filtre par expected_model : un PerDay sur
-                        # un AUTRE modèle (ex. gemini-2.5 alors qu'on
-                        # est sur 3.1) ne nous concerne pas, on l'ignore
-                        # → l'erreur bubblera comme erreur générique.
-                        if is_per_day_quota_exhausted(e, expected_model=model):
+                        # PerDay : on ne bascule QUE si on est sur le
+                        # modèle protégé (gemini-3.1-flash-lite, 500
+                        # req/jour). Pour les autres modèles (quotas
+                        # ~20 req/jour), brûler une clé du pool est
+                        # un mauvais deal — on remonte l'erreur.
+                        # Le filtre `expected_model=model` garantit
+                        # aussi qu'un PerDay parasite d'un AUTRE modèle
+                        # ne déclenche pas la bascule.
+                        try:
+                            from app import GEMINI_POOL_PROTECTED_MODEL as _PROTECTED
+                        except Exception:
+                            _PROTECTED = "gemini-3.1-flash-lite"
+                        if (model == _PROTECTED
+                                and is_per_day_quota_exhausted(e, expected_model=model)):
                             switched = False
                             try:
                                 from app import (
