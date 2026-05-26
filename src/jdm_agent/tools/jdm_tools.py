@@ -1823,20 +1823,19 @@ def write_submission_file(
         # dans `skipped_no_inference_proof` pour que l'agent les voie
         # et puisse soit les ré-inférer, soit les retirer de sa pile.
         # Pour .audit / .err / .stat (si schéma triplet) : texte libre OK.
-        from jdm_agent.enrich.validators import (
-            get_consolidation, _CONSOLIDATION_REGISTRY,
-        )
+        from jdm_agent.enrich import validators as _validators
+        from jdm_agent.enrich.validators import get_consolidation
         is_enrich_file = str(path).lower().endswith(".enrich")
         # DIAGNOSTIC : capture l'état du registry au moment de l'appel
-        # pour distinguer (a) context isolation cassé (registry=None) de
-        # (b) keys manquantes (normalisation différente / consolidate pas
-        # appelé). Visible dans la sortie du tool si tous les triplets
-        # sont skippés.
-        _reg_snapshot = _CONSOLIDATION_REGISTRY.get()
+        # pour distinguer (a) exclusion_context inactif (None) de
+        # (b) keys manquantes (consolidate pas appelé / mismatch norm).
+        with _validators._REGISTRY_LOCK:
+            _reg_snapshot = (
+                None if _validators._CONSOLIDATION_REGISTRY is None
+                else dict(_validators._CONSOLIDATION_REGISTRY)
+            )
         _reg_status = (
-            "None (exclusion_context inactif ou ContextVar cassé "
-            "entre threads — consolidate_candidate a pu tourner mais "
-            "register_consolidation a été un no-op)"
+            "None (exclusion_context inactif)"
             if _reg_snapshot is None
             else (f"{len(_reg_snapshot)} entrée(s)"
                   if _reg_snapshot else "vide ({})")

@@ -39,21 +39,28 @@ from jdm_agent.factcheck.models import Status
 from jdm_agent.factcheck.verifier import verify_claim
 
 
-# ---------- Registry d'exclusion (option A) ----------
+# ---------- Registries partagés thread-safe ----------
+#
+# IMPORTANT : on N'UTILISE PAS ContextVar pour ces registries. Raison :
+# LangChain exécute les tools dans des threads worker (ThreadPoolExecutor)
+# qui ne préservent PAS le contexte ContextVar du parent. Résultat :
+# register_consolidation() depuis le tool validate_candidate écrivait
+# dans un dict isolé du thread, get_consolidation() depuis le tool
+# write_submission_file lisait None → tous les triplets skippés
+# silencieusement → fichier .enrich vide.
+#
+# À la place : dict global module-level + Lock. Activé/désactivé par
+# `exclusion_context()` via un compteur (pour supporter le nesting).
+# Trade-off accepté : pas d'isolation per-user en cas de concurrent
+# heavy multi-user — mais les keys sont (term, relation, target) qui
+# sont stables, et chaque write_submission_file ne consulte que les
+# triplets que SON LLM lui passe → pas de fuite de contenu entre users.
+import threading
 
-_EXCLUSION_REGISTRY: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
-    "jdm_enrich_exclusion", default=None
-)
-
-# Registry des explications de consolidation produites par `infer()`.
-# Indexé par (term_normé, relation_normée, target_normée). Rempli par
-# `consolidate_candidate` quand status="consolidated". Re-lu par
-# `write_submission_file` pour OVERRIDER une éventuelle explanation
-# custom passée par le LLM (qui aurait tendance à mettre sa propre
-# formulation naturelle au lieu de la chaîne d'inférence formelle).
-_CONSOLIDATION_REGISTRY: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
-    "jdm_enrich_consolidation", default=None
-)
+_REGISTRY_LOCK = threading.RLock()
+_EXCLUSION_REGISTRY: Optional[dict] = None
+_CONSOLIDATION_REGISTRY: Optional[dict] = None
+_CONTEXT_DEPTH = 0  # compteur de nesting d'exclusion_context()
 
 
 def _norm_target(s: str) -> str:
@@ -70,32 +77,35 @@ def _norm_key(term: str, relation: str) -> tuple[str, str]:
 
 @contextmanager
 def exclusion_context():
-    """Crée des registries frais (exclusion + consolidation) pour la
+    """Active les registries partagés (exclusion + consolidation) pour la
     durée d'une invocation agent.
 
     Sans ce contexte, les helpers sont des no-ops — le comportement
     précédent (verify_claim a posteriori, explanation custom du LLM)
     est préservé.
 
-    Implémentation : on N'UTILISE PAS `reset(token)` car LangGraph fait
-    tourner l'agent dans un contexte (asyncio/threading) différent de
-    celui où le `with` a démarré → ValueError("Token … was created in a
-    different Context") à la sortie. À la place, on `set(None)` pour
-    invalider le registry.
+    Implémentation : dict module-level + Lock + compteur de nesting.
+    Anciennement basé sur ContextVar mais LangChain exécute les tools
+    dans des threads worker qui ne préservent pas le ContextVar du
+    parent → registry None dans le tool → register/get no-ops →
+    fichier .enrich vide. Le dict global avec Lock est cross-thread,
+    le compteur supporte le nesting (plusieurs invocations imbriquées
+    partagent le même dict, seule la SORTIE la plus externe le vide).
     """
-    _EXCLUSION_REGISTRY.set({})
-    _CONSOLIDATION_REGISTRY.set({})
+    global _EXCLUSION_REGISTRY, _CONSOLIDATION_REGISTRY, _CONTEXT_DEPTH
+    with _REGISTRY_LOCK:
+        if _CONTEXT_DEPTH == 0:
+            _EXCLUSION_REGISTRY = {}
+            _CONSOLIDATION_REGISTRY = {}
+        _CONTEXT_DEPTH += 1
     try:
         yield
     finally:
-        try:
-            _EXCLUSION_REGISTRY.set(None)
-        except Exception:
-            pass
-        try:
-            _CONSOLIDATION_REGISTRY.set(None)
-        except Exception:
-            pass
+        with _REGISTRY_LOCK:
+            _CONTEXT_DEPTH = max(0, _CONTEXT_DEPTH - 1)
+            if _CONTEXT_DEPTH == 0:
+                _EXCLUSION_REGISTRY = None
+                _CONSOLIDATION_REGISTRY = None
 
 
 # ---------- Registry de consolidation ----------
@@ -113,35 +123,35 @@ def register_consolidation(term: str, relation: str, target: str,
     """Stocke l'explication d'inférence produite par `infer()` pour ce
     triplet. Appelé par `consolidate_candidate` quand le triplet est
     confirmé. No-op si aucun `exclusion_context()` actif."""
-    reg = _CONSOLIDATION_REGISTRY.get()
-    if reg is None:
-        return
-    key = _norm_consolidation_key(term, relation, target)
-    reg[key] = {
-        "explanation": (explanation or "").strip(),
-        "schema": (schema or "").strip(),
-    }
+    with _REGISTRY_LOCK:
+        if _CONSOLIDATION_REGISTRY is None:
+            return
+        key = _norm_consolidation_key(term, relation, target)
+        _CONSOLIDATION_REGISTRY[key] = {
+            "explanation": (explanation or "").strip(),
+            "schema": (schema or "").strip(),
+        }
 
 
 def get_consolidation(term: str, relation: str, target: str) -> Optional[dict]:
     """Récupère l'explication d'inférence stockée pour ce triplet, si
     elle existe. None si pas trouvée. Utilisé par `write_submission_file`
     pour OVERRIDER une éventuelle explanation custom du LLM."""
-    reg = _CONSOLIDATION_REGISTRY.get()
-    if reg is None:
-        return None
-    key = _norm_consolidation_key(term, relation, target)
-    return reg.get(key)
+    with _REGISTRY_LOCK:
+        if _CONSOLIDATION_REGISTRY is None:
+            return None
+        key = _norm_consolidation_key(term, relation, target)
+        return _CONSOLIDATION_REGISTRY.get(key)
 
 
 def register_exclusion(term: str, relation: str, exclusion_set) -> None:
     """Stocke la liste de cibles déjà présentes pour (term, relation).
     Appelé par `list_existing_for_enrichment` après son fetch.
     No-op si aucun `exclusion_context()` n'est actif."""
-    reg = _EXCLUSION_REGISTRY.get()
-    if reg is None:
-        return
-    reg[_norm_key(term, relation)] = set(exclusion_set or [])
+    with _REGISTRY_LOCK:
+        if _EXCLUSION_REGISTRY is None:
+            return
+        _EXCLUSION_REGISTRY[_norm_key(term, relation)] = set(exclusion_set or [])
 
 
 def is_excluded(term: str, relation: str, target: str) -> Optional[str]:
@@ -149,10 +159,10 @@ def is_excluded(term: str, relation: str, target: str) -> Optional[str]:
     sinon un message court qui rappelle au LLM qu'il avait l'info.
     No-op (None) si aucun `exclusion_context()` n'est actif ou si pas
     de pré-fetch enregistré pour ce (term, relation)."""
-    reg = _EXCLUSION_REGISTRY.get()
-    if reg is None:
-        return None
-    excl = reg.get(_norm_key(term, relation))
+    with _REGISTRY_LOCK:
+        if _EXCLUSION_REGISTRY is None:
+            return None
+        excl = _EXCLUSION_REGISTRY.get(_norm_key(term, relation))
     if not excl:
         return None
     if _norm_target(target) in excl:
