@@ -2237,7 +2237,16 @@ _HEAD_JS = """
   // le bouton Gradio caché. Gradio diff son ul avec 7 enfants (ses
   // 7 options), pas 8. Notre MutationObserver re-injecte le bouton
   // après que Gradio ait fini sa MAJ.
+  // Drapeau global : pendant un cycle de rotation (clic sur le bouton
+  // -> Gradio update -> Svelte re-render x2), on bloque les re-injections
+  // intermédiaires du bouton. Le bouton reste affiché tel quel pendant
+  // le cycle (Svelte le supprime du DOM mais on ne le remet pas tout
+  // de suite). À la fin du cycle (resetObs disconnect via setTimeout),
+  // on relâche le drapeau et applyTabTweaks ré-injecte UNE SEULE FOIS.
+  window.__jdmRotationInProgress = false;
+
   function injectSwitchKeyButton() {
+    if (window.__jdmRotationInProgress) return;
     var hidden = document.getElementById('jarvis-switch-key-btn')
               || document.getElementById('chat-switch-key-btn');
     if (!hidden) return;
@@ -2247,36 +2256,25 @@ _HEAD_JS = """
     lists.forEach(function(ul) {
       var optsTxt = (ul.textContent || '');
       if (optsTxt.indexOf('Gemini') === -1) return;
-      // On place le bouton EN FRÈRE de ul (dans le parent), pas
-      // dedans : sinon les re-renders Svelte de ul (filter restrict
-      // puis reset) flashent le bouton 2 fois en le supprimant/
-      // ré-injectant. En frère, Svelte ne le touche jamais.
-      var container = ul.parentNode;
-      if (!container) return;
-      var existing = container.querySelector(':scope > .jdm-switch-key-injected');
-      if (existing) {
+      var existing = ul.querySelector('.jdm-switch-key-injected');
+      if (existing && existing === ul.lastElementChild) {
         if (existing.textContent !== btnLabel) existing.textContent = btnLabel;
-        // Assure que le bouton est APRÈS ul dans l'ordre DOM
-        if (existing.previousElementSibling !== ul && ul.nextSibling !== existing) {
-          container.insertBefore(existing, ul.nextSibling);
-        }
         return;
       }
-      var btn = document.createElement('div');
+      if (existing) existing.remove();
+      var btn = document.createElement('li');
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
       btn.setAttribute('role', 'button');
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        // Pas besoin de retirer btn du DOM : il est en frère de ul,
-        // pas dedans, donc Svelte ne le verra jamais dans son diff.
-        // Setup MutationObserver AVANT hidden.click() : dès que Svelte
-        // mute ul (re-render des li suite au choices update), le
-        // callback fire IMMÉDIATEMENT (pas de fenêtre de setTimeout
-        // visible) → on capture le nouveau label dans le placeholder
-        // et on reset le filter à all dans la même microtask. Le user
-        // ne voit JAMAIS la liste restreinte à 1 option.
+        if (btn.parentNode) btn.parentNode.removeChild(btn);
+        // ROTATION IN PROGRESS : empêche injectSwitchKeyButton de
+        // ré-injecter le bouton sur chaque mutation intermédiaire de
+        // ul (sinon flash 2 fois). Le drapeau est levé à la fin du
+        // cycle (après disconnect du resetObs).
+        window.__jdmRotationInProgress = true;
         var liInput = null;
         try {
           liInput = ul.closest('.form, [class*="block"]')
@@ -2296,12 +2294,27 @@ _HEAD_JS = """
             }
           });
           resetObs.observe(ul, { childList: true });
-          setTimeout(function() { resetObs.disconnect(); }, 2000);
+          // Fin du cycle : on déconnecte resetObs ET on relâche le
+          // drapeau. La prochaine mutation (la nôtre ou de l'user)
+          // déclenche applyTabTweaks qui injecte le bouton UNE seule
+          // fois → 0 flash supplémentaire.
+          setTimeout(function() {
+            resetObs.disconnect();
+            window.__jdmRotationInProgress = false;
+            // Force une ré-injection immédiate pour ne pas attendre
+            // une autre mutation
+            injectSwitchKeyButton();
+          }, 700);
+        } else {
+          // Fallback si liInput introuvable : relâche tout de suite
+          setTimeout(function() {
+            window.__jdmRotationInProgress = false;
+            injectSwitchKeyButton();
+          }, 200);
         }
         hidden.click();
       });
-      // Insère le bouton APRÈS ul (en frère), pas dedans
-      container.insertBefore(btn, ul.nextSibling);
+      ul.appendChild(btn);
     });
   }
 
