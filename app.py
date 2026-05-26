@@ -2266,6 +2266,16 @@ _HEAD_JS = """
         ev.preventDefault();
         ev.stopPropagation();
         if (btn.parentNode) btn.parentNode.removeChild(btn);
+        // Ferme le dropdown AVANT le hidden.click() — sinon Gradio
+        // updates le dropdown ouvert et handle_filter (lié à input_text
+        // = label du nouveau modèle) restreint l'affichage à 1 option.
+        // À la prochaine ouverture par l'user, handle_focus reset
+        // filtered_indices → liste complète restaurée.
+        try {
+          var liInput = ul.closest('.form, [class*="block"]')
+                          ?.querySelector('input[role="listbox"]');
+          if (liInput) liInput.blur();
+        } catch (e) {}
         hidden.click();
       });
       ul.appendChild(btn);
@@ -3854,36 +3864,23 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
         _switch_outputs = [model_in, jarvis_model,
                            chat_switch_key_btn, jarvis_switch_key_btn]
-        _reset_filter_js = """
-        () => {
-          // Reset filtered_indices via handle_focus (cf. Dropdown.svelte
-          // L152 : filtered_indices = choices.map((_, i) => i)) SANS
-          // toucher à input_text → trigger garde son label visible.
-          // setTimeout 120ms pour que le reactive block sur choices
-          // soit terminé avant qu'on reset (sinon race condition).
-          setTimeout(function() {
-            var inputs = document.querySelectorAll('input[role="listbox"]');
-            inputs.forEach(function(inp) {
-              if (inp.offsetParent === null) return;
-              var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
-              if (!root) return;
-              if ((root.textContent || '').indexOf('Modèle') === -1) return;
-              inp.focus();
-              inp.dispatchEvent(new FocusEvent('focus', {bubbles: true}));
-            });
-          }, 120);
-        }
-        """
+        # Pas de .then(js=...) ici : dispatch un focus pour reset le
+        # filtre FAISAIT FLASHER le dropdown (focus le ré-ouvre alors
+        # que Gradio vient de le fermer → MutationObserver → re-render
+        # → close → reopen…). À la place : on ferme proprement le
+        # dropdown via blur dans le click handler de injectSwitchKeyButton
+        # (cf. _HEAD_JS). Au prochain user-click pour ouvrir, Svelte
+        # appelle handle_focus → filtered_indices = all → menu complet.
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
+        )
         jarvis_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
+        )
         # ---- Handlers consolidés .change pour les deux dropdowns ----
         # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
         # - set_current_model(_CURRENT_MODEL tracking)
