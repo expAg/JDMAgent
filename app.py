@@ -2517,6 +2517,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     scale=1,
                 )
 
+            # Checkbox auto-bascule (option C). Décochée par défaut →
+            # le mode B s'active : sur PerDay non-3.1, l'agent abort,
+            # save son state, et un bouton « ▶️ Continuer avec 3.1 »
+            # apparaît dans le sous-onglet pour reprendre exactement où
+            # l'agent s'est arrêté. Cochée → auto-retry silencieux.
+            jarvis_auto_switch_cb = gr.Checkbox(
+                value=False,
+                label="Auto-bascule sur 3.1 si quota épuisé (sinon : bouton « Continuer »)",
+                elem_id="jarvis-auto-switch-cb",
+            )
+
             # ====== Sous-onglets ======
             with gr.Tabs() as jarvis_tabs:
 
@@ -2594,11 +2605,23 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 interactive=False,
                                 visible=False,
                             )
+                            # State pour B (option par défaut) : sauve le
+                            # state du flow quand PerDay non-3.1 hit, pour
+                            # permettre la reprise via le bouton continue.
+                            je_resume_state = gr.State(value=None)
+                            je_continue_btn = gr.Button(
+                                "▶️ Continuer avec gemini-3.1-flash-lite",
+                                visible=False,
+                                variant="primary",
+                            )
 
                     def _run_enrich(term, relations, target_n, vary, iterate, upload,
-                                    drops_key, model, budget_label, use_thinking):
-                        """Wrapper Gradio : construit le prompt, lance le flow Jarvis.
-                        Yield (chatbot, file_update, preview_update)."""
+                                    drops_key, model, budget_label, use_thinking,
+                                    auto_switch, resume_state):
+                        """Wrapper Gradio : construit le prompt, lance le flow.
+                        Yield 5-tuples (chat, file, preview, state, btn_update).
+                        Si resume_state n'est pas None, run_jarvis_flow reprend
+                        sur l'état sauvé (mode B continue)."""
                         from jarvis import build_enrich_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_enrich_prompt(
@@ -2615,7 +2638,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             f"🌱 Enrichissement de « {t} »"
                             if t else "🌱 Enrichissement (terme tiré au hasard)"
                         )
-                        for messages, fpath, fprev in run_jarvis_flow(
+                        abort_yielded = False
+                        for chunk in run_jarvis_flow(
                             prompt=prompt,
                             headline=headline,
                             model=model,
@@ -2626,28 +2650,49 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
-                            # Fix structurel de l'abandon : si l'utilisateur
-                            # a coché « itérer », on passe le nombre cible
-                            # à run_jarvis_flow qui relance le LLM via un
-                            # HumanMessage si finalisation prématurée.
                             consolidation_target=(
                                 int(target_n) if bool(iterate) else None
                             ),
+                            auto_switch_on_perday=bool(auto_switch),
+                            resume_state=resume_state,
                         ):
-                            yield (
-                                messages,
-                                gr.update(value=fpath, visible=bool(fpath)),
-                                gr.update(value=fprev, visible=bool(fprev)),
-                            )
+                            if len(chunk) == 5:
+                                # Abort PerDay non-3.1 : state + show btn
+                                messages, fpath, fprev, state, _ = chunk
+                                abort_yielded = True
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    state,
+                                    gr.update(visible=True),
+                                )
+                            else:
+                                messages, fpath, fprev = chunk
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    gr.skip(),
+                                    gr.skip(),
+                                )
+                        # Fin de flow normale (pas d'abort) : on clear le
+                        # state + hide le bouton (au cas où ils traînaient
+                        # d'une session précédente).
+                        if not abort_yielded:
+                            yield (gr.skip(), gr.skip(), gr.skip(),
+                                   None, gr.update(visible=False))
 
-                    je_launch.click(
-                        _run_enrich,
-                        inputs=[je_term, je_relation, je_target_n, je_vary,
-                                je_iterate, je_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget,
-                                jarvis_thinking],
-                        outputs=[je_chat, je_file, je_preview],
-                    )
+                    _je_inputs = [
+                        je_term, je_relation, je_target_n, je_vary,
+                        je_iterate, je_upload,
+                        jarvis_drops_key, jarvis_model, jarvis_budget,
+                        jarvis_thinking, jarvis_auto_switch_cb, je_resume_state,
+                    ]
+                    _je_outputs = [je_chat, je_file, je_preview,
+                                   je_resume_state, je_continue_btn]
+                    je_launch.click(_run_enrich, inputs=_je_inputs, outputs=_je_outputs)
+                    je_continue_btn.click(_run_enrich, inputs=_je_inputs, outputs=_je_outputs)
                     je_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
@@ -2750,9 +2795,14 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 interactive=False,
                                 visible=False,
                             )
+                            ja_resume_state = gr.State(value=None)
+                            ja_continue_btn = gr.Button(
+                                "▶️ Continuer avec gemini-3.1-flash-lite",
+                                visible=False, variant="primary",
+                            )
 
                     def _run_audit(term, relations, upload, drops_key, model, budget_label,
-                                   use_thinking):
+                                   use_thinking, auto_switch, resume_state):
                         from jarvis import build_audit_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_audit_prompt(
@@ -2765,7 +2815,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             f"🔍 Audit de « {t} »"
                             if t else "🔍 Audit (terme polysémique tiré au hasard)"
                         )
-                        for messages, fpath, fprev in run_jarvis_flow(
+                        abort_yielded = False
+                        for chunk in run_jarvis_flow(
                             prompt=prompt, headline=headline,
                             model=model, api_key="",
                             budget_label=str(budget_label),
@@ -2774,20 +2825,38 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
+                            auto_switch_on_perday=bool(auto_switch),
+                            resume_state=resume_state,
                         ):
-                            yield (
-                                messages,
-                                gr.update(value=fpath, visible=bool(fpath)),
-                                gr.update(value=fprev, visible=bool(fprev)),
-                            )
+                            if len(chunk) == 5:
+                                messages, fpath, fprev, state, _ = chunk
+                                abort_yielded = True
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    state, gr.update(visible=True),
+                                )
+                            else:
+                                messages, fpath, fprev = chunk
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    gr.skip(), gr.skip(),
+                                )
+                        if not abort_yielded:
+                            yield (gr.skip(), gr.skip(), gr.skip(),
+                                   None, gr.update(visible=False))
 
-                    ja_launch.click(
-                        _run_audit,
-                        inputs=[ja_term, ja_relation, ja_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget,
-                                jarvis_thinking],
-                        outputs=[ja_chat, ja_file, ja_preview],
-                    )
+                    _ja_inputs = [ja_term, ja_relation, ja_upload,
+                                  jarvis_drops_key, jarvis_model, jarvis_budget,
+                                  jarvis_thinking, jarvis_auto_switch_cb,
+                                  ja_resume_state]
+                    _ja_outputs = [ja_chat, ja_file, ja_preview,
+                                   ja_resume_state, ja_continue_btn]
+                    ja_launch.click(_run_audit, inputs=_ja_inputs, outputs=_ja_outputs)
+                    ja_continue_btn.click(_run_audit, inputs=_ja_inputs, outputs=_ja_outputs)
                     ja_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
@@ -2871,9 +2940,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 resizable=True,
                                 height=400,
                             )
+                            jg_resume_state = gr.State(value=None)
+                            jg_continue_btn = gr.Button(
+                                "▶️ Continuer avec gemini-3.1-flash-lite",
+                                visible=False, variant="primary",
+                            )
 
                     def _run_gap_detection(term, relations, min_pos, drops_key, model,
-                                           budget_label, use_thinking):
+                                           budget_label, use_thinking,
+                                           auto_switch, resume_state):
                         """Détecte les gaps DIRECTEMENT (rapide, déterministe)
                         puis lance l'agent pour la synthèse narrative."""
                         from jarvis import build_gap_prompt, run_jarvis_flow
@@ -2944,7 +3019,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         # run_jarvis_flow yield (messages, fpath, fprev) —
                         # gap_detection ne produit pas de fichier, on ignore
                         # les 2 derniers.
-                        for chat_msgs, _fpath, _fprev in run_jarvis_flow(
+                        abort_yielded = False
+                        for chunk in run_jarvis_flow(
                             prompt=prompt, headline=headline,
                             model=model, api_key="",
                             budget_label=str(budget_label),
@@ -2953,16 +3029,30 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
+                            auto_switch_on_perday=bool(auto_switch),
+                            resume_state=resume_state,
                         ):
-                            yield (gr.update(), gr.update(), chat_msgs)
+                            if len(chunk) == 5:
+                                chat_msgs, _fp, _fpv, state, _ = chunk
+                                abort_yielded = True
+                                yield (gr.update(), gr.update(), chat_msgs,
+                                       state, gr.update(visible=True))
+                            else:
+                                chat_msgs, _fp, _fpv = chunk
+                                yield (gr.update(), gr.update(), chat_msgs,
+                                       gr.skip(), gr.skip())
+                        if not abort_yielded:
+                            yield (gr.skip(), gr.skip(), gr.skip(),
+                                   None, gr.update(visible=False))
 
-                    jg_launch.click(
-                        _run_gap_detection,
-                        inputs=[jg_term, jg_relations, jg_min_pos,
-                                jarvis_drops_key, jarvis_model, jarvis_budget,
-                                jarvis_thinking],
-                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat],
-                    )
+                    _jg_inputs = [jg_term, jg_relations, jg_min_pos,
+                                  jarvis_drops_key, jarvis_model, jarvis_budget,
+                                  jarvis_thinking, jarvis_auto_switch_cb,
+                                  jg_resume_state]
+                    _jg_outputs = [jg_gaps_table, jg_gap_dropdown, jg_chat,
+                                   jg_resume_state, jg_continue_btn]
+                    jg_launch.click(_run_gap_detection, inputs=_jg_inputs, outputs=_jg_outputs)
+                    jg_continue_btn.click(_run_gap_detection, inputs=_jg_inputs, outputs=_jg_outputs)
                     jg_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
@@ -3069,9 +3159,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 interactive=False,
                                 visible=False,
                             )
+                            js_resume_state = gr.State(value=None)
+                            js_continue_btn = gr.Button(
+                                "▶️ Continuer avec gemini-3.1-flash-lite",
+                                visible=False, variant="primary",
+                            )
 
                     def _run_signalement(term, relations, upload, drops_key, model,
-                                         budget_label, use_thinking):
+                                         budget_label, use_thinking,
+                                         auto_switch, resume_state):
                         from jarvis import build_signalement_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_signalement_prompt(
@@ -3084,7 +3180,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             f"⚠️ Signalement pour « {t} »"
                             if t else "⚠️ Signalement (terme tiré au hasard)"
                         )
-                        for messages, fpath, fprev in run_jarvis_flow(
+                        abort_yielded = False
+                        for chunk in run_jarvis_flow(
                             prompt=prompt, headline=headline,
                             model=model, api_key="",
                             budget_label=str(budget_label),
@@ -3093,20 +3190,38 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
+                            auto_switch_on_perday=bool(auto_switch),
+                            resume_state=resume_state,
                         ):
-                            yield (
-                                messages,
-                                gr.update(value=fpath, visible=bool(fpath)),
-                                gr.update(value=fprev, visible=bool(fprev)),
-                            )
+                            if len(chunk) == 5:
+                                messages, fpath, fprev, state, _ = chunk
+                                abort_yielded = True
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    state, gr.update(visible=True),
+                                )
+                            else:
+                                messages, fpath, fprev = chunk
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    gr.skip(), gr.skip(),
+                                )
+                        if not abort_yielded:
+                            yield (gr.skip(), gr.skip(), gr.skip(),
+                                   None, gr.update(visible=False))
 
-                    js_launch.click(
-                        _run_signalement,
-                        inputs=[js_term, js_relation, js_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget,
-                                jarvis_thinking],
-                        outputs=[js_chat, js_file, js_preview],
-                    )
+                    _js_inputs = [js_term, js_relation, js_upload,
+                                  jarvis_drops_key, jarvis_model, jarvis_budget,
+                                  jarvis_thinking, jarvis_auto_switch_cb,
+                                  js_resume_state]
+                    _js_outputs = [js_chat, js_file, js_preview,
+                                   js_resume_state, js_continue_btn]
+                    js_launch.click(_run_signalement, inputs=_js_inputs, outputs=_js_outputs)
+                    js_continue_btn.click(_run_signalement, inputs=_js_inputs, outputs=_js_outputs)
                     js_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,
@@ -3206,9 +3321,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 interactive=False,
                                 visible=False,
                             )
+                            jst_resume_state = gr.State(value=None)
+                            jst_continue_btn = gr.Button(
+                                "▶️ Continuer avec gemini-3.1-flash-lite",
+                                visible=False, variant="primary",
+                            )
 
                     def _run_stats(term, relations, upload, drops_key, model,
-                                   budget_label, use_thinking):
+                                   budget_label, use_thinking,
+                                   auto_switch, resume_state):
                         from jarvis import build_stats_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_stats_prompt(
@@ -3228,7 +3349,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             headline = f"📊 Stats sur {len(rels)} relation(s)"
                         else:
                             headline = "📊 Stats (terme tiré au hasard)"
-                        for messages, fpath, fprev in run_jarvis_flow(
+                        abort_yielded = False
+                        for chunk in run_jarvis_flow(
                             prompt=prompt, headline=headline,
                             model=model, api_key="",
                             budget_label=str(budget_label),
@@ -3237,20 +3359,38 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             build_agent_fn=build_jdm_agent,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
+                            auto_switch_on_perday=bool(auto_switch),
+                            resume_state=resume_state,
                         ):
-                            yield (
-                                messages,
-                                gr.update(value=fpath, visible=bool(fpath)),
-                                gr.update(value=fprev, visible=bool(fprev)),
-                            )
+                            if len(chunk) == 5:
+                                messages, fpath, fprev, state, _ = chunk
+                                abort_yielded = True
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    state, gr.update(visible=True),
+                                )
+                            else:
+                                messages, fpath, fprev = chunk
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    gr.skip(), gr.skip(),
+                                )
+                        if not abort_yielded:
+                            yield (gr.skip(), gr.skip(), gr.skip(),
+                                   None, gr.update(visible=False))
 
-                    jst_launch.click(
-                        _run_stats,
-                        inputs=[jst_term, jst_relation, jst_upload,
-                                jarvis_drops_key, jarvis_model, jarvis_budget,
-                                jarvis_thinking],
-                        outputs=[jst_chat, jst_file, jst_preview],
-                    )
+                    _jst_inputs = [jst_term, jst_relation, jst_upload,
+                                   jarvis_drops_key, jarvis_model, jarvis_budget,
+                                   jarvis_thinking, jarvis_auto_switch_cb,
+                                   jst_resume_state]
+                    _jst_outputs = [jst_chat, jst_file, jst_preview,
+                                    jst_resume_state, jst_continue_btn]
+                    jst_launch.click(_run_stats, inputs=_jst_inputs, outputs=_jst_outputs)
+                    jst_continue_btn.click(_run_stats, inputs=_jst_inputs, outputs=_jst_outputs)
                     jst_chat.change(
                         refresh_dropdowns_silent,
                         inputs=None,

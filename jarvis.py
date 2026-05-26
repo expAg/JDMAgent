@@ -1051,7 +1051,9 @@ def run_jarvis_flow(
     use_thinking: bool = True,
     consolidation_target: Optional[int] = None,
     max_persistence_relances: Optional[int] = None,
-) -> Generator[tuple[list[dict], Optional[str], str], None, None]:
+    auto_switch_on_perday: bool = False,
+    resume_state: Optional[dict] = None,
+) -> Generator[tuple, None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
     compatibles avec 3 composants Gradio :
@@ -1176,7 +1178,24 @@ def run_jarvis_flow(
         # de la boucle de retry → compteur d'outils et registry
         # d'exclusion MAINTENUS à travers la pause.
         import time as _time
-        accumulated_messages: list = [HumanMessage(content=prompt)]
+        # Si on est en mode RESUME (l'utilisateur a cliqué « Continuer
+        # avec 3.1 » après un PerDay), on restaure l'état sauvé au lieu
+        # de partir d'un HumanMessage frais. accumulated_messages a déjà
+        # été passé par strip_thinking_blocks dans le state.
+        if resume_state is not None and resume_state.get("accumulated_messages"):
+            accumulated_messages = list(resume_state["accumulated_messages"])
+            if resume_state.get("progress_live"):
+                progress_live = list(resume_state["progress_live"])
+            if resume_state.get("progress_full"):
+                progress_full = list(resume_state["progress_full"])
+            if resume_state.get("last_file_path"):
+                last_file_path = resume_state["last_file_path"]
+            _add_line(
+                "*▶️ Reprise du flow interrompu (PerDay) sur "
+                f"`{model}` — l'agent continue exactement où il s'était arrêté.*"
+            )
+        else:
+            accumulated_messages = [HumanMessage(content=prompt)]
         # `persistence_relances` : nombre de relances déjà tentées via
         # nudge. Fix structurel du biais d'abandon du LLM — si le LLM
         # finalise prématurément (= consolidés < target alors qu'on a
@@ -1467,12 +1486,17 @@ def run_jarvis_flow(
                         if is_per_day_quota_exhausted(e, expected_model=model):
                             if _mark_blown_fn and current_gemini_key:
                                 _mark_blown_fn(current_gemini_key, model)
-                        # PerDay sur modèle non-protégé : on bascule le
-                        # dropdown sur 3.1 (set_current_model) et on ABORT
-                        # le flow. L'utilisateur re-clique « Lancer » s'il
-                        # veut retry avec 3.1 (équivalent à « oui »),
-                        # sinon il ne fait rien (« non »). Pas d'auto-
-                        # retry silencieux — l'utilisateur garde la main.
+                        # PerDay sur modèle non-protégé.
+                        # Deux modes :
+                        #   - auto_switch_on_perday=True (option C) : on
+                        #     bascule silencieusement sur _PROTECTED et
+                        #     on continue le flow (state préservé via
+                        #     accumulated_messages, strip_thinking pour
+                        #     les tokens).
+                        #   - sinon (option B, défaut) : ABORT, save
+                        #     state stripped, yield un 5-tuple avec
+                        #     state + marker → le wrapper affiche un
+                        #     bouton « Continuer avec 3.1 ».
                         if (model != _PROTECTED
                                 and is_per_day_quota_exhausted(e, expected_model=model)
                                 and _app is not None):
@@ -1480,20 +1504,68 @@ def run_jarvis_flow(
                                 _app.set_current_model(_PROTECTED)
                             except Exception:
                                 pass
+                            if auto_switch_on_perday and current_gemini_key:
+                                # Option C : auto-retry silencieux
+                                try:
+                                    accumulated_messages = strip_thinking_blocks(
+                                        accumulated_messages, keep_last=True
+                                    )
+                                    model = _PROTECTED
+                                    llm = build_llm_fn(
+                                        model, api_key,
+                                        use_thinking=use_thinking,
+                                        gemini_key_override=current_gemini_key,
+                                    )
+                                    agent = build_agent_fn(
+                                        client=get_client_fn(), llm=llm
+                                    )
+                                    _add_line(
+                                        f"*🔄 Quota épuisé — bascule auto "
+                                        f"sur `{_PROTECTED}`, je continue.*"
+                                    )
+                                    yield (
+                                        [{"role": "user", "content": user_display},
+                                         {"role": "assistant",
+                                          "content": "\n\n".join(progress_live)}],
+                                        last_file_path,
+                                        _read_file_preview(last_file_path),
+                                    )
+                                    continue
+                                except Exception:
+                                    pass  # fallback sur abort si erreur
+                            # Option B (défaut) : abort + save state +
+                            # yield 5-tuple pour activer bouton continuer.
+                            try:
+                                stripped = strip_thinking_blocks(
+                                    accumulated_messages, keep_last=True
+                                )
+                            except Exception:
+                                stripped = accumulated_messages
+                            saved_state = {
+                                "accumulated_messages": stripped,
+                                "progress_full": list(progress_full),
+                                "progress_live": list(progress_live),
+                                "last_file_path": last_file_path,
+                                "user_display": user_display,
+                            }
                             switch_msg = (
                                 f"⚠️ **Modèle `{model}` épuisé pour "
                                 f"aujourd'hui** (quota quotidien).\n\n"
                                 f"Le sélecteur est passé sur "
                                 f"`{_PROTECTED}` (500 req/j).\n\n"
-                                f"➡️ **Re-clique « Lancer »** pour continuer "
-                                f"avec `{_PROTECTED}`, ou choisis un autre "
-                                f"modèle BYOK (Claude / GPT)."
+                                f"➡️ Clique sur **« ▶️ Continuer avec "
+                                f"`{_PROTECTED}` »** pour reprendre EXACTEMENT "
+                                f"où l'agent s'est arrêté (state préservé), "
+                                f"ou re-clique « Lancer » pour repartir de "
+                                f"zéro."
                             )
                             yield (
                                 [{"role": "user", "content": user_display},
                                  {"role": "assistant", "content": switch_msg}],
                                 last_file_path,
                                 _read_file_preview(last_file_path),
+                                saved_state,
+                                "show_continue_btn",
                             )
                             return
                         if (model == _PROTECTED
