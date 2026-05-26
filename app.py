@@ -630,7 +630,11 @@ def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
     import re as _re
     out: list[tuple[str, str]] = []
     for key, label in ALL_MODELS.items():
-        if key in GEMINI_NATIVE_REQUIRED and is_model_blown_on_current_key(key):
+        # Le check « épuisé » s'applique à TOUS les Gemini natifs
+        # (3.1, 3.5, 2.5…), pas seulement NATIVE_REQUIRED. Sinon
+        # 2.5 hit PerDay → mark_blown → MAIS dropdown ne montre rien
+        # parce que la condition ne le testait pas.
+        if key in GEMINI_MODELS and is_model_blown_on_current_key(key):
             base = _re.sub(r"\s*\(.*?\)\s*$", "", str(label)).strip()
             decorated = f"{base} — épuisé sur cette clé"
         elif key == _CURRENT_MODEL:
