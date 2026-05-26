@@ -2247,25 +2247,30 @@ _HEAD_JS = """
     lists.forEach(function(ul) {
       var optsTxt = (ul.textContent || '');
       if (optsTxt.indexOf('Gemini') === -1) return;
-      var existing = ul.querySelector('.jdm-switch-key-injected');
-      // Si le bouton existe DÉJÀ et est EN DERNIÈRE POSITION, on
-      // update juste le label. Sinon, on le retire et recrée à la
-      // fin : après reset du filter, Svelte ajoute des nouveaux <li>
-      // (les options 2.5, 3.5, BYOK) APRÈS notre bouton → faut le
-      // déplacer en queue pour respecter « last in list ».
-      if (existing && existing === ul.lastElementChild) {
+      // On place le bouton EN FRÈRE de ul (dans le parent), pas
+      // dedans : sinon les re-renders Svelte de ul (filter restrict
+      // puis reset) flashent le bouton 2 fois en le supprimant/
+      // ré-injectant. En frère, Svelte ne le touche jamais.
+      var container = ul.parentNode;
+      if (!container) return;
+      var existing = container.querySelector(':scope > .jdm-switch-key-injected');
+      if (existing) {
         if (existing.textContent !== btnLabel) existing.textContent = btnLabel;
+        // Assure que le bouton est APRÈS ul dans l'ordre DOM
+        if (existing.previousElementSibling !== ul && ul.nextSibling !== existing) {
+          container.insertBefore(existing, ul.nextSibling);
+        }
         return;
       }
-      if (existing) existing.remove();
-      var btn = document.createElement('li');
+      var btn = document.createElement('div');
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
       btn.setAttribute('role', 'button');
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        if (btn.parentNode) btn.parentNode.removeChild(btn);
+        // Pas besoin de retirer btn du DOM : il est en frère de ul,
+        // pas dedans, donc Svelte ne le verra jamais dans son diff.
         // Setup MutationObserver AVANT hidden.click() : dès que Svelte
         // mute ul (re-render des li suite au choices update), le
         // callback fire IMMÉDIATEMENT (pas de fenêtre de setTimeout
@@ -2284,25 +2289,19 @@ _HEAD_JS = """
           var resetObs = new MutationObserver(function() {
             var v = liInput.value;
             if (v) {
-              // Svelte vient de set input_text=new_label → on capture
-              // pour le placeholder
               liInput.placeholder = v;
               liInput.classList.add('jdm-placeholder-as-value');
-              // Reset filter en passant input_text='' → handle_filter
-              // retournera all_indices → ul se re-render avec toutes
-              // les options visibles dans la même microtask
               setter.call(liInput, '');
               liInput.dispatchEvent(new Event('input', {bubbles: true}));
             }
           });
           resetObs.observe(ul, { childList: true });
-          // Safety: deconnecte après 2s pour éviter de polluer les
-          // mutations subséquentes (manuels par l'user).
           setTimeout(function() { resetObs.disconnect(); }, 2000);
         }
         hidden.click();
       });
-      ul.appendChild(btn);
+      // Insère le bouton APRÈS ul (en frère), pas dedans
+      container.insertBefore(btn, ul.nextSibling);
     });
   }
 
