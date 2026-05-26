@@ -360,6 +360,34 @@ def mark_gemini_key_blown(key: str, model: str) -> None:
         _BLOWN_TODAY[(key, model, _today_utc_str())] = True
 
 
+def is_model_fully_blown(model: str) -> bool:
+    """True si TOUTES les clés du pool sont blown ou invalides pour ce
+    modèle aujourd'hui. Utilisé pour griser dans le dropdown UI."""
+    keys = _parse_google_keys()
+    if not keys:
+        return False
+    today = _today_utc_str()
+    return all(
+        (k in _INVALID_KEYS) or _BLOWN_TODAY.get((k, model, today), False)
+        for k in keys
+    )
+
+
+def build_model_choices() -> list[tuple[str, str]]:
+    """Construit la liste de (label, value) du dropdown des modèles,
+    avec suffixe « (épuisé) » pour les Gemini natifs dont toutes les
+    clés du pool sont blown aujourd'hui. Les modèles non-Gemini et
+    Gemini compat-OpenAI restent sans suffixe (pas de tracking).
+    """
+    out: list[tuple[str, str]] = []
+    for key, label in ALL_MODELS.items():
+        suffix = ""
+        if key in GEMINI_NATIVE_REQUIRED and is_model_fully_blown(key):
+            suffix = " — ⛔ épuisé aujourd'hui"
+        out.append((label + suffix, key))
+    return out
+
+
 def pick_unblown_gemini_key(model: str,
                              skip: Optional[str] = None) -> Optional[str]:
     """Renvoie la première clé du pool non-épuisée pour `model`, ou
@@ -869,17 +897,17 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         "invalides, soit épuisées pour aujourd'hui. "
                         "Vérifie GOOGLE_API_KEYS."
                     ) from e
-                # 1) Quota QUOTIDIEN épuisé SUR LE MODÈLE PROTÉGÉ.
-                # On bascule UNIQUEMENT si :
-                # (a) on est sur gemini-3.1-flash-lite (le seul modèle
-                #     dont le quota PerDay généreux — 500 req/jour —
-                #     justifie de griller une clé du pool), ET
-                # (b) le PerDay concerne bien ce modèle (filtre
-                #     expected_model contre les PerDay parasites).
-                # Pour les autres modèles (quotas ~20 req/jour), on
-                # remonte l'erreur — c'est trop chiche pour justifier
-                # de griller une clé.
+                # 1) Quota QUOTIDIEN épuisé.
+                # On TRACE TOUJOURS la clé courante comme blown pour
+                # ce modèle (UI dropdown : « épuisé » quand toutes les
+                # clés sont blown). On ne BASCULE de clé que si on est
+                # sur le modèle protégé (gemini-3.1-flash-lite, 500
+                # req/jour). Pour les autres (~20 req/jour), on remonte
+                # l'erreur après le marquage.
                 from jarvis import is_per_day_quota_exhausted
+                if is_per_day_quota_exhausted(e, expected_model=model):
+                    if current_gemini_key:
+                        mark_gemini_key_blown(current_gemini_key, model)
                 if (model == GEMINI_POOL_PROTECTED_MODEL
                         and is_per_day_quota_exhausted(e, expected_model=model)):
                     switched = False
@@ -2077,7 +2105,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         elem_classes=["floating-thinking"],
                     )
                     model_in = gr.Dropdown(
-                        choices=[(label, key) for key, label in ALL_MODELS.items()],
+                        choices=build_model_choices(),
                         value="gemini-3.1-flash-lite",
                         label="Modèle",
                     )
@@ -2217,7 +2245,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         elem_classes=["floating-thinking"],
                     )
                     jarvis_model = gr.Dropdown(
-                        choices=[(label, key) for key, label in ALL_MODELS.items()],
+                        choices=build_model_choices(),
                         value="gemini-3.1-flash-lite",
                         label="Modèle",
                     )

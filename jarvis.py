@@ -1375,18 +1375,24 @@ def run_jarvis_flow(
                                 "invalides, soit épuisées pour aujourd'hui. "
                                 "Vérifie GOOGLE_API_KEYS dans tes secrets / .env."
                             ) from e
-                        # PerDay : on ne bascule QUE si on est sur le
-                        # modèle protégé (gemini-3.1-flash-lite, 500
-                        # req/jour). Pour les autres modèles (quotas
-                        # ~20 req/jour), brûler une clé du pool est
-                        # un mauvais deal — on remonte l'erreur.
-                        # Le filtre `expected_model=model` garantit
-                        # aussi qu'un PerDay parasite d'un AUTRE modèle
-                        # ne déclenche pas la bascule.
+                        # PerDay : on TRACE TOUJOURS la clé courante
+                        # comme blown pour ce modèle (visuel dropdown
+                        # « épuisé »). On ne BASCULE de clé que si on
+                        # est sur le modèle protégé (gemini-3.1-flash-
+                        # lite, 500 req/jour). Pour les autres (quotas
+                        # ~20 req/jour), on remonte l'erreur après le
+                        # marquage.
                         try:
-                            from app import GEMINI_POOL_PROTECTED_MODEL as _PROTECTED
+                            from app import (
+                                GEMINI_POOL_PROTECTED_MODEL as _PROTECTED,
+                                mark_gemini_key_blown as _mark_blown_fn,
+                            )
                         except Exception:
                             _PROTECTED = "gemini-3.1-flash-lite"
+                            _mark_blown_fn = None
+                        if is_per_day_quota_exhausted(e, expected_model=model):
+                            if _mark_blown_fn and current_gemini_key:
+                                _mark_blown_fn(current_gemini_key, model)
                         if (model == _PROTECTED
                                 and is_per_day_quota_exhausted(e, expected_model=model)):
                             switched = False
