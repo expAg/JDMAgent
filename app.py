@@ -692,14 +692,24 @@ def pick_unblown_gemini_key(model: str,
     pour la session courante."""
     keys = _parse_google_keys()
     today = _today_utc_str()
+    n = len(keys)
+    if n == 0:
+        return None
     # 1) Sticky : réutilise _CURRENT_GEMINI_KEY si encore utilisable
     cur = _CURRENT_GEMINI_KEY
     if (cur and cur != skip and cur in keys
             and cur not in _INVALID_KEYS
             and not _BLOWN_TODAY.get((cur, model, today), False)):
         return cur
-    # 2) Sinon, pique la première dispo dans l'ordre du pool
-    for k in keys:
+    # 2) Rotation cyclique : on commence APRÈS skip (ou après cur),
+    #    pas au début du pool — sinon on cycle 1↔2 sans atteindre 3/4.
+    start = 0
+    if skip and skip in keys:
+        start = (keys.index(skip) + 1) % n
+    elif cur and cur in keys:
+        start = (keys.index(cur) + 1) % n
+    for i in range(n):
+        k = keys[(start + i) % n]
         if k == skip:
             continue
         if k in _INVALID_KEYS:
@@ -3793,18 +3803,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             show_progress="hidden",
         )
 
-        # Bouton « Rotation clés gemini » : pick la clé suivante du pool
-        # qui n'est pas blown pour le modèle courant. Update les choices
-        # des deux dropdowns (suffix « épuisé » se recalcule) + le label
-        # des boutons (nouvel index « clé X/N »).
-        #
-        # CRITIQUE : on N'envoie PAS `value=...` dans le gr.update du
-        # dropdown. Quand un dropdown Gradio est OUVERT, passer une
-        # value le met en mode « search filter » → n'affiche que
-        # l'option qui matche la value → BYOK / autres options
-        # disparaissent visuellement. Sans value, Gradio update juste
-        # la liste des choices, garde implicitement la value existante,
-        # et la liste reste entièrement visible.
+        # Bouton « Rotation clés gemini » :
+        # 1) Python pick la clé suivante (rotation cyclique), update
+        #    les choices des dropdowns (suffix « épuisé » recalculé)
+        #    + label des boutons (nouvel index « clé X/N »).
+        # 2) Chaîné via .then(js=...) : force close + reopen le
+        #    dropdown ouvert → l'utilisateur voit la liste complète
+        #    rafraîchie avec les nouveaux markers sans manipulation.
         def _switch_api_key():
             cur_key = _CURRENT_GEMINI_KEY
             cur_mod = _CURRENT_MODEL or "gemini-3.1-flash-lite"
@@ -3814,23 +3819,50 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             choices = build_model_choices()
             new_label = _switch_key_btn_label()
             return (
-                gr.update(choices=choices),  # PAS de value=
-                gr.update(choices=choices),  # PAS de value=
+                gr.update(choices=choices),
+                gr.update(choices=choices),
                 gr.update(value=new_label),
                 gr.update(value=new_label),
             )
         _switch_outputs = [model_in, jarvis_model,
                            chat_switch_key_btn, jarvis_switch_key_btn]
+        # JS chaîné APRÈS la réponse Python : ferme le dropdown ouvert
+        # puis le ré-ouvre → re-render frais avec les nouveaux labels.
+        _reopen_js = """
+        () => {
+          // Trouve la listbox Gemini actuellement visible
+          var lists = document.querySelectorAll('ul[role="listbox"]');
+          var target = null;
+          lists.forEach(function(ul) {
+            if ((ul.textContent || '').indexOf('Gemini') === -1) return;
+            var r = ul.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) target = ul;
+          });
+          if (!target) return;
+          var root = target.closest('[class*="dropdown"]');
+          if (!root) return;
+          var trigger = root.querySelector('input');
+          if (!trigger) return;
+          // Close
+          trigger.blur();
+          document.body.click();
+          // Re-open
+          setTimeout(function() {
+            trigger.focus();
+            trigger.click();
+          }, 150);
+        }
+        """
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=_reopen_js)
         jarvis_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=_reopen_js)
         # ---- Handlers consolidés .change pour les deux dropdowns ----
         # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
         # - set_current_model(_CURRENT_MODEL tracking)
