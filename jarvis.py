@@ -1468,49 +1468,44 @@ def run_jarvis_flow(
                             if _mark_blown_fn and current_gemini_key:
                                 _mark_blown_fn(current_gemini_key, model)
                         # AUTO-BASCULE vers le modèle protégé (3.1, 500 req/j)
-                        # quand un modèle non-protégé est épuisé. L'utilisateur
-                        # continue son flow sans interruption — on rebuild
-                        # LLM + agent avec _PROTECTED et la même clé (ou une
-                        # autre si celle-ci est aussi blown pour 3.1).
+                        # quand un modèle non-protégé est épuisé. Le quota
+                        # PerDay est PAR-MODÈLE → la clé courante reste
+                        # parfaitement utilisable pour 3.1 (on vient de
+                        # marquer blown sur model != 3.1, donc 3.1 sur
+                        # cette même clé n'est pas blown). Pas besoin de
+                        # re-pick une clé.
                         if (model != _PROTECTED
                                 and is_per_day_quota_exhausted(e, expected_model=model)
-                                and _app is not None):
+                                and _app is not None
+                                and current_gemini_key):
                             try:
-                                pick_fn = _app.pick_unblown_gemini_key
-                                # Cherche une clé utilisable pour _PROTECTED
-                                # (peut être la même que current_gemini_key
-                                # car le quota est par-modèle).
-                                next_key_for_protected = pick_fn(_PROTECTED)
-                                if next_key_for_protected:
-                                    current_gemini_key = next_key_for_protected
-                                    model = _PROTECTED  # mute le modèle local
-                                    try:
-                                        _app.set_current_gemini_key(current_gemini_key)
-                                        _app.set_current_model(model)
-                                    except Exception:
-                                        pass
-                                    llm = build_llm_fn(
-                                        model, api_key,
-                                        use_thinking=use_thinking,
-                                        gemini_key_override=current_gemini_key,
-                                    )
-                                    agent = build_agent_fn(
-                                        client=get_client_fn(), llm=llm
-                                    )
-                                    _add_line(
-                                        f"*🔄 Quota quotidien épuisé sur ce "
-                                        f"modèle — bascule automatique sur "
-                                        f"`{_PROTECTED}` (500 req/j) pour "
-                                        f"continuer le travail.*"
-                                    )
-                                    yield (
-                                        [{"role": "user", "content": user_display},
-                                         {"role": "assistant",
-                                          "content": "\n\n".join(progress_live)}],
-                                        last_file_path,
-                                        _read_file_preview(last_file_path),
-                                    )
-                                    continue
+                                model = _PROTECTED  # mute le modèle local
+                                try:
+                                    _app.set_current_model(model)
+                                except Exception:
+                                    pass
+                                llm = build_llm_fn(
+                                    model, api_key,
+                                    use_thinking=use_thinking,
+                                    gemini_key_override=current_gemini_key,
+                                )
+                                agent = build_agent_fn(
+                                    client=get_client_fn(), llm=llm
+                                )
+                                _add_line(
+                                    f"*🔄 Quota quotidien épuisé sur ce "
+                                    f"modèle — bascule automatique sur "
+                                    f"`{_PROTECTED}` (500 req/j) pour "
+                                    f"continuer le travail.*"
+                                )
+                                yield (
+                                    [{"role": "user", "content": user_display},
+                                     {"role": "assistant",
+                                      "content": "\n\n".join(progress_live)}],
+                                    last_file_path,
+                                    _read_file_preview(last_file_path),
+                                )
+                                continue
                             except Exception:
                                 pass  # bascule indisponible → erreur finale
                         if (model == _PROTECTED

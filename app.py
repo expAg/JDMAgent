@@ -1099,32 +1099,30 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                     if current_gemini_key:
                         mark_gemini_key_blown(current_gemini_key, model)
                 # AUTO-BASCULE vers le modèle protégé (3.1, 500 req/j)
-                # quand un modèle non-protégé est épuisé.
+                # quand un modèle non-protégé est épuisé. La clé courante
+                # reste utilisable pour 3.1 (quota PerDay par-modèle).
                 if (model != GEMINI_POOL_PROTECTED_MODEL
-                        and is_per_day_quota_exhausted(e, expected_model=model)):
+                        and is_per_day_quota_exhausted(e, expected_model=model)
+                        and current_gemini_key):
                     try:
-                        next_key_for_protected = pick_unblown_gemini_key(GEMINI_POOL_PROTECTED_MODEL)
-                        if next_key_for_protected:
-                            current_gemini_key = next_key_for_protected
-                            model = GEMINI_POOL_PROTECTED_MODEL
-                            set_current_gemini_key(current_gemini_key)
-                            set_current_model(model)
-                            llm = _build_llm(
-                                model, api_key,
-                                use_thinking=use_thinking,
-                                gemini_key_override=current_gemini_key,
-                            )
-                            agent = build_jdm_agent(
-                                client=get_client(), llm=llm
-                            )
-                            switch_msg = (
-                                f"\n\n*🔄 Quota quotidien épuisé sur ce "
-                                f"modèle — bascule automatique sur "
-                                f"`{GEMINI_POOL_PROTECTED_MODEL}` (500 req/j).*"
-                            )
-                            current_progress = "\n\n".join(progress_live)
-                            yield current_progress + switch_msg, _NOOP_FILE
-                            continue
+                        model = GEMINI_POOL_PROTECTED_MODEL
+                        set_current_model(model)
+                        llm = _build_llm(
+                            model, api_key,
+                            use_thinking=use_thinking,
+                            gemini_key_override=current_gemini_key,
+                        )
+                        agent = build_jdm_agent(
+                            client=get_client(), llm=llm
+                        )
+                        switch_msg = (
+                            f"\n\n*🔄 Quota quotidien épuisé sur ce "
+                            f"modèle — bascule automatique sur "
+                            f"`{GEMINI_POOL_PROTECTED_MODEL}` (500 req/j).*"
+                        )
+                        current_progress = "\n\n".join(progress_live)
+                        yield current_progress + switch_msg, _NOOP_FILE
+                        continue
                     except Exception:
                         pass
                 if (model == GEMINI_POOL_PROTECTED_MODEL
