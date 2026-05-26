@@ -1778,10 +1778,17 @@ Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
 import base64 as _b64
 import tempfile
 
-# Répertoire des sous-graphes produits — autorisé en lecture par Gradio
-# (cf. demo.launch(allowed_paths=[VIZ_DIR])).
-VIZ_DIR = Path(tempfile.gettempdir()) / "jdm_viz"
-VIZ_DIR.mkdir(parents=True, exist_ok=True)
+# RÉPERTOIRE UNIFIÉ des productions JDM Agent.
+# Tous les flows (sous-graphes HTML, enrichissements .enrich, audits .audit,
+# signalements .err, stats .stat) écrivent dans ce dossier unique pour :
+#   1. Centraliser dans l'onglet « 📁 Productions » (FileExplorer)
+#   2. Simplifier le `allowed_paths` du launch Gradio
+#   3. Persister sur /tmp (seul dir fiable sur HF Spaces, cf. /tmp/jdm_cache)
+PRODUCTIONS_DIR = Path("/tmp/jdm_outputs")
+PRODUCTIONS_DIR.mkdir(parents=True, exist_ok=True)
+# VIZ_DIR conservé comme ALIAS du dir unifié — pour rétro-compat des
+# code paths qui le référencent encore. Pas de second répertoire.
+VIZ_DIR = PRODUCTIONS_DIR
 
 # Liste des relations principales exposées aux formulaires Jarvis +
 # Sous-graphe. Sortie au niveau module pour être réutilisable.
@@ -1824,7 +1831,20 @@ def viz_subgraph(term: str, depth: float,
         cache_key = (term, depth, top_k, top_k_d2, top_k_d3, top_k_d4,
                      tuple(rels or ()), tuple(d2_rels or ()),
                      tuple(d3_rels or ()), tuple(d4_rels or ()))
-        out_path = VIZ_DIR / f"viz_{abs(hash(cache_key)) % 10**8}.html"
+        # Nom incluant terme + timestamp court → lisible dans l'onglet
+        # Productions ET unique par requête (hash trop opaque pour l'UI).
+        # Le timestamp court (HHMMSS) garantit qu'une re-requête sur le
+        # même terme produit un fichier distinct (pas d'écrasement).
+        import time as _time_mod_viz
+        _safe_term = "".join(ch if ch.isalnum() or ch in "_-" else "_"
+                             for ch in (term or "x"))[:40]
+        _ts_short = _time_mod_viz.strftime("%H%M%S")
+        out_path = VIZ_DIR / f"viz_{_safe_term}_{_ts_short}.html"
+        # Safety anti-collision (rare : 2 viz exactement à la même seconde)
+        _i = 2
+        while out_path.exists():
+            out_path = VIZ_DIR / f"viz_{_safe_term}_{_ts_short}_{_i}.html"
+            _i += 1
         print(f"[viz] term={term!r} depth={depth} "
               f"top_k=[{top_k},{top_k_d2},{top_k_d3},{top_k_d4}] "
               f"rels={rels} d2={d2_rels} d3={d3_rels} d4={d4_rels}", flush=True)
@@ -3850,6 +3870,141 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         outputs=[jst_term, jst_relation, jarvis_tabs],
                     )
 
+                # ---- Sous-onglet 6 : 📁 Productions ----
+                # Centralise TOUS les fichiers produits par l'agent (sous-graphes
+                # HTML, .enrich, .audit, .err, .stat). Arborescence à gauche,
+                # viewer adaptatif à droite (iframe pour HTML, code pour text,
+                # télécharge pour le reste). Pas d'écrasement : tout file producer
+                # détecte les collisions et suffixe (_2, _3…).
+                with gr.Tab("📁 Productions", id="jarvis-productions"):
+                    gr.Markdown(
+                        "**Tous les fichiers produits** par l'agent (sous-graphes, "
+                        "enrichissements, audits, signalements, stats) sont listés "
+                        "ici. Aucun écrasement : les collisions de nom sont suffixées "
+                        "automatiquement (`_2`, `_3`…)."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1, min_width=280):
+                            prod_file_explorer = gr.FileExplorer(
+                                root_dir=str(PRODUCTIONS_DIR),
+                                glob="*",
+                                label="Fichiers",
+                                file_count="single",
+                                interactive=True,
+                                every=5,  # auto-refresh toutes les 5s
+                            )
+                            prod_refresh_btn = gr.Button("🔄 Rafraîchir maintenant",
+                                                          size="sm")
+                        with gr.Column(scale=3):
+                            prod_status = gr.Markdown(
+                                "*Sélectionne un fichier à gauche pour le visualiser.*"
+                            )
+                            prod_html_viewer = gr.HTML(visible=False)
+                            prod_text_viewer = gr.Code(
+                                visible=False, label="Contenu",
+                                language="markdown", lines=30,
+                            )
+                            prod_download = gr.File(
+                                visible=False, label="📥 Télécharger ce fichier",
+                                interactive=False,
+                            )
+
+                    def _render_production_file(selected_path):
+                        """Affiche le fichier selon son extension :
+                          - .html → iframe (data:base64) comme dans Sous-graphe
+                          - .enrich/.audit/.err/.stat/.txt/.md → gr.Code
+                          - autre → gr.File pour téléchargement
+                        Renvoie (status_md, html_html, text_code_update, file_update).
+                        """
+                        import base64 as _b64_prod
+                        import time as _time_prod
+                        if not selected_path:
+                            return (
+                                "*Sélectionne un fichier à gauche pour le visualiser.*",
+                                gr.update(visible=False, value=""),
+                                gr.update(visible=False, value=""),
+                                gr.update(visible=False, value=None),
+                            )
+                        try:
+                            sp = Path(selected_path)
+                            if not sp.exists():
+                                return (
+                                    f"⚠️ Le fichier `{selected_path}` n'existe plus "
+                                    "(supprimé ou renommé).",
+                                    gr.update(visible=False, value=""),
+                                    gr.update(visible=False, value=""),
+                                    gr.update(visible=False, value=None),
+                                )
+                            size_kb = sp.stat().st_size / 1024
+                            age_s = int(_time_prod.time() - sp.stat().st_mtime)
+                            status_md = (
+                                f"**📄 `{sp.name}`** — {size_kb:.1f} KB "
+                                f"(modifié il y a {age_s}s)"
+                            )
+                            ext = sp.suffix.lower()
+                            if ext == ".html":
+                                # iframe data:base64 — comme viz_subgraph
+                                html_text = sp.read_text(encoding="utf-8")
+                                b64 = _b64_prod.b64encode(html_text.encode("utf-8")).decode("ascii")
+                                iframe = (
+                                    f'<iframe src="data:text/html;base64,{b64}" '
+                                    f'style="width:100%;height:780px;border:1px solid #444;'
+                                    f'border-radius:8px;background:#fff;display:block;" '
+                                    f'sandbox="allow-scripts allow-same-origin"></iframe>'
+                                )
+                                return (
+                                    status_md,
+                                    gr.update(visible=True, value=iframe),
+                                    gr.update(visible=False, value=""),
+                                    gr.update(visible=True, value=str(sp)),
+                                )
+                            text_exts = {".enrich", ".audit", ".err", ".stat",
+                                         ".txt", ".md", ".csv", ".json", ".log"}
+                            if ext in text_exts:
+                                content = sp.read_text(encoding="utf-8", errors="replace")
+                                if len(content) > 200_000:
+                                    content = content[:200_000] + "\n\n[… tronqué — télécharge pour tout voir]"
+                                lang = {"json": "json", "md": "markdown"}.get(
+                                    ext.lstrip("."), "markdown"
+                                )
+                                return (
+                                    status_md,
+                                    gr.update(visible=False, value=""),
+                                    gr.update(visible=True, value=content, language=lang),
+                                    gr.update(visible=True, value=str(sp)),
+                                )
+                            # Type inconnu : juste téléchargement
+                            return (
+                                status_md + " *(type non prévisualisé)*",
+                                gr.update(visible=False, value=""),
+                                gr.update(visible=False, value=""),
+                                gr.update(visible=True, value=str(sp)),
+                            )
+                        except Exception as e:
+                            return (
+                                f"⚠️ Erreur lecture : {e}",
+                                gr.update(visible=False, value=""),
+                                gr.update(visible=False, value=""),
+                                gr.update(visible=False, value=None),
+                            )
+
+                    prod_file_explorer.change(
+                        _render_production_file,
+                        inputs=[prod_file_explorer],
+                        outputs=[prod_status, prod_html_viewer,
+                                 prod_text_viewer, prod_download],
+                    )
+
+                    def _refresh_explorer():
+                        """Force un rafraîchissement de l'arborescence."""
+                        return gr.update(root_dir=str(PRODUCTIONS_DIR))
+
+                    prod_refresh_btn.click(
+                        _refresh_explorer,
+                        inputs=None,
+                        outputs=[prod_file_explorer],
+                    )
+
             # ---- Câblage transverse : quand la clé LLMDrops change dans
             # le bandeau, on rafraîchit l'état interactive des 4 boutons
             # « Soumettre » post-hoc (Enrich/Audit/Signalement/Stats).
@@ -4016,6 +4171,6 @@ if __name__ == "__main__":
     # la démo (icône bureau / écran d'accueil mobile, plein écran sans
     # barre URL, cache partiel des assets). Aucun coût si non utilisé.
     demo.launch(server_name="0.0.0.0", server_port=7860,
-                allowed_paths=[str(VIZ_DIR)],
+                allowed_paths=[str(PRODUCTIONS_DIR)],
                 ssr_mode=False,
                 pwa=True)
