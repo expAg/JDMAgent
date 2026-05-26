@@ -1304,6 +1304,20 @@ def run_jarvis_flow(
             progress_live.append(live)
             progress_full.append(full if full is not None else live)
 
+        # OPTION C — path canonique unique pour CE run.
+        # Timestamp + 6 premiers chars du hash du prompt → unicité même
+        # si même prompt re-lancé. Tout va dans /tmp/jdm_outputs (la
+        # seule destination fiable sur HF Spaces).
+        # OPTION B — à la fin du flow on dumpe TOUT le registry de
+        # consolidation dans ce path. Garantit que le fichier final
+        # contient toutes les consolidations du run, même si le LLM
+        # a écrit dans plusieurs paths intermédiaires ou si rien.
+        import hashlib
+        import time as _time_mod
+        _ts = _time_mod.strftime("%Y%m%d_%H%M%S")
+        _hash = hashlib.sha1((prompt or "").encode("utf-8")).hexdigest()[:6]
+        canonical_path = f"/tmp/jdm_outputs/jdm_{_ts}_{_hash}.enrich"
+
         # Yield initial : user message + assistant placeholder, pas encore de fichier
         yield (
             [{"role": "user", "content": user_display},
@@ -1353,6 +1367,19 @@ def run_jarvis_flow(
         persistence_relances = 0
         persistence_done = False
         budget = None  # accessible hors du with pour le compteur final
+        # exclusion_context AUTOUR du while persistance : sans ça le
+        # registry de consolidation est wipé entre chaque relance car
+        # le with exit + re-enter à chaque tour → count_consolidations()
+        # repartirait de 0 et le fix cumulatif serait inopérant. Avec
+        # exclusion_context ici, le registry persiste sur TOUT le run.
+        # budget_context reste dans la boucle (compteur reset par relance
+        # = comportement actuel volontaire, budget interprété par session
+        # de streaming).
+        # Entrée MANUELLE du context manager (__enter__/__exit__) pour
+        # ne pas re-indenter tout le while → fermé dans le finally du try
+        # principal (cf. plus bas).
+        _excl_ctx = exclusion_context()
+        _excl_ctx.__enter__()
         while not persistence_done:
             rate_limit_attempts = 0
             # Hits de rate limit CONSÉCUTIFS sans aucun chunk reçu
@@ -1362,7 +1389,7 @@ def run_jarvis_flow(
             consecutive_rate_limit_hits = 0
             MAX_CONSECUTIVE_RATE_LIMIT = 3
             proactive_condense_count = 0
-            with budget_context(limit=limit) as budget, exclusion_context():
+            with budget_context(limit=limit) as budget:
                 # boucle retry quota : ILLIMITÉ tant que le délai
                 # retry est court (cf. detect_rate_limit_retry, cap
                 # interne à 120s par hit) ET qu'on fait du progrès
@@ -2047,6 +2074,48 @@ def run_jarvis_flow(
                 f"{full_text}\n\n</details>"
             )
 
+        # OPTION B — FUSION FINALE depuis le registry de consolidation.
+        # On dumpe TOUS les triplets consolidés du run (cumulatif via le
+        # registry survivant grâce à exclusion_context wrappant le while
+        # persistance) dans canonical_path. Garantit que le fichier
+        # affiché contient TOUT, peu importe ce que le LLM a écrit dans
+        # des paths intermédiaires ou si certaines écritures ont été
+        # écrasées par des appels successifs.
+        try:
+            from jdm_agent.enrich import list_consolidations
+            from jdm_agent.enrich.pipeline import write_submission as _write_sub
+            from jdm_agent.enrich import Candidate as _Candidate
+            from pathlib import Path as _Path
+            entries = list_consolidations()
+            if entries:
+                _Path(canonical_path).parent.mkdir(parents=True, exist_ok=True)
+                cands = [
+                    _Candidate(
+                        term=e["term"], relation=e["relation"], target=e["target"],
+                        annotation="",
+                        consolidation_explanation=e.get("explanation") or "",
+                        confidence=0.8, source="agent",
+                        validation_status="ok",
+                        consolidation_status="consolidated",
+                    )
+                    for e in entries
+                ]
+                _write_sub(canonical_path, cands, client=get_client_fn())
+                last_file_path = canonical_path
+                _add_line(
+                    f"*📦 Fichier final fusionné : {len(entries)} triplets "
+                    f"consolidés écrits dans `{canonical_path}` "
+                    f"(garantit que rien n'est perdu).*"
+                )
+        except Exception as _e:
+            # Safety : si la fusion finale foire, on ne casse pas le flow,
+            # on garde last_file_path tel que la dernière écriture LLM
+            # l'avait laissé.
+            _add_line(
+                f"*⚠️ Fusion finale impossible : {_e}. Le fichier affiché "
+                f"correspond à la dernière écriture du LLM.*"
+            )
+
         final_content = (
             (final_answer or "*(réponse vide)*")
             + footer
@@ -2058,6 +2127,14 @@ def run_jarvis_flow(
             last_file_path, _read_file_preview(last_file_path),
         )
     finally:
+        # Ferme manuellement l'exclusion_context ouvert avant le
+        # while persistance (cf. __enter__ plus haut). Try/except pour
+        # supporter le cas où _excl_ctx n'a pas été initialisé (erreur
+        # tres precoce dans le run).
+        try:
+            _excl_ctx.__exit__(None, None, None)
+        except Exception:
+            pass
         # Restore env var si on l'avait modifiée
         if drops_key and drops_key.strip():
             if saved_drops_key is None:
