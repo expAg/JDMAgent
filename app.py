@@ -2262,21 +2262,42 @@ _HEAD_JS = """
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
       btn.setAttribute('role', 'button');
+      // mousedown.preventDefault() empêche le browser de transférer le
+      // focus depuis l'input listbox (qui a actuellement le focus
+      // puisque le dropdown est ouvert) → handle_blur NE FIRE PAS →
+      // show_options reste true → le dropdown ne se ferme JAMAIS.
+      btn.addEventListener('mousedown', function(ev) {
+        ev.preventDefault();
+      });
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        if (btn.parentNode) btn.parentNode.removeChild(btn);
-        // Ferme le dropdown AVANT le hidden.click() — sinon Gradio
-        // updates le dropdown ouvert et handle_filter (lié à input_text
-        // = label du nouveau modèle) restreint l'affichage à 1 option.
-        // À la prochaine ouverture par l'user, handle_focus reset
-        // filtered_indices → liste complète restaurée.
+        var liInput = null;
         try {
-          var liInput = ul.closest('.form, [class*="block"]')
-                          ?.querySelector('input[role="listbox"]');
-          if (liInput) liInput.blur();
+          liInput = ul.closest('.form, [class*="block"]')
+                       ?.querySelector('input[role="listbox"]');
         } catch (e) {}
+        if (btn.parentNode) btn.parentNode.removeChild(btn);
         hidden.click();
+        // Après le roundtrip Gradio, le reactive block L94-108 de
+        // Dropdown.svelte va appeler handle_filter(choices, input_text)
+        // → filtered_indices restreint à 1 option (le label courant
+        // matche exactement 1 choice). Pour rétablir TOUTES les options
+        // visibles, on dispatch un FocusEvent qui déclenche handle_focus
+        // → filtered_indices = choices.map((_,i)=>i). Le focus du browser
+        // n'a JAMAIS changé (mousedown.preventDefault) donc aucun blur,
+        // aucun flash, le menu reste ouvert en continu.
+        var trySync = function() {
+          if (liInput) {
+            liInput.dispatchEvent(new FocusEvent('focus', {bubbles: true}));
+          }
+        };
+        // Plusieurs timings : on couvre la fenêtre du roundtrip Gradio
+        // sans connaître sa durée exacte. Les dispatchs redondants sont
+        // des no-ops (handle_focus est idempotent).
+        setTimeout(trySync, 80);
+        setTimeout(trySync, 250);
+        setTimeout(trySync, 600);
       });
       ul.appendChild(btn);
     });
