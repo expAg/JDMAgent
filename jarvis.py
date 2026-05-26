@@ -1219,7 +1219,19 @@ def run_jarvis_flow(
     import os
     from jdm_agent.tools.budget import budget_context
     from jdm_agent.enrich.validators import exclusion_context
+    from jdm_agent.enrich import count_consolidations
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    def _pending_line() -> str:
+        """Ligne « génération en cours » avec compteur cumulatif des
+        triplets consolidés (lu depuis le registry global, donc
+        cumulatif sur tout le flow y compris les relances). Format :
+        « ⏳ Génération en cours… (X/Y consolidés) » si target fixé,
+        sinon « ⏳ Génération en cours… (X consolidés) »."""
+        n = count_consolidations()
+        if consolidation_target:
+            return f"*⏳ Génération en cours… ({n}/{consolidation_target} consolidés)*"
+        return f"*⏳ Génération en cours… ({n} consolidés)*"
 
     # Override env var pour LLMDrops si une clé est fournie côté UI
     saved_drops_key: Optional[str] = None
@@ -1444,7 +1456,7 @@ def run_jarvis_flow(
                                             # ou au yield final.
                                             live_with_pending = (
                                                 "\n\n".join(progress_live)
-                                                + "\n\n*⏳ Génération en cours…*"
+                                                + "\n\n" + _pending_line()
                                             )
                                             yield (
                                                 [{"role": "user", "content": user_display},
@@ -1479,7 +1491,7 @@ def run_jarvis_flow(
                                             )
                                         live_with_pending = (
                                             "\n\n".join(progress_live)
-                                            + "\n\n*⏳ Génération en cours…*"
+                                            + "\n\n" + _pending_line()
                                         )
                                         yield (
                                             [{"role": "user", "content": user_display},
