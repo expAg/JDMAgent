@@ -498,23 +498,25 @@ def _refresh_dropdown_wrap(fn):
     une rebuild de page).
     """
     def wrapped(*args, **kwargs):
-        last_state = None  # (tuple(choices), cur) — pour dédup
+        # On NE touche les dropdowns qu'UNE SEULE FOIS — au DERNIER yield
+        # du générateur. Pendant le streaming, on yield gr.skip() pour
+        # chaque chunk → Gradio NE touche PAS le composant (pas de focus
+        # violet, pas de chargement, pas de flicker).
+        # Buffering : on garde le chunk précédent et on le yield au tour
+        # suivant avec gr.skip(). Le dernier chunk est yieldé APRÈS la
+        # fin de l'itération, avec le vrai gr.update(choices=...).
+        prev = None
         for chunk in fn(*args, **kwargs):
-            t = chunk if isinstance(chunk, tuple) else (chunk,)
-            # CRITIQUE : on ne yield un VRAI gr.update(choices=…) QUE
-            # quand l'état change (modèle blown, modèle courant changé,
-            # etc.). Sans ça, chaque chunk re-render le dropdown → row
-            # qui CLIGNOTE pendant tout le streaming. gr.update() vide
-            # est un no-op côté Gradio (pas de re-render).
+            if prev is not None:
+                pt = prev if isinstance(prev, tuple) else (prev,)
+                yield (*pt, gr.skip(), gr.skip())
+            prev = chunk
+        if prev is not None:
+            pt = prev if isinstance(prev, tuple) else (prev,)
             cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             choices = build_model_choices()
-            state = (tuple(choices), cur)
-            if state != last_state:
-                u = gr.update(choices=choices, value=cur)
-                last_state = state
-            else:
-                u = gr.update()  # no-op : pas de re-render
-            yield (*t, u, u)
+            u = gr.update(choices=choices, value=cur)
+            yield (*pt, u, u)
     return wrapped
 
 
@@ -2397,24 +2399,21 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 visible=False,
                 render=False,
             )
-            # Wrapper qui yield les updates des DEUX dropdowns (model_in
-            # + jarvis_model) après le texte et la viz. ChatInterface
-            # additional_outputs contient les deux → sync inter-onglets
-            # garanti après un chat (notamment pour l'état « épuisé »).
-            # DÉDUP : on n'envoie un vrai update QUE quand l'état change
-            # (sinon row qui clignote à chaque chunk du streaming).
+            # Dropdowns touchés UNE SEULE FOIS (dernier yield) →
+            # pendant le streaming, gr.skip() pour ne pas re-render le
+            # row Modèle. Buffering : on garde le chunk précédent.
             def _chat_with_agent_with_dropdown_refresh(*args, **kwargs):
-                last_state = None
+                prev = None
                 for chunk in chat_with_agent(*args, **kwargs):
-                    text, viz_update = chunk
+                    if prev is not None:
+                        text, viz_update = prev
+                        yield text, viz_update, gr.skip(), gr.skip()
+                    prev = chunk
+                if prev is not None:
+                    text, viz_update = prev
                     cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
                     choices = build_model_choices()
-                    state = (tuple(choices), cur)
-                    if state != last_state:
-                        u = gr.update(choices=choices, value=cur)
-                        last_state = state
-                    else:
-                        u = gr.update()  # no-op
+                    u = gr.update(choices=choices, value=cur)
                     yield text, viz_update, u, u
 
             chat = gr.ChatInterface(
