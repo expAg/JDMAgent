@@ -317,38 +317,36 @@ GEMINI_POOL_PROTECTED_MODEL = "gemini-3.1-flash-lite"
 def _parse_google_keys() -> list[str]:
     """Renvoie la liste ordonnée de clés Google API disponibles.
 
-    Priorité 1 : variable `GOOGLE_API_KEYS` (multi-clés, séparateurs
-        autorisés : `,`, `;`, `|`, retour à la ligne).
+    Priorité 1 : variable `GOOGLE_API_KEYS` (multi-clés).
     Priorité 2 : variable `GOOGLE_API_KEY` (singulière, rétro-compat).
     Renvoie [] si aucune.
 
-    Parsing robuste :
-    - Strip BOM UTF-8 + whitespace en début/fin
-    - Multi-séparateurs (regex `[,;|\\n\\r]+`) — HF Spaces stocke
-      parfois les secrets avec newlines, certains users utilisent `;`
-    - Strip guillemets autour de chaque clé
-    - Strip espaces internes (les clés Google ne contiennent jamais
-      de whitespace interne)
+    Parsing TRÈS robuste : on splitte sur tout caractère qui n'est PAS
+    un caractère valide de clé Google API (alphabet `[A-Za-z0-9_-]`).
+    Couvre tous les cas observés :
+    - Séparateur classique : `,` ASCII U+002C
+    - Fullwidth comma `，` U+FF0C (claviers chinois/japonais)
+    - Arabic comma `،` U+060C
+    - Newlines, tabs, espaces, `;`, `|`, ou autres confusables
+    - Guillemets éventuels autour des clés
     """
     import re
+
+    def _split_robust(blob: str) -> list[str]:
+        chunks = re.split(r"[^A-Za-z0-9_-]+", blob)
+        return [c for c in chunks if c]
+
     raw = os.environ.get("GOOGLE_API_KEYS", "")
     csv = raw.lstrip("﻿").strip()  # ﻿ = BOM UTF-8
     if csv:
-        out: list[str] = []
-        for chunk in re.split(r"[,;|\n\r]+", csv):
-            k = chunk.strip()
-            if len(k) >= 2 and (
-                (k[0] == '"' and k[-1] == '"')
-                or (k[0] == "'" and k[-1] == "'")
-            ):
-                k = k[1:-1].strip()
-            # Strip whitespace interne (tabs, espaces) — bruit potentiel
-            k = re.sub(r"\s+", "", k)
-            if k:
-                out.append(k)
-        return out
-    single = os.environ.get("GOOGLE_API_KEY", "").lstrip("﻿").strip()
-    return [single] if single else []
+        return _split_robust(csv)
+    single_raw = os.environ.get("GOOGLE_API_KEY", "").lstrip("﻿").strip()
+    if not single_raw:
+        return []
+    # Même nettoyage si la singulière est mal collée (peu probable mais
+    # défensif — un user pourrait avoir mis une CSV dans GOOGLE_API_KEY
+    # par accident).
+    return _split_robust(single_raw)
 
 
 def _masked_key(key: str) -> str:
