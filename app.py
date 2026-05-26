@@ -388,18 +388,18 @@ def build_pool_diag_md() -> str:
         lines.append("- **Clés marquées invalides (session)** :")
         for k in _INVALID_KEYS:
             lines.append(f"  - `{_masked_key(k)}`")
-    # DIAG : ce que build_model_choices() voit au moment du refresh.
-    # Si le suffixe « épuisé » n'apparaît pas dans le dropdown alors
-    # que mark_blown a été appelé, cette section révèle pourquoi.
-    try:
-        cur_choices = build_model_choices()
-        lines.append("- **Choices vus par le dropdown** (debug) :")
-        for label, key in cur_choices:
-            if key in GEMINI_NATIVE_REQUIRED:
-                blown_flag = is_model_blown_on_current_key(key)
-                lines.append(f"  - `{key}` → `{label}` (blown_on_current_key={blown_flag})")
-    except Exception as exc:
-        lines.append(f"- *(diag choices indisponible : {exc})*")
+    # DIAG : on N'APPELLE PAS build_model_choices() ici (Gradio 5.50 lève
+    # 'Button' object has no attribute '_id' quand on construit des
+    # choices hors contexte Blocks/event). On lit DIRECTEMENT l'état
+    # in-memory pour chaque modèle Gemini.
+    today = _today_utc_str()
+    lines.append("- **État par modèle Gemini** (debug) :")
+    for key in GEMINI_NATIVE_REQUIRED:
+        if _CURRENT_GEMINI_KEY:
+            blown = _BLOWN_TODAY.get((_CURRENT_GEMINI_KEY, key, today), False)
+        else:
+            blown = False
+        lines.append(f"  - `{key}` : blown_on_current_key={blown}")
     return "\n".join(lines)
 
 
