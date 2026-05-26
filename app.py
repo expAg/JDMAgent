@@ -349,6 +349,29 @@ def _parse_google_keys() -> list[str]:
     return _split_robust(single_raw)
 
 
+def _current_key_index_label() -> str:
+    """Renvoie '(clé 2/4)' selon la position de _CURRENT_GEMINI_KEY
+    dans le pool. '(pool vide)' si aucune clé, '(clé ?/N)' si la clé
+    courante n'est pas dans le pool (cas env fallback)."""
+    try:
+        keys = _parse_google_keys()
+    except Exception:
+        return ""
+    n = len(keys)
+    if n == 0:
+        return "(pool vide)"
+    cur = _CURRENT_GEMINI_KEY
+    if cur and cur in keys:
+        idx = keys.index(cur) + 1
+        return f"(clé {idx}/{n})"
+    return f"(clé ?/{n})"
+
+
+def _switch_key_btn_label() -> str:
+    """Label du bouton « Changer de clé API » avec index courant."""
+    return f"🔄 Changer de clé API {_current_key_index_label()}"
+
+
 def _masked_key(key: str) -> str:
     """Affichage masqué d'une clé pour diagnostic (4 premiers + 4 derniers
     chars + longueur), sans exposer la valeur entière."""
@@ -2184,11 +2207,54 @@ _HEAD_JS = """
     });
   }
 
+  // Injection d'un bouton stylé « Changer de clé API (clé X/N) » à la
+  // FIN de la liste d'options de chaque dropdown modèle ouverte. Le label
+  // est cloné depuis le bouton Gradio caché (#chat-switch-key-btn /
+  // #jarvis-switch-key-btn). Click sur le clone → dispatch un click sur
+  // le bouton caché → trigger le handler Python.
+  function injectSwitchKeyButton() {
+    // Trouve le bouton Gradio caché courant (priorité : Jarvis si visible).
+    // Les deux ont le même label (synchronisés par le handler Python).
+    var hidden = document.getElementById('jarvis-switch-key-btn')
+              || document.getElementById('chat-switch-key-btn');
+    if (!hidden) return;
+    var btnLabel = (hidden.textContent || '🔄 Changer de clé API').trim();
+
+    // Chaque liste d'options ouverte (Gradio v5 = ul role=listbox dans
+    // un portail rattaché au body) reçoit un bouton clone en dernier
+    // élément, si pas déjà injecté.
+    var lists = document.querySelectorAll('ul[role="listbox"]');
+    lists.forEach(function(ul) {
+      // Vérifie que la liste contient bien des options modèle (Gemini)
+      var optsTxt = (ul.textContent || '');
+      if (optsTxt.indexOf('Gemini') === -1) return;  // pas notre dropdown
+      // Pas déjà injecté ?
+      if (ul.querySelector('.jdm-switch-key-injected')) {
+        // Update du label si changé entre temps
+        var existing = ul.querySelector('.jdm-switch-key-injected');
+        if (existing.textContent !== btnLabel) existing.textContent = btnLabel;
+        return;
+      }
+      var btn = document.createElement('li');
+      btn.className = 'jdm-switch-key-injected';
+      btn.textContent = btnLabel;
+      btn.setAttribute('role', 'button');
+      btn.addEventListener('click', function(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        // Trigger le vrai bouton Gradio caché → fire le handler Python
+        hidden.click();
+      });
+      ul.appendChild(btn);
+    });
+  }
+
   function applyTabTweaks() {
     pushAideTabRight();
     colorJarvisTab();
     applyThinkingTooltip();
     replaceCheckOnBlownOptions();
+    injectSwitchKeyButton();
   }
   document.addEventListener('DOMContentLoaded', applyTabTweaks);
   setTimeout(applyTabTweaks, 400);
@@ -2327,6 +2393,34 @@ _CHATBOT_CSS = """
 #key-in:has(input[disabled]),
 #key-in:has(input:disabled) {
   opacity: 0.55;
+}
+
+/* Boutons « Changer de clé API » masqués (Gradio les rend mais on les
+   cache visuellement — leurs clicks restent triggerables via JS
+   depuis le bouton clone injecté dans le dropdown). */
+.jdm-hidden-switch-btn {
+  display: none !important;
+}
+
+/* Style du bouton clone INJECTÉ par JS à la fin de la liste d'options
+   du dropdown modèle. Format = bouton standard, distinct des options. */
+.jdm-switch-key-injected {
+  display: block !important;
+  width: calc(100% - 16px) !important;
+  margin: 8px !important;
+  padding: 10px 16px !important;
+  background: var(--button-secondary-background-fill, #4b4b5c) !important;
+  border: 1px solid var(--button-secondary-border-color, #6b6b80) !important;
+  border-radius: 8px !important;
+  color: var(--button-secondary-text-color, #fff) !important;
+  font-weight: 600 !important;
+  text-align: center !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  transition: background 0.15s ease !important;
+}
+.jdm-switch-key-injected:hover {
+  background: var(--button-secondary-background-fill-hover, #5d5d70) !important;
 }
 
 /* Onglet Aide flush à droite — appliqué par JS (pushAideTabRight
@@ -2573,10 +2667,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         elem_classes=["floating-thinking"],
                     )
                     model_in.render()
+                    # Bouton caché — sera trigger par le clone DOM injecté
+                    # dans le dropdown via JS.
                     chat_switch_key_btn = gr.Button(
-                        "🔄 Changer de clé API",
+                        value=_switch_key_btn_label(),
                         size="sm",
                         elem_id="chat-switch-key-btn",
+                        elem_classes=["jdm-hidden-switch-btn"],
                     )
 
             # Handler model_in.change : binding différé à la fin du
@@ -2704,9 +2801,10 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     )
                     jarvis_model.render()
                     jarvis_switch_key_btn = gr.Button(
-                        "🔄 Changer de clé API",
+                        value=_switch_key_btn_label(),
                         size="sm",
                         elem_id="jarvis-switch-key-btn",
+                        elem_classes=["jdm-hidden-switch-btn"],
                     )
                 jarvis_budget = gr.Dropdown(
                     choices=["10", "25", "50", "100", "illimité"],
@@ -3687,9 +3785,9 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         )
 
         # Bouton « Changer de clé API » : pick la clé suivante du pool
-        # qui n'est pas blown pour le modèle courant, set la clé courante,
-        # refresh les deux dropdowns. Si pool a une seule clé ou toutes
-        # blown → no-op silencieux.
+        # qui n'est pas blown pour le modèle courant. Met aussi à jour
+        # le label des boutons (clones DOM injectés dans le dropdown)
+        # avec le nouvel index « clé X/N ».
         def _switch_api_key():
             cur_key = _CURRENT_GEMINI_KEY
             cur_mod = _CURRENT_MODEL or "gemini-3.1-flash-lite"
@@ -3698,18 +3796,23 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 set_current_gemini_key(next_key)
             cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             choices = build_model_choices()
+            new_label = _switch_key_btn_label()
             return (
                 gr.update(choices=choices, value=cur),
                 gr.update(choices=choices, value=cur),
+                gr.update(value=new_label),
+                gr.update(value=new_label),
             )
+        _switch_outputs = [model_in, jarvis_model,
+                           chat_switch_key_btn, jarvis_switch_key_btn]
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
-            outputs=[model_in, jarvis_model],
+            outputs=_switch_outputs,
             show_progress="hidden",
         )
         jarvis_switch_key_btn.click(
             _switch_api_key, inputs=None,
-            outputs=[model_in, jarvis_model],
+            outputs=_switch_outputs,
             show_progress="hidden",
         )
         # ---- Handlers consolidés .change pour les deux dropdowns ----
