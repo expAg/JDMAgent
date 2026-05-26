@@ -254,22 +254,26 @@ def count_consolidated_in_messages(messages: list) -> int:
 
 
 def detect_rate_limit_retry(exc) -> Optional[float]:
-    """Détecte les erreurs 429 « PerMinute » sur le free tier Gemini et
-    extrait le délai de retry recommandé par l'API.
+    """Détecte les erreurs 429 quota Gemini et extrait le délai de
+    retry recommandé par l'API.
 
-    Renvoie le nombre de secondes à attendre (+1s de marge) si :
-      - l'exception est un RESOURCE_EXHAUSTED / 429
-      - le quota concerné est PerMinute (qui se régénère vite)
-      - le délai annoncé est raisonnable (<= 120s)
+    On fait CONFIANCE au `retryDelay` de l'API : si elle dit « retry
+    in Xs » et que X est raisonnable (<= 120s), on attend X+1s. Peu
+    importe le type de quota :
+      - `PerMinute` : régénère vite, typique
+      - `PerDay` : normalement délai très long (h), mais en pratique
+        Google renvoie parfois un délai court (rafale qui se débloque)
+        → on attend si l'API le suggère
+      - autres : pareil
 
-    Renvoie None pour tous les autres cas (per-day, autre provider, etc.)
-    — l'appelant remontera alors l'erreur brute.
+    Renvoie None si :
+      - pas un 429 / RESOURCE_EXHAUSTED
+      - pas de retryDelay parseable
+      - délai > 120s (clairement un reset quotidien, on n'attend pas)
     """
     import re
     msg = str(exc)
     if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
-        return None
-    if "PerMinute" not in msg:
         return None
     # Format prioritaire : « Please retry in 44.989851353s. »
     m = re.search(r"retry in ([\d.]+)s", msg)

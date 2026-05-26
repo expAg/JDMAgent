@@ -43,10 +43,14 @@ def test_detect_rate_limit_per_minute_extracts_delay():
     assert 45.0 <= delay <= 46.0  # 44.989 + 1.0 marge
 
 
-def test_detect_rate_limit_per_day_returns_none():
-    """Quota PerDay (pas PerMinute) → on ne retry pas."""
+def test_detect_rate_limit_per_day_with_short_delay_retries():
+    """Quota PerDay avec délai court (rafale qui se débloque) → on retry.
+    On fait confiance au retryDelay de l'API, peu importe le type de quota.
+    Le seul filtre est délai <= 120s (cf. test_detect_rate_limit_too_long)."""
     msg = _GEMINI_429_PERMINUTE.replace("PerMinute", "PerDay")
-    assert detect_rate_limit_retry(Exception(msg)) is None
+    delay = detect_rate_limit_retry(Exception(msg))
+    assert delay is not None
+    assert 45.0 <= delay <= 46.0
 
 
 def test_detect_rate_limit_non_429_returns_none():
