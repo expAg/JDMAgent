@@ -3332,8 +3332,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         # 2) Le modèle courant (_CURRENT_MODEL, session-wide) doit être
         #    affiché par les DEUX dropdowns à chaque retour d'onglet —
         #    pas le `value` initial hardcodé du composant.
-        # → À chaque changement d'onglet : on refresh choices + on force
-        #   value=_CURRENT_MODEL pour persister la sélection session-wide.
+        # 3) Changer le modèle dans un onglet → l'AUTRE dropdown bascule
+        #    instantanément sur le même choix (cross-sync direct).
         def _refresh_both_dropdowns():
             cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             return (
@@ -3344,6 +3344,24 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             _refresh_both_dropdowns,
             inputs=None,
             outputs=[model_in, jarvis_model],
+        )
+        # Cross-sync direct : pick d'un modèle dans l'un → l'autre suit
+        # immédiatement. set_current_model est déjà fait par les
+        # _on_*_model_change_refresh locaux ; ici on ne fait que pousser
+        # value vers le dropdown jumeau.
+        def _sync_jarvis_from_chatbot(m: str):
+            return gr.update(choices=build_model_choices(), value=m)
+        def _sync_chatbot_from_jarvis(m: str):
+            return gr.update(choices=build_model_choices(), value=m)
+        model_in.change(
+            _sync_jarvis_from_chatbot,
+            inputs=[model_in],
+            outputs=[jarvis_model],
+        )
+        jarvis_model.change(
+            _sync_chatbot_from_jarvis,
+            inputs=[jarvis_model],
+            outputs=[model_in],
         )
 
     gr.Markdown(
