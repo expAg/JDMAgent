@@ -1028,12 +1028,15 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     # peut être utilisée même hors pool) et on la track quand même —
     # mark_blown ultérieur fonctionne et le dropdown reflète l'état.
     current_gemini_key: Optional[str] = None
-    if model in GEMINI_NATIVE_REQUIRED:
+    if model in GEMINI_MODELS:
+        # Pick pour TOUS les Gemini (3.1, 3.5, 2.5) — pas seulement
+        # NATIVE_REQUIRED. Sinon 2.5 (OpenAI-compat) tombe sur l'env
+        # GOOGLE_API_KEY brut = CSV du pool non parsé = INVALID_KEY.
         current_gemini_key = pick_unblown_gemini_key(model)
         if not current_gemini_key:
-            env_key = os.environ.get("GOOGLE_API_KEY", "").strip()
-            if env_key:
-                current_gemini_key = env_key
+            keys = _parse_google_keys()
+            if keys:
+                current_gemini_key = keys[0]
     set_current_gemini_key(current_gemini_key)
     # Annonce le modèle actif → préfixe ✅ devant lui dans le dropdown.
     set_current_model(model)

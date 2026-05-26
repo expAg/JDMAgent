@@ -1111,22 +1111,23 @@ def run_jarvis_flow(
                 _app = _get_app_module()
                 if _app is None:
                     raise RuntimeError("app module unavailable")
-                GEMINI_NATIVE_REQUIRED = _app.GEMINI_NATIVE_REQUIRED
+                GEMINI_MODELS = _app.GEMINI_MODELS
                 pick_unblown_gemini_key = _app.pick_unblown_gemini_key
                 _set_current_key = _app.set_current_gemini_key
                 _set_current_model = _app.set_current_model
-                if model in GEMINI_NATIVE_REQUIRED:
+                # Pick pour TOUS les Gemini (3.1, 3.5, 2.5…), pas seulement
+                # NATIVE_REQUIRED. Sinon 2.5 (qui passe par l'endpoint
+                # OpenAI-compat) ne reçoit pas la clé du pool et tombe
+                # sur l'env GOOGLE_API_KEY brut = CSV des 4 clés non
+                # parsé = INVALID_KEY garanti.
+                if model in GEMINI_MODELS:
                     current_gemini_key = pick_unblown_gemini_key(model)
-                    # Fallback : si toutes les clés du pool sont blown/
-                    # invalides pour ce modèle, on retombe sur la
-                    # variable d'env singulière GOOGLE_API_KEY (qui
-                    # peut être utilisée même hors pool). On la track
-                    # quand même comme current_gemini_key → mark_blown
-                    # ultérieur fonctionne et le dropdown reflète l'état.
+                    # Fallback : pool vide → env GOOGLE_API_KEY (mais
+                    # _parse_google_keys → 1ère du CSV, pas CSV brut).
                     if not current_gemini_key:
-                        env_key = os.environ.get("GOOGLE_API_KEY", "").strip()
-                        if env_key:
-                            current_gemini_key = env_key
+                        keys = _app._parse_google_keys()
+                        if keys:
+                            current_gemini_key = keys[0]
                     _set_current_key(current_gemini_key)
                 # Annonce le modèle actif → préfixe ✅ dans le dropdown.
                 _set_current_model(model)
