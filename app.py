@@ -2160,6 +2160,27 @@ _HEAD_JS = """
         var ticks2 = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
         ticks2.forEach(function(ic) { ic.style.display = ''; });
       }
+
+      // BYOK : remplacer le ✓ par 🔑 pour les options qui contiennent
+      // « BYOK » dans leur label (Claude, GPT). Même technique que ❌.
+      var isByok = !isBlown && text.indexOf('BYOK') !== -1;
+      var existingKey = opt.querySelector('.jdm-key-marker');
+      if (isByok) {
+        opt.dataset.jdmByok = '1';
+        if (!existingKey) {
+          var k = document.createElement('span');
+          k.textContent = '🔑 ';
+          k.className = 'jdm-key-marker';
+          k.style.marginRight = '4px';
+          k.style.display = 'inline-block';
+          opt.insertBefore(k, opt.firstChild);
+        }
+        var ticks3 = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+        ticks3.forEach(function(ic) { ic.style.display = 'none'; });
+      } else if (opt.dataset.jdmByok === '1' && !isByok) {
+        delete opt.dataset.jdmByok;
+        if (existingKey) existingKey.remove();
+      }
     });
   }
 
@@ -2552,6 +2573,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         elem_classes=["floating-thinking"],
                     )
                     model_in.render()
+                    chat_switch_key_btn = gr.Button(
+                        "🔄 Changer de clé API",
+                        size="sm",
+                        elem_id="chat-switch-key-btn",
+                    )
 
             # Handler model_in.change : binding différé à la fin du
             # Blocks (jarvis_model n'existe pas encore ici).
@@ -2677,6 +2703,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         elem_classes=["floating-thinking"],
                     )
                     jarvis_model.render()
+                    jarvis_switch_key_btn = gr.Button(
+                        "🔄 Changer de clé API",
+                        size="sm",
+                        elem_id="jarvis-switch-key-btn",
+                    )
                 jarvis_budget = gr.Dropdown(
                     choices=["10", "25", "50", "100", "illimité"],
                     value="illimité",
@@ -3651,6 +3682,33 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         main_tabs.select(
             _refresh_both_dropdowns,
             inputs=None,
+            outputs=[model_in, jarvis_model],
+            show_progress="hidden",
+        )
+
+        # Bouton « Changer de clé API » : pick la clé suivante du pool
+        # qui n'est pas blown pour le modèle courant, set la clé courante,
+        # refresh les deux dropdowns. Si pool a une seule clé ou toutes
+        # blown → no-op silencieux.
+        def _switch_api_key():
+            cur_key = _CURRENT_GEMINI_KEY
+            cur_mod = _CURRENT_MODEL or "gemini-3.1-flash-lite"
+            next_key = pick_unblown_gemini_key(cur_mod, skip=cur_key)
+            if next_key and next_key != cur_key:
+                set_current_gemini_key(next_key)
+            cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
+            choices = build_model_choices()
+            return (
+                gr.update(choices=choices, value=cur),
+                gr.update(choices=choices, value=cur),
+            )
+        chat_switch_key_btn.click(
+            _switch_api_key, inputs=None,
+            outputs=[model_in, jarvis_model],
+            show_progress="hidden",
+        )
+        jarvis_switch_key_btn.click(
+            _switch_api_key, inputs=None,
             outputs=[model_in, jarvis_model],
             show_progress="hidden",
         )
