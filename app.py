@@ -498,30 +498,30 @@ def _refresh_dropdown_wrap(fn):
     une rebuild de page).
     """
     def wrapped(*args, **kwargs):
+        i = 0
         for chunk in fn(*args, **kwargs):
             t = chunk if isinstance(chunk, tuple) else (chunk,)
-            # On envoie TOUJOURS le refresh : l'optimisation par version
-            # counter peut rater des changements quand build_model_choices
-            # est recalculé entre deux yields (ex. _CURRENT_GEMINI_KEY
-            # changé par un set_current_gemini_key dans le retry handler).
-            # Mieux vaut un peu de bande passante en plus qu'un dropdown
-            # qui ne se met pas à jour.
-            yield (*t, gr.update(choices=build_model_choices()))
+            i += 1
+            # On yield un TICK (int incrémenté), pas le choices update
+            # directement. Le tick alimente dropdown_tick qui a un
+            # handler .change séparé refresh-both-dropdowns. Ça garantit
+            # que LES DEUX dropdowns (model_in + jarvis_model) reflètent
+            # le nouvel état après le flow, quel que soit l'onglet
+            # d'origine.
+            yield (*t, i)
     return wrapped
 
 
 def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
     """Construit la liste de (label, value) du dropdown des modèles.
 
-    Marquage visuel (les DEUX dropdowns — LLM Chatbot ET Jarvis) :
-      - Modèle blown sur la clé courante → suffixe `— épuisé sur cette
-        clé`. Le JS dans `_HEAD_JS` détecte ce suffixe pour ajouter
-        ❌ + grisage CSS.
-      - Modèle actuellement sélectionné → préfixe `✅ `.
-      - Autres modèles → label original.
-
-    Le paramètre `for_chatbot` est conservé pour compat mais n'a plus
-    d'effet (toutes les dropdowns ont le même marquage).
+    Marquage server-side : SEUL le suffixe `— épuisé sur cette clé`
+    est ajouté (modèle blown sur la clé courante). Le JS dans
+    `_HEAD_JS` :
+      - détecte ce suffixe pour ajouter ❌ + grisage CSS
+      - ajoute un ✅ devant l'option sélectionnée (qui a le ✓ natif
+        Gradio) — entièrement client-side, instantané, pas de
+        rebuild de choices nécessaire au .change.
     """
     import re as _re
     out: list[tuple[str, str]] = []
@@ -529,8 +529,6 @@ def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
         if key in GEMINI_NATIVE_REQUIRED and is_model_blown_on_current_key(key):
             base = _re.sub(r"\s*\(.*?\)\s*$", "", label).strip()
             decorated = f"{base} — épuisé sur cette clé"
-        elif key == _CURRENT_MODEL:
-            decorated = f"✅ {label}"
         else:
             decorated = label
         out.append((decorated, key))
@@ -1985,10 +1983,47 @@ _HEAD_JS = """
     });
   }
 
+  // Marque ✅ devant l'option sélectionnée (qui a le ✓ natif Gradio).
+  // 100% client-side : pas d'appel serveur, pas de rebuild de choices.
+  // Tourne en MutationObserver → mise à jour instantanée au clic.
+  function markSelectedWithGreenCheck() {
+    var nodes = document.querySelectorAll(
+      '[role="option"], li[role="option"], ul[role="listbox"] li, ' +
+      '.options li, [data-testid="dropdown"] li'
+    );
+    nodes.forEach(function(opt) {
+      // L'option sélectionnée a une icône ✓ (svg/checkmark) Gradio.
+      // Si elle est blown, on a déjà masqué ses ticks → on n'ajoute
+      // PAS de ✅ par-dessus le grisage / ❌.
+      if (opt.dataset.jdmBlown === '1') return;
+      var hasNativeCheck = false;
+      var icons = opt.querySelectorAll('svg, .checkmark, [class*="check"]');
+      icons.forEach(function(ic) {
+        if (ic.style.display !== 'none' && ic.offsetParent !== null) {
+          hasNativeCheck = true;
+        }
+      });
+      var marker = opt.querySelector('.jdm-green-check');
+      if (hasNativeCheck) {
+        if (!marker) {
+          var v = document.createElement('span');
+          v.textContent = '✅ ';
+          v.className = 'jdm-green-check';
+          v.style.marginRight = '4px';
+          v.style.display = 'inline-block';
+          opt.insertBefore(v, opt.firstChild);
+        }
+      } else if (marker) {
+        marker.remove();
+      }
+    });
+  }
+
   function applyTabTweaks() {
     pushAideTabRight();
     colorJarvisTab();
     applyThinkingTooltip();
+    markSelectedWithGreenCheck();
     replaceCheckOnBlownOptions();
   }
   document.addEventListener('DOMContentLoaded', applyTabTweaks);
@@ -2151,6 +2186,12 @@ _CHATBOT_CSS = """
 
 with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_CSS,
                fill_width=True) as demo:
+
+    # Tick caché : incrementé par les flows à chaque yield, déclenche
+    # un refresh ATOMIQUE des deux dropdowns (model_in + jarvis_model).
+    # Garantit que l'état « épuisé » d'un modèle après un flow apparaît
+    # sur LES DEUX onglets, quel que soit l'onglet d'origine du flow.
+    dropdown_tick = gr.Number(value=0, visible=False, label="")
 
     with gr.Tabs() as main_tabs:
 
@@ -2381,19 +2422,22 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 visible=False,
                 render=False,
             )
-            # Wrapper qui ajoute un 3e yield (refresh du dropdown modèle).
-            # On envoie TOUJOURS un gr.update(choices=...) pour garantir
-            # que l'UI reflète l'état courant (l'optimisation par version
-            # counter ratait des changements dans certains chemins).
+            # Wrapper qui yield un tick (3e élément) au lieu d'un
+            # gr.update(choices=...). Le tick alimente dropdown_tick qui
+            # a son propre handler .change refresh-both-dropdowns →
+            # garantit que LES DEUX dropdowns (model_in + jarvis_model)
+            # reflètent l'état après ce chat (blown PerDay, etc.).
             def _chat_with_agent_with_dropdown_refresh(*args, **kwargs):
+                i = 0
                 for chunk in chat_with_agent(*args, **kwargs):
                     text, viz_update = chunk
-                    yield text, viz_update, gr.update(choices=build_model_choices())
+                    i += 1
+                    yield text, viz_update, i
 
             chat = gr.ChatInterface(
                 fn=_chat_with_agent_with_dropdown_refresh,
                 additional_inputs=[key_in, model_in, chat_thinking],
-                additional_outputs=[viz_html_out, model_in],
+                additional_outputs=[viz_html_out, dropdown_tick],
                 # Chatbot agrandi : 780 px de haut (+30 % vs 600).
                 # Tentative d'HTML/<details> abandonnée — gr.Chatbot v5
                 # fragmente tout tag inconnu en un caractère par ligne ;
@@ -2620,7 +2664,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 je_iterate, je_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[je_chat, je_file, je_preview, jarvis_model],
+                        outputs=[je_chat, je_file, je_preview, dropdown_tick],
                     )
 
                     # Grisage visuel de « Varier les types de relations »
@@ -2754,7 +2798,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[ja_term, ja_relation, ja_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[ja_chat, ja_file, ja_preview, jarvis_model],
+                        outputs=[ja_chat, ja_file, ja_preview, dropdown_tick],
                     )
 
                     def _show_audit_submit(file_path, drops_key):
@@ -2923,7 +2967,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[jg_term, jg_relations, jg_min_pos,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat, jarvis_model],
+                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat, dropdown_tick],
                     )
 
                     # Routage du gap sélectionné → onglet Enrichissement,
@@ -3061,7 +3105,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[js_term, js_relation, js_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[js_chat, js_file, js_preview, jarvis_model],
+                        outputs=[js_chat, js_file, js_preview, dropdown_tick],
                     )
 
                     def _show_signal_submit(file_path, drops_key):
@@ -3199,7 +3243,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[jst_term, jst_relation, jst_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[jst_chat, jst_file, jst_preview, jarvis_model],
+                        outputs=[jst_chat, jst_file, jst_preview, dropdown_tick],
                     )
 
                     def _show_stats_submit(file_path, drops_key):
@@ -3289,6 +3333,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             _refresh_both_dropdowns,
             inputs=None,
             outputs=[model_in, jarvis_model],
+            show_progress="hidden",
         )
         # ---- Handlers consolidés .change pour les deux dropdowns ----
         # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
@@ -3319,6 +3364,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             _on_model_change_chat,
             inputs=[model_in],
             outputs=[key_in, chat_thinking, jarvis_model],
+            show_progress="hidden",
         ).then(
             fn=None, inputs=[model_in], outputs=None,
             js=_thinking_tooltip_js("chat-thinking-cb"),
@@ -3337,9 +3383,30 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             _on_jarvis_model_change,
             inputs=[jarvis_model],
             outputs=[jarvis_thinking, model_in],
+            show_progress="hidden",
         ).then(
             fn=None, inputs=[jarvis_model], outputs=None,
             js=_thinking_tooltip_js("jarvis-thinking-cb"),
+        )
+
+        # ---- Tick → refresh atomique des DEUX dropdowns ----
+        # dropdown_tick est incrementé par les wrappers (Jarvis flows +
+        # ChatInterface). Quand sa valeur change, ON refresh choices ET
+        # value sur model_in ET jarvis_model en une passe. C'est le SEUL
+        # endroit qui appelle build_model_choices() en réponse à un flow
+        # → garantit le sync inter-onglets de l'état « épuisé ».
+        def _refresh_dropdowns_from_tick(_tick):
+            cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
+            choices = build_model_choices()
+            return (
+                gr.update(choices=choices, value=cur),
+                gr.update(choices=choices, value=cur),
+            )
+        dropdown_tick.change(
+            _refresh_dropdowns_from_tick,
+            inputs=[dropdown_tick],
+            outputs=[model_in, jarvis_model],
+            show_progress="hidden",
         )
 
     gr.Markdown(
