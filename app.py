@@ -498,16 +498,22 @@ def _refresh_dropdown_wrap(fn):
     une rebuild de page).
     """
     def wrapped(*args, **kwargs):
+        last_state = None  # (tuple(choices), cur) — pour dédup
         for chunk in fn(*args, **kwargs):
             t = chunk if isinstance(chunk, tuple) else (chunk,)
-            # On yield DEUX updates dropdown (model_in + jarvis_model)
-            # avec choices recalculés. Les launch.click correspondants
-            # ont outputs=[..., model_in, jarvis_model]. Ça garantit
-            # que les DEUX dropdowns reflètent l'état (« épuisé »,
-            # ✅ courant) après le flow, quel que soit l'onglet d'origine.
+            # CRITIQUE : on ne yield un VRAI gr.update(choices=…) QUE
+            # quand l'état change (modèle blown, modèle courant changé,
+            # etc.). Sans ça, chaque chunk re-render le dropdown → row
+            # qui CLIGNOTE pendant tout le streaming. gr.update() vide
+            # est un no-op côté Gradio (pas de re-render).
             cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             choices = build_model_choices()
-            u = gr.update(choices=choices, value=cur)
+            state = (tuple(choices), cur)
+            if state != last_state:
+                u = gr.update(choices=choices, value=cur)
+                last_state = state
+            else:
+                u = gr.update()  # no-op : pas de re-render
             yield (*t, u, u)
     return wrapped
 
@@ -2395,12 +2401,20 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             # + jarvis_model) après le texte et la viz. ChatInterface
             # additional_outputs contient les deux → sync inter-onglets
             # garanti après un chat (notamment pour l'état « épuisé »).
+            # DÉDUP : on n'envoie un vrai update QUE quand l'état change
+            # (sinon row qui clignote à chaque chunk du streaming).
             def _chat_with_agent_with_dropdown_refresh(*args, **kwargs):
+                last_state = None
                 for chunk in chat_with_agent(*args, **kwargs):
                     text, viz_update = chunk
                     cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
                     choices = build_model_choices()
-                    u = gr.update(choices=choices, value=cur)
+                    state = (tuple(choices), cur)
+                    if state != last_state:
+                        u = gr.update(choices=choices, value=cur)
+                        last_state = state
+                    else:
+                        u = gr.update()  # no-op
                     yield text, viz_update, u, u
 
             chat = gr.ChatInterface(
