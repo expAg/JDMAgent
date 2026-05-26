@@ -3811,11 +3811,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             show_progress="hidden",
         )
 
-        # Bouton « Rotation clés gemini » : update _CURRENT_GEMINI_KEY
-        # + choices des 2 dropdowns (suffix « épuisé » recalculé pour
-        # la nouvelle clé) + label des 2 boutons (nouvel index).
-        # Marche en place grâce à filterable=False sur les dropdowns —
-        # le mode combobox aurait sinon filtré à la value courante.
+        # Bouton « Rotation clés gemini » :
+        # CAUSE ROOT lue dans gradio/_frontend_code/dropdown/shared/
+        # Dropdown.svelte L95-101 : quand choices update, Gradio appelle
+        # set_input_text() qui set input_text = label de la value
+        # courante, puis handle_filter(choices, input_text) filtre la
+        # liste à ce substring → seule la value courante visible.
+        # FIX : .then(js=...) dispatch un 'focus' sur l'input → la fn
+        # handle_focus (L152-155) reset filtered_indices à tous les
+        # choices → toutes les options redeviennent visibles.
         def _switch_api_key():
             cur_key = _CURRENT_GEMINI_KEY
             cur_mod = _CURRENT_MODEL or "gemini-3.1-flash-lite"
@@ -3832,16 +3836,31 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
         _switch_outputs = [model_in, jarvis_model,
                            chat_switch_key_btn, jarvis_switch_key_btn]
+        _reset_filter_js = """
+        () => {
+          // Reset filtered_indices via focus event sur l'input du
+          // dropdown Modèle visible (cf. Dropdown.svelte L152).
+          var inputs = document.querySelectorAll('input[role="combobox"], input[aria-haspopup="listbox"]');
+          inputs.forEach(function(inp) {
+            if (inp.offsetParent === null) return;
+            var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
+            if (!root) return;
+            if ((root.textContent || '').indexOf('Modèle') === -1) return;
+            inp.focus();
+            inp.dispatchEvent(new FocusEvent('focus', {bubbles: true}));
+          });
+        }
+        """
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
         jarvis_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
         # ---- Handlers consolidés .change pour les deux dropdowns ----
         # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
         # - set_current_model(_CURRENT_MODEL tracking)
