@@ -497,27 +497,23 @@ def _refresh_dropdown_wrap(fn):
     courante et on yield un update initial (pour synchroniser après
     une rebuild de page).
     """
-    def wrapped(*args, **kwargs):
-        # On NE touche les dropdowns qu'UNE SEULE FOIS — au DERNIER yield
-        # du générateur. Pendant le streaming, on yield gr.skip() pour
-        # chaque chunk → Gradio NE touche PAS le composant (pas de focus
-        # violet, pas de chargement, pas de flicker).
-        # Buffering : on garde le chunk précédent et on le yield au tour
-        # suivant avec gr.skip(). Le dernier chunk est yieldé APRÈS la
-        # fin de l'itération, avec le vrai gr.update(choices=...).
-        prev = None
-        for chunk in fn(*args, **kwargs):
-            if prev is not None:
-                pt = prev if isinstance(prev, tuple) else (prev,)
-                yield (*pt, gr.skip(), gr.skip())
-            prev = chunk
-        if prev is not None:
-            pt = prev if isinstance(prev, tuple) else (prev,)
-            cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
-            choices = build_model_choices()
-            u = gr.update(choices=choices, value=cur)
-            yield (*pt, u, u)
-    return wrapped
+    # Wrapper devenu pass-through : les dropdowns ne sont PLUS dans les
+    # outputs du launch handler (sinon Gradio les marque « processing »
+    # pendant tout le flow). Ils sont rafraîchis SÉPARÉMENT via une
+    # chaîne .then(refresh_dropdowns_silent, show_progress="hidden")
+    # APRÈS la fin du flow → row Modèle stable + état final propagé.
+    return fn
+
+
+def refresh_dropdowns_silent():
+    """Helper appelé via .then() après chaque launch handler.
+    Refresh choices+value des DEUX dropdowns, sans progress bar."""
+    cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
+    choices = build_model_choices()
+    return (
+        gr.update(choices=choices, value=cur),
+        gr.update(choices=choices, value=cur),
+    )
 
 
 def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
@@ -2399,27 +2395,14 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 visible=False,
                 render=False,
             )
-            # Dropdowns touchés UNE SEULE FOIS (dernier yield) →
-            # pendant le streaming, gr.skip() pour ne pas re-render le
-            # row Modèle. Buffering : on garde le chunk précédent.
-            def _chat_with_agent_with_dropdown_refresh(*args, **kwargs):
-                prev = None
-                for chunk in chat_with_agent(*args, **kwargs):
-                    if prev is not None:
-                        text, viz_update = prev
-                        yield text, viz_update, gr.skip(), gr.skip()
-                    prev = chunk
-                if prev is not None:
-                    text, viz_update = prev
-                    cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
-                    choices = build_model_choices()
-                    u = gr.update(choices=choices, value=cur)
-                    yield text, viz_update, u, u
-
+            # Les dropdowns NE SONT PLUS dans additional_outputs → row
+            # Modèle reste stable (pas de "processing | Xs"). Update
+            # fait via chat.chatbot.change(.then) APRÈS la fin du flow
+            # (helper refresh_dropdowns_silent, show_progress="hidden").
             chat = gr.ChatInterface(
-                fn=_chat_with_agent_with_dropdown_refresh,
+                fn=chat_with_agent,
                 additional_inputs=[key_in, model_in, chat_thinking],
-                additional_outputs=[viz_html_out, model_in, jarvis_model],
+                additional_outputs=[viz_html_out],
                 # Chatbot agrandi : 780 px de haut (+30 % vs 600).
                 # Tentative d'HTML/<details> abandonnée — gr.Chatbot v5
                 # fragmente tout tag inconnu en un caractère par ligne ;
@@ -2471,6 +2454,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                   setTimeout(scrollToViz, 700);
                   setTimeout(scrollToViz, 1200);
                 }"""
+            )
+
+            # Après chaque tour de chat (chat.chatbot change), on refresh
+            # silencieusement les deux dropdowns pour propager l'état
+            # « épuisé » si PerDay a été hit. show_progress="hidden" →
+            # zéro indicateur visuel sur les rows Modèle.
+            chat.chatbot.change(
+                refresh_dropdowns_silent,
+                inputs=None,
+                outputs=[model_in, jarvis_model],
+                show_progress="hidden",
             )
 
         # ----- Tab 5: Jarvis (flows guidés par formulaires — Phase 13) -----
@@ -2642,7 +2636,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 je_iterate, je_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[je_chat, je_file, je_preview, model_in, jarvis_model],
+                        outputs=[je_chat, je_file, je_preview],
+                    ).then(
+                        refresh_dropdowns_silent,
+                        inputs=None,
+                        outputs=[model_in, jarvis_model],
+                        show_progress="hidden",
                     )
 
                     # Grisage visuel de « Varier les types de relations »
@@ -2776,7 +2775,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[ja_term, ja_relation, ja_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[ja_chat, ja_file, ja_preview, model_in, jarvis_model],
+                        outputs=[ja_chat, ja_file, ja_preview],
+                    ).then(
+                        refresh_dropdowns_silent,
+                        inputs=None,
+                        outputs=[model_in, jarvis_model],
+                        show_progress="hidden",
                     )
 
                     def _show_audit_submit(file_path, drops_key):
@@ -2945,7 +2949,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[jg_term, jg_relations, jg_min_pos,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat, model_in, jarvis_model],
+                        outputs=[jg_gaps_table, jg_gap_dropdown, jg_chat],
+                    ).then(
+                        refresh_dropdowns_silent,
+                        inputs=None,
+                        outputs=[model_in, jarvis_model],
+                        show_progress="hidden",
                     )
 
                     # Routage du gap sélectionné → onglet Enrichissement,
@@ -3083,7 +3092,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[js_term, js_relation, js_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[js_chat, js_file, js_preview, model_in, jarvis_model],
+                        outputs=[js_chat, js_file, js_preview],
+                    ).then(
+                        refresh_dropdowns_silent,
+                        inputs=None,
+                        outputs=[model_in, jarvis_model],
+                        show_progress="hidden",
                     )
 
                     def _show_signal_submit(file_path, drops_key):
@@ -3221,7 +3235,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         inputs=[jst_term, jst_relation, jst_upload,
                                 jarvis_drops_key, jarvis_model, jarvis_budget,
                                 jarvis_thinking],
-                        outputs=[jst_chat, jst_file, jst_preview, model_in, jarvis_model],
+                        outputs=[jst_chat, jst_file, jst_preview],
+                    ).then(
+                        refresh_dropdowns_silent,
+                        inputs=None,
+                        outputs=[model_in, jarvis_model],
+                        show_progress="hidden",
                     )
 
                     def _show_stats_submit(file_path, drops_key):
