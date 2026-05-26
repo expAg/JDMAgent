@@ -19,6 +19,7 @@ from jarvis import (
     build_signalement_prompt,
     build_stats_prompt,
     detect_rate_limit_retry,
+    is_invalid_api_key,
     is_per_day_quota_exhausted,
 )
 
@@ -66,6 +67,31 @@ def test_is_per_day_quota_exhausted_false_on_per_minute():
 def test_is_per_day_quota_exhausted_false_on_non_quota():
     """Erreur générique : pas un quota."""
     assert is_per_day_quota_exhausted(ValueError("foo")) is False
+
+
+_GEMINI_400_INVALID_KEY = (
+    "Error calling model 'gemini-3.1-flash-lite' (INVALID_ARGUMENT): 400 "
+    "INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key not "
+    "valid. Please pass a valid API key.', 'status': 'INVALID_ARGUMENT', "
+    "'details': [{'reason': 'API_KEY_INVALID', "
+    "'domain': 'googleapis.com'}]}}"
+)
+
+
+def test_is_invalid_api_key_detects_400():
+    """Détection de la clé Google invalide (400 INVALID_ARGUMENT)."""
+    assert is_invalid_api_key(Exception(_GEMINI_400_INVALID_KEY)) is True
+
+
+def test_is_invalid_api_key_false_on_quota():
+    """Une 429 quota n'est PAS une clé invalide."""
+    assert is_invalid_api_key(Exception(_GEMINI_429_PERMINUTE)) is False
+
+
+def test_is_invalid_api_key_false_on_other():
+    """Erreur générique : pas une clé invalide."""
+    assert is_invalid_api_key(ValueError("foo")) is False
+    assert is_invalid_api_key(Exception("Connection refused")) is False
 
 
 def test_is_per_day_quota_exhausted_filter_by_model():

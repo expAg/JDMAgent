@@ -320,14 +320,25 @@ def _parse_google_keys() -> list[str]:
     return [single] if single else []
 
 
-# Marquage in-memory des clés épuisées par jour UTC.
-# Format : {(api_key, "YYYY-MM-DD"): True}
 # Marquage in-memory **par (clé, modèle)** : chaque modèle Gemini a
 # son propre quota PerDay → une clé peut être blown pour
 # gemini-3.1-flash-lite mais OK pour gemini-3.5-flash. Format :
 #   {(api_key, model_id, "YYYY-MM-DD"): True}
 # Reset implicite à minuit UTC (l'entrée du jour précédent n'existe plus).
 _BLOWN_TODAY: dict[tuple[str, str, str], bool] = {}
+
+# Clés marquées comme INVALIDES (typo, révoquée, etc.) — exclusion
+# PERMANENTE pour la session courante (pas reset à minuit). Détecté
+# via le code 400 INVALID_ARGUMENT / API_KEY_INVALID renvoyé par
+# l'API Google quand on tente d'utiliser une clé bidon.
+_INVALID_KEYS: set[str] = set()
+
+
+def mark_gemini_key_invalid(key: str) -> None:
+    """Marque une clé comme définitivement invalide pour la session
+    (typo, révoquée, jamais activée pour Gemini, etc.)."""
+    if key:
+        _INVALID_KEYS.add(key)
 
 
 def _today_utc_str() -> str:
@@ -348,11 +359,16 @@ def pick_unblown_gemini_key(model: str,
     (utilisé pour ne pas re-choisir celle qui vient de hit le PerDay).
 
     `model` est requis : chaque modèle Gemini a son propre quota PerDay,
-    donc une clé peut être blown pour un modèle et OK pour un autre."""
+    donc une clé peut être blown pour un modèle et OK pour un autre.
+
+    Exclut aussi les clés marquées comme INVALIDES (API_KEY_INVALID)
+    pour la session courante."""
     keys = _parse_google_keys()
     today = _today_utc_str()
     for k in keys:
         if k == skip:
+            continue
+        if k in _INVALID_KEYS:
             continue
         if not _BLOWN_TODAY.get((k, model, today), False):
             return k
@@ -807,6 +823,44 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 # Sortie normale → on quitte le while
                 break
             except Exception as e:
+                # 0) Clé API invalide → marque + switch.
+                from jarvis import is_invalid_api_key
+                if is_invalid_api_key(e):
+                    switched = False
+                    try:
+                        if current_gemini_key:
+                            mark_gemini_key_invalid(current_gemini_key)
+                        next_key = pick_unblown_gemini_key(
+                            model, skip=current_gemini_key
+                        )
+                        if next_key:
+                            pool_n = gemini_pool_size()
+                            current_gemini_key = next_key
+                            llm = _build_llm(
+                                model, api_key,
+                                use_thinking=use_thinking,
+                                gemini_key_override=current_gemini_key,
+                            )
+                            agent = build_jdm_agent(
+                                client=get_client(), llm=llm
+                            )
+                            switch_msg = (
+                                f"\n\n*🔑 Clé Google invalide détectée — "
+                                f"bascule sur une autre clé du pool "
+                                f"(pool : {pool_n} clés).*"
+                            )
+                            current_progress = "\n\n".join(progress_live)
+                            yield current_progress + switch_msg, _NOOP_FILE
+                            switched = True
+                    except Exception:
+                        pass
+                    if switched:
+                        continue
+                    raise RuntimeError(
+                        "Toutes les clés du pool Google sont soit "
+                        "invalides, soit épuisées pour aujourd'hui. "
+                        "Vérifie GOOGLE_API_KEYS."
+                    ) from e
                 # 1) Quota QUOTIDIEN épuisé SUR LE MODÈLE COURANT.
                 # On filtre par expected_model pour ignorer les PerDay
                 # parasites venant d'un autre modèle (ex : un quota

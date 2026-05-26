@@ -253,6 +253,15 @@ def count_consolidated_in_messages(messages: list) -> int:
     return n
 
 
+def is_invalid_api_key(exc) -> bool:
+    """Détecte une clé API invalide (typo, révoquée, jamais activée
+    pour Gemini, etc.). Google renvoie alors 400 INVALID_ARGUMENT avec
+    `reason: 'API_KEY_INVALID'`. À traiter comme exclusion permanente
+    (la clé ne deviendra pas valide en attendant) → bascule de clé."""
+    msg = str(exc)
+    return "API_KEY_INVALID" in msg or "API key not valid" in msg
+
+
 def _extract_quota_model(exc) -> Optional[str]:
     """Extrait l'identifiant du modèle concerné par un quota épuisé,
     via `quotaDimensions.model` dans le message d'erreur.
@@ -1315,6 +1324,57 @@ def run_jarvis_flow(
                         # tente de basculer sur la suivante non-blown.
                         # Sinon (pool vide / toutes blown), on signale
                         # et on stop.
+                        # 0) Clé API invalide (typo, révoquée). Marquer
+                        # la clé courante comme invalide pour la session
+                        # et basculer sur la suivante du pool. Même
+                        # logique que PerDay (rebuild LLM + agent +
+                        # continue), mais marquage différent (permanent).
+                        if is_invalid_api_key(e):
+                            switched = False
+                            try:
+                                from app import (
+                                    mark_gemini_key_invalid,
+                                    pick_unblown_gemini_key,
+                                    gemini_pool_size,
+                                )
+                                if current_gemini_key:
+                                    mark_gemini_key_invalid(current_gemini_key)
+                                next_key = pick_unblown_gemini_key(
+                                    model, skip=current_gemini_key
+                                )
+                                if next_key:
+                                    pool_n = gemini_pool_size()
+                                    current_gemini_key = next_key
+                                    llm = build_llm_fn(
+                                        model, api_key,
+                                        use_thinking=use_thinking,
+                                        gemini_key_override=current_gemini_key,
+                                    )
+                                    agent = build_agent_fn(
+                                        client=get_client_fn(), llm=llm
+                                    )
+                                    _add_line(
+                                        f"*🔑 Clé Google invalide détectée — "
+                                        f"bascule sur une autre clé du pool "
+                                        f"(pool : {pool_n} clés).*"
+                                    )
+                                    yield (
+                                        [{"role": "user", "content": user_display},
+                                         {"role": "assistant",
+                                          "content": "\n\n".join(progress_live)}],
+                                        last_file_path,
+                                        _read_file_preview(last_file_path),
+                                    )
+                                    switched = True
+                            except Exception:
+                                pass
+                            if switched:
+                                continue
+                            raise RuntimeError(
+                                "Toutes les clés du pool Google sont soit "
+                                "invalides, soit épuisées pour aujourd'hui. "
+                                "Vérifie GOOGLE_API_KEYS dans tes secrets / .env."
+                            ) from e
                         # On filtre par expected_model : un PerDay sur
                         # un AUTRE modèle (ex. gemini-2.5 alors qu'on
                         # est sur 3.1) ne nous concerne pas, on l'ignore
