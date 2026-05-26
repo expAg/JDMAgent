@@ -62,6 +62,15 @@ _EXCLUSION_REGISTRY: Optional[dict] = None
 _CONSOLIDATION_REGISTRY: Optional[dict] = None
 _CONTEXT_DEPTH = 0  # compteur de nesting d'exclusion_context()
 
+# Path d'append automatique pour les consolidations. Quand non-None,
+# register_consolidation() écrit chaque triplet consolidé en mode
+# append dans ce fichier IMMÉDIATEMENT après l'avoir ajouté au
+# registry. Permet à l'UI Gradio (et au mcp client) de voir le
+# fichier grossir en temps réel, sans dépendre du LLM appelant
+# write_submission_file (qui écraserait à chaque appel).
+_CONSOLIDATION_OUTPUT_PATH: Optional[str] = None
+_CONSOLIDATION_OUTPUT_HEADER_WRITTEN: bool = False
+
 
 def _norm_target(s: str) -> str:
     """Normalisation cohérente avec `jdm_tools._norm` utilisé dans
@@ -118,19 +127,89 @@ def _norm_consolidation_key(term: str, relation: str, target: str) -> tuple[str,
     )
 
 
+def set_consolidation_output_path(path: Optional[str]) -> None:
+    """Active l'écriture automatique en mode APPEND : chaque appel à
+    `register_consolidation` écrit la ligne du triplet consolidé dans
+    `path` immédiatement après l'avoir ajouté au registry.
+
+    Permet à l'UI (Gradio gr.File) de voir le fichier grossir en temps
+    réel sans dépendre du LLM appelant `write_submission_file`. Le
+    fichier reçoit un header de soumission JeuxDeMots au PREMIER append.
+
+    Passer `None` désactive l'auto-append (reset du flag header).
+    """
+    global _CONSOLIDATION_OUTPUT_PATH, _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
+    with _REGISTRY_LOCK:
+        _CONSOLIDATION_OUTPUT_PATH = path
+        _CONSOLIDATION_OUTPUT_HEADER_WRITTEN = False
+
+
+def get_consolidation_output_path() -> Optional[str]:
+    """Retourne le path d'auto-append courant, ou None si désactivé."""
+    with _REGISTRY_LOCK:
+        return _CONSOLIDATION_OUTPUT_PATH
+
+
+def _append_consolidation_to_file(term: str, relation: str, target: str,
+                                   explanation: str) -> None:
+    """Écrit une ligne `term | relation | target |  < explanation >`
+    en APPEND dans le path configuré par `set_consolidation_output_path`.
+    No-op si aucun path n'est défini. Crée le dossier parent si absent.
+    Écrit un header de soumission lors du PREMIER append.
+
+    Appelé sous `_REGISTRY_LOCK` par `register_consolidation`.
+    L'écriture file est rapide (~ms) ; le lock reste bref.
+
+    Pas de décodage des raffinements ici (raw `term>id` reste raw) —
+    le décodage propre est fait par la fusion finale via
+    `pipeline.write_submission`. Trade-off : visibilité temps réel
+    prime sur la cosmétique des noms.
+    """
+    global _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
+    if _CONSOLIDATION_OUTPUT_PATH is None:
+        return
+    try:
+        from pathlib import Path as _Path
+        p = _Path(_CONSOLIDATION_OUTPUT_PATH)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
+        expl = " ".join((explanation or "").split())
+        with p.open("a", encoding="utf-8") as f:
+            if write_header:
+                f.write(
+                    "# Soumission JeuxDeMots — fichier d'enrichissement "
+                    "(append-only, mis à jour à chaque consolidation).\n"
+                    "# Format : terme | relation | cible | annotation < explication >\n\n"
+                )
+                _CONSOLIDATION_OUTPUT_HEADER_WRITTEN = True
+            f.write(f"{term} | {relation} | {target} |  < {expl} >\n")
+    except Exception:
+        pass  # silent fail : le registry continue à fonctionner
+
+
 def register_consolidation(term: str, relation: str, target: str,
                             explanation: str, schema: Optional[str] = None) -> None:
     """Stocke l'explication d'inférence produite par `infer()` pour ce
     triplet. Appelé par `consolidate_candidate` quand le triplet est
-    confirmé. No-op si aucun `exclusion_context()` actif."""
+    confirmé. No-op si aucun `exclusion_context()` actif.
+
+    Si `set_consolidation_output_path` a été appelé, écrit également
+    la ligne en APPEND dans ce fichier (auto-append temps réel).
+    Déduplication : si le triplet est déjà dans le registry, on
+    ne l'écrit PAS une 2e fois (évite les doublons dans le fichier
+    append-only).
+    """
     with _REGISTRY_LOCK:
         if _CONSOLIDATION_REGISTRY is None:
             return
         key = _norm_consolidation_key(term, relation, target)
+        is_new = key not in _CONSOLIDATION_REGISTRY
         _CONSOLIDATION_REGISTRY[key] = {
             "explanation": (explanation or "").strip(),
             "schema": (schema or "").strip(),
         }
+        if is_new:
+            _append_consolidation_to_file(term, relation, target, explanation)
 
 
 def get_consolidation(term: str, relation: str, target: str) -> Optional[dict]:

@@ -1236,6 +1236,21 @@ def run_jarvis_flow(
             return f"*⏳ Génération en cours… ({n}/{consolidation_target} consolidés)*"
         return f"*⏳ Génération en cours… ({n} consolidés)*"
 
+    def _current_file_path() -> Optional[str]:
+        """Renvoie canonical_path dès qu'il existe sur disque (auto-append
+        l'aura créé au 1er triplet consolidé) — priorité absolue car
+        c'est CE fichier qui contient l'historique complet du run en
+        temps réel. Sinon fallback sur last_file_path (path écrit par
+        le LLM via write_submission_file) qui peut être un .audit/.err
+        legitimately différent."""
+        try:
+            from pathlib import Path as _PathCheck
+            if _PathCheck(canonical_path).exists():
+                return canonical_path
+        except Exception:
+            pass
+        return last_file_path
+
     # Override env var pour LLMDrops si une clé est fournie côté UI
     saved_drops_key: Optional[str] = None
     if drops_key and drops_key.strip():
@@ -1380,6 +1395,12 @@ def run_jarvis_flow(
         # principal (cf. plus bas).
         _excl_ctx = exclusion_context()
         _excl_ctx.__enter__()
+        # Active l'auto-append : chaque register_consolidation écrit
+        # immédiatement la ligne dans canonical_path. L'UI verra le
+        # fichier grossir EN TEMPS RÉEL sans dépendre du LLM appelant
+        # write_submission_file. Désactivé dans le finally.
+        from jdm_agent.enrich import set_consolidation_output_path
+        set_consolidation_output_path(canonical_path)
         while not persistence_done:
             rate_limit_attempts = 0
             # Hits de rate limit CONSÉCUTIFS sans aucun chunk reçu
@@ -1527,8 +1548,8 @@ def run_jarvis_flow(
                                             [{"role": "user", "content": user_display},
                                              {"role": "assistant",
                                               "content": live_with_pending}],
-                                            last_file_path,
-                                            _read_file_preview(last_file_path),
+                                            _current_file_path(),
+                                            _read_file_preview(_current_file_path()),
                                         )
                             # FIN DE CHUNK : check si historique
                             # dépasse le seuil → condensation proactive
@@ -1904,7 +1925,7 @@ def run_jarvis_flow(
                                 [{"role": "user", "content": user_display},
                                  {"role": "assistant",
                                   "content": current_progress + "\n\n" + wait_msg}],
-                                last_file_path, _read_file_preview(last_file_path),
+                                _current_file_path(), _read_file_preview(_current_file_path()),
                             )
                             _time.sleep(retry_delay)
                             # PAS de reset des progress / last_file_path.
@@ -2124,9 +2145,15 @@ def run_jarvis_flow(
         yield (
             [{"role": "user", "content": user_display},
              {"role": "assistant", "content": final_content}],
-            last_file_path, _read_file_preview(last_file_path),
+            _current_file_path(), _read_file_preview(_current_file_path()),
         )
     finally:
+        # Désactive l'auto-append (path persistait globalement)
+        try:
+            from jdm_agent.enrich import set_consolidation_output_path
+            set_consolidation_output_path(None)
+        except Exception:
+            pass
         # Ferme manuellement l'exclusion_context ouvert avant le
         # while persistance (cf. __enter__ plus haut). Try/except pour
         # supporter le cas où _excl_ctx n'a pas été initialisé (erreur

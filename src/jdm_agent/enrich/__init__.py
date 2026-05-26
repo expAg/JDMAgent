@@ -10,6 +10,7 @@ from jdm_agent.enrich.proposers import propose_candidates
 from jdm_agent.enrich.validators import (
     validate_candidate, consolidate_candidate,
     count_consolidations, list_consolidations,
+    set_consolidation_output_path, get_consolidation_output_path,
 )
 from jdm_agent.enrich.pipeline import (
     enrich, write_candidates_csv, write_submission,
@@ -22,6 +23,7 @@ __all__ = [
     "detect_gaps", "DEFAULT_TARGET_RELATIONS",
     "propose_candidates", "validate_candidate", "consolidate_candidate",
     "count_consolidations", "list_consolidations",
+    "set_consolidation_output_path", "get_consolidation_output_path",
     "enrich", "write_candidates_csv", "write_submission",
     "compute_submission_filename", "submit_to_jdm", "DEFAULT_ENDPOINT_URL",
 ]
