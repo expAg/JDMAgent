@@ -314,14 +314,20 @@ LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/v1/"
 # leurs capabilities (ex: lfm2.5-1.2b-instruct vanilla, phi3:mini)
 # sont volontairement exclus — Ollama rejette toute requête avec
 # `tools=[...]` sur eux (400 « does not support tools »).
+#
+# Les deux tags `*-tools` ci-dessous sont CUSTOM cote LIRMM : ils
+# reutilisent le blob du modele vanilla + ajoutent RENDERER/PARSER
+# `lfm2-thinking` au Modelfile, ce qui declenche les capabilities
+# `['completion', 'tools', 'thinking']`. Cf. notes d'install dans
+# AIDE / Installation.
 LIQUID_MODELS = {
-    "lfm2.5-thinking-1.2b": "Liquid LFM 2.5 Thinking 1.2B (LIRMM, tools)",
-    "qwen3-32b": "Qwen3 32B (LIRMM, tools, ~slow CPU)",
+    "lfm2.5-1.2b-instruct-tools": "Liquid LFM 2.5 1.2B Instruct (LIRMM, rapide)",
+    "lfm2-24b-a2b-tools": "Liquid LFM 2 24B-A2B MoE (LIRMM, puissant)",
 }
 # Routing model_id (clean, Dropdown-friendly) → tag exact côté Ollama.
 LIQUID_MODEL_ROUTING = {
-    "lfm2.5-thinking-1.2b": "lfm2.5-thinking:1.2b",
-    "qwen3-32b": "qwen3:32b",
+    "lfm2.5-1.2b-instruct-tools": "lfm2.5-1.2b-instruct-tools",
+    "lfm2-24b-a2b-tools": "lfm2-24b-a2b-tools",
 }
 
 # Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
@@ -972,46 +978,133 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     )
 
 
+class _LiquidChatOpenAI:
+    """Wrapper léger autour de ChatOpenAI qui fixe le bug Ollama LIRMM
+    où le PARSER `lfm2-thinking` classe TOUTE la sortie en `reasoning`
+    au lieu de `content` (résultat : content="", reasoning="vraie
+    réponse"). On intercepte chaque réponse et on copie reasoning →
+    content si content est vide.
+
+    Implémente l'interface Runnable de LangChain (invoke / ainvoke /
+    stream / astream / bind_tools / with_*…) en délégant tout au
+    ChatOpenAI sous-jacent, sauf le post-process des AIMessages
+    retournés.
+
+    Implémenté comme proxy + override de _generate au lieu de subclass
+    pour rester robuste aux refactors internes de langchain_openai
+    (les méthodes privées bougent souvent).
+    """
+    def __init__(self, inner):
+        self._inner = inner
+
+    @staticmethod
+    def _patch_message(msg):
+        """Si content vide et un `reasoning` (ou `thinking`) dans
+        additional_kwargs → copie comme content. Mute msg in-place."""
+        try:
+            from langchain_core.messages import AIMessage, AIMessageChunk
+            if not isinstance(msg, (AIMessage, AIMessageChunk)):
+                return msg
+            current = msg.content
+            is_empty = (
+                current is None
+                or (isinstance(current, str) and not current.strip())
+                or (isinstance(current, list) and not any(
+                    (isinstance(b, str) and b.strip())
+                    or (isinstance(b, dict) and (b.get("text") or "").strip())
+                    for b in current
+                ))
+            )
+            if not is_empty:
+                return msg
+            akw = getattr(msg, "additional_kwargs", {}) or {}
+            reasoning = akw.get("reasoning") or akw.get("thinking") or ""
+            if isinstance(reasoning, str) and reasoning.strip():
+                msg.content = reasoning
+        except Exception:
+            pass
+        return msg
+
+    def _patch_result(self, result):
+        """Patch ChatResult / liste de generations en place."""
+        try:
+            gens = getattr(result, "generations", None)
+            if gens is None:
+                return result
+            for gen in gens:
+                if hasattr(gen, "message"):
+                    self._patch_message(gen.message)
+        except Exception:
+            pass
+        return result
+
+    def invoke(self, *args, **kwargs):
+        return self._patch_message(self._inner.invoke(*args, **kwargs))
+
+    async def ainvoke(self, *args, **kwargs):
+        return self._patch_message(await self._inner.ainvoke(*args, **kwargs))
+
+    def stream(self, *args, **kwargs):
+        for chunk in self._inner.stream(*args, **kwargs):
+            yield self._patch_message(chunk)
+
+    async def astream(self, *args, **kwargs):
+        async for chunk in self._inner.astream(*args, **kwargs):
+            yield self._patch_message(chunk)
+
+    def bind_tools(self, *args, **kwargs):
+        return _LiquidChatOpenAI(self._inner.bind_tools(*args, **kwargs))
+
+    def bind(self, *args, **kwargs):
+        return _LiquidChatOpenAI(self._inner.bind(*args, **kwargs))
+
+    def with_structured_output(self, *args, **kwargs):
+        return _LiquidChatOpenAI(self._inner.with_structured_output(*args, **kwargs))
+
+    def with_config(self, *args, **kwargs):
+        return _LiquidChatOpenAI(self._inner.with_config(*args, **kwargs))
+
+    def __getattr__(self, name):
+        # Délègue tout le reste (attributes, methods divers de Runnable)
+        # au ChatOpenAI sous-jacent — bind_tools du langgraph create_agent
+        # appelle plein d'introspection qu'on ne peut pas tout lister.
+        return getattr(self._inner, name)
+
+
 def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     """Builder pour les modèles Ollama hébergés au LIRMM (portail-aren).
 
     Passe par l'API OpenAI-compatible exposée par Ollama (mapping
     standard `/v1/chat/completions` ↔ `/api/chat`). Tool calling
     supporté côté Ollama pour les modèles dont les `capabilities`
-    incluent `tools` (vérifié via /api/show, cf. LIQUID_MODELS).
+    incluent `tools` — c'est le cas pour les tags custom
+    `*-tools` créés via RENDERER/PARSER `lfm2-thinking` au LIRMM.
 
-    Spécificités du déploiement LIRMM :
+    Spécificités du déploiement :
       - Pas de clé API → on passe `"ollama"` (string non-vide requise
         par le SDK OpenAI mais ignorée côté serveur)
-      - Modèles avec `thinking` capability (lfm2.5-thinking, qwen3) :
-        on DÉSACTIVE la génération de chain-of-thought via le paramètre
-        Ollama-spécifique `think=false` (extension extra_body) → gain
-        ~30-50% de latence sur CPU, le CoT était de toute façon ignoré
-        par notre pipeline (pas de parsing du champ `reasoning`).
-      - Pin LANGUE : `extra_body={"options":{"system":"…"}}` n'existe
-        pas dans l'API OpenAI-compat → on injecte la consigne FR
-        dans le prompt au niveau du tool calling pour les petits
-        modèles 1.2B-7B qui dérivent en anglais. Pour 32B+ pas
-        nécessaire (qwen3:32b parle français nativement).
-      - Timeout long (120s) car CPU lent sur longs prompts (~20k tokens
+      - `extra_body={"think": False}` : demande à Ollama de skip le CoT
+        (gain perf). Ne marche pas toujours selon la version du
+        PARSER — d'où le wrapper _LiquidChatOpenAI qui corrige aussi
+        le cas où la sortie atterrit dans `reasoning` au lieu de
+        `content` (PARSER lfm2-thinking classe tout en thinking sur
+        certaines versions).
+      - Timeout long (120s) car CPU lent sur prompts longs (~20k tokens
         avec 27 outils).
 
-    `use_thinking` est ignoré (on désactive toujours côté Ollama pour
-    perf — le CoT n'est pas exposé à l'utilisateur de toute façon).
+    `use_thinking` est ignoré (Ollama gère via extra_body).
     """
     routed = LIQUID_MODEL_ROUTING.get(model_id, model_id)
     from langchain_openai import ChatOpenAI
-    # extra_body = passé tel quel dans le JSON body de la requête à
-    # /v1/chat/completions. Ollama l'utilise pour ses paramètres
-    # propriétaires (`think`, `keep_alive`, `num_ctx`, etc.).
-    return ChatOpenAI(
+    inner = ChatOpenAI(
         model=routed,
         base_url=LIQUID_BASE_URL,
         api_key="ollama",  # placeholder — Ollama ne vérifie pas
-        temperature=1.0,
+        temperature=0.1,   # recommandé Liquid AI (cf. model card HF)
         timeout=120.0,
-        extra_body={"think": False},  # skip chain-of-thought → ~30-50% plus rapide
+        extra_body={"think": False},
     )
+    return _LiquidChatOpenAI(inner)
 
 
 def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
