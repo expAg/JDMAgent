@@ -2446,6 +2446,20 @@ _CHATBOT_CSS = """
   background: var(--button-secondary-background-fill-hover, #5d5d70) !important;
 }
 
+/* Gradio v5 cache le ✓ sur les options non sélectionnées via
+   .inner-item.hide { visibility: hidden }. On le rend VISIBLE en gris
+   pour que chaque option ait son check (gris si non sélectionné,
+   normal si sélectionné). Désactivé sur options grisées blown
+   (data-jdm-blown=1) où on a déjà mis ❌. */
+ul[role="listbox"] li .inner-item.hide {
+  visibility: visible !important;
+  opacity: 0.28 !important;
+}
+ul[role="listbox"] li[data-jdm-blown="1"] .inner-item,
+ul[role="listbox"] li[data-jdm-byok="1"] .inner-item {
+  visibility: hidden !important;
+}
+
 /* Onglet Aide flush à droite — appliqué par JS (pushAideTabRight
    dans _HEAD_JS) qui cherche par texte « Aide » dans tous les
    boutons role="tab", car la structure DOM Gradio v5 varie. CSS
@@ -3842,27 +3856,22 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                            chat_switch_key_btn, jarvis_switch_key_btn]
         _reset_filter_js = """
         () => {
-          // L'input du Dropdown.svelte a role='listbox' (PAS combobox !)
-          // et bind:value={input_text}. Pour reset filtered_indices :
-          // on vide inp.value via le SETTER NATIF (sinon Svelte's
-          // bind:value ne capte pas le changement) et on dispatch un
-          // 'input' event. handle_filter(choices, "") matche tous
-          // les choices → liste complète visible.
-          var inputs = document.querySelectorAll('input[role="listbox"]');
-          inputs.forEach(function(inp) {
-            if (inp.offsetParent === null) return;
-            var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
-            if (!root) return;
-            if ((root.textContent || '').indexOf('Modèle') === -1) return;
-            // Setter natif HTMLInputElement.value pour propager à
-            // bind:value={input_text} de Svelte (sinon le binding
-            // ne se met pas à jour avec inp.value = '' tout seul).
-            var setter = Object.getOwnPropertyDescriptor(
-              window.HTMLInputElement.prototype, 'value'
-            ).set;
-            setter.call(inp, '');
-            inp.dispatchEvent(new Event('input', {bubbles: true}));
-          });
+          // Reset filtered_indices via handle_focus (cf. Dropdown.svelte
+          // L152 : filtered_indices = choices.map((_, i) => i)) SANS
+          // toucher à input_text → trigger garde son label visible.
+          // setTimeout 120ms pour que le reactive block sur choices
+          // soit terminé avant qu'on reset (sinon race condition).
+          setTimeout(function() {
+            var inputs = document.querySelectorAll('input[role="listbox"]');
+            inputs.forEach(function(inp) {
+              if (inp.offsetParent === null) return;
+              var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
+              if (!root) return;
+              if ((root.textContent || '').indexOf('Modèle') === -1) return;
+              inp.focus();
+              inp.dispatchEvent(new FocusEvent('focus', {bubbles: true}));
+            });
+          }, 120);
         }
         """
         chat_switch_key_btn.click(
