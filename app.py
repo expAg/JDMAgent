@@ -972,27 +972,28 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     supporté côté Ollama pour les modèles compatibles.
 
     Spécificités du déploiement LIRMM :
-      - Cert TLS self-signed → `verify=False` côté httpx
       - Pas de clé API → on passe `"ollama"` (string non-vide requise
         par le SDK OpenAI mais ignorée côté serveur)
       - Modèle 1.2B → temperature modérée (1.0) pour éviter incohérences
+      - Timeout long (120s) car un 1.2B sur CPU peut être lent sur les
+        longs prompts (notre system prompt fait ~20k tokens)
 
     `use_thinking` est sans effet (le 1.2B n'expose pas de chain-of-thought
     formel). Présent pour homogénéité de signature avec les autres builders.
+
+    Cert TLS : on garde la vérif par défaut (LIRMM est CNRS-géré, cert
+    a priori valide). Si le déploiement utilise un cert self-signed,
+    on le verra dans l'erreur SSL et on ajoutera un `httpx.Client(
+    verify=False)` ciblé à ce moment-là.
     """
-    import httpx as _httpx
     routed = LIQUID_MODEL_ROUTING.get(model_id, model_id)
     from langchain_openai import ChatOpenAI
-    # http_client custom : verify=False pour accepter le cert self-signed
-    # LIRMM. Timeout long (120s) car un 1.2B sur CPU peut être lent sur
-    # les longs prompts (notre system prompt fait ~20k tokens).
-    _client = _httpx.Client(verify=False, timeout=120.0)
     return ChatOpenAI(
         model=routed,
         base_url=LIQUID_BASE_URL,
         api_key="ollama",  # placeholder — Ollama ne vérifie pas
         temperature=1.0,
-        http_client=_client,
+        timeout=120.0,
     )
 
 
@@ -4096,28 +4097,43 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 gr.update(visible=False, value=None),
                             )
 
+                    # Handler unique : rend le fichier ET met à jour
+                    # l'état du bouton submit en une seule passe. Évite
+                    # le bug où le Timer (qui modifie les choices du
+                    # Dropdown) re-déclenche en interne le change → un
+                    # 2e handler bound séparément reçoit [] comme inputs
+                    # (cf. erreur HF « didn't receive enough input values »).
+                    def _render_and_toggle(selected_path, drops_key):
+                        from jarvis import has_drops_key as _hk
+                        status, html_u, text_u, file_u = _render_production_file(
+                            selected_path
+                        )
+                        submit_ok = bool(selected_path) and _hk(drops_key)
+                        return (
+                            status, html_u, text_u, file_u,
+                            gr.update(interactive=submit_ok),
+                        )
+
                     prod_file_dropdown.change(
-                        _render_production_file,
-                        inputs=[prod_file_dropdown],
+                        _render_and_toggle,
+                        inputs=[prod_file_dropdown, jarvis_drops_key],
                         outputs=[prod_status, prod_html_viewer,
-                                 prod_text_viewer, prod_download],
+                                 prod_text_viewer, prod_download,
+                                 prod_submit_btn],
                     )
 
-                    def _toggle_submit_btn(selected_path, drops_key):
-                        """Active le bouton submit si fichier sélectionné
-                        ET (clé fournie dans le bandeau OU env active)."""
+                    # Refresh du bouton quand la clé Drops change SEULE
+                    # (pas de changement de sélection). Handler dédié
+                    # avec inputs explicites — pas de risque de fire
+                    # interne car la textbox de clé ne participe pas
+                    # au Timer du Dropdown.
+                    def _toggle_submit_only(selected_path, drops_key):
                         from jarvis import has_drops_key as _hk
                         ok = bool(selected_path) and _hk(drops_key)
                         return gr.update(interactive=ok)
 
-                    # Réactive à chaque changement de sélection OU de clé
-                    prod_file_dropdown.change(
-                        _toggle_submit_btn,
-                        inputs=[prod_file_dropdown, jarvis_drops_key],
-                        outputs=[prod_submit_btn],
-                    )
                     jarvis_drops_key.change(
-                        _toggle_submit_btn,
+                        _toggle_submit_only,
                         inputs=[prod_file_dropdown, jarvis_drops_key],
                         outputs=[prod_submit_btn],
                     )
