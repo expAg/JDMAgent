@@ -2249,10 +2249,27 @@ _HEAD_JS = """
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        // CRITIQUE : retire le bouton du DOM AVANT de trigger Gradio,
-        // sinon le diff de l'ul casse les options voisines (BYOK, 2.5).
         if (btn.parentNode) btn.parentNode.removeChild(btn);
+        // Capture le trigger du dropdown pour pouvoir le re-ouvrir
+        // après que Gradio ait fini la MAJ.
+        var dropdownRoot = ul.closest('[class*="dropdown"]') || document.body;
+        var triggerInput = dropdownRoot.querySelector('input');
+        // Trigger l'update Python (handler caché)
         hidden.click();
+        // Ferme le dropdown (Gradio update pendant qu'il est ouvert →
+        // n'affiche plus que la value courante), puis le ré-ouvre dans
+        // 250ms pour que l'user voit l'état frais sans manipulation.
+        setTimeout(function() {
+          document.dispatchEvent(new KeyboardEvent('keydown',
+            {key: 'Escape', bubbles: true}));
+          document.body.click();
+          setTimeout(function() {
+            if (triggerInput) {
+              triggerInput.focus();
+              triggerInput.click();
+            }
+          }, 250);
+        }, 50);
       });
       ul.appendChild(btn);
     });
