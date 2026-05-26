@@ -2468,16 +2468,24 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
     # avec render=False puis .render() dans leur tab respectif. Permet
     # de les passer dans les outputs des handlers des AUTRES tabs : le
     # flow LLM Chatbot peut updater jarvis_model et vice-versa.
+    # filterable=False : sinon Gradio met le dropdown en mode combobox
+    # avec search/filter. Sur gr.update(choices=...) pendant qu'il est
+    # ouvert, l'input garde le label de la value courante → la liste
+    # affichée est filtrée à cette seule option (bug visible : BYOK
+    # et 2.5 disparaissent après un click rotation). En non-filterable,
+    # les choices update sont visibles intégralement.
     model_in = gr.Dropdown(
         choices=build_model_choices(),
         value="gemini-3.1-flash-lite",
         label="Modèle",
+        filterable=False,
         render=False,
     )
     jarvis_model = gr.Dropdown(
         choices=build_model_choices(),
         value="gemini-3.1-flash-lite",
         label="Modèle",
+        filterable=False,
         render=False,
     )
 
@@ -3804,18 +3812,26 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         )
 
         # Bouton « Rotation clés gemini » : update _CURRENT_GEMINI_KEY
-        # + label des 2 boutons (nouvel index « clé X/N »). Le suffix
-        # « épuisé » sera rafraîchi au prochain refresh naturel du
-        # dropdown (fin de flow, tab switch).
+        # + choices des 2 dropdowns (suffix « épuisé » recalculé pour
+        # la nouvelle clé) + label des 2 boutons (nouvel index).
+        # Marche en place grâce à filterable=False sur les dropdowns —
+        # le mode combobox aurait sinon filtré à la value courante.
         def _switch_api_key():
             cur_key = _CURRENT_GEMINI_KEY
             cur_mod = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             next_key = pick_unblown_gemini_key(cur_mod, skip=cur_key)
             if next_key and next_key != cur_key:
                 set_current_gemini_key(next_key)
+            choices = build_model_choices()
             new_label = _switch_key_btn_label()
-            return gr.update(value=new_label), gr.update(value=new_label)
-        _switch_outputs = [chat_switch_key_btn, jarvis_switch_key_btn]
+            return (
+                gr.update(choices=choices),
+                gr.update(choices=choices),
+                gr.update(value=new_label),
+                gr.update(value=new_label),
+            )
+        _switch_outputs = [model_in, jarvis_model,
+                           chat_switch_key_btn, jarvis_switch_key_btn]
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
