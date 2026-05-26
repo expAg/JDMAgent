@@ -352,8 +352,10 @@ def _parse_google_keys() -> list[str]:
 
 def _current_key_index_label() -> str:
     """Renvoie '(clé 2/4)' selon la position de _CURRENT_GEMINI_KEY
-    dans le pool. '(pool vide)' si aucune clé, '(clé ?/N)' si la clé
-    courante n'est pas dans le pool (cas env fallback)."""
+    dans le pool. '(pool vide)' si aucune clé. Si la clé courante
+    n'est pas (ou pas encore) dans le pool → défaut '(clé 1/N)' :
+    on présume la 1ʳᵉ du CSV, qui est aussi celle qu'on utilisera
+    par défaut au prochain pick."""
     try:
         keys = _parse_google_keys()
     except Exception:
@@ -365,7 +367,7 @@ def _current_key_index_label() -> str:
     if cur and cur in keys:
         idx = keys.index(cur) + 1
         return f"(clé {idx}/{n})"
-    return f"(clé ?/{n})"
+    return f"(clé 1/{n})"
 
 
 def _switch_key_btn_label() -> str:
@@ -720,6 +722,14 @@ ALL_MODELS = {
 # Filtre par date Pacific Time → les blown des jours précédents sont
 # automatiquement abandonnés (Gemini les a reset à minuit PT).
 _load_pool_state()
+
+# Si après load _CURRENT_GEMINI_KEY est toujours None mais qu'on a un
+# pool, on init à la 1ʳᵉ clé du pool → l'index dans le bouton affiche
+# bien « clé 1/N » au démarrage, pas « ? ».
+if _CURRENT_GEMINI_KEY is None:
+    _initial_keys = _parse_google_keys()
+    if _initial_keys:
+        _CURRENT_GEMINI_KEY = _initial_keys[0]
 
 # Modèles pour lesquels la case « Raisonnement » est cochable :
 #   - Gemini 3.x natifs : include_thoughts + thinking_level (réel côté API)
@@ -2208,45 +2218,47 @@ _HEAD_JS = """
     });
   }
 
-  // Injection d'un bouton stylé « Changer de clé API (clé X/N) » à la
-  // FIN de la liste d'options de chaque dropdown modèle ouverte. Le label
-  // est cloné depuis le bouton Gradio caché (#chat-switch-key-btn /
-  // #jarvis-switch-key-btn). Click sur le clone → dispatch un click sur
-  // le bouton caché → trigger le handler Python.
+  // Injection d'un bouton stylé « Rotation clés gemini (clé X/N) » JUSTE
+  // APRÈS la liste d'options du dropdown modèle (PAS dans le ul lui-
+  // même : sinon Gradio réconcilie le ul après un click et vire/casse
+  // nos enfants → options BYOK et 2.5 qui disparaissent visuellement).
+  // On insère dans le PARENT du ul, après le ul.
   function injectSwitchKeyButton() {
-    // Trouve le bouton Gradio caché courant (priorité : Jarvis si visible).
-    // Les deux ont le même label (synchronisés par le handler Python).
     var hidden = document.getElementById('jarvis-switch-key-btn')
               || document.getElementById('chat-switch-key-btn');
     if (!hidden) return;
-    var btnLabel = (hidden.textContent || '🔄 Changer de clé API').trim();
+    var btnLabel = (hidden.textContent || '🔄 Rotation clés gemini').trim();
 
-    // Chaque liste d'options ouverte (Gradio v5 = ul role=listbox dans
-    // un portail rattaché au body) reçoit un bouton clone en dernier
-    // élément, si pas déjà injecté.
     var lists = document.querySelectorAll('ul[role="listbox"]');
     lists.forEach(function(ul) {
-      // Vérifie que la liste contient bien des options modèle (Gemini)
       var optsTxt = (ul.textContent || '');
       if (optsTxt.indexOf('Gemini') === -1) return;  // pas notre dropdown
-      // Pas déjà injecté ?
-      if (ul.querySelector('.jdm-switch-key-injected')) {
-        // Update du label si changé entre temps
-        var existing = ul.querySelector('.jdm-switch-key-injected');
+      var parent = ul.parentElement;
+      if (!parent) return;
+      // Pas déjà injecté juste après ce ul ?
+      var existing = parent.querySelector(':scope > .jdm-switch-key-injected');
+      if (existing) {
+        // Update du label si changé
         if (existing.textContent !== btnLabel) existing.textContent = btnLabel;
         return;
       }
-      var btn = document.createElement('li');
+      var btn = document.createElement('div');
       btn.className = 'jdm-switch-key-injected';
       btn.textContent = btnLabel;
       btn.setAttribute('role', 'button');
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        // Trigger le vrai bouton Gradio caché → fire le handler Python
         hidden.click();
       });
-      ul.appendChild(btn);
+      // Insertion APRÈS le ul, dans le parent. Gradio ne touche que
+      // ses propres enfants (les li du ul) → nos div en frère du ul
+      // restent stables.
+      if (ul.nextSibling) {
+        parent.insertBefore(btn, ul.nextSibling);
+      } else {
+        parent.appendChild(btn);
+      }
     });
   }
 
