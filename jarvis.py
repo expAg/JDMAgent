@@ -1485,7 +1485,7 @@ def run_jarvis_flow(
                                 f"aujourd'hui** (quota quotidien).\n\n"
                                 f"Le sélecteur est passé sur "
                                 f"`{_PROTECTED}` (500 req/j).\n\n"
-                                f"➡️ **Re-clique « Lancer »** pour reprendre "
+                                f"➡️ **Re-clique « Lancer »** pour continuer "
                                 f"avec `{_PROTECTED}`, ou choisis un autre "
                                 f"modèle BYOK (Claude / GPT)."
                             )

@@ -1113,7 +1113,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                         f"(quota quotidien).\n\n"
                         f"Le sélecteur est passé sur "
                         f"`{GEMINI_POOL_PROTECTED_MODEL}` (500 req/j).\n\n"
-                        f"➡️ **Renvoie ton message** pour reprendre avec "
+                        f"➡️ **Renvoie ton message** pour continuer avec "
                         f"`{GEMINI_POOL_PROTECTED_MODEL}`, ou choisis un "
                         f"autre modèle BYOK (Claude / GPT)."
                     )
