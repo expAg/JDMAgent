@@ -18,6 +18,23 @@ from __future__ import annotations
 from typing import Any, Generator, Optional
 
 
+def _get_app_module():
+    """Récupère le module app DÉJÀ chargé via sys.modules. Sur HF
+    Spaces, app.py tourne comme __main__ (pas 'app'). Faire
+    `from app import X` re-load app.py SOUS LA CLÉ 'app' et déclenche
+    un bug Gradio (composants re-créés hors d'un contexte Blocks valide
+    → 'Button' object has no attribute '_id'). Le pattern correct :
+    lire app.X via sys.modules sans jamais ré-importer.
+    Renvoie None si introuvable (= mode test isolé, p.ex. pytest)."""
+    import sys
+    m = sys.modules.get('__main__')
+    # On vérifie qu'on a bien le bon module — pas par exemple le
+    # __main__ d'un test pytest qui n'a pas nos symboles.
+    if m is not None and hasattr(m, 'pick_unblown_gemini_key'):
+        return m
+    return sys.modules.get('app')
+
+
 def _content_to_text(content: Any) -> str:
     """Normalise un `AIMessage.content` LangChain en string plate
     (TEXTE PARLÉ uniquement, exclut les blocs thinking/reasoning).
@@ -1089,11 +1106,13 @@ def run_jarvis_flow(
             # Si modèle Gemini natif, on pick une clé du pool en explicite
             # pour pouvoir la marquer "blown" plus tard si nécessaire.
             try:
-                from app import (
-                    GEMINI_NATIVE_REQUIRED, pick_unblown_gemini_key,
-                    set_current_gemini_key as _set_current_key,
-                    set_current_model as _set_current_model,
-                )
+                _app = _get_app_module()
+                if _app is None:
+                    raise RuntimeError("app module unavailable")
+                GEMINI_NATIVE_REQUIRED = _app.GEMINI_NATIVE_REQUIRED
+                pick_unblown_gemini_key = _app.pick_unblown_gemini_key
+                _set_current_key = _app.set_current_gemini_key
+                _set_current_model = _app.set_current_model
                 if model in GEMINI_NATIVE_REQUIRED:
                     current_gemini_key = pick_unblown_gemini_key(model)
                     # Fallback : si toutes les clés du pool sont blown/
@@ -1342,11 +1361,12 @@ def run_jarvis_flow(
                         if is_invalid_api_key(e):
                             switched = False
                             try:
-                                from app import (
-                                    mark_gemini_key_invalid,
-                                    pick_unblown_gemini_key,
-                                    gemini_pool_size,
-                                )
+                                _app = _get_app_module()
+                                if _app is None:
+                                    raise RuntimeError("app module unavailable")
+                                mark_gemini_key_invalid = _app.mark_gemini_key_invalid
+                                pick_unblown_gemini_key = _app.pick_unblown_gemini_key
+                                gemini_pool_size = _app.gemini_pool_size
                                 if current_gemini_key:
                                     mark_gemini_key_invalid(current_gemini_key)
                                 next_key = pick_unblown_gemini_key(
@@ -1356,8 +1376,7 @@ def run_jarvis_flow(
                                     pool_n = gemini_pool_size()
                                     current_gemini_key = next_key
                                     try:
-                                        from app import set_current_gemini_key as _set_cur
-                                        _set_cur(current_gemini_key)
+                                        _app.set_current_gemini_key(current_gemini_key)
                                     except Exception:
                                         pass
                                     llm = build_llm_fn(
@@ -1391,10 +1410,11 @@ def run_jarvis_flow(
                             # clé) pour vérifier que le parsing CSV
                             # n'a rien tronqué.
                             try:
-                                from app import (
-                                    _parse_google_keys as _parse_keys,
-                                    _masked_key,
-                                )
+                                _app = _get_app_module()
+                                if _app is None:
+                                    raise RuntimeError("app module unavailable")
+                                _parse_keys = _app._parse_google_keys
+                                _masked_key = _app._masked_key
                                 parsed = _parse_keys()
                                 diag = "\n".join(
                                     f"  - {i+1}. {_masked_key(k)}"
@@ -1437,12 +1457,11 @@ def run_jarvis_flow(
                         # lite, 500 req/jour). Pour les autres (quotas
                         # ~20 req/jour), on remonte l'erreur après le
                         # marquage.
-                        try:
-                            from app import (
-                                GEMINI_POOL_PROTECTED_MODEL as _PROTECTED,
-                                mark_gemini_key_blown as _mark_blown_fn,
-                            )
-                        except Exception:
+                        _app = _get_app_module()
+                        if _app is not None:
+                            _PROTECTED = getattr(_app, 'GEMINI_POOL_PROTECTED_MODEL', "gemini-3.1-flash-lite")
+                            _mark_blown_fn = getattr(_app, 'mark_gemini_key_blown', None)
+                        else:
                             _PROTECTED = "gemini-3.1-flash-lite"
                             _mark_blown_fn = None
                         if is_per_day_quota_exhausted(e, expected_model=model):
@@ -1452,11 +1471,12 @@ def run_jarvis_flow(
                                 and is_per_day_quota_exhausted(e, expected_model=model)):
                             switched = False
                             try:
-                                from app import (
-                                    mark_gemini_key_blown,
-                                    pick_unblown_gemini_key,
-                                    gemini_pool_size,
-                                )
+                                _app = _get_app_module()
+                                if _app is None:
+                                    raise RuntimeError("app module unavailable")
+                                mark_gemini_key_blown = _app.mark_gemini_key_blown
+                                pick_unblown_gemini_key = _app.pick_unblown_gemini_key
+                                gemini_pool_size = _app.gemini_pool_size
                                 if current_gemini_key:
                                     mark_gemini_key_blown(current_gemini_key, model)
                                 next_key = pick_unblown_gemini_key(
@@ -1464,13 +1484,10 @@ def run_jarvis_flow(
                                 )
                                 if next_key:
                                     # Rebuild LLM + agent avec la nouvelle clé.
-                                    # accumulated_messages reste intact →
-                                    # langgraph reprend là où il en était.
                                     pool_n = gemini_pool_size()
                                     current_gemini_key = next_key
                                     try:
-                                        from app import set_current_gemini_key as _set_cur
-                                        _set_cur(current_gemini_key)
+                                        _app.set_current_gemini_key(current_gemini_key)
                                     except Exception:
                                         pass
                                     llm = build_llm_fn(
@@ -1564,11 +1581,15 @@ def run_jarvis_flow(
                         diag = ""
                         try:
                             import sys as _sys
-                            app_mod = _sys.modules.get('app')
+                            # Sur HF Spaces, app.py est lancé comme __main__,
+                            # pas 'app'. On cherche les deux.
+                            app_mod = _sys.modules.get('__main__')
+                            if app_mod is None or not hasattr(app_mod, 'build_pool_diag_md'):
+                                app_mod = _sys.modules.get('app')
                             if app_mod is None:
-                                diag = "\n\n---\n*(diag indisponible : app pas chargé dans sys.modules)*"
+                                diag = "\n\n---\n*(diag : ni __main__ ni app dans sys.modules)*"
                             elif not hasattr(app_mod, 'build_pool_diag_md'):
-                                diag = "\n\n---\n*(diag indisponible : build_pool_diag_md introuvable)*"
+                                diag = "\n\n---\n*(diag : module trouvé mais sans build_pool_diag_md)*"
                             else:
                                 diag = "\n\n---\n" + app_mod.build_pool_diag_md()
                         except Exception as _ce:
