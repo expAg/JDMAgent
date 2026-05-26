@@ -2249,27 +2249,10 @@ _HEAD_JS = """
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
         ev.stopPropagation();
+        // Retire le bouton AVANT de trigger Gradio pour ne pas casser
+        // le diff de l'ul. La MutationObserver re-injecte après MAJ.
         if (btn.parentNode) btn.parentNode.removeChild(btn);
-        // Capture le trigger du dropdown pour pouvoir le re-ouvrir
-        // après que Gradio ait fini la MAJ.
-        var dropdownRoot = ul.closest('[class*="dropdown"]') || document.body;
-        var triggerInput = dropdownRoot.querySelector('input');
-        // Trigger l'update Python (handler caché)
         hidden.click();
-        // Ferme le dropdown (Gradio update pendant qu'il est ouvert →
-        // n'affiche plus que la value courante), puis le ré-ouvre dans
-        // 250ms pour que l'user voit l'état frais sans manipulation.
-        setTimeout(function() {
-          document.dispatchEvent(new KeyboardEvent('keydown',
-            {key: 'Escape', bubbles: true}));
-          document.body.click();
-          setTimeout(function() {
-            if (triggerInput) {
-              triggerInput.focus();
-              triggerInput.click();
-            }
-          }, 250);
-        }, 50);
       });
       ul.appendChild(btn);
     });
@@ -3810,22 +3793,29 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             show_progress="hidden",
         )
 
-        # Bouton « Changer de clé API » : pick la clé suivante du pool
-        # qui n'est pas blown pour le modèle courant. Met aussi à jour
-        # le label des boutons (clones DOM injectés dans le dropdown)
-        # avec le nouvel index « clé X/N ».
+        # Bouton « Rotation clés gemini » : pick la clé suivante du pool
+        # qui n'est pas blown pour le modèle courant. Update les choices
+        # des deux dropdowns (suffix « épuisé » se recalcule) + le label
+        # des boutons (nouvel index « clé X/N »).
+        #
+        # CRITIQUE : on N'envoie PAS `value=...` dans le gr.update du
+        # dropdown. Quand un dropdown Gradio est OUVERT, passer une
+        # value le met en mode « search filter » → n'affiche que
+        # l'option qui matche la value → BYOK / autres options
+        # disparaissent visuellement. Sans value, Gradio update juste
+        # la liste des choices, garde implicitement la value existante,
+        # et la liste reste entièrement visible.
         def _switch_api_key():
             cur_key = _CURRENT_GEMINI_KEY
             cur_mod = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             next_key = pick_unblown_gemini_key(cur_mod, skip=cur_key)
             if next_key and next_key != cur_key:
                 set_current_gemini_key(next_key)
-            cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             choices = build_model_choices()
             new_label = _switch_key_btn_label()
             return (
-                gr.update(choices=choices, value=cur),
-                gr.update(choices=choices, value=cur),
+                gr.update(choices=choices),  # PAS de value=
+                gr.update(choices=choices),  # PAS de value=
                 gr.update(value=new_label),
                 gr.update(value=new_label),
             )
