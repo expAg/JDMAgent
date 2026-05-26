@@ -322,8 +322,12 @@ def _parse_google_keys() -> list[str]:
 
 # Marquage in-memory des clés épuisées par jour UTC.
 # Format : {(api_key, "YYYY-MM-DD"): True}
-# Reset implicite : à minuit UTC, la clé `(key, today)` n'existe plus.
-_BLOWN_TODAY: dict[tuple[str, str], bool] = {}
+# Marquage in-memory **par (clé, modèle)** : chaque modèle Gemini a
+# son propre quota PerDay → une clé peut être blown pour
+# gemini-3.1-flash-lite mais OK pour gemini-3.5-flash. Format :
+#   {(api_key, model_id, "YYYY-MM-DD"): True}
+# Reset implicite à minuit UTC (l'entrée du jour précédent n'existe plus).
+_BLOWN_TODAY: dict[tuple[str, str, str], bool] = {}
 
 
 def _today_utc_str() -> str:
@@ -331,22 +335,26 @@ def _today_utc_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def mark_gemini_key_blown(key: str) -> None:
-    """Marque une clé comme épuisée pour aujourd'hui UTC."""
-    if key:
-        _BLOWN_TODAY[(key, _today_utc_str())] = True
+def mark_gemini_key_blown(key: str, model: str) -> None:
+    """Marque une (clé, modèle) comme épuisée pour aujourd'hui UTC."""
+    if key and model:
+        _BLOWN_TODAY[(key, model, _today_utc_str())] = True
 
 
-def pick_unblown_gemini_key(skip: Optional[str] = None) -> Optional[str]:
-    """Renvoie la première clé non-épuisée du pool (en ordre liste),
-    ou None si toutes blown / pool vide. `skip` exclut une clé donnée
-    (utilisé pour ne pas re-choisir celle qui vient de hit le PerDay)."""
+def pick_unblown_gemini_key(model: str,
+                             skip: Optional[str] = None) -> Optional[str]:
+    """Renvoie la première clé du pool non-épuisée pour `model`, ou
+    None si toutes blown / pool vide. `skip` exclut une clé donnée
+    (utilisé pour ne pas re-choisir celle qui vient de hit le PerDay).
+
+    `model` est requis : chaque modèle Gemini a son propre quota PerDay,
+    donc une clé peut être blown pour un modèle et OK pour un autre."""
     keys = _parse_google_keys()
     today = _today_utc_str()
     for k in keys:
         if k == skip:
             continue
-        if not _BLOWN_TODAY.get((k, today), False):
+        if not _BLOWN_TODAY.get((k, model, today), False):
             return k
     return None
 
@@ -546,7 +554,7 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
     if api_key_override:
         token = api_key_override.strip()
     else:
-        picked = pick_unblown_gemini_key()
+        picked = pick_unblown_gemini_key(model_id)
         token = picked or os.environ.get("GOOGLE_API_KEY", "").strip()
     if not token:
         raise ValueError(
@@ -662,7 +670,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
         return
     # Pool Gemini : on track la clé courante pour bascule sur PerDay.
     current_gemini_key: Optional[str] = (
-        pick_unblown_gemini_key() if model in GEMINI_NATIVE_REQUIRED else None
+        pick_unblown_gemini_key(model) if model in GEMINI_NATIVE_REQUIRED else None
     )
     try:
         llm = _build_llm(model, api_key, use_thinking=use_thinking,
@@ -799,16 +807,20 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                 # Sortie normale → on quitte le while
                 break
             except Exception as e:
-                # 1) Quota QUOTIDIEN épuisé.
-                # Si pool de clés disponible → on bascule. Sinon stop.
+                # 1) Quota QUOTIDIEN épuisé SUR LE MODÈLE COURANT.
+                # On filtre par expected_model pour ignorer les PerDay
+                # parasites venant d'un autre modèle (ex : un quota
+                # historique sur gemini-2.5 ne doit pas mark blown
+                # gemini-3.1). Si pool de clés disponible pour ce
+                # modèle → on bascule. Sinon stop.
                 from jarvis import is_per_day_quota_exhausted
-                if is_per_day_quota_exhausted(e):
+                if is_per_day_quota_exhausted(e, expected_model=model):
                     switched = False
                     try:
                         if current_gemini_key:
-                            mark_gemini_key_blown(current_gemini_key)
+                            mark_gemini_key_blown(current_gemini_key, model)
                         next_key = pick_unblown_gemini_key(
-                            skip=current_gemini_key
+                            model, skip=current_gemini_key
                         )
                         if next_key:
                             pool_n = gemini_pool_size()

@@ -67,6 +67,22 @@ def test_is_per_day_quota_exhausted_false_on_non_quota():
     assert is_per_day_quota_exhausted(ValueError("foo")) is False
 
 
+def test_is_per_day_quota_exhausted_filter_by_model():
+    """Avec expected_model, ne renvoie True QUE si le quota PerDay
+    concerne le modèle attendu."""
+    msg = _GEMINI_429_PERMINUTE.replace("PerMinute", "PerDay")
+    # Sans filtre → True
+    assert is_per_day_quota_exhausted(Exception(msg)) is True
+    # Avec filtre matchant → True
+    assert is_per_day_quota_exhausted(
+        Exception(msg), expected_model="gemini-3.1-flash-lite"
+    ) is True
+    # Avec filtre différent → False (le quota concernait 3.1, pas 2.5)
+    assert is_per_day_quota_exhausted(
+        Exception(msg), expected_model="gemini-2.5-flash-lite"
+    ) is False
+
+
 # ---------- Pool de clés Google API ----------
 
 
@@ -84,17 +100,22 @@ def test_google_api_keys_pool_csv():
         keys = app._parse_google_keys()
         assert keys == ["key_aaa", "key_bbb", "key_ccc"]
         assert app.gemini_pool_size() == 3
+        MODEL = "gemini-3.1-flash-lite"
+        OTHER = "gemini-3.5-flash"
         # Pick : première par défaut
-        assert app.pick_unblown_gemini_key() == "key_aaa"
+        assert app.pick_unblown_gemini_key(MODEL) == "key_aaa"
         # Skip : suivante
-        assert app.pick_unblown_gemini_key(skip="key_aaa") == "key_bbb"
-        # Mark blown : la pick suivante saute
-        app.mark_gemini_key_blown("key_aaa")
-        assert app.pick_unblown_gemini_key() == "key_bbb"
-        app.mark_gemini_key_blown("key_bbb")
-        assert app.pick_unblown_gemini_key() == "key_ccc"
-        app.mark_gemini_key_blown("key_ccc")
-        assert app.pick_unblown_gemini_key() is None  # tout blown
+        assert app.pick_unblown_gemini_key(MODEL, skip="key_aaa") == "key_bbb"
+        # Mark blown sur MODEL : la pick suivante saute pour MODEL
+        app.mark_gemini_key_blown("key_aaa", MODEL)
+        assert app.pick_unblown_gemini_key(MODEL) == "key_bbb"
+        # MAIS la même clé reste DISPO pour OTHER (quota séparé par modèle)
+        assert app.pick_unblown_gemini_key(OTHER) == "key_aaa"
+        app.mark_gemini_key_blown("key_bbb", MODEL)
+        assert app.pick_unblown_gemini_key(MODEL) == "key_ccc"
+        app.mark_gemini_key_blown("key_ccc", MODEL)
+        assert app.pick_unblown_gemini_key(MODEL) is None  # MODEL : tout blown
+        assert app.pick_unblown_gemini_key(OTHER) == "key_aaa"  # OTHER : intact
     finally:
         if saved_csv is not None:
             os.environ["GOOGLE_API_KEYS"] = saved_csv

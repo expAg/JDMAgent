@@ -253,7 +253,25 @@ def count_consolidated_in_messages(messages: list) -> int:
     return n
 
 
-def is_per_day_quota_exhausted(exc) -> bool:
+def _extract_quota_model(exc) -> Optional[str]:
+    """Extrait l'identifiant du modèle concerné par un quota épuisé,
+    via `quotaDimensions.model` dans le message d'erreur.
+
+    Ex : « 'quotaDimensions': {'location': 'global',
+    'model': 'gemini-3.1-flash-lite'} » → renvoie 'gemini-3.1-flash-lite'.
+    Renvoie None si pas trouvé."""
+    import re
+    msg = str(exc)
+    m = re.search(r"'model'\s*:\s*'([^']+)'", msg)
+    if m:
+        return m.group(1)
+    m = re.search(r'"model"\s*:\s*"([^"]+)"', msg)
+    if m:
+        return m.group(1)
+    return None
+
+
+def is_per_day_quota_exhausted(exc, expected_model: Optional[str] = None) -> bool:
     """Détecte les quotas QUOTIDIENS épuisés (PerDay) sur Gemini.
 
     Le retryDelay annoncé par l'API est trompeur sur ce type de quota
@@ -263,11 +281,26 @@ def is_per_day_quota_exhausted(exc) -> bool:
 
     Match sur quotaId contenant `PerDay` (typiquement
     `GenerateRequestsPerDayPerProjectPerModel-FreeTier`).
+
+    Si `expected_model` est fourni, on ne renvoie True QUE si le quota
+    PerDay concerne exactement ce modèle (extrait via quotaDimensions
+    dans le payload d'erreur). Permet d'ignorer un PerDay sur un autre
+    modèle (ex : on est sur gemini-3.1-flash-lite, un quota historique
+    sur gemini-2.5-flash-lite ne nous concerne pas pour la bascule).
     """
     msg = str(exc)
     if "RESOURCE_EXHAUSTED" not in msg and "429" not in msg:
         return False
-    return "PerDay" in msg
+    if "PerDay" not in msg:
+        return False
+    if expected_model is None:
+        return True
+    quota_model = _extract_quota_model(exc)
+    if quota_model is None:
+        # Pas pu extraire → on est conservateur : on considère que ça
+        # concerne le modèle courant (sinon on perd la détection).
+        return True
+    return quota_model == expected_model
 
 
 def detect_rate_limit_retry(exc) -> Optional[float]:
@@ -1056,7 +1089,7 @@ def run_jarvis_flow(
             try:
                 from app import GEMINI_NATIVE_REQUIRED, pick_unblown_gemini_key
                 if model in GEMINI_NATIVE_REQUIRED:
-                    current_gemini_key = pick_unblown_gemini_key()
+                    current_gemini_key = pick_unblown_gemini_key(model)
             except Exception:
                 pass  # app pas importable (test mode) → comportement standard
             llm = build_llm_fn(model, api_key, use_thinking=use_thinking,
@@ -1282,7 +1315,11 @@ def run_jarvis_flow(
                         # tente de basculer sur la suivante non-blown.
                         # Sinon (pool vide / toutes blown), on signale
                         # et on stop.
-                        if is_per_day_quota_exhausted(e):
+                        # On filtre par expected_model : un PerDay sur
+                        # un AUTRE modèle (ex. gemini-2.5 alors qu'on
+                        # est sur 3.1) ne nous concerne pas, on l'ignore
+                        # → l'erreur bubblera comme erreur générique.
+                        if is_per_day_quota_exhausted(e, expected_model=model):
                             switched = False
                             try:
                                 from app import (
@@ -1291,9 +1328,9 @@ def run_jarvis_flow(
                                     gemini_pool_size,
                                 )
                                 if current_gemini_key:
-                                    mark_gemini_key_blown(current_gemini_key)
+                                    mark_gemini_key_blown(current_gemini_key, model)
                                 next_key = pick_unblown_gemini_key(
-                                    skip=current_gemini_key
+                                    model, skip=current_gemini_key
                                 )
                                 if next_key:
                                     # Rebuild LLM + agent avec la nouvelle clé.
