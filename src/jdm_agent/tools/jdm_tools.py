@@ -1789,24 +1789,29 @@ def write_submission_file(
         if dict_items:
             out["ignored_dicts"] = len(dict_items)
     else:
-        # Mode TRIPLETS canonique (que des dicts)
-        # Pour chaque triplet, on OVERRIDE l'explanation passée par le
-        # LLM par celle stockée dans le registry de consolidation (mise
-        # là par consolidate_candidate quand le triplet a été inféré).
-        # Le LLM a tendance à inventer ses propres formulations
-        # naturelles (« trait constitutif de... ») au lieu de citer la
-        # chaîne d'inférence formelle. Ici on force l'usage de
-        # l'explication PROUVÉE par le moteur.
+        # Mode TRIPLETS canonique (que des dicts).
+        # Pour .enrich : l'explication DOIT venir du registry de
+        # consolidation (mise là par consolidate_candidate après inférence).
+        # Toute formulation libre du LLM est REJETÉE — on n'écrit que
+        # ce qui a été PROUVÉ par le moteur d'inférence. Si le triplet
+        # n'est pas dans le registry, on met « non inférable depuis JDM »
+        # (explicite, ne laisse pas croire à une preuve).
+        # Pour les autres extensions (.audit, .err, .stat) qui utiliseraient
+        # quand même le schéma triplet : le texte libre du LLM est accepté
+        # (fallback registry → LLM text).
         from jdm_agent.enrich.validators import get_consolidation
+        is_enrich_file = str(path).lower().endswith(".enrich")
         def _resolve_explanation(t: dict) -> str:
             from_registry = get_consolidation(
                 str(t["term"]), str(t["relation"]), str(t["target"])
             )
             if from_registry and from_registry.get("explanation"):
                 return from_registry["explanation"]
-            # Fallback : ce que le LLM a passé (cas standalone /
-            # invocation hors session agent, ou triplet non passé par
-            # consolidate_candidate). Mieux que rien.
+            # Pas dans le registry.
+            if is_enrich_file:
+                # STRICT : pas de texte libre LLM pour .enrich.
+                return "non inférable depuis JDM"
+            # Autres extensions : le texte libre LLM est OK.
             return str(t.get("explanation") or "")
         cands = [Candidate(
             term=str(t["term"]), relation=str(t["relation"]), target=str(t["target"]),
