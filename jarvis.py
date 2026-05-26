@@ -1566,8 +1566,12 @@ def run_jarvis_flow(
                             diag += "\n\n*[IMPORT OK]*"
                         except Exception as _ie:
                             import traceback as _tb
+                            _full_tb = _tb.format_exc()
+                            # On veut le DÉBUT du traceback (notre code),
+                            # pas seulement la fin (Gradio internals).
                             diag += (f"\n\n*[IMPORT raised : {type(_ie).__name__}: {_ie}]*"
-                                     f"\n```\n{_tb.format_exc()[-600:]}\n```")
+                                     f"\n**Début TB (notre code) :**\n```\n{_full_tb[:1800]}\n```"
+                                     f"\n**Fin TB :**\n```\n{_full_tb[-800:]}\n```")
                         if _pd_fn is not None:
                             try:
                                 diag += "\n\n" + _pd_fn()
