@@ -1370,15 +1370,38 @@ def run_jarvis_flow(
                                 pass
                             if switched:
                                 continue
-                            # Yield au chatbot, pas raise (sinon Gradio
-                            # crash et l'erreur ne va qu'en console).
+                            # Yield au chatbot avec DIAGNOSTIC : ce qui
+                            # a été parsé depuis GOOGLE_API_KEYS (4 chars
+                            # début + 4 chars fin + longueur de chaque
+                            # clé) pour vérifier que le parsing CSV
+                            # n'a rien tronqué.
+                            try:
+                                from app import (
+                                    _parse_google_keys as _parse_keys,
+                                    _masked_key,
+                                )
+                                parsed = _parse_keys()
+                                diag = "\n".join(
+                                    f"  - {i+1}. {_masked_key(k)}"
+                                    for i, k in enumerate(parsed)
+                                ) or "  (aucune clé parsée)"
+                            except Exception:
+                                parsed = []
+                                diag = "  (diagnostic indisponible)"
                             err_msg = (
                                 "❌ **Toutes les clés Google du pool ont "
                                 "échoué**.\n\n"
-                                "Causes possibles :\n"
+                                f"**Diagnostic** : {len(parsed)} clé(s) "
+                                f"parsée(s) depuis `GOOGLE_API_KEYS` :\n"
+                                f"{diag}\n\n"
+                                "Vérifie ci-dessus que chaque clé a la "
+                                "**longueur attendue (~39 chars)** et "
+                                "commence par `AIza`. Si une clé est "
+                                "tronquée → problème de parsing CSV.\n\n"
+                                "Sinon, causes possibles côté Google :\n"
                                 "1. Clés non activées pour l'**API "
-                                "Generative Language** (active-la sur "
-                                "Google Cloud Console → APIs & Services).\n"
+                                "Generative Language** (Google Cloud "
+                                "Console).\n"
                                 "2. Clés d'un projet sans accès aux "
                                 "modèles Gemini 3.x.\n"
                                 "3. Quotas PerDay tous épuisés (reset "

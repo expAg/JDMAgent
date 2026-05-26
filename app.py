@@ -320,12 +320,38 @@ def _parse_google_keys() -> list[str]:
     Priorité 1 : variable `GOOGLE_API_KEYS` (CSV, sep `,`).
     Priorité 2 : variable `GOOGLE_API_KEY` (singulière, rétro-compat).
     Renvoie [] si aucune.
+
+    Parsing robuste : strip whitespace, BOM, CR/LF, guillemets optionnels
+    autour de chaque clé (les secrets HF Spaces ou .env mal collés
+    peuvent contenir ces parasites).
     """
-    csv = os.environ.get("GOOGLE_API_KEYS", "").strip()
+    raw = os.environ.get("GOOGLE_API_KEYS", "")
+    csv = raw.lstrip("﻿").strip()  # ﻿ = BOM UTF-8
     if csv:
-        return [k.strip() for k in csv.split(",") if k.strip()]
-    single = os.environ.get("GOOGLE_API_KEY", "").strip()
+        out: list[str] = []
+        for chunk in csv.split(","):
+            k = chunk.strip().strip("\r\n\t ").strip()
+            # Strip guillemets simples / doubles autour
+            if len(k) >= 2 and (
+                (k[0] == '"' and k[-1] == '"')
+                or (k[0] == "'" and k[-1] == "'")
+            ):
+                k = k[1:-1].strip()
+            if k:
+                out.append(k)
+        return out
+    single = os.environ.get("GOOGLE_API_KEY", "").lstrip("﻿").strip()
     return [single] if single else []
+
+
+def _masked_key(key: str) -> str:
+    """Affichage masqué d'une clé pour diagnostic (4 premiers + 4 derniers
+    chars + longueur), sans exposer la valeur entière."""
+    if not key:
+        return "(vide)"
+    if len(key) < 12:
+        return f"« {key} » ({len(key)} chars — trop court, suspect)"
+    return f"{key[:4]}…{key[-4:]} ({len(key)} chars)"
 
 
 # Marquage in-memory **par (clé, modèle)** : chaque modèle Gemini a
@@ -893,20 +919,28 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                     if switched:
                         continue
                     # Toutes les clés ont échoué — yield un message
-                    # clair au chatbot (pas raise, sinon Gradio crash
-                    # et l'erreur ne s'affiche QUE dans la console).
+                    # clair au chatbot avec DIAGNOSTIC des clés parsées
+                    # (4 premiers + 4 derniers chars de chacune) pour
+                    # vérifier que le parsing CSV n'a rien tronqué.
+                    parsed = _parse_google_keys()
+                    diag = "\n".join(
+                        f"  - {i+1}. {_masked_key(k)}"
+                        for i, k in enumerate(parsed)
+                    ) or "  (aucune clé parsée — vérifie GOOGLE_API_KEYS)"
                     yield (
                         "❌ **Toutes les clés Google du pool ont échoué**.\n\n"
-                        "Causes possibles :\n"
-                        "1. Les clés ne sont pas **activées pour l'API "
-                        "Generative Language** (active-la sur Google "
-                        "Cloud Console → APIs & Services → Library).\n"
-                        "2. Les clés viennent d'un **projet sans facturation** "
-                        "qui n'a pas accès aux modèles Gemini 3.x.\n"
-                        "3. Quotas PerDay tous épuisés pour aujourd'hui "
-                        "(reset à minuit UTC).\n\n"
-                        "Bascule sur un modèle BYOK (Claude / GPT) "
-                        "pour continuer dès maintenant."
+                        f"**Diagnostic** : {len(parsed)} clé(s) parsée(s) "
+                        f"depuis `GOOGLE_API_KEYS` :\n{diag}\n\n"
+                        "Vérifie ci-dessus que chaque clé a la **longueur "
+                        "attendue (~39 chars)** et commence par `AIza`. "
+                        "Si une clé est tronquée → problème de parsing CSV.\n\n"
+                        "Sinon, causes possibles côté Google :\n"
+                        "1. Clés non **activées pour l'API Generative "
+                        "Language** (Google Cloud Console → APIs & Services).\n"
+                        "2. Clés d'un projet sans accès aux modèles Gemini 3.x.\n"
+                        "3. Quotas PerDay tous épuisés (reset minuit UTC).\n\n"
+                        "Bascule sur un modèle BYOK (Claude / GPT) pour "
+                        "continuer dès maintenant."
                     ), _NOOP_FILE
                     return
                 # 1) Quota QUOTIDIEN épuisé.
