@@ -1910,6 +1910,18 @@ def run_jarvis_flow(
                                     f"({chars_before // 1000}k chars → résumé) — "
                                     f"l'agent reprend avec un nudge frais.*"
                                 )
+                                # Yield immédiat — sans ça la ligne n'est
+                                # poussée à Gradio QU'AU PROCHAIN chunk,
+                                # qui peut tarder (PerMinute en boucle) →
+                                # l'utilisateur ne voyait jamais le message
+                                # condensé, juste « j'attends Xs ».
+                                yield (
+                                    [{"role": "user", "content": user_display},
+                                     {"role": "assistant",
+                                      "content": "\n\n".join(progress_live)}],
+                                    last_file_path,
+                                    _read_file_preview(last_file_path),
+                                )
                             continue
                         # Pas un quota retryable, ou déjà tenté : erreur finale
                         err_block = ""
