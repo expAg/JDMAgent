@@ -23,3 +23,5 @@ COMMANDES.md
 *_enrichissement_jdm.csv
 *_enrichissement_jdm.txt
 modèle Inférences php.txt
+# État persisté du pool Gemini (clé/modèle courants + blown/invalid)
+pool_state.json

@@ -416,21 +416,109 @@ def mark_gemini_key_invalid(key: str) -> None:
     if key and key not in _INVALID_KEYS:
         _INVALID_KEYS.add(key)
         _bump_registry_version()
+        _save_pool_state()
 
 
 def _today_utc_str() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """Renvoie la date du jour de RESET des quotas Gemini PerDay.
+    Google reset les quotas du free tier à minuit Pacific Time (PT),
+    PAS UTC. Le nom de la fonction est resté `_utc` pour rétro-compat
+    mais l'implémentation utilise désormais America/Los_Angeles."""
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+    except Exception:
+        # Fallback : UTC (approximation, déraille de ~8h)
+        from datetime import timezone
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+# Fichier de persistance de l'état du pool — survit aux crashs du
+# process et permet de reprendre l'état correct au redémarrage. Au
+# load on filtre par _today_utc_str() courante → les entrées des
+# jours précédents sont automatiquement abandonnées (= reset auto
+# à minuit Pacific Time, comme Gemini lui-même).
+_POOL_STATE_FILE = "pool_state.json"
+
+
+def _save_pool_state() -> None:
+    """Persiste sur disque l'état blown/invalid + clé/modèle courants.
+    Best-effort, jamais bloquant (try/except global)."""
+    try:
+        import json
+        today = _today_utc_str()
+        # Sérialisation : tuples → listes (JSON ne supporte pas les tuples)
+        blown_list = [
+            {"key": k, "model": m, "date": d}
+            for (k, m, d), v in _BLOWN_TODAY.items() if v
+        ]
+        payload = {
+            "version": 1,
+            "saved_at_date": today,
+            "blown": blown_list,
+            "invalid_keys": sorted(_INVALID_KEYS),
+            "current_key": _CURRENT_GEMINI_KEY,
+            "current_model": _CURRENT_MODEL,
+        }
+        with open(_POOL_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass  # best-effort, on n'interrompt jamais le flow
+
+
+def _load_pool_state() -> None:
+    """Restaure l'état blown/invalid + clé/modèle courants depuis le
+    disque au démarrage du module. Filtre par date courante (Pacific
+    Time) pour ignorer les blown des jours précédents (= reset Gemini)."""
+    global _CURRENT_GEMINI_KEY, _CURRENT_MODEL
+    try:
+        import json
+        import os
+        if not os.path.exists(_POOL_STATE_FILE):
+            return
+        with open(_POOL_STATE_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        today = _today_utc_str()
+        # On ne charge QUE les blown de la date du jour. Si le file a
+        # été écrit hier, ses blown sont obsolètes (Gemini a reset).
+        for entry in payload.get("blown", []):
+            d = entry.get("date")
+            k = entry.get("key")
+            m = entry.get("model")
+            if d == today and k and m:
+                _BLOWN_TODAY[(k, m, d)] = True
+        for k in payload.get("invalid_keys", []):
+            if k:
+                _INVALID_KEYS.add(k)
+        # Restore la clé courante SEULEMENT si elle est encore utilisable
+        # (présente dans le pool, non invalide, et pas blown pour le
+        # modèle protégé — sinon on laissera pick_unblown_gemini_key
+        # en choisir une autre au prochain pick).
+        saved_key = payload.get("current_key")
+        saved_model = payload.get("current_model")
+        if saved_key:
+            pool = _parse_google_keys()
+            if (saved_key in pool
+                    and saved_key not in _INVALID_KEYS
+                    and not _BLOWN_TODAY.get(
+                        (saved_key, GEMINI_POOL_PROTECTED_MODEL, today), False)):
+                _CURRENT_GEMINI_KEY = saved_key
+        if saved_model:
+            _CURRENT_MODEL = saved_model
+    except Exception:
+        pass  # best-effort, on n'interrompt jamais le démarrage
 
 
 def mark_gemini_key_blown(key: str, model: str) -> None:
-    """Marque une (clé, modèle) comme épuisée pour aujourd'hui UTC."""
+    """Marque une (clé, modèle) comme épuisée pour aujourd'hui (PT)."""
     if not key or not model:
         return
     cell = (key, model, _today_utc_str())
     if not _BLOWN_TODAY.get(cell, False):
         _BLOWN_TODAY[cell] = True
         _bump_registry_version()
+        _save_pool_state()
 
 
 # Clé Gemini ACTIVE dans la session courante (= celle dans laquelle
@@ -444,11 +532,13 @@ _CURRENT_GEMINI_KEY: Optional[str] = None
 def set_current_gemini_key(key: Optional[str]) -> None:
     """Déclare la clé Gemini active. Bumpe le registry version pour
     que le dropdown se rafraîchisse au prochain yield (le label
-    « ✅/❌ épuisé sur cette clé » dépend de la clé courante)."""
+    « ✅/❌ épuisé sur cette clé » dépend de la clé courante).
+    Persiste sur disque pour reprendre l'état au prochain démarrage."""
     global _CURRENT_GEMINI_KEY
     if _CURRENT_GEMINI_KEY != key:
         _CURRENT_GEMINI_KEY = key
         _bump_registry_version()
+        _save_pool_state()
 
 
 # Modèle actuellement sélectionné (utilisé pour préfixer ✅ devant
@@ -459,11 +549,12 @@ _CURRENT_MODEL: Optional[str] = "gemini-3.1-flash-lite"
 
 def set_current_model(model: Optional[str]) -> None:
     """Déclare le modèle actif. Bumpe la version → le dropdown se
-    rafraîchit avec ✅ devant cette option."""
+    rafraîchit avec ✅ devant cette option. Persiste sur disque."""
     global _CURRENT_MODEL
     if _CURRENT_MODEL != model:
         _CURRENT_MODEL = model
         _bump_registry_version()
+        _save_pool_state()
 
 
 def is_model_blown_on_current_key(model: str) -> bool:
@@ -577,6 +668,11 @@ ALL_MODELS = {
     **GEMINI_MODELS,
     **ANTHROPIC_MODELS, **OPENAI_MODELS,
 }
+
+# Charge l'état persisté du pool depuis le disque (crashs, restarts).
+# Filtre par date Pacific Time → les blown des jours précédents sont
+# automatiquement abandonnés (Gemini les a reset à minuit PT).
+_load_pool_state()
 
 # Modèles pour lesquels la case « Raisonnement » est cochable :
 #   - Gemini 3.x natifs : include_thoughts + thinking_level (réel côté API)
