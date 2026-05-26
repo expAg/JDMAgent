@@ -2266,6 +2266,40 @@ _HEAD_JS = """
         ev.preventDefault();
         ev.stopPropagation();
         if (btn.parentNode) btn.parentNode.removeChild(btn);
+        // Setup MutationObserver AVANT hidden.click() : dès que Svelte
+        // mute ul (re-render des li suite au choices update), le
+        // callback fire IMMÉDIATEMENT (pas de fenêtre de setTimeout
+        // visible) → on capture le nouveau label dans le placeholder
+        // et on reset le filter à all dans la même microtask. Le user
+        // ne voit JAMAIS la liste restreinte à 1 option.
+        var liInput = null;
+        try {
+          liInput = ul.closest('.form, [class*="block"]')
+                       ?.querySelector('input[role="listbox"]');
+        } catch (e) {}
+        if (liInput) {
+          var setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+          ).set;
+          var resetObs = new MutationObserver(function() {
+            var v = liInput.value;
+            if (v) {
+              // Svelte vient de set input_text=new_label → on capture
+              // pour le placeholder
+              liInput.placeholder = v;
+              liInput.classList.add('jdm-placeholder-as-value');
+              // Reset filter en passant input_text='' → handle_filter
+              // retournera all_indices → ul se re-render avec toutes
+              // les options visibles dans la même microtask
+              setter.call(liInput, '');
+              liInput.dispatchEvent(new Event('input', {bubbles: true}));
+            }
+          });
+          resetObs.observe(ul, { childList: true });
+          // Safety: deconnecte après 2s pour éviter de polluer les
+          // mutations subséquentes (manuels par l'user).
+          setTimeout(function() { resetObs.disconnect(); }, 2000);
+        }
         hidden.click();
       });
       ul.appendChild(btn);
@@ -3865,52 +3899,21 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             )
         _switch_outputs = [model_in, jarvis_model,
                            chat_switch_key_btn, jarvis_switch_key_btn]
-        _reset_filter_js = """
-        () => {
-          // Stratégie sans flash : reset du filter via setter('') +
-          // dispatch input, MAIS on rend le label visible via le
-          // placeholder de l'input (qui est totalement indépendant
-          // de l'état Svelte input_text → pas de race avec le tick
-          // Svelte qui re-syncrait la value). CSS plus bas force le
-          // placeholder à RESSEMBLER à une vraie valeur (couleur
-          // body-text au lieu de gris, pas d'italique).
-          //
-          // Quand l'utilisateur ouvre/ferme le dropdown manuellement
-          // ou pick une option, Svelte set value via input_text →
-          // input.value devient non-vide → placeholder disparait
-          // naturellement (CSS standard).
-          setTimeout(function() {
-            var inputs = document.querySelectorAll('input[role="listbox"]');
-            inputs.forEach(function(inp) {
-              if (inp.offsetParent === null) return;
-              var root = inp.closest('.form, [class*="dropdown"], [class*="block"]');
-              if (!root) return;
-              if ((root.textContent || '').indexOf('Modèle') === -1) return;
-              var savedLabel = inp.value;
-              if (!savedLabel) return;
-              var setter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value'
-              ).set;
-              setter.call(inp, '');
-              inp.dispatchEvent(new Event('input', {bubbles: true}));
-              // Placeholder reflète le label courant — visuellement
-              // identique à une vraie valeur grâce au CSS .jdm-placeholder-as-value
-              inp.placeholder = savedLabel;
-              inp.classList.add('jdm-placeholder-as-value');
-            });
-          }, 120);
-        }
-        """
+        # Pas de .then(js=...) ici : le reset du filter est géré
+        # directement par la MutationObserver setupée dans le click
+        # handler de injectSwitchKeyButton (cf. _HEAD_JS). Cet observer
+        # réagit IMMÉDIATEMENT à la mutation de ul par Svelte → aucun
+        # délai de setTimeout visible → pas de flash.
         chat_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
+        )
         jarvis_switch_key_btn.click(
             _switch_api_key, inputs=None,
             outputs=_switch_outputs,
             show_progress="hidden",
-        ).then(fn=None, inputs=None, outputs=None, js=_reset_filter_js)
+        )
         # ---- Handlers consolidés .change pour les deux dropdowns ----
         # UN SEUL aller-retour serveur par pick (au lieu de 3+ avant) :
         # - set_current_model(_CURRENT_MODEL tracking)
