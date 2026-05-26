@@ -1114,9 +1114,14 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
         api_key="ollama",  # placeholder — Ollama ne vérifie pas
         temperature=0.1,   # recommandé Liquid AI (cf. model card HF)
         timeout=600.0,     # 10 min, large pour prefill 20k tokens + reponse
-        streaming=True,    # tokens en streaming → keepalive reseau
+        # streaming=False (defaut) : observé que streaming=True + tools
+        # sur Ollama OpenAI-compat donnait des reponses vides au moment
+        # de l'assemblage des chunks cote langgraph. Sans streaming le
+        # serveur attend la fin et renvoie un dict complet, plus fiable
+        # pour l'agent. Cout : pas de keepalive HTTP intermediaire →
+        # le timeout 600s doit etre respecte cote proxy LIRMM (a verifier
+        # si le proxy a un timeout court avec un test depuis l'exterieur).
         extra_body={
-            "think": False,
             "keep_alive": "30m",  # garde modele + KV cache 30 min
         },
     )
