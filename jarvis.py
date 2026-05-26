@@ -1555,11 +1555,14 @@ def run_jarvis_flow(
                                 f"({len(progress_full)})</summary>\n\n"
                                 f"{(chr(10)*2).join(progress_full)}\n\n</details>"
                             )
+                        # MARQUEUR HARDCODÉ : pour vérifier qu'on est bien
+                        # dans ce code path (et que HF déploie bien).
+                        diag = "\n\n---\n🔎 **[MARKER-JARVIS-FINAL-YIELD]** (Phase 13 debug)"
                         try:
                             from app import build_pool_diag_md as _pool_diag
-                            diag = "\n\n---\n" + _pool_diag()
-                        except Exception:
-                            diag = ""
+                            diag += "\n\n" + _pool_diag()
+                        except Exception as _diag_exc:
+                            diag += f"\n\n*(build_pool_diag_md raised : {_diag_exc})*"
                         yield (
                             [{"role": "user", "content": user_display},
                              {"role": "assistant",
