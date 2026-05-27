@@ -2486,6 +2486,32 @@ _HEAD_JS = """
 """
 
 _CHATBOT_CSS = """
+/* ----- Theme clair : adoucir le blanc aveuglant.
+   Gradio v5 utilise des CSS variables tokenisees. En mode clair (pas
+   de classe .dark sur le container), on substitue les fonds blancs
+   purs par des gris zinc tres clairs — moins fatigant pour l'oeil.
+   Les inputs gardent un fond plus clair pour qu'ils restent distincts
+   des surfaces de fond. */
+.gradio-container:not(.dark) {
+  --body-background-fill: #f4f4f5 !important;        /* zinc-100 */
+  --background-fill-primary: #fafafa !important;     /* zinc-50 */
+  --background-fill-secondary: #f4f4f5 !important;   /* zinc-100 */
+  --block-background-fill: #fafafa !important;       /* zinc-50 */
+  --block-secondary-background-fill: #f4f4f5 !important;
+  --panel-background-fill: #f4f4f5 !important;
+  --neutral-50: #fafafa !important;
+  --neutral-100: #f4f4f5 !important;
+  --border-color-primary: #d4d4d8 !important;         /* zinc-300 */
+  --border-color-accent-subdued: #e4e4e7 !important;  /* zinc-200 */
+  /* Inputs restent presque blancs pour ressortir des surfaces */
+  --input-background-fill: #ffffff !important;
+  --chatbot-background-fill: #fafafa !important;
+}
+/* Fond global du body en clair = meme gris doux que le container */
+body:not(.dark) {
+  background: #f4f4f5 !important;
+}
+
 /* ----- Productions : CheckboxGroup uniforme (mm largeur + ellipsis).
    Cible par elem_id pour ne pas affecter les autres CheckboxGroup.
    Le label HTML est dans .wrap > label > span (Gradio v5). */
