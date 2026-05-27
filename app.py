@@ -3022,18 +3022,45 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             viz_html_out.render()
             # Scroll automatique CENTRÉ sur la viz quand elle apparaît.
             # Le Chatbot Gradio auto-scrolle vers la fin du chat APRÈS
-            # notre yield, donc on doit scroller APRÈS lui : plusieurs
-            # tentatives échelonnées (300/700/1200ms) pour s'imposer.
+            # notre yield, donc on scrolle APRÈS lui (un seul setTimeout
+            # à 700ms — le 1er essai à 300ms etait souvent ecrase par
+            # l'autoscroll Gradio).
+            # BUG FIX : ancienne version faisait 3 setTimeout (300/700/
+            # 1200ms) → si l'utilisateur scrollait à 400ms, le tick à
+            # 700ms le ramenait, idem pour 1200ms → impossible de remonter.
+            # Maintenant : un seul scroll, annulable si l'utilisateur
+            # scrolle/clique entre-temps. Plus jamais de hijack.
             viz_html_out.change(
                 fn=None, inputs=None, outputs=None,
                 js="""() => {
-                  const scrollToViz = () => {
-                    const el = document.getElementById('viz-container');
-                    if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
-                  };
-                  setTimeout(scrollToViz, 300);
-                  setTimeout(scrollToViz, 700);
-                  setTimeout(scrollToViz, 1200);
+                  const el = document.getElementById('viz-container');
+                  if (!el) return;
+                  // Annule un scroll en attente d'une precedente generation
+                  if (window.__vizScrollPending) {
+                    clearTimeout(window.__vizScrollPending);
+                    window.__vizScrollPending = null;
+                  }
+                  // Si l'utilisateur scrolle / tape / clique pendant le
+                  // delai, on abandonne le scroll auto (respect intent).
+                  let userInteracted = false;
+                  const cancel = () => { userInteracted = true; };
+                  const opts = { passive: true, once: true };
+                  window.addEventListener('wheel', cancel, opts);
+                  window.addEventListener('touchmove', cancel, opts);
+                  window.addEventListener('keydown', cancel, { once: true });
+                  window.addEventListener('mousedown', cancel, opts);
+                  window.__vizScrollPending = setTimeout(() => {
+                    if (!userInteracted) {
+                      el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                    }
+                    // Cleanup listeners (les `once:true` se cleanup auto
+                    // s'ils ont tire, mais s'ils n'ont pas tire on retire)
+                    window.removeEventListener('wheel', cancel);
+                    window.removeEventListener('touchmove', cancel);
+                    window.removeEventListener('keydown', cancel);
+                    window.removeEventListener('mousedown', cancel);
+                    window.__vizScrollPending = null;
+                  }, 700);
                 }"""
             )
 
