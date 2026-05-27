@@ -1452,40 +1452,47 @@ def run_jarvis_flow(
                                     # Accumulation pour permettre la reprise
                                     # après pause quota (cf. retry plus bas).
                                     accumulated_messages.append(m)
+                                    # === DIAG : log TOUS les messages (AIMessage
+                                    # ET ToolMessage) avec le nom du node qui
+                                    # les a emis. Le bug observe (chunk vide
+                                    # tcs=0 content_len=0) peut etre un artefact
+                                    # langgraph (END node, par exemple) plutot
+                                    # que la vraie reponse Gemini 2.5. ===
+                                    _diag_chunk_n += 1
+                                    try:
+                                        _diag_addl = getattr(m, "additional_kwargs", {}) or {}
+                                        _diag_meta = getattr(m, "response_metadata", {}) or {}
+                                        _diag_invalid = getattr(m, "invalid_tool_calls", None)
+                                        _diag_content_repr = repr(getattr(m, "content", ""))[:200]
+                                        _diag_finish = (
+                                            _diag_meta.get("finish_reason")
+                                            or _diag_meta.get("stop_reason")
+                                            or "?"
+                                        )
+                                        _diag_msgcls = type(m).__name__
+                                        _diag_tcs_n = len(getattr(m, "tool_calls", []) or [])
+                                        _diag_line = (
+                                            f"<div class=\"jdm-narration\">"
+                                            f"🐛 <b>chunk#{_diag_chunk_n}</b> "
+                                            f"node=<code>{_node}</code> "
+                                            f"cls={_diag_msgcls} "
+                                            f"tcs={_diag_tcs_n} "
+                                            f"finish={_diag_finish} "
+                                            f"addl_keys={list(_diag_addl.keys())} "
+                                            f"invalid_tcs={_diag_invalid!r} "
+                                            f"content_len={len(str(getattr(m,'content','') or ''))} "
+                                            f"content_repr={_diag_content_repr}"
+                                            f"</div>"
+                                        )
+                                        _add_line(_diag_line)
+                                    except Exception as _diag_e:
+                                        _add_line(
+                                            f"<div class=\"jdm-narration\">"
+                                            f"🐛 chunk#{_diag_chunk_n} diag-error: {_diag_e}"
+                                            f"</div>"
+                                        )
                                     if isinstance(m, AIMessage):
                                         tcs = getattr(m, "tool_calls", []) or []
-                                        # === DIAG TEMPORAIRE : dump complet de
-                                        # l'AIMessage reçue pour traquer le bug
-                                        # de fin de stream prematuree. ===
-                                        _diag_chunk_n += 1
-                                        try:
-                                            _diag_addl = getattr(m, "additional_kwargs", {}) or {}
-                                            _diag_meta = getattr(m, "response_metadata", {}) or {}
-                                            _diag_invalid = getattr(m, "invalid_tool_calls", None)
-                                            _diag_content_repr = repr(getattr(m, "content", ""))[:200]
-                                            _diag_finish = (
-                                                _diag_meta.get("finish_reason")
-                                                or _diag_meta.get("stop_reason")
-                                                or "?"
-                                            )
-                                            _diag_line = (
-                                                f"<div class=\"jdm-narration\">"
-                                                f"🐛 <b>chunk#{_diag_chunk_n}</b> "
-                                                f"AIMsg: tcs={len(tcs)} "
-                                                f"finish={_diag_finish} "
-                                                f"addl_keys={list(_diag_addl.keys())} "
-                                                f"invalid_tcs={_diag_invalid!r} "
-                                                f"content_len={len(str(getattr(m,'content','') or ''))} "
-                                                f"content_repr={_diag_content_repr}"
-                                                f"</div>"
-                                            )
-                                            _add_line(_diag_line)
-                                        except Exception as _diag_e:
-                                            _add_line(
-                                                f"<div class=\"jdm-narration\">"
-                                                f"🐛 chunk#{_diag_chunk_n} diag-error: {_diag_e}"
-                                                f"</div>"
-                                            )
                                         # 1) Chain-of-thought (Anthropic Extended,
                                         #    Gemini avec include_thoughts, o1/o3).
                                         #    Style : blockquote + <small> + couleur
