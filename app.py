@@ -4352,7 +4352,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             # input). Sinon dégrise pour signaler.
                             with gr.Row():
                                 prod_submit_btn = gr.Button(
-                                    "📤 Soumettre ce fichier à JDM (LLMDrops)",
+                                    "📤 Soumettre la sélection à JDM",
                                     variant="primary",
                                     interactive=False,
                                 )
@@ -4448,22 +4448,27 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         return None
 
                     # Handler unique : rend le fichier (1er selectionne) ET
-                    # met a jour l'etat des boutons submit + delete. Bind
-                    # sur les DEUX checkboxgroup (recent et oldies) pour
+                    # met a jour l'etat des boutons submit + delete (compte
+                    # dans le label). Bind sur les DEUX checkboxgroup pour
                     # rester synchro quoi que l'user clique.
                     def _render_and_toggle(recent_list, oldies_list, drops_key):
                         from jarvis import has_drops_key as _hk
                         path = _first_selected(recent_list, oldies_list)
                         status, html_u, text_u, file_u = _render_production_file(path)
-                        submit_ok = bool(path) and _hk(drops_key)
                         n_total = len(recent_list or []) + len(oldies_list or [])
+                        has_key = _hk(drops_key)
+                        submit_ok = bool(n_total) and has_key
+                        submit_label = (
+                            f"📤 Soumettre la sélection ({n_total}) à JDM"
+                            if n_total else "📤 Soumettre la sélection à JDM"
+                        )
                         delete_label = (
                             f"🗑️ Supprimer la sélection ({n_total})"
                             if n_total else "🗑️ Supprimer la sélection"
                         )
                         return (
                             status, html_u, text_u, file_u,
-                            gr.update(interactive=submit_ok),
+                            gr.update(interactive=submit_ok, value=submit_label),
                             gr.update(interactive=bool(n_total), value=delete_label),
                         )
 
@@ -4476,11 +4481,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                  prod_submit_btn, prod_delete_one_btn],
                     )
 
-                    # Refresh du bouton submit quand la cle Drops change.
+                    # Refresh du bouton submit quand la cle Drops change
+                    # (le label garde son compte courant — pas de re-render).
                     def _toggle_submit_only(recent_list, oldies_list, drops_key):
                         from jarvis import has_drops_key as _hk
-                        path = _first_selected(recent_list, oldies_list)
-                        ok = bool(path) and _hk(drops_key)
+                        n_total = len(recent_list or []) + len(oldies_list or [])
+                        ok = bool(n_total) and _hk(drops_key)
                         return gr.update(interactive=ok)
 
                     jarvis_drops_key.change(
@@ -4492,57 +4498,75 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
                     def _submit_production_file(recent_list, oldies_list,
                                                 drops_key, jarvis_model_v):
-                        """Upload le 1er fichier selectionne (priorite recent
-                        > oldies) vers LLMDrops via jarvis.submit_existing_file.
-                        Marque le fichier comme soumis si succes (✅ prefix
-                        dans le label + classe CSS .prod-submitted)."""
-                        selected_path = _first_selected(recent_list, oldies_list)
-                        if not selected_path:
-                            return gr.update(visible=True,
-                                             value="⚠️ Aucun fichier sélectionné.")
-                        try:
-                            from jarvis import submit_existing_file
-                            res = submit_existing_file(
-                                file_path=selected_path,
-                                drops_key=(drops_key or ""),
-                                model_name=(jarvis_model_v or "manual_submission"),
+                        """Upload TOUS les fichiers selectionnes (union
+                        recent + oldies) un par un en serie. Pour chaque
+                        succes, ajoute le filename a .submitted.json.
+                        Renvoie un compte rendu agrege + refresh des deux
+                        CheckboxGroup (pour afficher les nouveaux ✅).
+                        """
+                        targets = list(recent_list or []) + list(oldies_list or [])
+                        if not targets:
+                            return (
+                                gr.update(visible=True,
+                                          value="⚠️ Aucun fichier sélectionné."),
+                                gr.update(), gr.update(),
                             )
-                            # res = [{role:'assistant', content:'…verdict…'}]
-                            if isinstance(res, list) and res:
-                                last = res[-1]
+                        from jarvis import submit_existing_file
+                        n_ok = 0
+                        n_fail = 0
+                        report_lines = []
+                        for path in targets:
+                            name = Path(path).name
+                            try:
+                                res = submit_existing_file(
+                                    file_path=path,
+                                    drops_key=(drops_key or ""),
+                                    model_name=(jarvis_model_v or "manual_submission"),
+                                )
                                 content = ""
-                                if isinstance(last, dict):
-                                    content = str(last.get("content", "") or "")
-                                else:
-                                    content = str(last)
-                                # Marque comme soumis si le content
-                                # commence par ✅ (verdict de succes).
+                                if isinstance(res, list) and res:
+                                    last = res[-1]
+                                    if isinstance(last, dict):
+                                        content = str(last.get("content", "") or "")
+                                    else:
+                                        content = str(last)
                                 if content.lstrip().startswith("✅"):
+                                    n_ok += 1
                                     try:
-                                        _mark_submitted(Path(selected_path).name)
+                                        _mark_submitted(name)
                                     except Exception:
                                         pass
-                                return gr.update(
-                                    visible=True,
-                                    value=content or "(réponse vide)",
-                                )
-                            # Fallback si format inattendu
-                            return gr.update(
-                                visible=True,
-                                value=f"⚠️ Réponse inattendue de submit_existing_file : "
-                                      f"`{type(res).__name__}` — `{str(res)[:300]}`",
-                            )
-                        except Exception as e:
-                            return gr.update(
-                                visible=True,
-                                value=f"❌ Erreur soumission : {e}",
-                            )
+                                    report_lines.append(f"- ✅ `{name}`")
+                                else:
+                                    n_fail += 1
+                                    # Extrait 1ere ligne utile pour brièveté
+                                    first_line = (content.splitlines() or [""])[0][:140]
+                                    report_lines.append(f"- ❌ `{name}` — {first_line}")
+                            except Exception as e:
+                                n_fail += 1
+                                report_lines.append(f"- ❌ `{name}` — `{e}`")
+                        # Compte rendu agrege
+                        header = (
+                            f"**Soumission terminée** : ✅ {n_ok} réussi(s) "
+                            f"/ ❌ {n_fail} échec(s) sur {len(targets)} fichier(s)."
+                        )
+                        full_msg = header + "\n\n" + "\n".join(report_lines)
+                        # Refresh les CheckboxGroup pour faire apparaitre
+                        # les ✅ sur les fichiers nouvellement soumis.
+                        rec = _scan_productions_choices()
+                        old = _scan_oldies_choices()
+                        return (
+                            gr.update(visible=True, value=full_msg),
+                            gr.update(choices=rec, visible=bool(rec)),
+                            gr.update(choices=old, visible=bool(old)),
+                        )
 
                     prod_submit_btn.click(
                         _submit_production_file,
                         inputs=[prod_file_dropdown, prod_oldies_radio,
                                 jarvis_drops_key, jarvis_model],
-                        outputs=[prod_submit_status],
+                        outputs=[prod_submit_status,
+                                 prod_file_dropdown, prod_oldies_radio],
                     )
 
                     def _refresh_both_lists():
