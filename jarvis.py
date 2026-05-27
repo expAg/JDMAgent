@@ -119,6 +119,19 @@ def _truncate(s: str, n: int = 60) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
+def _hi(text) -> str:
+    """Wrap un terme-cle (mot JDM, cible candidate…) dans un span colore
+    pour le faire ressortir dans les narrations Jarvis (couleur ambre
+    sobre, distincte du gris du raisonnement). La classe `jarvis-term`
+    est definie dans `_CHATBOT_CSS` cote app.py — si la classe est
+    strippee par le sanitizer du Chatbot, le texte reste lisible (juste
+    pas colore). HTML-escape le contenu pour eviter toute injection
+    accidentelle si un terme JDM contient '<' '>' '&'.
+    """
+    import html as _h
+    return f'<span class="jarvis-term">{_h.escape(str(text or ""))}</span>'
+
+
 def strip_thinking_blocks(messages: list, keep_last: bool = True) -> list:
     """Filtre les blocs « thinking » / « reasoning » des AIMessage list-content.
 
@@ -531,7 +544,7 @@ TOOL_NARRATION: dict[str, dict] = {
     "list_existing_for_enrichment": {
         "start": lambda a: (
             f"📥 Je récupère ce qui existe déjà sur "
-            f"« {_truncate(a.get('term'))} » pour la relation "
+            f"« {_hi(_truncate(a.get('term')))} » pour la relation "
             f"`{a.get('relation_name') or a.get('relation') or '?'}`…"
         ),
         "done": lambda c: _format_done(c, lambda d: (
@@ -540,8 +553,8 @@ TOOL_NARRATION: dict[str, dict] = {
     },
     "validate_candidate": {
         "start": lambda a: (
-            f"🧪 Je teste le candidat « {_truncate(a.get('term'))} | "
-            f"{a.get('relation', '?')} | {_truncate(a.get('target'))} »…"
+            f"🧪 Je teste le candidat « {_hi(_truncate(a.get('term')))} | "
+            f"`{a.get('relation', '?')}` | {_hi(_truncate(a.get('target')))} »…"
         ),
         # Cascade d'affichage du verdict :
         # 1. consolidation_status (résultat de l'inférence) prime
@@ -569,21 +582,21 @@ TOOL_NARRATION: dict[str, dict] = {
         )),
     },
     "disambiguate": {
-        "start": lambda a: f"🔎 Je cherche les sens de « {_truncate(a.get('term'))} »…",
+        "start": lambda a: f"🔎 Je cherche les sens de « {_hi(_truncate(a.get('term')))} »…",
         "done": lambda c: _format_done(c, lambda d: (
             f"→ {len(d.get('senses') or d.get('refinements') or []) or '?'} sens trouvés."
         )),
     },
     "lookup_term": {
-        "start": lambda a: f"📖 Je vérifie l'existence de « {_truncate(a.get('term'))} » dans JDM…",
+        "start": lambda a: f"📖 Je vérifie l'existence de « {_hi(_truncate(a.get('term')))} » dans JDM…",
         "done": lambda c: _format_done(c, lambda d: (
             "→ trouvé." if d.get("found") or d.get("id") else "→ inconnu."
         )),
     },
     "get_relations_of_type": {
         "start": lambda a: (
-            f"🔗 Je regarde les triplets « {_truncate(a.get('term'))} | "
-            f"{a.get('relation_name') or a.get('relation') or '?'} »…"
+            f"🔗 Je regarde les triplets « {_hi(_truncate(a.get('term')))} | "
+            f"`{a.get('relation_name') or a.get('relation') or '?'}` »…"
         ),
         "done": lambda c: _format_done(c, lambda d: (
             f"→ {d.get('count', len(d.get('triplets', [])) or '?')} relation(s) trouvée(s)."
