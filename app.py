@@ -4062,9 +4062,54 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         "pousser au LLMDrops directement depuis ici."
                     )
 
+                    # Seuil d'archivage : au-dela on deplace dans oldies/.
+                    PRODUCTIONS_OLDIES_THRESHOLD_SEC = 48 * 3600  # 48h
+                    PRODUCTIONS_OLDIES_DIR = PRODUCTIONS_DIR / "oldies"
+
+                    def _move_old_files_to_oldies():
+                        """Deplace les fichiers du root PRODUCTIONS_DIR plus
+                        vieux que 48h vers PRODUCTIONS_DIR/oldies/. Idempotent,
+                        appele par chaque tick du Timer.
+                        """
+                        import time as _t_prod
+                        if not PRODUCTIONS_DIR.exists():
+                            return
+                        now = _t_prod.time()
+                        PRODUCTIONS_OLDIES_DIR.mkdir(exist_ok=True)
+                        for p in PRODUCTIONS_DIR.iterdir():
+                            if not p.is_file():
+                                continue
+                            try:
+                                age = now - p.stat().st_mtime
+                                if age >= PRODUCTIONS_OLDIES_THRESHOLD_SEC:
+                                    dst = PRODUCTIONS_OLDIES_DIR / p.name
+                                    # Si collision (rare : meme nom apres pull),
+                                    # on suffixe avec timestamp pour ne pas perdre.
+                                    if dst.exists():
+                                        dst = PRODUCTIONS_OLDIES_DIR / f"{int(p.stat().st_mtime)}_{p.name}"
+                                    p.rename(dst)
+                            except OSError:
+                                continue
+
+                    def _format_file_entry(p, now):
+                        st = p.stat()
+                        age = int(now - st.st_mtime)
+                        if age < 60:
+                            age_s = f"{age}s"
+                        elif age < 3600:
+                            age_s = f"{age // 60}min"
+                        elif age < 86400:
+                            age_s = f"{age // 3600}h"
+                        else:
+                            age_s = f"{age // 86400}j"
+                        sz_kb = st.st_size / 1024
+                        return (f"{p.name} — {sz_kb:.1f}KB · {age_s}", str(p))
+
                     def _scan_productions_choices():
-                        """Liste (label, path) triée par mtime DESC. Label format
-                        '<nom> — <KB>KB · <âge>s' pour scan visuel rapide."""
+                        """Liste (label, path) des fichiers RECENTS (root),
+                        triee par mtime DESC. Auto-archive les >48h en oldies
+                        AVANT le scan."""
+                        _move_old_files_to_oldies()
                         if not PRODUCTIONS_DIR.exists():
                             return []
                         import time as _t_prod
@@ -4074,42 +4119,88 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             if not p.is_file():
                                 continue
                             try:
-                                st = p.stat()
-                                files.append((p, st.st_size, st.st_mtime))
+                                files.append((p, p.stat().st_mtime))
                             except OSError:
                                 continue
-                        files.sort(key=lambda x: -x[2])
-                        out = []
-                        for p, sz, mt in files:
-                            age = int(now - mt)
-                            if age < 60:
-                                age_s = f"{age}s"
-                            elif age < 3600:
-                                age_s = f"{age // 60}min"
-                            elif age < 86400:
-                                age_s = f"{age // 3600}h"
-                            else:
-                                age_s = f"{age // 86400}j"
-                            sz_kb = sz / 1024
-                            label = f"{p.name} — {sz_kb:.1f}KB · {age_s}"
-                            out.append((label, str(p)))
-                        return out
+                        files.sort(key=lambda x: -x[1])
+                        return [_format_file_entry(p, now) for p, _ in files]
+
+                    def _scan_oldies_choices():
+                        """Liste (label, path) des fichiers ARCHIVES (oldies/),
+                        triee par mtime DESC (le plus recent archive d'abord)."""
+                        if not PRODUCTIONS_OLDIES_DIR.exists():
+                            return []
+                        import time as _t_prod
+                        now = _t_prod.time()
+                        files = []
+                        for p in PRODUCTIONS_OLDIES_DIR.iterdir():
+                            if not p.is_file():
+                                continue
+                            try:
+                                files.append((p, p.stat().st_mtime))
+                            except OSError:
+                                continue
+                        files.sort(key=lambda x: -x[1])
+                        return [_format_file_entry(p, now) for p, _ in files]
 
                     with gr.Row():
                         with gr.Column(scale=1, min_width=320):
-                            prod_file_dropdown = gr.Dropdown(
+                            # Radio au lieu de Dropdown : plus stable, pas de
+                            # filter race condition (cf. bug user : 'la dropdown
+                            # limite le choix au selectionne apres quelques sec').
+                            # Le Timer auto-refresh peut alors mettre a jour les
+                            # choices sans drama UI.
+                            prod_file_dropdown = gr.Radio(
                                 choices=_scan_productions_choices(),
-                                label="📂 Fichiers (du plus récent au plus ancien)",
+                                label="📂 Fichiers récents (< 48 h)",
                                 value=None,
                                 interactive=True,
-                                filterable=True,
+                                elem_id="prod-file-radio",
                             )
                             prod_refresh_btn = gr.Button("🔄 Rafraîchir maintenant",
                                                           size="sm")
+                            # Accordion oldies — fichiers archives (>= 48h),
+                            # plies par defaut. Auto-deplaces par
+                            # _move_old_files_to_oldies() a chaque scan.
+                            with gr.Accordion(
+                                "📦 Archives (≥ 48 h)", open=False,
+                            ):
+                                prod_oldies_radio = gr.Radio(
+                                    choices=_scan_oldies_choices(),
+                                    label=None,
+                                    value=None,
+                                    interactive=True,
+                                    elem_id="prod-oldies-radio",
+                                )
+                            # === Boutons de suppression — ADMIN UNIQUEMENT
+                            # (revele via .admin-only + URL ?admin=1, cf.
+                            # _HEAD_JS / _CHATBOT_CSS). Sans le flag, les
+                            # boutons n'apparaissent meme pas dans le DOM.
+                            with gr.Group(elem_classes=["admin-only"]):
+                                gr.Markdown(
+                                    "*🔒 Actions admin :*",
+                                    elem_id="prod-admin-label",
+                                )
+                                with gr.Row():
+                                    prod_delete_one_btn = gr.Button(
+                                        "🗑️ Supprimer le fichier sélectionné",
+                                        size="sm",
+                                    )
+                                # Pour le bouton « tout vider », 2-clics :
+                                # 1er clic → texte devient « ⚠️ Confirmer »
+                                # 2e clic dans les 5s → suppression effective
+                                # Etat geré par gr.State (bool armed).
+                                prod_purge_armed = gr.State(value=False)
+                                with gr.Row():
+                                    prod_purge_all_btn = gr.Button(
+                                        "🗑️ Tout vider",
+                                        size="sm",
+                                        variant="stop",
+                                    )
                             # Timer de re-scan : tick toutes les 3s, met à jour
-                            # les choices du Dropdown sans toucher à la sélection
-                            # courante de l'utilisateur (gr.update(choices=…)
-                            # préserve value si toujours présente).
+                            # les choices des Radios sans toucher à la sélection
+                            # courante (gr.update(choices=…) la préserve si
+                            # toujours présente).
                             prod_timer = gr.Timer(3.0, active=True)
                         with gr.Column(scale=3):
                             prod_status = gr.Markdown(
@@ -4302,24 +4393,140 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         outputs=[prod_submit_status],
                     )
 
-                    def _refresh_choices():
-                        """Re-scanne PRODUCTIONS_DIR et met à jour les choices
-                        du Dropdown. Préserve la sélection courante si le
-                        fichier existe encore (Gradio gère ça nativement)."""
-                        return gr.update(choices=_scan_productions_choices())
+                    def _refresh_both_lists():
+                        """Re-scan : déplace les >48h en oldies puis met à
+                        jour les deux Radios (récents + archives) en un seul
+                        round-trip."""
+                        return (
+                            gr.update(choices=_scan_productions_choices()),
+                            gr.update(choices=_scan_oldies_choices()),
+                        )
 
                     prod_refresh_btn.click(
-                        _refresh_choices,
+                        _refresh_both_lists,
                         inputs=None,
-                        outputs=[prod_file_dropdown],
+                        outputs=[prod_file_dropdown, prod_oldies_radio],
                     )
                     # Auto-refresh via Timer : tick toutes les 3s → re-scan
-                    # du dir → mise à jour silencieuse des choices. Le user
-                    # voit apparaître les nouveaux fichiers sans clic.
+                    # du dir → mise à jour silencieuse des deux Radios.
                     prod_timer.tick(
-                        _refresh_choices,
+                        _refresh_both_lists,
                         inputs=None,
-                        outputs=[prod_file_dropdown],
+                        outputs=[prod_file_dropdown, prod_oldies_radio],
+                    )
+
+                    # Selection cote oldies → bascule le Radio actif sur None
+                    # ET delegue le rendu via prod_oldies_radio.change ci-dessous.
+                    def _on_oldies_select(oldies_path, drops_key):
+                        from jarvis import has_drops_key as _hk
+                        status, html_u, text_u, file_u = _render_production_file(
+                            oldies_path
+                        )
+                        submit_ok = bool(oldies_path) and _hk(drops_key)
+                        return (
+                            None,  # clear le radio recent (un seul fichier actif)
+                            status, html_u, text_u, file_u,
+                            gr.update(interactive=submit_ok),
+                        )
+                    prod_oldies_radio.change(
+                        _on_oldies_select,
+                        inputs=[prod_oldies_radio, jarvis_drops_key],
+                        outputs=[prod_file_dropdown,
+                                 prod_status, prod_html_viewer,
+                                 prod_text_viewer, prod_download,
+                                 prod_submit_btn],
+                    )
+
+                    # === Admin : suppression unitaire ===
+                    def _delete_one_file(selected_path, oldies_path):
+                        """Supprime le fichier actuellement selectionne (peu
+                        importe d'ou il vient : recent ou oldies). Renvoie
+                        un message status + refresh des deux Radios."""
+                        target = selected_path or oldies_path
+                        if not target:
+                            return (
+                                "⚠️ Aucun fichier sélectionné.",
+                                gr.update(value=""), gr.update(value=""),
+                                gr.update(value=None),
+                                gr.update(choices=_scan_productions_choices(), value=None),
+                                gr.update(choices=_scan_oldies_choices(), value=None),
+                                gr.update(interactive=False),
+                            )
+                        try:
+                            p = Path(target)
+                            if p.exists():
+                                p.unlink()
+                                msg = f"🗑️ Supprimé : `{p.name}`"
+                            else:
+                                msg = f"⚠️ Fichier déjà absent : `{p.name}`"
+                        except Exception as e:
+                            msg = f"❌ Erreur suppression : `{e}`"
+                        return (
+                            msg,
+                            gr.update(visible=False, value=""),
+                            gr.update(visible=False, value=""),
+                            gr.update(visible=False, value=None),
+                            gr.update(choices=_scan_productions_choices(), value=None),
+                            gr.update(choices=_scan_oldies_choices(), value=None),
+                            gr.update(interactive=False),
+                        )
+                    prod_delete_one_btn.click(
+                        _delete_one_file,
+                        inputs=[prod_file_dropdown, prod_oldies_radio],
+                        outputs=[prod_status, prod_html_viewer, prod_text_viewer,
+                                 prod_download, prod_file_dropdown,
+                                 prod_oldies_radio, prod_submit_btn],
+                    )
+
+                    # === Admin : tout vider (recents + oldies) — 2 clics ===
+                    def _purge_all(armed):
+                        """1er clic : arme + change le label en avertissement.
+                        2e clic dans la foulee (armed=True) : suppression
+                        effective de TOUS les fichiers (root + oldies)."""
+                        if not armed:
+                            # Armement
+                            n_root = len(_scan_productions_choices())
+                            n_old = len(_scan_oldies_choices())
+                            total = n_root + n_old
+                            return (
+                                True,  # armed
+                                gr.update(
+                                    value=f"⚠️ Confirmer : supprimer {total} fichier(s) "
+                                          f"({n_root} récents + {n_old} archives) ?",
+                                ),
+                                "⚠️ Re-clique pour confirmer (action irréversible).",
+                                gr.update(choices=_scan_productions_choices()),
+                                gr.update(choices=_scan_oldies_choices()),
+                            )
+                        # Confirmation : on vide
+                        n_deleted = 0
+                        n_failed = 0
+                        for dir_ in (PRODUCTIONS_DIR, PRODUCTIONS_OLDIES_DIR):
+                            if not dir_.exists():
+                                continue
+                            for p in dir_.iterdir():
+                                if not p.is_file():
+                                    continue
+                                try:
+                                    p.unlink()
+                                    n_deleted += 1
+                                except Exception:
+                                    n_failed += 1
+                        msg_parts = [f"🗑️ **{n_deleted}** fichier(s) supprimé(s)"]
+                        if n_failed:
+                            msg_parts.append(f"({n_failed} échecs)")
+                        return (
+                            False,  # disarmed pour prochain cycle
+                            gr.update(value="🗑️ Tout vider"),
+                            " ".join(msg_parts),
+                            gr.update(choices=_scan_productions_choices(), value=None),
+                            gr.update(choices=_scan_oldies_choices(), value=None),
+                        )
+                    prod_purge_all_btn.click(
+                        _purge_all,
+                        inputs=[prod_purge_armed],
+                        outputs=[prod_purge_armed, prod_purge_all_btn,
+                                 prod_status, prod_file_dropdown, prod_oldies_radio],
                     )
 
             # ---- Câblage transverse : quand la clé LLMDrops change dans
@@ -4394,6 +4601,25 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     label="⬇️ Telecharger .env",
                     visible=False, interactive=False,
                 )
+                # ===== Purge du cache JDM (admin) =====
+                # Separateur discret + bouton de purge tout en bas du
+                # panneau. 2-clics avec armement pour eviter le clic
+                # accidentel (memes mecanique que "Tout vider"
+                # production). Vise le repertoire JDM_CACHE_DIR (defaut
+                # /tmp/jdm_cache sur HF, .cache/jdm en local).
+                gr.Markdown("---")
+                gr.Markdown(
+                    "**🧹 Purge du cache JDM** — supprime toutes les entrees "
+                    "cachees (relations, refinements). Le prochain appel "
+                    "rechargera depuis l'API JDM."
+                )
+                _cache_purge_armed = gr.State(value=False)
+                with gr.Row():
+                    _cache_purge_btn = gr.Button(
+                        "🧹 Purger le cache JDM",
+                        size="sm",
+                    )
+                _cache_purge_status = gr.Markdown(visible=False)
 
             def _export_secrets(pw: str):
                 """Renvoie le .env reconstitue si le mot de passe match.
@@ -4518,6 +4744,75 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 _export_secrets,
                 inputs=[_export_pw],
                 outputs=[_export_status, _export_textbox, _export_dlfile],
+            )
+
+            # === Cache purge handler (admin) ===
+            def _purge_cache(armed):
+                """2 clics : 1er arme, 2e dans la foulee purge.
+                Vide JDM_CACHE_DIR (defaut /tmp/jdm_cache sur HF,
+                .cache/jdm en local)."""
+                import os as _os_cp
+                import shutil as _sh_cp
+                cache_dir = _os_cp.environ.get("JDM_CACHE_DIR", ".cache/jdm")
+                cache_path = Path(cache_dir)
+                if not armed:
+                    # Armement : compter taille avant
+                    try:
+                        total_bytes = 0
+                        n_files = 0
+                        if cache_path.exists():
+                            for root, _, files in _os_cp.walk(cache_path):
+                                for f in files:
+                                    try:
+                                        total_bytes += (Path(root) / f).stat().st_size
+                                        n_files += 1
+                                    except OSError:
+                                        pass
+                        size_mb = total_bytes / 1024 / 1024
+                        return (
+                            True,
+                            gr.update(value="⚠️ Confirmer la purge"),
+                            gr.update(
+                                visible=True,
+                                value=f"⚠️ **{n_files}** fichier(s) cache "
+                                      f"(~{size_mb:.1f} MB) dans `{cache_dir}`. "
+                                      f"Re-clique pour confirmer.",
+                            ),
+                        )
+                    except Exception as e:
+                        return (
+                            False, gr.update(),
+                            gr.update(visible=True, value=f"❌ Scan impossible : `{e}`"),
+                        )
+                # Confirmation : purge effective
+                try:
+                    if cache_path.exists():
+                        _sh_cp.rmtree(cache_path, ignore_errors=True)
+                    cache_path.mkdir(parents=True, exist_ok=True)
+                    # Reset le client cache module-level pour qu'il
+                    # re-ouvre la nouvelle dir vide au prochain appel.
+                    try:
+                        if "_CLIENT" in globals():
+                            globals()["_CLIENT"] = None
+                    except Exception:
+                        pass
+                    return (
+                        False,
+                        gr.update(value="🧹 Purger le cache JDM"),
+                        gr.update(visible=True,
+                                  value=f"✅ Cache vidé (`{cache_dir}`)."),
+                    )
+                except Exception as e:
+                    return (
+                        False,
+                        gr.update(value="🧹 Purger le cache JDM"),
+                        gr.update(visible=True, value=f"❌ Purge échouée : `{e}`"),
+                    )
+
+            _cache_purge_btn.click(
+                _purge_cache,
+                inputs=[_cache_purge_armed],
+                outputs=[_cache_purge_armed, _cache_purge_btn, _cache_purge_status],
             )
 
         # ----- Sync des dropdowns modèle entre onglets -----
