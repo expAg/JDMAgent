@@ -659,17 +659,31 @@ def refresh_dropdowns_silent():
     )
 
 
-def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
+# Modeles exclus du dropdown JARVIS uniquement (restent dispo dans
+# l'onglet « 🤖 Agent » / chat libre). Diag empirique : Gemini 2.5
+# Flash Lite emet un AIMessage VIDE (`tcs=0 content_len=0 finish=STOP`)
+# apres une serie de validate_candidate echoues, ce qui termine le
+# stream langgraph. Le comportement n'apparait pas en chat (mono-tour,
+# pas de boucle de tool calls) — d'ou le filtrage cible.
+JARVIS_BLACKLIST = {"gemini-2.5-flash-lite"}
+
+
+def build_model_choices(for_jarvis: bool = False) -> list[tuple[str, str]]:
     """Construit la liste de (label, value) du dropdown des modèles.
 
     Marquage server-side (les deux dropdowns) :
       - ✅ devant le modèle courant (_CURRENT_MODEL)
       - suffixe `— épuisé sur cette clé` pour les modèles Gemini natifs
         blown sur la clé courante (le JS ajoute ❌ + grisage CSS)
+
+    `for_jarvis=True` filtre les modèles listés dans `JARVIS_BLACKLIST`
+    (ex. Gemini 2.5 — bail en mode tool-call loop, cf. constante).
     """
     import re as _re
     out: list[tuple[str, str]] = []
     for key, label in ALL_MODELS.items():
+        if for_jarvis and key in JARVIS_BLACKLIST:
+            continue
         # Le check « épuisé » s'applique à TOUS les Gemini natifs
         # (3.1, 3.5, 2.5…), pas seulement NATIVE_REQUIRED. Sinon
         # 2.5 hit PerDay → mark_blown → MAIS dropdown ne montre rien
@@ -683,6 +697,15 @@ def build_model_choices(for_chatbot: bool = False) -> list[tuple[str, str]]:
             decorated = label
         out.append((decorated, key))
     return out
+
+
+def _safe_jarvis_value(model_id: str) -> str:
+    """Renvoie un model_id utilisable comme `value` du dropdown jarvis.
+    Si `model_id` est dans la blacklist (ex. user a selectionne Gemini 2.5
+    cote chat puis ouvre Jarvis), fallback sur un default sur (3.1)."""
+    if model_id in JARVIS_BLACKLIST:
+        return "gemini-3.1-flash-lite"
+    return model_id
 
 
 def pick_unblown_gemini_key(model: str,
@@ -2713,7 +2736,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         render=False,
     )
     jarvis_model = gr.Dropdown(
-        choices=build_model_choices(),
+        choices=build_model_choices(for_jarvis=True),
         value="gemini-3.1-flash-lite",
         label="Modèle",
         filterable=False,
@@ -4482,7 +4505,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             cur = _CURRENT_MODEL or "gemini-3.1-flash-lite"
             return (
                 gr.update(choices=build_model_choices(), value=cur),
-                gr.update(choices=build_model_choices(), value=cur),
+                gr.update(choices=build_model_choices(for_jarvis=True),
+                          value=_safe_jarvis_value(cur)),
             )
         main_tabs.select(
             _refresh_both_dropdowns,
@@ -4506,11 +4530,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             next_key = pick_unblown_gemini_key(cur_mod, skip=cur_key)
             if next_key and next_key != cur_key:
                 set_current_gemini_key(next_key)
-            choices = build_model_choices()
+            choices_chat = build_model_choices()
+            choices_jarvis = build_model_choices(for_jarvis=True)
             new_label = _switch_key_btn_label()
             return (
-                gr.update(choices=choices),
-                gr.update(choices=choices),
+                gr.update(choices=choices_chat),
+                gr.update(choices=choices_jarvis),
                 gr.update(value=new_label),
                 gr.update(value=new_label),
             )
@@ -4547,10 +4572,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             thinking_update = (gr.update(interactive=True)
                                if m in THINKING_SUPPORTED_MODELS
                                else gr.update(interactive=False, value=False))
-            # Refresh choices avec ✅ devant le NOUVEAU modèle courant,
-            # même operation pour les deux dropdowns. show_progress=
-            # "hidden" rend l'aller-retour invisible.
-            choices = build_model_choices()
+            # Refresh choices avec ✅ devant le NOUVEAU modèle courant.
+            # jarvis_model utilise un set filtre (sans 2.5) et un value
+            # safe (fallback 3.1 si user vient de selectionner 2.5 cote chat).
+            choices_chat = build_model_choices()
+            choices_jarvis = build_model_choices(for_jarvis=True)
             return (
                 gr.update(  # key_in
                     interactive=needs_key,
@@ -4558,8 +4584,9 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                  else "Non requis pour les modèles Gemini hébergés"),
                 ),
                 thinking_update,  # chat_thinking
-                gr.update(choices=choices, value=m),  # model_in
-                gr.update(choices=choices, value=m),  # jarvis_model
+                gr.update(choices=choices_chat, value=m),  # model_in
+                gr.update(choices=choices_jarvis,          # jarvis_model
+                          value=_safe_jarvis_value(m)),
             )
         model_in.change(
             _on_model_change_chat,
@@ -4576,11 +4603,14 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             thinking_update = (gr.update(interactive=True)
                                if m in THINKING_SUPPORTED_MODELS
                                else gr.update(interactive=False, value=False))
-            choices = build_model_choices()
+            # m vient du dropdown jarvis donc pas blacklisté par construction.
+            # On rebuild les choices separement pour chaque dropdown.
+            choices_chat = build_model_choices()
+            choices_jarvis = build_model_choices(for_jarvis=True)
             return (
                 thinking_update,  # jarvis_thinking
-                gr.update(choices=choices, value=m),  # model_in
-                gr.update(choices=choices, value=m),  # jarvis_model
+                gr.update(choices=choices_chat, value=m),  # model_in
+                gr.update(choices=choices_jarvis, value=m),  # jarvis_model
             )
         jarvis_model.change(
             _on_jarvis_model_change,
