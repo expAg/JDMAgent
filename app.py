@@ -4150,12 +4150,25 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                             # limite le choix au selectionne apres quelques sec').
                             # Le Timer auto-refresh peut alors mettre a jour les
                             # choices sans drama UI.
+                            # IMPORTANT : gr.Radio avec choices=[] rend un
+                            # placeholder moche « Bouton radio ». On hide le
+                            # Radio quand vide et on affiche un sibling
+                            # Markdown « (aucun) » a la place. Le refresh
+                            # bascule la visibilite des deux selon le compte.
+                            _initial_recent = _scan_productions_choices()
+                            _initial_oldies = _scan_oldies_choices()
+                            prod_empty_md = gr.Markdown(
+                                "*(aucun fichier récent — lance un flow "
+                                "Jarvis pour en générer)*",
+                                visible=not bool(_initial_recent),
+                            )
                             prod_file_dropdown = gr.Radio(
-                                choices=_scan_productions_choices(),
+                                choices=_initial_recent,
                                 label="📂 Fichiers récents (< 48 h)",
                                 value=None,
                                 interactive=True,
                                 elem_id="prod-file-radio",
+                                visible=bool(_initial_recent),
                             )
                             prod_refresh_btn = gr.Button("🔄 Rafraîchir maintenant",
                                                           size="sm")
@@ -4165,12 +4178,17 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                             with gr.Accordion(
                                 "📦 Archives (≥ 48 h)", open=False,
                             ):
+                                prod_oldies_empty_md = gr.Markdown(
+                                    "*(aucune archive pour le moment)*",
+                                    visible=not bool(_initial_oldies),
+                                )
                                 prod_oldies_radio = gr.Radio(
-                                    choices=_scan_oldies_choices(),
+                                    choices=_initial_oldies,
                                     label=None,
                                     value=None,
                                     interactive=True,
                                     elem_id="prod-oldies-radio",
+                                    visible=bool(_initial_oldies),
                                 )
                             # === Boutons de suppression — ADMIN UNIQUEMENT
                             # (revele via .admin-only + URL ?admin=1, cf.
@@ -4395,24 +4413,31 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
 
                     def _refresh_both_lists():
                         """Re-scan : déplace les >48h en oldies puis met à
-                        jour les deux Radios (récents + archives) en un seul
-                        round-trip."""
+                        jour les deux Radios + leurs sibling « (vide) ».
+                        Bascule la visibilité : Radio visible si non-empty,
+                        sinon le Markdown placeholder visible."""
+                        rec = _scan_productions_choices()
+                        old = _scan_oldies_choices()
                         return (
-                            gr.update(choices=_scan_productions_choices()),
-                            gr.update(choices=_scan_oldies_choices()),
+                            gr.update(choices=rec, visible=bool(rec)),
+                            gr.update(visible=not bool(rec)),
+                            gr.update(choices=old, visible=bool(old)),
+                            gr.update(visible=not bool(old)),
                         )
 
                     prod_refresh_btn.click(
                         _refresh_both_lists,
                         inputs=None,
-                        outputs=[prod_file_dropdown, prod_oldies_radio],
+                        outputs=[prod_file_dropdown, prod_empty_md,
+                                 prod_oldies_radio, prod_oldies_empty_md],
                     )
                     # Auto-refresh via Timer : tick toutes les 3s → re-scan
                     # du dir → mise à jour silencieuse des deux Radios.
                     prod_timer.tick(
                         _refresh_both_lists,
                         inputs=None,
-                        outputs=[prod_file_dropdown, prod_oldies_radio],
+                        outputs=[prod_file_dropdown, prod_empty_md,
+                                 prod_oldies_radio, prod_oldies_empty_md],
                     )
 
                     # Selection cote oldies → bascule le Radio actif sur None
@@ -4441,15 +4466,20 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                     def _delete_one_file(selected_path, oldies_path):
                         """Supprime le fichier actuellement selectionne (peu
                         importe d'ou il vient : recent ou oldies). Renvoie
-                        un message status + refresh des deux Radios."""
+                        un message status + refresh des deux Radios + leurs
+                        siblings « (vide) »."""
                         target = selected_path or oldies_path
                         if not target:
+                            rec = _scan_productions_choices()
+                            old = _scan_oldies_choices()
                             return (
                                 "⚠️ Aucun fichier sélectionné.",
                                 gr.update(value=""), gr.update(value=""),
                                 gr.update(value=None),
-                                gr.update(choices=_scan_productions_choices(), value=None),
-                                gr.update(choices=_scan_oldies_choices(), value=None),
+                                gr.update(choices=rec, value=None, visible=bool(rec)),
+                                gr.update(visible=not bool(rec)),
+                                gr.update(choices=old, value=None, visible=bool(old)),
+                                gr.update(visible=not bool(old)),
                                 gr.update(interactive=False),
                             )
                         try:
@@ -4461,13 +4491,17 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                                 msg = f"⚠️ Fichier déjà absent : `{p.name}`"
                         except Exception as e:
                             msg = f"❌ Erreur suppression : `{e}`"
+                        rec = _scan_productions_choices()
+                        old = _scan_oldies_choices()
                         return (
                             msg,
                             gr.update(visible=False, value=""),
                             gr.update(visible=False, value=""),
                             gr.update(visible=False, value=None),
-                            gr.update(choices=_scan_productions_choices(), value=None),
-                            gr.update(choices=_scan_oldies_choices(), value=None),
+                            gr.update(choices=rec, value=None, visible=bool(rec)),
+                            gr.update(visible=not bool(rec)),
+                            gr.update(choices=old, value=None, visible=bool(old)),
+                            gr.update(visible=not bool(old)),
                             gr.update(interactive=False),
                         )
                     prod_delete_one_btn.click(
@@ -4475,7 +4509,8 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                         inputs=[prod_file_dropdown, prod_oldies_radio],
                         outputs=[prod_status, prod_html_viewer, prod_text_viewer,
                                  prod_download, prod_file_dropdown,
-                                 prod_oldies_radio, prod_submit_btn],
+                                 prod_empty_md, prod_oldies_radio,
+                                 prod_oldies_empty_md, prod_submit_btn],
                     )
 
                     # === Admin : tout vider (recents + oldies) — 2 clics ===
@@ -4485,18 +4520,20 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                         effective de TOUS les fichiers (root + oldies)."""
                         if not armed:
                             # Armement
-                            n_root = len(_scan_productions_choices())
-                            n_old = len(_scan_oldies_choices())
-                            total = n_root + n_old
+                            rec = _scan_productions_choices()
+                            old = _scan_oldies_choices()
+                            total = len(rec) + len(old)
                             return (
                                 True,  # armed
                                 gr.update(
                                     value=f"⚠️ Confirmer : supprimer {total} fichier(s) "
-                                          f"({n_root} récents + {n_old} archives) ?",
+                                          f"({len(rec)} récents + {len(old)} archives) ?",
                                 ),
                                 "⚠️ Re-clique pour confirmer (action irréversible).",
-                                gr.update(choices=_scan_productions_choices()),
-                                gr.update(choices=_scan_oldies_choices()),
+                                gr.update(choices=rec, visible=bool(rec)),
+                                gr.update(visible=not bool(rec)),
+                                gr.update(choices=old, visible=bool(old)),
+                                gr.update(visible=not bool(old)),
                             )
                         # Confirmation : on vide
                         n_deleted = 0
@@ -4515,18 +4552,23 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                         msg_parts = [f"🗑️ **{n_deleted}** fichier(s) supprimé(s)"]
                         if n_failed:
                             msg_parts.append(f"({n_failed} échecs)")
+                        rec = _scan_productions_choices()
+                        old = _scan_oldies_choices()
                         return (
                             False,  # disarmed pour prochain cycle
                             gr.update(value="🗑️ Tout vider"),
                             " ".join(msg_parts),
-                            gr.update(choices=_scan_productions_choices(), value=None),
-                            gr.update(choices=_scan_oldies_choices(), value=None),
+                            gr.update(choices=rec, value=None, visible=bool(rec)),
+                            gr.update(visible=not bool(rec)),
+                            gr.update(choices=old, value=None, visible=bool(old)),
+                            gr.update(visible=not bool(old)),
                         )
                     prod_purge_all_btn.click(
                         _purge_all,
                         inputs=[prod_purge_armed],
                         outputs=[prod_purge_armed, prod_purge_all_btn,
-                                 prod_status, prod_file_dropdown, prod_oldies_radio],
+                                 prod_status, prod_file_dropdown, prod_empty_md,
+                                 prod_oldies_radio, prod_oldies_empty_md],
                     )
 
             # ---- Câblage transverse : quand la clé LLMDrops change dans
