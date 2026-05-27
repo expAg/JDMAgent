@@ -1116,12 +1116,24 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     # retournent le content DIRECTEMENT dans .content cote API, le
     # workaround reasoning→content n'est plus necessaire en pratique.
     # Si un futur modele revient sur PARSER thinking, on revisitera.
+    # streaming=True : OBLIGATOIRE pour traverser le proxy Apache
+    # LIRMM (`portail-aren.lirmm.fr/liquidJDM`) qui a un ProxyTimeout
+    # par defaut de 60s. Sans streaming, ChatOpenAI attend la fin
+    # complete de la generation cote serveur, et si Ollama prend >60s
+    # (cas typique du prefill de notre prompt ~20k tokens) → Apache
+    # coupe → reponse vide cote client.
+    # Avec streaming, Ollama emet des chunks SSE en continu → Apache
+    # les forward au fur et a mesure → connexion vivante, pas de
+    # timeout. Pour que ca marche correctement il fallait AUSSI retirer
+    # le wrapper _LiquidChatOpenAI dont le proxy __getattr__ cassait
+    # l'assemblage des chunks par langgraph (cf. commit precedent).
     return ChatOpenAI(
         model=routed,
         base_url=LIQUID_BASE_URL,
         api_key="ollama",  # placeholder — Ollama ne vérifie pas
         temperature=0.1,   # recommandé Liquid AI (cf. model card HF)
         timeout=600.0,     # 10 min, large pour prefill 20k tokens + reponse
+        streaming=True,    # critique pour proxy LIRMM (cf. note ci-dessus)
         extra_body={
             "keep_alive": "30m",  # garde modele + KV cache 30 min
         },
