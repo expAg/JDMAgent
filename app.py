@@ -322,12 +322,14 @@ LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/"
 #   - lfm2.5-1.2b-fast-tools  (1.2B Instruct, rapide)
 #   - lfm2-24b-a2b-fast-tools (24B-A2B MoE, plus capable)
 LIQUID_MODELS = {
-    "lfm2.5-1.2b-fast-tools": "Liquid LFM 2.5 1.2B Instruct (LIRMM, rapide)",
-    "qwen3-30b-a3b": "Qwen3 30B-A3B MoE (LIRMM, capable, ~lent)",
+    "lfm2.5-1.2b-fast-tools": "Liquid LFM 2.5 1.2B Instruct (LIRMM, rapide, sans CoT)",
+    "lfm2.5-thinking-1.2b": "Liquid LFM 2.5 1.2B Thinking (LIRMM, lent, avec CoT)",
+    "qwen3-30b-a3b": "Qwen3 30B-A3B MoE (LIRMM, capable, ~lent, CoT opt)",
 }
 # Routing model_id (clean, Dropdown-friendly) → tag exact côté Ollama.
 LIQUID_MODEL_ROUTING = {
     "lfm2.5-1.2b-fast-tools": "lfm2.5-1.2b-fast-tools",
+    "lfm2.5-thinking-1.2b": "lfm2.5-thinking:1.2b",
     "qwen3-30b-a3b": "qwen3:30b-a3b",
 }
 
@@ -788,14 +790,17 @@ THINKING_SUPPORTED_MODELS = (
     GEMINI_THINKING_SUPPORTED
     | set(ANTHROPIC_MODELS.keys())
     | set(OPENAI_MODELS.keys())
-    # NB : les Liquid Ollama LIRMM (fast-tools) ne sont PAS inclus.
-    # Leurs Modelfile custom utilise un TEMPLATE simple avec
-    # `{{ if .Tools }}` mais SANS le PARSER `lfm2-thinking` (qui
-    # forcerait la generation d'un long CoT et faisait passer le
-    # temps de reponse de 2s a 75s). Resultat : capabilities=
-    # ['completion','tools'] mais PAS 'thinking' → si on envoyait
-    # `think=true`, Ollama renvoie 400 « does not support thinking ».
-    # → case Raisonnement automatiquement grisee sur ces modeles.
+    # Liquid LFM 2.5 1.2B THINKING (tag `lfm2.5-thinking:1.2b`) :
+    # capability `thinking` activee via PARSER lfm2-thinking → CoT
+    # disponible mais le modele est sensiblement plus lent que le
+    # fast-tools (le parser force la generation systematique du CoT).
+    | {"lfm2.5-thinking-1.2b"}
+    # Qwen3 30B-A3B : capability `thinking` native (sans parser).
+    # On peut activer `reasoning=True` cote ChatOllama → think=true.
+    | {"qwen3-30b-a3b"}
+    # NB : Liquid 1.2B fast-tools n'est PAS inclus — capabilities=
+    # ['completion','tools'] sans 'thinking' (Modelfile sans PARSER
+    # lfm2-thinking pour eviter la lenteur). Case grisee dessus.
 )
 
 
@@ -1136,23 +1141,24 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     # parle l'API native /api/chat, format que les modeles Ollama
     # comprennent nativement → tool calling fiable.
     from langchain_ollama import ChatOllama
-    # use_thinking : IGNORE pour les tags custom fast-tools — leur
-    # Modelfile n'inclut PAS le PARSER lfm2-thinking (qui forcait la
-    # generation d'un CoT et faisait passer la latence de 2s a 75s).
-    # Resultat : capabilities=['completion','tools'] sans 'thinking'.
-    # Envoyer reasoning=True donnerait erreur 400 « does not support
-    # thinking ». La case Raisonnement est de toute facon grisee
-    # automatiquement pour ces modeles (cf. THINKING_SUPPORTED_MODELS).
+    # reasoning : True UNIQUEMENT si le modele a la capability thinking
+    # ET que use_thinking est demande. Sinon → Ollama rejette avec
+    # 400 « does not support thinking ». La liste des modeles thinking-
+    # capable est THINKING_SUPPORTED_MODELS (cote app.py module-level).
     #
     # Streaming : ChatOllama streame nativement via .stream() ; pas de
     # param explicite au constructeur (disable_streaming=False par defaut).
-    return ChatOllama(
-        model=routed,
-        base_url=LIQUID_BASE_URL,  # SANS /v1/ — ChatOllama append /api/chat
-        temperature=0.1,           # recommandé Liquid AI (cf. model card HF)
-        client_kwargs={"timeout": 600.0},  # 10 min couvre prefill 20k tokens
-        keep_alive="30m",          # garde modele + KV cache entre tours
-    )
+    kwargs = {
+        "model": routed,
+        "base_url": LIQUID_BASE_URL,  # SANS /v1/ — ChatOllama append /api/chat
+        "temperature": 0.1,           # recommandé Liquid AI (cf. model card HF)
+        "client_kwargs": {"timeout": 600.0},  # 10 min couvre prefill 20k tokens
+        "keep_alive": "30m",          # garde modele + KV cache entre tours
+    }
+    # Active reasoning uniquement si le modele le supporte ET demande
+    if use_thinking and model_id in THINKING_SUPPORTED_MODELS:
+        kwargs["reasoning"] = True
+    return ChatOllama(**kwargs)
 
 
 def build_jdm_agent_smart(client, llm, **kwargs):
@@ -4547,31 +4553,39 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             accumulated_tool_calls.extend(tcc)
 
                         # Build display
+                        # PENDANT le streaming : raisonnement affiche en
+                        # blockquote VISIBLE (pas dans <details> qui ne se
+                        # deplie pas dans le Chatbot Gradio v5). C'est
+                        # le but du user — voir le CoT se construire en
+                        # direct. A la fin (cf. plus bas), on bascule sur
+                        # <details> ferme.
                         display_parts = []
                         if accumulated_reasoning:
+                            # Blockquote markdown — chaque ligne prefixee par "> "
+                            r_quoted = "\n".join(
+                                f"> {line}"
+                                for line in accumulated_reasoning.split("\n")
+                            )
                             display_parts.append(
-                                f"<details><summary>🧠 Raisonnement "
-                                f"({len(accumulated_reasoning)} chars)</summary>\n\n"
-                                f"<small><i>{accumulated_reasoning}</i></small>\n\n"
-                                f"</details>"
+                                f"> 🧠 **Raisonnement en cours** "
+                                f"({len(accumulated_reasoning)} chars)\n"
+                                f"{r_quoted}"
                             )
                         if accumulated_content:
                             display_parts.append(accumulated_content)
                         if accumulated_tool_calls:
-                            display_parts.append(
-                                f"<details><summary>🔧 Tool calls "
-                                f"({len(accumulated_tool_calls)})</summary>\n\n"
-                                f"<small><pre>{accumulated_tool_calls}</pre></small>\n\n"
-                                f"</details>"
+                            tc_str = "\n".join(
+                                f"> 🔧 `{tc.get('name', '?')}({tc.get('args', '')})`"
+                                for tc in accumulated_tool_calls
                             )
+                            display_parts.append(tc_str)
                         if not display_parts and n_chunks >= 5:
                             # 5+ chunks et toujours rien parsé → debug
                             display_parts.append(
-                                f"<details open><summary>🔬 Debug — "
-                                f"chunks recus mais rien parse</summary>\n\n"
-                                f"<small><pre>"
-                                + "\n\n".join(debug_first_chunks)
-                                + f"</pre></small>\n\n</details>"
+                                f"**🔬 Debug — chunks recus mais rien parse :**\n\n"
+                                f"```\n"
+                                + "\n".join(debug_first_chunks)
+                                + "\n```"
                             )
                         history[-1] = {
                             "role": "assistant",
@@ -4586,33 +4600,35 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         )
 
                     elapsed = _t_chat.time() - t0
-                    # Assemble le rendu final : CoT, content, tool_calls,
-                    # debug si rien parse.
+                    # Final : raisonnement reste en blockquote markdown
+                    # (visible, pas de details qui ne se deplie pas).
                     final_parts = []
                     if accumulated_reasoning:
+                        r_quoted = "\n".join(
+                            f"> {line}"
+                            for line in accumulated_reasoning.split("\n")
+                        )
                         final_parts.append(
-                            f"<details><summary>🧠 Raisonnement "
-                            f"({len(accumulated_reasoning)} chars)</summary>\n\n"
-                            f"<small><i>{accumulated_reasoning}</i></small>\n\n"
-                            f"</details>"
+                            f"> 🧠 **Raisonnement** "
+                            f"({len(accumulated_reasoning)} chars)\n"
+                            f"{r_quoted}"
                         )
                     if accumulated_content:
                         final_parts.append(accumulated_content)
                     if accumulated_tool_calls:
-                        final_parts.append(
-                            f"<details><summary>🔧 Tool calls "
-                            f"({len(accumulated_tool_calls)})</summary>\n\n"
-                            f"<small><pre>{accumulated_tool_calls}</pre></small>\n\n"
-                            f"</details>"
+                        tc_str = "\n".join(
+                            f"> 🔧 `{tc.get('name', '?')}({tc.get('args', '')})`"
+                            for tc in accumulated_tool_calls
                         )
+                        final_parts.append(tc_str)
                     if not final_parts:
                         # Rien parse : on dump le debug des premiers chunks
                         final_parts.append(
                             f"*(réponse vide — rien parse dans {n_chunks} chunks)*\n\n"
-                            f"<details open><summary>🔬 Debug — chunks bruts</summary>\n\n"
-                            f"<small><pre>"
-                            + "\n\n".join(debug_first_chunks)
-                            + f"</pre></small>\n\n</details>"
+                            f"**🔬 Debug — chunks bruts :**\n\n"
+                            f"```\n"
+                            + "\n".join(debug_first_chunks)
+                            + "\n```"
                         )
                     history[-1] = {
                         "role": "assistant",
