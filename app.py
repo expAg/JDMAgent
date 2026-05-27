@@ -1996,6 +1996,32 @@ _HEAD_JS = """
     }
   } catch (e) { /* navigateurs anciens : on ignore */ }
 
+  // ---------- Productions : tooltip natif + marquage soumis ----------
+  // Pour chaque label des CheckboxGroup productions (recent + oldies) :
+  //   - ajoute un title= avec le texte complet (hover natif HTML)
+  //   - si le label commence par ✅ (= deja soumis a JDM), ajoute la
+  //     classe .prod-submitted pour declencher le styling CSS.
+  function refreshProdLabels(root) {
+    root.querySelectorAll(
+      '#prod-file-radio label, #prod-oldies-radio label'
+    ).forEach(function(lbl) {
+      var span = lbl.querySelector('span');
+      var txt = (span ? span.textContent : lbl.textContent || '').trim();
+      if (!txt) return;
+      if (lbl.title !== txt) lbl.title = txt;
+      var isSubmitted = txt.startsWith('✅');
+      lbl.classList.toggle('prod-submitted', isSubmitted);
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    refreshProdLabels(document);
+  });
+  new MutationObserver(function() {
+    refreshProdLabels(document);
+  }).observe(document.body || document.documentElement, {
+    childList: true, subtree: true
+  });
+
   // ---------- Style parenthèses des dropdowns (quotas, BYOK) ----------
   // Trouve toute option dont le texte se termine par « (X req/jour) » ou
   // « (BYOK ...) » et entoure cette partie d'un span gris/petit.
@@ -2460,6 +2486,46 @@ _HEAD_JS = """
 """
 
 _CHATBOT_CSS = """
+/* ----- Productions : CheckboxGroup uniforme (mm largeur + ellipsis).
+   Cible par elem_id pour ne pas affecter les autres CheckboxGroup.
+   Le label HTML est dans .wrap > label > span (Gradio v5). */
+#prod-file-radio label, #prod-oldies-radio label {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  margin-bottom: 4px !important;
+}
+#prod-file-radio label span, #prod-oldies-radio label span {
+  display: inline-block !important;
+  max-width: calc(100% - 28px) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  vertical-align: middle !important;
+}
+/* Files SOUMIS = label commence par ✅ (cf. _format_file_entry) →
+   teinte la bulle pour indiquer son etat. Attribute selector sur le
+   span enfant qui contient le texte. */
+#prod-file-radio label:has(span[title^="✅"]),
+#prod-file-radio label:has(span:first-child + span:not([title])),
+#prod-oldies-radio label:has(span[title^="✅"]) {
+  /* Fallback : on cible via le texte du span directement */
+}
+#prod-file-radio label span:first-of-type,
+#prod-oldies-radio label span:first-of-type {
+  /* Detect submitted via le texte commence par ✅ (le ✅ est dans le
+     premier caractere du label) — on l'utilise comme indice visuel. */
+}
+/* Marquage soumis : on injecte une classe via JS si label commence
+   par ✅ (cf. _HEAD_JS). Quand la classe est presente, fond vert
+   discret. Sinon, fond neutre. */
+#prod-file-radio label.prod-submitted,
+#prod-oldies-radio label.prod-submitted {
+  background: rgba(34,197,94,0.10) !important;
+  border-left: 3px solid rgba(34,197,94,0.6) !important;
+  padding-left: 6px !important;
+}
+
 /* ----- Mise en evidence des termes-cles dans les narrations Jarvis.
    Le helper `_hi()` dans jarvis.py wrap les termes/cibles dans des
    <span class="jarvis-term">. Couleur ambre saturee + bold leger →
@@ -4065,6 +4131,51 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                     # Seuil d'archivage : au-dela on deplace dans oldies/.
                     PRODUCTIONS_OLDIES_THRESHOLD_SEC = 48 * 3600  # 48h
                     PRODUCTIONS_OLDIES_DIR = PRODUCTIONS_DIR / "oldies"
+                    # Etat de soumission persistant : maps "filename" -> ts.
+                    # Permet de marquer ✅ les fichiers deja uploades a JDM
+                    # (survit aux redemarrages tant que PRODUCTIONS_DIR existe).
+                    PRODUCTIONS_SUBMITTED_FILE = PRODUCTIONS_DIR / ".submitted.json"
+
+                    def _load_submitted_set() -> set:
+                        """Charge l'ensemble des noms de fichiers deja soumis."""
+                        import json as _j_sub
+                        if not PRODUCTIONS_SUBMITTED_FILE.exists():
+                            return set()
+                        try:
+                            data = _j_sub.loads(
+                                PRODUCTIONS_SUBMITTED_FILE.read_text(encoding="utf-8")
+                            )
+                            if isinstance(data, dict):
+                                return set(data.keys())
+                            if isinstance(data, list):
+                                return set(data)
+                        except Exception:
+                            pass
+                        return set()
+
+                    def _mark_submitted(filename: str):
+                        """Ajoute filename au registre des fichiers soumis."""
+                        import json as _j_sub
+                        import time as _t_sub
+                        try:
+                            current = {}
+                            if PRODUCTIONS_SUBMITTED_FILE.exists():
+                                try:
+                                    current = _j_sub.loads(
+                                        PRODUCTIONS_SUBMITTED_FILE.read_text(encoding="utf-8")
+                                    )
+                                    if not isinstance(current, dict):
+                                        current = {}
+                                except Exception:
+                                    current = {}
+                            current[filename] = _t_sub.time()
+                            PRODUCTIONS_DIR.mkdir(exist_ok=True)
+                            PRODUCTIONS_SUBMITTED_FILE.write_text(
+                                _j_sub.dumps(current, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                        except Exception:
+                            pass  # silencieux : ce n'est pas critique
 
                     def _move_old_files_to_oldies():
                         """Deplace les fichiers du root PRODUCTIONS_DIR plus
@@ -4091,7 +4202,11 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                             except OSError:
                                 continue
 
-                    def _format_file_entry(p, now):
+                    def _format_file_entry(p, now, submitted_set):
+                        """Label = "✅ name.ext — 1.2KB · 5h" si soumis,
+                        sinon sans prefixe. Le ✅ permet aussi a un CSS
+                        attribute selector (label*="✅") de teinter
+                        differemment la bulle dans le CheckboxGroup."""
                         st = p.stat()
                         age = int(now - st.st_mtime)
                         if age < 60:
@@ -4103,7 +4218,8 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                         else:
                             age_s = f"{age // 86400}j"
                         sz_kb = st.st_size / 1024
-                        return (f"{p.name} — {sz_kb:.1f}KB · {age_s}", str(p))
+                        prefix = "✅ " if p.name in submitted_set else ""
+                        return (f"{prefix}{p.name} — {sz_kb:.1f}KB · {age_s}", str(p))
 
                     def _scan_productions_choices():
                         """Liste (label, path) des fichiers RECENTS (root),
@@ -4114,16 +4230,17 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                             return []
                         import time as _t_prod
                         now = _t_prod.time()
+                        sub = _load_submitted_set()
                         files = []
                         for p in PRODUCTIONS_DIR.iterdir():
-                            if not p.is_file():
-                                continue
+                            if not p.is_file() or p.name.startswith("."):
+                                continue  # skip .submitted.json + autres .files
                             try:
                                 files.append((p, p.stat().st_mtime))
                             except OSError:
                                 continue
                         files.sort(key=lambda x: -x[1])
-                        return [_format_file_entry(p, now) for p, _ in files]
+                        return [_format_file_entry(p, now, sub) for p, _ in files]
 
                     def _scan_oldies_choices():
                         """Liste (label, path) des fichiers ARCHIVES (oldies/),
@@ -4132,29 +4249,25 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                             return []
                         import time as _t_prod
                         now = _t_prod.time()
+                        sub = _load_submitted_set()
                         files = []
                         for p in PRODUCTIONS_OLDIES_DIR.iterdir():
-                            if not p.is_file():
+                            if not p.is_file() or p.name.startswith("."):
                                 continue
                             try:
                                 files.append((p, p.stat().st_mtime))
                             except OSError:
                                 continue
                         files.sort(key=lambda x: -x[1])
-                        return [_format_file_entry(p, now) for p, _ in files]
+                        return [_format_file_entry(p, now, sub) for p, _ in files]
 
                     with gr.Row():
                         with gr.Column(scale=1, min_width=320):
-                            # Radio au lieu de Dropdown : plus stable, pas de
-                            # filter race condition (cf. bug user : 'la dropdown
-                            # limite le choix au selectionne apres quelques sec').
-                            # Le Timer auto-refresh peut alors mettre a jour les
-                            # choices sans drama UI.
-                            # IMPORTANT : gr.Radio avec choices=[] rend un
-                            # placeholder moche « Bouton radio ». On hide le
-                            # Radio quand vide et on affiche un sibling
-                            # Markdown « (aucun) » a la place. Le refresh
-                            # bascule la visibilite des deux selon le compte.
+                            # CheckboxGroup au lieu de Radio : permet
+                            # multi-selection (suppression en lot). L'aperçu
+                            # + le submit agissent sur le PREMIER fichier
+                            # selectionne. Stable, pas de filter race comme
+                            # le Dropdown.
                             _initial_recent = _scan_productions_choices()
                             _initial_oldies = _scan_oldies_choices()
                             prod_empty_md = gr.Markdown(
@@ -4162,10 +4275,10 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                                 "Jarvis pour en générer)*",
                                 visible=not bool(_initial_recent),
                             )
-                            prod_file_dropdown = gr.Radio(
+                            prod_file_dropdown = gr.CheckboxGroup(
                                 choices=_initial_recent,
-                                label="📂 Fichiers récents (< 48 h)",
-                                value=None,
+                                label="📂 Fichiers récents",
+                                value=[],
                                 interactive=True,
                                 elem_id="prod-file-radio",
                                 visible=bool(_initial_recent),
@@ -4176,16 +4289,16 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                             # plies par defaut. Auto-deplaces par
                             # _move_old_files_to_oldies() a chaque scan.
                             with gr.Accordion(
-                                "📦 Archives (≥ 48 h)", open=False,
+                                "📦 Archives", open=False,
                             ):
                                 prod_oldies_empty_md = gr.Markdown(
                                     "*(aucune archive pour le moment)*",
                                     visible=not bool(_initial_oldies),
                                 )
-                                prod_oldies_radio = gr.Radio(
+                                prod_oldies_radio = gr.CheckboxGroup(
                                     choices=_initial_oldies,
                                     label=None,
-                                    value=None,
+                                    value=[],
                                     interactive=True,
                                     elem_id="prod-oldies-radio",
                                     visible=bool(_initial_oldies),
@@ -4201,8 +4314,9 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                                 )
                                 with gr.Row():
                                     prod_delete_one_btn = gr.Button(
-                                        "🗑️ Supprimer le fichier sélectionné",
+                                        "🗑️ Supprimer la sélection",
                                         size="sm",
+                                        interactive=False,
                                     )
                                 # Pour le bouton « tout vider », 2-clics :
                                 # 1er clic → texte devient « ⚠️ Confirmer »
@@ -4323,54 +4437,66 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                                 gr.update(visible=False, value=None),
                             )
 
-                    # Handler unique : rend le fichier ET met à jour
-                    # l'état du bouton submit en une seule passe. Évite
-                    # le bug où le Timer (qui modifie les choices du
-                    # Dropdown) re-déclenche en interne le change → un
-                    # 2e handler bound séparément reçoit [] comme inputs
-                    # (cf. erreur HF « didn't receive enough input values »).
-                    def _render_and_toggle(selected_path, drops_key):
+                    # Helper : prend le 1er fichier selectionne (priorite
+                    # aux recents puis oldies) pour l'apercu + le submit.
+                    # Les CheckboxGroup renvoient une LISTE (multi-select).
+                    def _first_selected(recent_list, oldies_list):
+                        if recent_list:
+                            return recent_list[0]
+                        if oldies_list:
+                            return oldies_list[0]
+                        return None
+
+                    # Handler unique : rend le fichier (1er selectionne) ET
+                    # met a jour l'etat des boutons submit + delete. Bind
+                    # sur les DEUX checkboxgroup (recent et oldies) pour
+                    # rester synchro quoi que l'user clique.
+                    def _render_and_toggle(recent_list, oldies_list, drops_key):
                         from jarvis import has_drops_key as _hk
-                        status, html_u, text_u, file_u = _render_production_file(
-                            selected_path
+                        path = _first_selected(recent_list, oldies_list)
+                        status, html_u, text_u, file_u = _render_production_file(path)
+                        submit_ok = bool(path) and _hk(drops_key)
+                        n_total = len(recent_list or []) + len(oldies_list or [])
+                        delete_label = (
+                            f"🗑️ Supprimer la sélection ({n_total})"
+                            if n_total else "🗑️ Supprimer la sélection"
                         )
-                        submit_ok = bool(selected_path) and _hk(drops_key)
                         return (
                             status, html_u, text_u, file_u,
                             gr.update(interactive=submit_ok),
+                            gr.update(interactive=bool(n_total), value=delete_label),
                         )
 
                     prod_file_dropdown.change(
                         _render_and_toggle,
-                        inputs=[prod_file_dropdown, jarvis_drops_key],
+                        inputs=[prod_file_dropdown, prod_oldies_radio,
+                                jarvis_drops_key],
                         outputs=[prod_status, prod_html_viewer,
                                  prod_text_viewer, prod_download,
-                                 prod_submit_btn],
+                                 prod_submit_btn, prod_delete_one_btn],
                     )
 
-                    # Refresh du bouton quand la clé Drops change SEULE
-                    # (pas de changement de sélection). Handler dédié
-                    # avec inputs explicites — pas de risque de fire
-                    # interne car la textbox de clé ne participe pas
-                    # au Timer du Dropdown.
-                    def _toggle_submit_only(selected_path, drops_key):
+                    # Refresh du bouton submit quand la cle Drops change.
+                    def _toggle_submit_only(recent_list, oldies_list, drops_key):
                         from jarvis import has_drops_key as _hk
-                        ok = bool(selected_path) and _hk(drops_key)
+                        path = _first_selected(recent_list, oldies_list)
+                        ok = bool(path) and _hk(drops_key)
                         return gr.update(interactive=ok)
 
                     jarvis_drops_key.change(
                         _toggle_submit_only,
-                        inputs=[prod_file_dropdown, jarvis_drops_key],
+                        inputs=[prod_file_dropdown, prod_oldies_radio,
+                                jarvis_drops_key],
                         outputs=[prod_submit_btn],
                     )
 
-                    def _submit_production_file(selected_path, drops_key, jarvis_model_v):
-                        """Upload le fichier sélectionné vers LLMDrops via
-                        jarvis.submit_existing_file. Note : la fonction renvoie
-                        une LISTE de messages chat-format `[{role, content}]`
-                        (concue pour gr.Chatbot dans les sous-onglets Jarvis),
-                        donc ici on extrait juste le content du dernier message
-                        pour l'afficher dans notre gr.Markdown."""
+                    def _submit_production_file(recent_list, oldies_list,
+                                                drops_key, jarvis_model_v):
+                        """Upload le 1er fichier selectionne (priorite recent
+                        > oldies) vers LLMDrops via jarvis.submit_existing_file.
+                        Marque le fichier comme soumis si succes (✅ prefix
+                        dans le label + classe CSS .prod-submitted)."""
+                        selected_path = _first_selected(recent_list, oldies_list)
                         if not selected_path:
                             return gr.update(visible=True,
                                              value="⚠️ Aucun fichier sélectionné.")
@@ -4389,6 +4515,13 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                                     content = str(last.get("content", "") or "")
                                 else:
                                     content = str(last)
+                                # Marque comme soumis si le content
+                                # commence par ✅ (verdict de succes).
+                                if content.lstrip().startswith("✅"):
+                                    try:
+                                        _mark_submitted(Path(selected_path).name)
+                                    except Exception:
+                                        pass
                                 return gr.update(
                                     visible=True,
                                     value=content or "(réponse vide)",
@@ -4407,7 +4540,8 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
 
                     prod_submit_btn.click(
                         _submit_production_file,
-                        inputs=[prod_file_dropdown, jarvis_drops_key, jarvis_model],
+                        inputs=[prod_file_dropdown, prod_oldies_radio,
+                                jarvis_drops_key, jarvis_model],
                         outputs=[prod_submit_status],
                     )
 
@@ -4440,77 +4574,74 @@ with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, cs
                                  prod_oldies_radio, prod_oldies_empty_md],
                     )
 
-                    # Selection cote oldies → bascule le Radio actif sur None
-                    # ET delegue le rendu via prod_oldies_radio.change ci-dessous.
-                    def _on_oldies_select(oldies_path, drops_key):
-                        from jarvis import has_drops_key as _hk
-                        status, html_u, text_u, file_u = _render_production_file(
-                            oldies_path
-                        )
-                        submit_ok = bool(oldies_path) and _hk(drops_key)
-                        return (
-                            None,  # clear le radio recent (un seul fichier actif)
-                            status, html_u, text_u, file_u,
-                            gr.update(interactive=submit_ok),
-                        )
+                    # Le change du CheckboxGroup oldies declenche aussi
+                    # _render_and_toggle (memes outputs que le recent).
+                    # Pas de clear de l'autre liste : multi-select cross-list.
                     prod_oldies_radio.change(
-                        _on_oldies_select,
-                        inputs=[prod_oldies_radio, jarvis_drops_key],
-                        outputs=[prod_file_dropdown,
-                                 prod_status, prod_html_viewer,
+                        _render_and_toggle,
+                        inputs=[prod_file_dropdown, prod_oldies_radio,
+                                jarvis_drops_key],
+                        outputs=[prod_status, prod_html_viewer,
                                  prod_text_viewer, prod_download,
-                                 prod_submit_btn],
+                                 prod_submit_btn, prod_delete_one_btn],
                     )
 
-                    # === Admin : suppression unitaire ===
-                    def _delete_one_file(selected_path, oldies_path):
-                        """Supprime le fichier actuellement selectionne (peu
-                        importe d'ou il vient : recent ou oldies). Renvoie
-                        un message status + refresh des deux Radios + leurs
-                        siblings « (vide) »."""
-                        target = selected_path or oldies_path
-                        if not target:
-                            rec = _scan_productions_choices()
-                            old = _scan_oldies_choices()
+                    # === Admin : suppression multi-fichiers ===
+                    def _delete_selected_files(recent_list, oldies_list):
+                        """Supprime TOUS les fichiers cochees dans l'un ou
+                        l'autre CheckboxGroup. Retourne status + refresh des
+                        deux CheckboxGroup + leurs siblings (vide)."""
+                        targets = list(recent_list or []) + list(oldies_list or [])
+                        rec = _scan_productions_choices()
+                        old = _scan_oldies_choices()
+                        if not targets:
                             return (
                                 "⚠️ Aucun fichier sélectionné.",
-                                gr.update(value=""), gr.update(value=""),
-                                gr.update(value=None),
-                                gr.update(choices=rec, value=None, visible=bool(rec)),
+                                gr.update(), gr.update(), gr.update(),
+                                gr.update(choices=rec, value=[], visible=bool(rec)),
                                 gr.update(visible=not bool(rec)),
-                                gr.update(choices=old, value=None, visible=bool(old)),
+                                gr.update(choices=old, value=[], visible=bool(old)),
                                 gr.update(visible=not bool(old)),
                                 gr.update(interactive=False),
+                                gr.update(interactive=False, value="🗑️ Supprimer la sélection"),
                             )
-                        try:
-                            p = Path(target)
-                            if p.exists():
-                                p.unlink()
-                                msg = f"🗑️ Supprimé : `{p.name}`"
-                            else:
-                                msg = f"⚠️ Fichier déjà absent : `{p.name}`"
-                        except Exception as e:
-                            msg = f"❌ Erreur suppression : `{e}`"
+                        n_ok = 0
+                        n_fail = 0
+                        for t in targets:
+                            try:
+                                p = Path(t)
+                                if p.exists():
+                                    p.unlink()
+                                    n_ok += 1
+                                else:
+                                    n_fail += 1
+                            except Exception:
+                                n_fail += 1
+                        msg_parts = [f"🗑️ **{n_ok}** fichier(s) supprimé(s)"]
+                        if n_fail:
+                            msg_parts.append(f"({n_fail} échec(s))")
                         rec = _scan_productions_choices()
                         old = _scan_oldies_choices()
                         return (
-                            msg,
+                            " ".join(msg_parts),
                             gr.update(visible=False, value=""),
                             gr.update(visible=False, value=""),
                             gr.update(visible=False, value=None),
-                            gr.update(choices=rec, value=None, visible=bool(rec)),
+                            gr.update(choices=rec, value=[], visible=bool(rec)),
                             gr.update(visible=not bool(rec)),
-                            gr.update(choices=old, value=None, visible=bool(old)),
+                            gr.update(choices=old, value=[], visible=bool(old)),
                             gr.update(visible=not bool(old)),
                             gr.update(interactive=False),
+                            gr.update(interactive=False, value="🗑️ Supprimer la sélection"),
                         )
                     prod_delete_one_btn.click(
-                        _delete_one_file,
+                        _delete_selected_files,
                         inputs=[prod_file_dropdown, prod_oldies_radio],
                         outputs=[prod_status, prod_html_viewer, prod_text_viewer,
                                  prod_download, prod_file_dropdown,
                                  prod_empty_md, prod_oldies_radio,
-                                 prod_oldies_empty_md, prod_submit_btn],
+                                 prod_oldies_empty_md, prod_submit_btn,
+                                 prod_delete_one_btn],
                     )
 
                     # === Admin : tout vider (recents + oldies) — 2 clics ===
