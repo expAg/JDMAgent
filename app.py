@@ -4231,107 +4231,142 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         with gr.Tab("🛠️ Aide / Installation"):
             gr.Markdown(AIDE_MD)
             gr.Markdown("---")
-            # === Panneau Export des Secrets HF (pour reconstituer un .env) ===
-            # Permet au PROPRIETAIRE du Space de recuperer ses variables
-            # d'environnement (cles API, config) au runtime, parce que la UI
-            # HF Settings affiche les Secrets en write-only (pas de read).
+            # === Panneau Configuration .env (admin) ===
+            # Sur deploy-self : panneau qui LIT le fichier .env du repo
+            # et permet de MODIFIER chaque variable (cles API, config) puis
+            # de RE-ECRIRE le fichier. Utile sur un serveur dedie ou la UI
+            # HF Settings n'existe pas — l'admin se connecte avec ?admin=1
+            # + mot de passe et edite le .env via l'app au lieu d'ouvrir
+            # un terminal SSH.
             # PROTECTION DOUBLE :
             #   1. URL flag ?admin=1 (cf. JS dans _HEAD_JS + CSS .admin-only)
             #      → sans le flag, le panneau est invisible dans le DOM
-            #      → le visiteur lambda ne sait meme pas qu'il existe
-            #   2. Mot de passe (Secret HF `EXPORT_SECRETS_PASSWORD`)
-            #      → meme avec le flag, faut le mot de passe pour les valeurs
-            # Allowlist stricte des cles exportees — pas tout l'env systeme.
-            # Place tout en BAS de l'onglet (apres AIDE_MD) pour ne pas
-            # distraire le visiteur lambda + accordeon plie par defaut.
+            #   2. Mot de passe (env var `EXPORT_SECRETS_PASSWORD`)
+            #      → meme avec le flag, faut le mot de passe pour reveler/editer
+            # Allowlist stricte des cles editables.
+            EDITABLE_ENV_VARS = [
+                # Secrets sensibles
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "GOOGLE_API_KEY",
+                "GOOGLE_API_KEYS",
+                "GROQ_API_KEY",
+                "DEEPSEEK_API_KEY",
+                "JDM_DROPS_API_KEY",
+                "EXPORT_SECRETS_PASSWORD",
+                # Configuration
+                "LLM_PROVIDER",
+                "LLM_MODEL",
+                "LLM_TEMPERATURE",
+                "JDM_BASE_URL",
+                "JDM_TIMEOUT",
+                "JDM_DROPS_URL",
+                "JDM_CACHE_TTL_META",
+                "JDM_CACHE_TTL_DATA",
+                "OLLAMA_BASE_URL",
+                "APP_SUBPATH",
+            ]
+            # Variables traitees comme secrets (champ password masque)
+            _SECRET_LIKE = lambda v: (
+                v.endswith("_API_KEY") or v == "GOOGLE_API_KEYS"
+                or v.endswith("_PASSWORD")
+            )
+            # Chemin du fichier .env a editer — racine du repo
+            _ENV_FILE = Path(__file__).parent / ".env"
+
+            def _parse_env_file(path):
+                """Parse un .env (KEY=val ou KEY="val"). Renvoie un dict.
+                Ignore les lignes commentees et vides. Tolere les guillemets
+                doubles/simples et les commentaires inline (apres #).
+                """
+                result = {}
+                if not path.exists():
+                    return result
+                try:
+                    raw = path.read_text(encoding="utf-8")
+                except Exception:
+                    return result
+                for line in raw.splitlines():
+                    s = line.strip()
+                    if not s or s.startswith("#"):
+                        continue
+                    if "=" not in s:
+                        continue
+                    key, _, val = s.partition("=")
+                    key = key.strip()
+                    val = val.strip()
+                    # Retire commentaire inline non-protege par guillemets
+                    if val and val[0] not in ('"', "'"):
+                        # split sur # uniquement s'il y a un espace avant
+                        hashpos = val.find("  #")
+                        if hashpos < 0:
+                            hashpos = val.find(" #")
+                        if hashpos >= 0:
+                            val = val[:hashpos].strip()
+                    # Retire les guillemets externes + unescape
+                    if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                        val = val[1:-1]
+                        val = val.replace('\\"', '"').replace("\\\\", "\\")
+                    result[key] = val
+                return result
+
             with gr.Accordion(
-                "🔐 Export des secrets HF (proprietaire uniquement)",
+                "⚙️ Configuration .env (admin uniquement)",
                 open=False,
                 elem_classes=["admin-only"],
             ):
                 gr.Markdown(
-                    "Pour recuperer tes cles API stockees dans Settings HF "
-                    "(reconstituer un `.env` pour deployer ailleurs : VPS, "
-                    "serveur dedie, machine locale…). Le mot de passe doit "
-                    "etre defini au prealable comme Secret HF nomme "
-                    "`EXPORT_SECRETS_PASSWORD`."
+                    "Edite les variables d'environnement persistees dans le "
+                    "fichier `.env` a la racine du repo. Mot de passe requis "
+                    "(`EXPORT_SECRETS_PASSWORD` defini dans `.env` ou env "
+                    "shell). La sauvegarde reecrit le fichier ; les variables "
+                    "non listees ici (commentaires, vars custom) sont "
+                    "**preservees** au mieux."
                 )
                 with gr.Row():
-                    _export_pw = gr.Textbox(
-                        label="Mot de passe (Secret HF `EXPORT_SECRETS_PASSWORD`)",
+                    _cfg_pw = gr.Textbox(
+                        label="Mot de passe (`EXPORT_SECRETS_PASSWORD`)",
                         type="password", placeholder="…",
                         scale=3,
                     )
-                    _export_btn = gr.Button(
-                        "🔓 Decrypter et afficher",
+                    _cfg_unlock_btn = gr.Button(
+                        "🔓 Deverrouiller",
                         variant="primary", scale=1,
                     )
-                _export_status = gr.Markdown(visible=False)
-                _export_textbox = gr.Textbox(
-                    label=".env reconstruit (copie ou telecharge)",
-                    lines=15, max_lines=30,
-                    show_copy_button=True, interactive=False,
-                    visible=False,
-                )
-                _export_dlfile = gr.File(
-                    label="⬇️ Telecharger .env",
-                    visible=False, interactive=False,
-                )
+                _cfg_status = gr.Markdown(visible=False)
 
-            def _export_secrets(pw: str):
-                """Renvoie le .env reconstitue si le mot de passe match.
-                Cle d'autorisation = Secret HF `EXPORT_SECRETS_PASSWORD`.
-                """
-                import os as _os
-                import tempfile as _tmp
-                # Allowlist STRICTE — rien d'autre n'est expose
-                EXPORTABLE_ENV_VARS = [
-                    # Secrets sensibles
-                    "ANTHROPIC_API_KEY",
-                    "OPENAI_API_KEY",
-                    "GOOGLE_API_KEY",
-                    "GOOGLE_API_KEYS",  # pool CSV multi-cles
-                    "GROQ_API_KEY",
-                    "DEEPSEEK_API_KEY",
-                    "JDM_DROPS_API_KEY",
-                    "EXPORT_SECRETS_PASSWORD",  # le mdp lui-meme
-                    # Configuration (non sensible mais utile pour redeploy)
-                    "LLM_PROVIDER",
-                    "LLM_MODEL",
-                    "LLM_TEMPERATURE",
-                    "JDM_BASE_URL",
-                    "JDM_TIMEOUT",
-                    "JDM_DROPS_URL",  # fallback DEFAULT_ENDPOINT_URL si non defini
-                    "JDM_CACHE_TTL_META",
-                    "JDM_CACHE_TTL_DATA",
-                    "OLLAMA_BASE_URL",
-                    "APP_SUBPATH",
-                ]
-                # Fallbacks pour les variables qui ont une valeur par defaut
-                # hardcodee dans le code et qu'on veut quand meme voir
-                # apparaitre dans le .env exporte (sinon perte d'info si
-                # l'utilisateur n'a jamais set l'env var explicitement).
-                try:
-                    from jdm_agent.enrich.uploader import (
-                        DEFAULT_ENDPOINT_URL as _DROPS_DEFAULT_URL,
+                # Form de tous les champs editables — rendus invisibles
+                # jusqu'au deverrouillage.
+                _cfg_fields = {}
+                with gr.Group(visible=False) as _cfg_form:
+                    for var in EDITABLE_ENV_VARS:
+                        _cfg_fields[var] = gr.Textbox(
+                            label=var,
+                            type="password" if _SECRET_LIKE(var) else "text",
+                            placeholder=f"valeur de {var} (vide = non definie)",
+                            interactive=True,
+                            value="",
+                        )
+                    _cfg_save_btn = gr.Button(
+                        "💾 Sauvegarder dans .env",
+                        variant="primary",
                     )
-                except Exception:
-                    _DROPS_DEFAULT_URL = "http://jeuxdemots.org/LLMDrops.php"
-                FALLBACK_DEFAULTS = {
-                    "JDM_DROPS_URL": _DROPS_DEFAULT_URL,
-                }
-                expected = _os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
+                    _cfg_save_status = gr.Markdown(visible=False)
+
+            def _cfg_unlock(pw: str):
+                """Verifie le mot de passe puis charge les valeurs du .env
+                (ou os.environ en fallback) dans les champs."""
+                expected = os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
                 if not expected:
                     return (
                         gr.update(
                             visible=True,
-                            value="⚠️ **Non configure.** Le Secret HF "
-                                  "`EXPORT_SECRETS_PASSWORD` n'est pas defini "
-                                  "cote Space. Ajoute-le dans Settings → "
-                                  "Variables and secrets, puis re-essaie.",
+                            value="⚠️ **Non configure.** Definis "
+                                  "`EXPORT_SECRETS_PASSWORD` dans ton .env "
+                                  "(ou env var shell) puis relance l'app.",
                         ),
                         gr.update(visible=False),
-                        gr.update(visible=False),
+                        *[gr.update() for _ in EDITABLE_ENV_VARS],
                     )
                 if not pw or pw.strip() != expected:
                     return (
@@ -4340,67 +4375,113 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             value="❌ **Mot de passe incorrect.**",
                         ),
                         gr.update(visible=False),
-                        gr.update(visible=False),
+                        *[gr.update() for _ in EDITABLE_ENV_VARS],
                     )
-                # Match : construire le .env
-                lines = [
-                    "# .env reconstitue depuis HF Space",
-                    f"# Genere le {_os.environ.get('HF_SPACE_NAME', 'jdmagent')}",
-                    "",
-                ]
-                present = []
-                missing = []
-                from_default = []
-                for key in EXPORTABLE_ENV_VARS:
-                    val = _os.environ.get(key, "")
-                    used_default = False
-                    if not val and key in FALLBACK_DEFAULTS:
-                        val = FALLBACK_DEFAULTS[key]
-                        used_default = True
-                    if val:
-                        # Echappe les retours ligne et guillemets
-                        safe = val.replace("\\", "\\\\").replace('"', '\\"')
-                        comment = "  # valeur par defaut" if used_default else ""
-                        lines.append(f'{key}="{safe}"{comment}')
-                        if used_default:
-                            from_default.append(key)
-                        else:
-                            present.append(key)
-                    else:
-                        missing.append(key)
-                content = "\n".join(lines) + "\n"
-                # Ecriture fichier temp pour le DownloadButton
-                tmp = _tmp.NamedTemporaryFile(
-                    mode="w", suffix=".env", prefix="jdmagent_",
-                    delete=False, encoding="utf-8",
-                )
-                tmp.write(content)
-                tmp.close()
-                status = (
-                    f"✅ **{len(present)} variables exportees** depuis "
-                    f"l'env : `{', '.join(present)}`"
-                )
-                if from_default:
-                    status += (
-                        f"\n\n🔧 **{len(from_default)} variables avec valeur "
-                        f"par defaut** (env non set) : "
-                        f"`{', '.join(from_default)}`"
-                    )
-                if missing:
-                    status += (
-                        f"\n\nℹ️ **{len(missing)} variables non definies** "
-                        f"(omises) : `{', '.join(missing)}`"
-                    )
+                # OK : lire le .env existant et pre-remplir
+                env_dict = _parse_env_file(_ENV_FILE)
+                field_updates = []
+                for var in EDITABLE_ENV_VARS:
+                    val = env_dict.get(var, os.environ.get(var, ""))
+                    field_updates.append(gr.update(value=val))
                 return (
-                    gr.update(visible=True, value=status),
-                    gr.update(visible=True, value=content),
-                    gr.update(visible=True, value=tmp.name),
+                    gr.update(
+                        visible=True,
+                        value=f"✅ **Deverrouille.** Fichier source : "
+                              f"`{_ENV_FILE}` "
+                              f"({'existe' if _ENV_FILE.exists() else 'sera cree'}).",
+                    ),
+                    gr.update(visible=True),
+                    *field_updates,
                 )
 
-            _export_btn.click(
-                _export_secrets,
-                inputs=[_export_pw],
-                outputs=[_export_status, _export_textbox, _export_dlfile],
+            def _cfg_save(*values):
+                """Ecrit toutes les valeurs dans le .env. Preserve les
+                lignes existantes non-allowlistees (commentaires + vars
+                custom) en les recopiant au debut du fichier."""
+                # Re-verification : qu'on n'a pas perdu le contexte admin
+                expected = os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
+                if not expected:
+                    return gr.update(
+                        visible=True,
+                        value="⚠️ **Non configure.** Definis "
+                              "`EXPORT_SECRETS_PASSWORD` d'abord.",
+                    )
+                # Map var → nouvelle valeur soumise
+                new_values = dict(zip(EDITABLE_ENV_VARS, values))
+                # Lit le .env existant pour preserver les lignes non gerees
+                preserved_lines = []
+                if _ENV_FILE.exists():
+                    try:
+                        raw = _ENV_FILE.read_text(encoding="utf-8")
+                        for line in raw.splitlines():
+                            s = line.strip()
+                            if not s or s.startswith("#"):
+                                preserved_lines.append(line)
+                                continue
+                            if "=" not in s:
+                                preserved_lines.append(line)
+                                continue
+                            key = s.partition("=")[0].strip()
+                            if key not in EDITABLE_ENV_VARS:
+                                # Var hors allowlist : on garde la ligne
+                                preserved_lines.append(line)
+                    except Exception as e:
+                        return gr.update(
+                            visible=True,
+                            value=f"❌ **Lecture impossible** : `{e}`",
+                        )
+                # Compose le nouveau contenu
+                output_lines = []
+                if preserved_lines:
+                    output_lines.extend(preserved_lines)
+                    output_lines.append("")
+                output_lines.append("# === Variables editees via le panneau Config ===")
+                n_written = 0
+                n_skipped = 0
+                for var in EDITABLE_ENV_VARS:
+                    val = new_values.get(var, "")
+                    if val is None:
+                        val = ""
+                    val = str(val).strip()
+                    if not val:
+                        # Vide → on ecrit la ligne commentee pour montrer
+                        # que la var existe mais n'est pas definie
+                        output_lines.append(f"# {var}=")
+                        n_skipped += 1
+                        continue
+                    # Echappe pour le format .env
+                    safe = val.replace("\\", "\\\\").replace('"', '\\"')
+                    output_lines.append(f'{var}="{safe}"')
+                    n_written += 1
+                final = "\n".join(output_lines) + "\n"
+                try:
+                    _ENV_FILE.write_text(final, encoding="utf-8")
+                except Exception as e:
+                    return gr.update(
+                        visible=True,
+                        value=f"❌ **Ecriture impossible** dans `{_ENV_FILE}` "
+                              f": `{e}`. Verifie les droits d'ecriture du "
+                              f"process.",
+                    )
+                return gr.update(
+                    visible=True,
+                    value=f"✅ **Sauvegarde** dans `{_ENV_FILE}` "
+                          f"({n_written} variables definies, "
+                          f"{n_skipped} vides). "
+                          f"⚠️ Les changements ne prennent effet qu'au "
+                          f"prochain redemarrage de l'app.",
+                )
+
+            _cfg_unlock_btn.click(
+                _cfg_unlock,
+                inputs=[_cfg_pw],
+                outputs=[_cfg_status, _cfg_form,
+                         *[_cfg_fields[v] for v in EDITABLE_ENV_VARS]],
+            )
+            _cfg_save_btn.click(
+                _cfg_save,
+                inputs=[_cfg_fields[v] for v in EDITABLE_ENV_VARS],
+                outputs=[_cfg_save_status],
             )
 
         # ----- Sync des dropdowns modèle entre onglets -----
