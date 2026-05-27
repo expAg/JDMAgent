@@ -145,25 +145,35 @@ else
     fi
     echo ""
     echo "  Pour automatiser ce restart a l'avenir, cree un service"
-    echo "  systemd nomme 'jdmagent' (exemple minimal) :"
+    echo "  systemd nomme 'jdmagent'. Copie-colle ce bloc tel quel :"
+    echo "  (les valeurs sont deja substituees avec ton contexte actuel)"
     echo ""
-    echo "     sudo tee /etc/systemd/system/jdmagent.service > /dev/null <<EOF"
+    echo "     sudo tee /etc/systemd/system/jdmagent.service > /dev/null <<'EOF'"
     echo "     [Unit]"
     echo "     Description=JDMAgent Gradio"
     echo "     After=network.target"
     echo ""
     echo "     [Service]"
-    echo "     User=\$USER"
+    # IMPORTANT : on expand $USER et $SCRIPT_DIR ICI, avant l'echo,
+    # pour que le bloc affiche les valeurs LITTERALES (hguenoune, /chemin/...).
+    # Sinon systemd recoit `User=$USER` en string non-substituee et echoue
+    # avec status=217/USER. Le 'EOF' (quote) cote heredoc empeche le shell
+    # de l'utilisateur de re-substituer au paste — c'est nous qui avons
+    # deja substitue ici, on veut juste qu'il colle tel quel.
+    echo "     User=$(id -un)"
     echo "     WorkingDirectory=$SCRIPT_DIR"
     echo "     ExecStart=$SCRIPT_DIR/.venv/bin/python $SCRIPT_DIR/app.py"
     echo "     Restart=on-failure"
+    echo "     RestartSec=5"
     echo "     EnvironmentFile=$SCRIPT_DIR/.env"
     echo ""
     echo "     [Install]"
     echo "     WantedBy=multi-user.target"
     echo "     EOF"
     echo ""
+    echo "     sudo systemctl daemon-reload"
     echo "     sudo systemctl enable --now jdmagent"
+    echo "     sudo systemctl status jdmagent"
     echo ""
     echo "  Apres ca, ./update.sh restart automatiquement."
 fi
