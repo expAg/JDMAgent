@@ -1717,14 +1717,43 @@ Statistiques de couverture par terme et/ou par relation.
 
 ⚠️ **Sécurité** : les clés que tu colles dans l'UI ne sont **jamais persistées** côté serveur — elles vivent uniquement le temps de ton onglet navigateur.
 
-## 4. Installation locale (optionnel)
+## 4. Installation locale (déployer la même app ailleurs)
+
+Recette complète pour faire tourner la démo Gradio sur ta machine (Linux / macOS / Windows) ou sur un serveur (LIRMM, VPS, etc.) :
 
 ```bash
+# 1. Cloner le repo
 git clone https://github.com/expAg/JDMAgent.git
 cd JDMAgent
-pip install -e ".[langchain,anthropic,openai,google,mcp,dev]"
-python app.py        # lance Gradio sur http://localhost:7860
+
+# 2. Créer un environnement Python isolé (venv) dans le repo
+#    Sur Debian/Ubuntu : sudo apt install python3-venv si pas déjà là
+python3 -m venv .venv
+
+# 3. Activer le venv
+source .venv/bin/activate          # Linux / macOS
+# .venv\\Scripts\\activate           # Windows (cmd / PowerShell)
+
+# 4. Installer les dépendances
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. Configurer les clés API (copie le template puis édite)
+cp .env.example .env
+# édite .env : ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY /
+# GROQ_API_KEY / DEEPSEEK_API_KEY / JDM_DROPS_API_KEY / LLM_PROVIDER /
+# LLM_MODEL — seules les clés des providers que tu veux utiliser sont
+# obligatoires, le reste peut rester vide.
+
+# 6. Lancer l'app — écoute sur http://0.0.0.0:7860
+python app.py
 ```
+
+Ensuite, dans ton navigateur → <http://localhost:7860> (ou l'IP du serveur sur le port 7860 si déploiement distant).
+
+**Sur Debian 12 / Ubuntu 24.04 (PEP 668)** : pip refuse d'installer hors venv — le venv ci-dessus est donc **obligatoire**, pas optionnel. Ne contourne pas avec `--break-system-packages` (casse les outils OS).
+
+**Pour ré-utiliser sans tout retaper** : `cd /chemin/JDMAgent && source .venv/bin/activate && python app.py`. Ou en service systemd, invoque directement `.venv/bin/python app.py` (pas besoin d'activate).
 
 Voir [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md) pour les détails (CLI, MCP, fact-check programmatique).
 

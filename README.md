@@ -205,28 +205,52 @@ vérification externe recensés par [\[28\]](#ref-28).
 
 ## 6. Installation
 
+Deux pistes selon ton usage :
+
+### A. Lancer la démo Gradio (la même que sur HF Space)
+
+C'est l'option recommandée si tu veux juste **faire tourner l'app web** sur ta machine ou un serveur (LIRMM, VPS, etc.) :
+
 ```bash
 git clone https://github.com/expAg/JDMAgent.git
 cd JDMAgent
-python -m venv .venv
-.venv\Scripts\activate          # Windows  (ou source .venv/bin/activate)
 
-# Installation de base + LangChain
+python3 -m venv .venv                       # créer un venv (obligatoire sur Debian 12 — PEP 668)
+source .venv/bin/activate                   # Linux/macOS — ou .venv\Scripts\activate (Windows)
+
+pip install --upgrade pip
+pip install -r requirements.txt             # même set de deps que HF Space
+
+cp .env.example .env                        # copier le template…
+# … puis éditer .env pour y mettre tes clés API (au moins celles des
+# providers LLM que tu veux utiliser : ANTHROPIC_API_KEY, OPENAI_API_KEY,
+# GOOGLE_API_KEY, GROQ_API_KEY, etc.) et JDM_DROPS_API_KEY pour
+# soumettre automatiquement à JeuxDeMots.
+
+python app.py                               # écoute sur http://0.0.0.0:7860
+```
+
+Ensuite, dans ton navigateur → <http://localhost:7860>.
+
+### B. Mode dev / bibliothèque (pour brancher MCP, écrire des scripts, etc.)
+
+Si tu veux utiliser le package `jdm_agent` programmatiquement (CLI, MCP, tests) :
+
+```bash
+git clone https://github.com/expAg/JDMAgent.git
+cd JDMAgent
+python3 -m venv .venv
+source .venv/bin/activate                   # ou .venv\Scripts\activate sur Windows
+
+# Installation editable + LangChain + provider(s) au choix
 pip install -e ".[dev,langchain]"
+pip install -e ".[anthropic]"               # Claude
+pip install -e ".[openai]"                  # GPT
+pip install -e ".[google]"                  # Gemini
+pip install -e ".[ollama]"                  # local
+pip install -e ".[mcp]"                     # serveur MCP
 
-# Providers LLM (au choix)
-pip install -e ".[anthropic]"   # Claude
-pip install -e ".[openai]"      # GPT
-pip install -e ".[google]"      # Gemini
-pip install -e ".[ollama]"      # local
-
-# Serveur MCP (recommandé)
-pip install -e ".[mcp]"
-
-# Configuration
-cp .env.example .env
-# édite .env : ANTHROPIC_API_KEY / OPENAI_API_KEY / LLM_PROVIDER / LLM_MODEL
-# et pour la soumission contributive : JDM_DROPS_API_KEY
+cp .env.example .env                        # même config que mode A
 ```
 
 Tests :
