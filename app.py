@@ -1937,6 +1937,22 @@ _HEAD_JS = """
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>
 (function() {
+  // ---------- Gate admin (URL flag ?admin=1) ----------
+  // Si l'URL contient ?admin=1, on ajoute la classe .admin-mode sur
+  // <body>. Le CSS associe (cf. _CHATBOT_CSS) revele alors les blocs
+  // marques `elem_classes=["admin-only"]`. Sans ce flag, ces blocs
+  // restent invisibles pour le visiteur lambda.
+  try {
+    var qs = new URLSearchParams(window.location.search || '');
+    if (qs.get('admin') === '1') {
+      var setAdminBody = function() {
+        if (document.body) document.body.classList.add('admin-mode');
+      };
+      if (document.body) setAdminBody();
+      else document.addEventListener('DOMContentLoaded', setAdminBody);
+    }
+  } catch (e) { /* navigateurs anciens : on ignore */ }
+
   // ---------- Style parenthèses des dropdowns (quotas, BYOK) ----------
   // Trouve toute option dont le texte se termine par « (X req/jour) » ou
   // « (BYOK ...) » et entoure cette partie d'un span gris/petit.
@@ -2401,6 +2417,11 @@ _HEAD_JS = """
 """
 
 _CHATBOT_CSS = """
+/* ----- Gate admin : .admin-only cache par defaut, revele si <body>
+   a la classe .admin-mode (posee par le JS quand ?admin=1 dans URL). */
+.admin-only { display: none !important; }
+body.admin-mode .admin-only { display: block !important; }
+
 /* Checkbox 'Raisonnement' flottante : position absolue dans le coin
    haut-droit du conteneur de la Column qui contient le dropdown modèle
    — alignée verticalement sur la baseline du label chip « Modèle ».
@@ -4208,19 +4229,25 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----
         with gr.Tab("🛠️ Aide / Installation"):
+            gr.Markdown(AIDE_MD)
+            gr.Markdown("---")
             # === Panneau Export des Secrets HF (pour reconstituer un .env) ===
             # Permet au PROPRIETAIRE du Space de recuperer ses variables
             # d'environnement (cles API, config) au runtime, parce que la UI
             # HF Settings affiche les Secrets en write-only (pas de read).
-            # PROTECTION : un mot de passe (defini par le Secret HF
-            # `EXPORT_SECRETS_PASSWORD`) gate l'acces. Sans ce mot de passe
-            # cote utilisateur ET cote Space, rien n'est revele. Allowlist
-            # stricte des cles exportees — pas tout l'env systeme.
-            # UI : wrappe dans une Accordion(open=False) — le panneau est
-            # plie par defaut pour ne pas distraire le visiteur lambda.
+            # PROTECTION DOUBLE :
+            #   1. URL flag ?admin=1 (cf. JS dans _HEAD_JS + CSS .admin-only)
+            #      → sans le flag, le panneau est invisible dans le DOM
+            #      → le visiteur lambda ne sait meme pas qu'il existe
+            #   2. Mot de passe (Secret HF `EXPORT_SECRETS_PASSWORD`)
+            #      → meme avec le flag, faut le mot de passe pour les valeurs
+            # Allowlist stricte des cles exportees — pas tout l'env systeme.
+            # Place tout en BAS de l'onglet (apres AIDE_MD) pour ne pas
+            # distraire le visiteur lambda + accordeon plie par defaut.
             with gr.Accordion(
                 "🔐 Export des secrets HF (proprietaire uniquement)",
                 open=False,
+                elem_classes=["admin-only"],
             ):
                 gr.Markdown(
                     "Pour recuperer tes cles API stockees dans Settings HF "
@@ -4375,9 +4402,6 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 inputs=[_export_pw],
                 outputs=[_export_status, _export_textbox, _export_dlfile],
             )
-
-            gr.Markdown("---")
-            gr.Markdown(AIDE_MD)
 
         # ----- Sync des dropdowns modèle entre onglets -----
         # 1) Le marquage « épuisé » d'un modèle (blown PerDay) doit être
