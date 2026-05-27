@@ -307,7 +307,11 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # du serveur Ollama (mappage standard /v1/ ↔ /api/ en interne). Cert
 # self-signed → verify=False côté httpx (injecté dans le build).
 # Pas de clé API requise (Ollama LIRMM est en accès libre).
-LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/v1/"
+LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/"
+# Note : SANS /v1/ a la fin — ChatOllama (langchain-ollama) append
+# automatiquement /api/chat. On utilise l'API native d'Ollama (pas
+# /v1/chat/completions OpenAI-compat) parce que ce dernier donnait
+# des reponses vides avec tool calling.
 # Modèles Ollama LIRMM. CUSTOM côté serveur : on a écrit un Modelfile
 # qui réutilise le blob du vanilla + un TEMPLATE custom qui inclut
 # `{{ if .Tools }}` pour qu'Ollama détecte la capability `tools`
@@ -1116,27 +1120,20 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     # retournent le content DIRECTEMENT dans .content cote API, le
     # workaround reasoning→content n'est plus necessaire en pratique.
     # Si un futur modele revient sur PARSER thinking, on revisitera.
-    # streaming=True : OBLIGATOIRE pour traverser le proxy Apache
-    # LIRMM (`portail-aren.lirmm.fr/liquidJDM`) qui a un ProxyTimeout
-    # par defaut de 60s. Sans streaming, ChatOpenAI attend la fin
-    # complete de la generation cote serveur, et si Ollama prend >60s
-    # (cas typique du prefill de notre prompt ~20k tokens) → Apache
-    # coupe → reponse vide cote client.
-    # Avec streaming, Ollama emet des chunks SSE en continu → Apache
-    # les forward au fur et a mesure → connexion vivante, pas de
-    # timeout. Pour que ca marche correctement il fallait AUSSI retirer
-    # le wrapper _LiquidChatOpenAI dont le proxy __getattr__ cassait
-    # l'assemblage des chunks par langgraph (cf. commit precedent).
-    return ChatOpenAI(
+    # Bascule sur ChatOllama (langchain-ollama) au lieu de ChatOpenAI :
+    # le chemin /v1/chat/completions (OpenAI-compat) avec tool calling
+    # donnait des reponses vides cote app (le user test direct avec
+    # /api/generate marche, donc le modele est OK, mais le pipeline
+    # langchain-openai ↔ Ollama-v1-tools assemble mal). ChatOllama
+    # parle l'API native /api/chat, format que les modeles Ollama
+    # comprennent nativement → tool calling fiable.
+    from langchain_ollama import ChatOllama
+    return ChatOllama(
         model=routed,
-        base_url=LIQUID_BASE_URL,
-        api_key="ollama",  # placeholder — Ollama ne vérifie pas
-        temperature=0.1,   # recommandé Liquid AI (cf. model card HF)
-        timeout=600.0,     # 10 min, large pour prefill 20k tokens + reponse
-        streaming=True,    # critique pour proxy LIRMM (cf. note ci-dessus)
-        extra_body={
-            "keep_alive": "30m",  # garde modele + KV cache 30 min
-        },
+        base_url=LIQUID_BASE_URL,  # SANS /v1/ — ChatOllama append /api/chat
+        temperature=0.1,           # recommandé Liquid AI (cf. model card HF)
+        client_kwargs={"timeout": 600.0},  # 10 min couvre prefill 20k tokens
+        keep_alive="30m",          # garde modele + KV cache entre tours
     )
 
 

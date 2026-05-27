@@ -23,6 +23,11 @@ langgraph>=0.2
 langchain-anthropic>=0.2
 langchain-openai>=0.2
 langchain-google-genai>=2.0
+# - langchain-ollama : API native Ollama (/api/chat) pour les modeles
+#                      heberges au LIRMM. Le chemin /v1/chat/completions
+#                      via langchain-openai donnait des reponses vides
+#                      avec tool calling — natif Ollama est fiable.
+langchain-ollama>=0.2
 
 # UI — Gradio 5.x (résout: pas de pydub/audioop, pas de HfFolder removed,
 # pas du bug jinja2 dict cache, et meilleurs defaults pour HF Spaces)
