@@ -323,12 +323,12 @@ LIQUID_BASE_URL = "https://portail-aren.lirmm.fr/liquidJDM/"
 #   - lfm2-24b-a2b-fast-tools (24B-A2B MoE, plus capable)
 LIQUID_MODELS = {
     "lfm2.5-1.2b-fast-tools": "Liquid LFM 2.5 1.2B Instruct (LIRMM, rapide)",
-    "lfm2-24b-a2b-fast-tools": "Liquid LFM 2 24B-A2B MoE (LIRMM, capable)",
+    "qwen3-30b-a3b": "Qwen3 30B-A3B MoE (LIRMM, capable, ~lent)",
 }
 # Routing model_id (clean, Dropdown-friendly) → tag exact côté Ollama.
 LIQUID_MODEL_ROUTING = {
     "lfm2.5-1.2b-fast-tools": "lfm2.5-1.2b-fast-tools",
-    "lfm2-24b-a2b-fast-tools": "lfm2-24b-a2b-fast-tools",
+    "qwen3-30b-a3b": "qwen3:30b-a3b",
 }
 
 # Le SEUL modèle pour lequel le pool de clés bascule sur PerDay.
@@ -4435,6 +4435,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     value="lfm2.5-1.2b-fast-tools",
                     label="Modèle Ollama (tag exact côté LIRMM)",
                 )
+                _test_thinking = gr.Checkbox(
+                    label="Raisonnement (CoT)",
+                    value=False,
+                    info="Active `think=true` côté Ollama (le modèle doit "
+                         "avoir la capability `thinking`, sinon erreur 400)",
+                )
             _test_chat = gr.Chatbot(
                 type="messages", label="Chat brut",
                 height=400, show_label=False,
@@ -4446,11 +4452,13 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             _test_send = gr.Button("📨 Envoyer", variant="primary")
             _test_status = gr.Markdown(visible=False)
 
-            def _liquid_brute_chat(message, history, model_tag):
-                """Chat direct ChatOllama.invoke, sans agent ni tools.
-                Retourne (history mise a jour, status)."""
+            def _liquid_brute_chat(message, history, model_tag, use_reasoning):
+                """Chat direct ChatOllama avec STREAMING + raisonnement
+                optionnel. Sans agent ni tools.
+                Yield (history mise a jour, status) au fur et a mesure."""
                 if not message or not message.strip():
-                    return history, gr.update(visible=False)
+                    yield history, gr.update(visible=False)
+                    return
                 import time as _t_chat
                 from langchain_ollama import ChatOllama
                 from langchain_core.messages import (
@@ -4460,22 +4468,28 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 history.append({"role": "user", "content": message})
                 history.append({"role": "assistant", "content": "*⏳ ...*"})
                 yield history, gr.update(
-                    visible=True, value=f"⏳ Appel `{model_tag}` en cours…"
+                    visible=True,
+                    value=f"⏳ Appel `{model_tag}` "
+                          f"(raisonnement={'✓' if use_reasoning else '✗'})…"
                 )
 
                 try:
-                    llm = ChatOllama(
-                        model=model_tag,
-                        base_url=LIQUID_BASE_URL,
-                        temperature=0.1,
-                        client_kwargs={"timeout": 600.0},
-                        keep_alive="30m",
-                    )
+                    kwargs = {
+                        "model": model_tag,
+                        "base_url": LIQUID_BASE_URL,
+                        "temperature": 0.1,
+                        "client_kwargs": {"timeout": 600.0},
+                        "keep_alive": "30m",
+                    }
+                    if use_reasoning:
+                        # active `think=true` cote Ollama. Si le modele ne
+                        # supporte pas → erreur 400 attrapee plus bas.
+                        kwargs["reasoning"] = True
+                    llm = ChatOllama(**kwargs)
                     msgs = [SystemMessage(
                         content="Tu es un assistant qui répond en français de "
                                 "façon concise."
                     )]
-                    # Reconvertit l'historique en messages (sauf le placeholder)
                     for m in history[:-2]:
                         if m["role"] == "user":
                             msgs.append(HumanMessage(content=m["content"]))
@@ -4484,18 +4498,61 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     msgs.append(HumanMessage(content=message))
 
                     t0 = _t_chat.time()
-                    response = llm.invoke(msgs)
+                    # STREAMING : on yield à chaque chunk reçu
+                    accumulated_content = ""
+                    accumulated_reasoning = ""
+                    n_chunks = 0
+                    for chunk in llm.stream(msgs):
+                        n_chunks += 1
+                        if hasattr(chunk, "content") and chunk.content:
+                            # content peut être str ou list (multi-content)
+                            if isinstance(chunk.content, str):
+                                accumulated_content += chunk.content
+                            elif isinstance(chunk.content, list):
+                                for block in chunk.content:
+                                    if isinstance(block, str):
+                                        accumulated_content += block
+                                    elif isinstance(block, dict) and block.get("text"):
+                                        accumulated_content += block["text"]
+                        # Le reasoning (CoT) peut arriver dans additional_kwargs
+                        akw = getattr(chunk, "additional_kwargs", {}) or {}
+                        r = akw.get("reasoning") or akw.get("thinking") or ""
+                        if r:
+                            accumulated_reasoning += r if isinstance(r, str) else ""
+
+                        # Update UI à chaque chunk
+                        display = accumulated_content or "*(en cours…)*"
+                        if accumulated_reasoning:
+                            # Bloc CoT en haut, replié
+                            display = (
+                                f"<details><summary>🧠 Raisonnement "
+                                f"({len(accumulated_reasoning)} chars)</summary>\n\n"
+                                f"<small><i>{accumulated_reasoning}</i></small>\n\n"
+                                f"</details>\n\n{display}"
+                            )
+                        history[-1] = {"role": "assistant", "content": display}
+                        yield history, gr.update(
+                            visible=True,
+                            value=f"⏳ Streaming… {n_chunks} chunks, "
+                                  f"{len(accumulated_content)} chars content, "
+                                  f"{len(accumulated_reasoning)} chars CoT"
+                        )
+
                     elapsed = _t_chat.time() - t0
-                    content = response.content or ""
-                    if not content.strip():
-                        content = "*(réponse vide — même en direct ! Le modèle " \
-                                  "ne renvoie rien.)*"
-                    history[-1] = {"role": "assistant", "content": content}
+                    final = accumulated_content or "*(réponse vide)*"
+                    if accumulated_reasoning:
+                        final = (
+                            f"<details><summary>🧠 Raisonnement "
+                            f"({len(accumulated_reasoning)} chars)</summary>\n\n"
+                            f"<small><i>{accumulated_reasoning}</i></small>\n\n"
+                            f"</details>\n\n{final}"
+                        )
+                    history[-1] = {"role": "assistant", "content": final}
                     yield history, gr.update(
                         visible=True,
-                        value=f"✅ Réponse en {elapsed:.1f}s — "
-                              f"`{len(content)}` chars, "
-                              f"type=`{type(response).__name__}`",
+                        value=f"✅ {elapsed:.1f}s — {n_chunks} chunks, "
+                              f"{len(accumulated_content)} chars content, "
+                              f"{len(accumulated_reasoning)} chars CoT"
                     )
                 except Exception as e:
                     history[-1] = {"role": "assistant",
@@ -4506,12 +4563,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
             _test_send.click(
                 _liquid_brute_chat,
-                inputs=[_test_msg, _test_chat, _test_model],
+                inputs=[_test_msg, _test_chat, _test_model, _test_thinking],
                 outputs=[_test_chat, _test_status],
             ).then(lambda: "", outputs=[_test_msg])
             _test_msg.submit(
                 _liquid_brute_chat,
-                inputs=[_test_msg, _test_chat, _test_model],
+                inputs=[_test_msg, _test_chat, _test_model, _test_thinking],
                 outputs=[_test_chat, _test_status],
             ).then(lambda: "", outputs=[_test_msg])
 
