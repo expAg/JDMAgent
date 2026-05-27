@@ -1116,10 +1116,14 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     # marge confortable pour les tours longs et le 24B-A2B (prefill plus
     # lent encore).
     #
-    # keep_alive=30m : garde le modele en RAM ET son KV cache entre
+    # keep_alive=5m : garde le modele en RAM ET son KV cache entre
     # les calls successifs. Les tours suivants reutilisent le prefix
     # cache → enorme gain (le system prompt n'est plus re-prefille).
-    # Sans ca, Ollama decharge apres ~5min d'inactivite par defaut.
+    # ATTENTION : sur le serveur LIRMM (CPU pur, pas de GPU), garder
+    # plusieurs modeles chauds (qwen3:30b = 19 GB + 1.2b + thinking)
+    # sature la RAM et fait s'ecrouler tous les modeles. On reste sur
+    # 5m → le 1.2b reste chaud entre tours d'une meme session, mais
+    # un modele non-utilise libere la RAM rapidement.
     #
     # streaming=True : Ollama streame les tokens des qu'ils sortent →
     # la connexion HTTP reste vivante, pas de coupure middleware sur
@@ -1153,7 +1157,7 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
         "base_url": LIQUID_BASE_URL,  # SANS /v1/ — ChatOllama append /api/chat
         "temperature": 0.1,           # recommandé Liquid AI (cf. model card HF)
         "client_kwargs": {"timeout": 600.0},  # 10 min couvre prefill 20k tokens
-        "keep_alive": "30m",          # garde modele + KV cache entre tours
+        "keep_alive": "5m",           # garde modele chaud sans saturer la RAM LIRMM CPU
     }
     # Active reasoning uniquement si le modele le supporte ET demande
     if use_thinking and model_id in THINKING_SUPPORTED_MODELS:
@@ -4485,7 +4489,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         "base_url": LIQUID_BASE_URL,
                         "temperature": 0.1,
                         "client_kwargs": {"timeout": 600.0},
-                        "keep_alive": "30m",
+                        "keep_alive": "5m",
                         # Force EXPLICITE reasoning (True ou False) plutot que
                         # de laisser le defaut (qui pour les modeles thinking-
                         # capable peut activer le CoT cote Ollama meme sans
