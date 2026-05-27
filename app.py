@@ -4216,34 +4216,40 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
             # `EXPORT_SECRETS_PASSWORD`) gate l'acces. Sans ce mot de passe
             # cote utilisateur ET cote Space, rien n'est revele. Allowlist
             # stricte des cles exportees — pas tout l'env systeme.
-            gr.Markdown(
-                "## 🔐 Export des secrets HF (proprietaire uniquement)\n\n"
-                "Pour recuperer tes cles API stockees dans Settings HF "
-                "(reconstituer un `.env` pour deployer ailleurs : LIRMM, "
-                "Render, local…). Le mot de passe doit etre defini au "
-                "prealable comme Secret HF nomme `EXPORT_SECRETS_PASSWORD`."
-            )
-            with gr.Row():
-                _export_pw = gr.Textbox(
-                    label="Mot de passe (Secret HF `EXPORT_SECRETS_PASSWORD`)",
-                    type="password", placeholder="…",
-                    scale=3,
+            # UI : wrappe dans une Accordion(open=False) — le panneau est
+            # plie par defaut pour ne pas distraire le visiteur lambda.
+            with gr.Accordion(
+                "🔐 Export des secrets HF (proprietaire uniquement)",
+                open=False,
+            ):
+                gr.Markdown(
+                    "Pour recuperer tes cles API stockees dans Settings HF "
+                    "(reconstituer un `.env` pour deployer ailleurs : VPS, "
+                    "serveur dedie, machine locale…). Le mot de passe doit "
+                    "etre defini au prealable comme Secret HF nomme "
+                    "`EXPORT_SECRETS_PASSWORD`."
                 )
-                _export_btn = gr.Button(
-                    "🔓 Decrypter et afficher",
-                    variant="primary", scale=1,
+                with gr.Row():
+                    _export_pw = gr.Textbox(
+                        label="Mot de passe (Secret HF `EXPORT_SECRETS_PASSWORD`)",
+                        type="password", placeholder="…",
+                        scale=3,
+                    )
+                    _export_btn = gr.Button(
+                        "🔓 Decrypter et afficher",
+                        variant="primary", scale=1,
+                    )
+                _export_status = gr.Markdown(visible=False)
+                _export_textbox = gr.Textbox(
+                    label=".env reconstruit (copie ou telecharge)",
+                    lines=15, max_lines=30,
+                    show_copy_button=True, interactive=False,
+                    visible=False,
                 )
-            _export_status = gr.Markdown(visible=False)
-            _export_textbox = gr.Textbox(
-                label=".env reconstruit (copie ou telecharge)",
-                lines=15, max_lines=30,
-                show_copy_button=True, interactive=False,
-                visible=False,
-            )
-            _export_dlfile = gr.File(
-                label="⬇️ Telecharger .env",
-                visible=False, interactive=False,
-            )
+                _export_dlfile = gr.File(
+                    label="⬇️ Telecharger .env",
+                    visible=False, interactive=False,
+                )
 
             def _export_secrets(pw: str):
                 """Renvoie le .env reconstitue si le mot de passe match.
