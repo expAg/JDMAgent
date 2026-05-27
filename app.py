@@ -4219,6 +4219,8 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     "OPENAI_API_KEY",
                     "GOOGLE_API_KEY",
                     "GOOGLE_API_KEYS",  # pool CSV multi-cles
+                    "GROQ_API_KEY",
+                    "DEEPSEEK_API_KEY",
                     "JDM_DROPS_API_KEY",
                     "EXPORT_SECRETS_PASSWORD",  # le mdp lui-meme
                     # Configuration (non sensible mais utile pour redeploy)
@@ -4227,11 +4229,24 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     "LLM_TEMPERATURE",
                     "JDM_BASE_URL",
                     "JDM_TIMEOUT",
-                    "JDM_DROPS_URL",
+                    "JDM_DROPS_URL",  # fallback DEFAULT_ENDPOINT_URL si non defini
                     "JDM_CACHE_TTL_META",
                     "JDM_CACHE_TTL_DATA",
                     "OLLAMA_BASE_URL",
                 ]
+                # Fallbacks pour les variables qui ont une valeur par defaut
+                # hardcodee dans le code et qu'on veut quand meme voir
+                # apparaitre dans le .env exporte (sinon perte d'info si
+                # l'utilisateur n'a jamais set l'env var explicitement).
+                try:
+                    from jdm_agent.enrich.uploader import (
+                        DEFAULT_ENDPOINT_URL as _DROPS_DEFAULT_URL,
+                    )
+                except Exception:
+                    _DROPS_DEFAULT_URL = "http://jeuxdemots.org/LLMDrops.php"
+                FALLBACK_DEFAULTS = {
+                    "JDM_DROPS_URL": _DROPS_DEFAULT_URL,
+                }
                 expected = _os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
                 if not expected:
                     return (
@@ -4262,13 +4277,22 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 ]
                 present = []
                 missing = []
+                from_default = []
                 for key in EXPORTABLE_ENV_VARS:
                     val = _os.environ.get(key, "")
+                    used_default = False
+                    if not val and key in FALLBACK_DEFAULTS:
+                        val = FALLBACK_DEFAULTS[key]
+                        used_default = True
                     if val:
                         # Echappe les retours ligne et guillemets
                         safe = val.replace("\\", "\\\\").replace('"', '\\"')
-                        lines.append(f'{key}="{safe}"')
-                        present.append(key)
+                        comment = "  # valeur par defaut" if used_default else ""
+                        lines.append(f'{key}="{safe}"{comment}')
+                        if used_default:
+                            from_default.append(key)
+                        else:
+                            present.append(key)
                     else:
                         missing.append(key)
                 content = "\n".join(lines) + "\n"
@@ -4280,9 +4304,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                 tmp.write(content)
                 tmp.close()
                 status = (
-                    f"✅ **{len(present)} variables exportees** : "
-                    f"`{', '.join(present)}`"
+                    f"✅ **{len(present)} variables exportees** depuis "
+                    f"l'env : `{', '.join(present)}`"
                 )
+                if from_default:
+                    status += (
+                        f"\n\n🔧 **{len(from_default)} variables avec valeur "
+                        f"par defaut** (env non set) : "
+                        f"`{', '.join(from_default)}`"
+                    )
                 if missing:
                     status += (
                         f"\n\nℹ️ **{len(missing)} variables non definies** "
