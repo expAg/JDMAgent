@@ -2418,9 +2418,16 @@ _HEAD_JS = """
 
 _CHATBOT_CSS = """
 /* ----- Gate admin : .admin-only cache par defaut, revele si <body>
-   a la classe .admin-mode (posee par le JS quand ?admin=1 dans URL). */
+   a la classe .admin-mode (posee par le JS quand ?admin=1 dans URL).
+   IMPORTANT : on EVITE le selector `body.admin-mode ...` parce que
+   Gradio v5 scope le CSS injecte via le param `css=` et la regle avec
+   `body` ne matche pas (constat empirique : computed display reste
+   `none` meme avec body.admin-mode set). On utilise `.admin-mode
+   .admin-only` (le body porte .admin-mode, ses descendants .admin-only
+   sont reveles). Specificite (0,2,0) > (0,1,0) → gagne sur la regle
+   hide. */
 .admin-only { display: none !important; }
-body.admin-mode .admin-only { display: block !important; }
+.admin-mode .admin-only { display: block !important; }
 
 /* Checkbox 'Raisonnement' flottante : position absolue dans le coin
    haut-droit du conteneur de la Column qui contient le dropdown modèle
