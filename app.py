@@ -2662,7 +2662,7 @@ ul[role="listbox"] li[data-jdm-byok="1"] .inner-item {
 }
 """
 
-with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_CSS,
+with gr.Blocks(theme=THEME, title="Jarvis : Agent JeuxDeMots", head=_HEAD_JS, css=_CHATBOT_CSS,
                fill_width=True) as demo:
 
     # Les deux dropdowns « Modèle » sont DÉCLARÉS ici (avant les tabs)
