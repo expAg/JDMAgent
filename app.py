@@ -4395,6 +4395,108 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
         with gr.Tab("🛠️ Aide / Installation"):
             gr.Markdown(AIDE_MD)
 
+        # ----- Tab 7: 🧪 Test brut Liquid (debug, Phase 14) -----
+        # Onglet diagnostique : ChatOllama direct, AUCUN agent, AUCUN tool,
+        # AUCUN system prompt enorme. Juste pour valider que le pipeline
+        # HF Spaces ↔ langchain-ollama ↔ proxy LIRMM marche bout en bout
+        # sur les modeles Liquid. Si ce chat repond mais les Jarvis flows
+        # restent vides → confirmation que c'est l'overload (27 tools +
+        # gros prompt) qui ecroule le modele.
+        with gr.Tab("🧪 Test brut Liquid"):
+            gr.Markdown(
+                "**Test de diagnostic** — chat direct vers les modèles Liquid "
+                "LIRMM, **sans** agent / tools / system prompt énorme. "
+                "Si ça répond ici mais pas dans Jarvis → c'est la charge "
+                "cognitive (27 tools + gros prompt) qui écroule le modèle. "
+                "Si ça ne répond pas non plus → problème réseau / proxy / "
+                "tag Ollama manquant."
+            )
+            with gr.Row():
+                _test_model = gr.Dropdown(
+                    choices=list(LIQUID_MODEL_ROUTING.values()),
+                    value="lfm2.5-1.2b-fast-tools",
+                    label="Modèle Ollama (tag exact côté LIRMM)",
+                )
+            _test_chat = gr.Chatbot(
+                type="messages", label="Chat brut",
+                height=400, show_label=False,
+            )
+            _test_msg = gr.Textbox(
+                placeholder="Tape un message (ex: « Bonjour »)…",
+                show_label=False,
+            )
+            _test_send = gr.Button("📨 Envoyer", variant="primary")
+            _test_status = gr.Markdown(visible=False)
+
+            def _liquid_brute_chat(message, history, model_tag):
+                """Chat direct ChatOllama.invoke, sans agent ni tools.
+                Retourne (history mise a jour, status)."""
+                if not message or not message.strip():
+                    return history, gr.update(visible=False)
+                import time as _t_chat
+                from langchain_ollama import ChatOllama
+                from langchain_core.messages import (
+                    HumanMessage, SystemMessage, AIMessage,
+                )
+                history = list(history or [])
+                history.append({"role": "user", "content": message})
+                history.append({"role": "assistant", "content": "*⏳ ...*"})
+                yield history, gr.update(
+                    visible=True, value=f"⏳ Appel `{model_tag}` en cours…"
+                )
+
+                try:
+                    llm = ChatOllama(
+                        model=model_tag,
+                        base_url=LIQUID_BASE_URL,
+                        temperature=0.1,
+                        client_kwargs={"timeout": 600.0},
+                        keep_alive="30m",
+                    )
+                    msgs = [SystemMessage(
+                        content="Tu es un assistant qui répond en français de "
+                                "façon concise."
+                    )]
+                    # Reconvertit l'historique en messages (sauf le placeholder)
+                    for m in history[:-2]:
+                        if m["role"] == "user":
+                            msgs.append(HumanMessage(content=m["content"]))
+                        elif m["role"] == "assistant":
+                            msgs.append(AIMessage(content=m["content"]))
+                    msgs.append(HumanMessage(content=message))
+
+                    t0 = _t_chat.time()
+                    response = llm.invoke(msgs)
+                    elapsed = _t_chat.time() - t0
+                    content = response.content or ""
+                    if not content.strip():
+                        content = "*(réponse vide — même en direct ! Le modèle " \
+                                  "ne renvoie rien.)*"
+                    history[-1] = {"role": "assistant", "content": content}
+                    yield history, gr.update(
+                        visible=True,
+                        value=f"✅ Réponse en {elapsed:.1f}s — "
+                              f"`{len(content)}` chars, "
+                              f"type=`{type(response).__name__}`",
+                    )
+                except Exception as e:
+                    history[-1] = {"role": "assistant",
+                                   "content": f"❌ Erreur : {e}"}
+                    yield history, gr.update(
+                        visible=True, value=f"❌ {type(e).__name__}: {e}"
+                    )
+
+            _test_send.click(
+                _liquid_brute_chat,
+                inputs=[_test_msg, _test_chat, _test_model],
+                outputs=[_test_chat, _test_status],
+            ).then(lambda: "", outputs=[_test_msg])
+            _test_msg.submit(
+                _liquid_brute_chat,
+                inputs=[_test_msg, _test_chat, _test_model],
+                outputs=[_test_chat, _test_status],
+            ).then(lambda: "", outputs=[_test_msg])
+
         # ----- Sync des dropdowns modèle entre onglets -----
         # 1) Le marquage « épuisé » d'un modèle (blown PerDay) doit être
         #    visible sur les DEUX dropdowns sans avoir à lancer un flow.
