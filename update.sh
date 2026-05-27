@@ -84,15 +84,22 @@ fi
 RESTART_DONE=0
 RESTART_METHOD=""
 
-# Cas 1 : Service systemd nomme `jdmagent` (le plus propre)
-if command -v systemctl >/dev/null 2>&1 \
-   && systemctl list-unit-files --no-legend --no-pager 2>/dev/null \
-        | grep -q '^jdmagent\.service'; then
+# Detection du service : on cherche le fichier directement (plus fiable
+# que `systemctl list-unit-files` dont le format/cache peut varier).
+SVC_PATH=""
+for p in /etc/systemd/system/jdmagent.service /lib/systemd/system/jdmagent.service /usr/lib/systemd/system/jdmagent.service; do
+    if [ -f "$p" ]; then
+        SVC_PATH="$p"
+        break
+    fi
+done
+
+if [ -n "$SVC_PATH" ] && command -v systemctl >/dev/null 2>&1; then
     if [ "$NO_UPDATE" = "0" ]; then
-        step "Service systemd 'jdmagent' detecte"
+        step "Service systemd detecte : $SVC_PATH"
         if systemctl restart jdmagent 2>/dev/null; then
             RESTART_DONE=1
-            RESTART_METHOD="systemctl restart jdmagent (en tant que ton user)"
+            RESTART_METHOD="systemctl restart jdmagent (sans sudo)"
         elif sudo -n systemctl restart jdmagent 2>/dev/null; then
             RESTART_DONE=1
             RESTART_METHOD="sudo systemctl restart jdmagent (sudo sans mdp)"
@@ -144,28 +151,25 @@ else
         echo "        obligatoire pour qu'elles soient chargees."
     fi
     echo ""
-    echo "  Pour automatiser ce restart a l'avenir, cree un service"
-    echo "  systemd nomme 'jdmagent'. Copie-colle ce bloc tel quel :"
-    echo "  (les valeurs sont deja substituees avec ton contexte actuel)"
+    echo "  Pour automatiser ce restart a l'avenir, cree le service"
+    echo "  systemd 'jdmagent'. Copie-colle ce bloc tel quel :"
     echo ""
     echo "     sudo tee /etc/systemd/system/jdmagent.service > /dev/null <<'EOF'"
     echo "     [Unit]"
-    echo "     Description=JDMAgent Gradio"
+    echo "     Description=JDMAgent"
     echo "     After=network.target"
     echo ""
     echo "     [Service]"
-    # IMPORTANT : on expand $USER et $SCRIPT_DIR ICI, avant l'echo,
-    # pour que le bloc affiche les valeurs LITTERALES (hguenoune, /chemin/...).
-    # Sinon systemd recoit `User=$USER` en string non-substituee et echoue
-    # avec status=217/USER. Le 'EOF' (quote) cote heredoc empeche le shell
-    # de l'utilisateur de re-substituer au paste — c'est nous qui avons
-    # deja substitue ici, on veut juste qu'il colle tel quel.
-    echo "     User=$(id -un)"
+    # User=root par choix explicite (note : l'app a alors acces complet
+    # au systeme — accepter cette contrepartie de la simplicite).
+    # Pas d'EnvironmentFile : l'app charge .env via python-dotenv au
+    # demarrage. EnvironmentFile= systemd ne sait pas parser les
+    # commentaires inline (KEY=val # comment) qu'on a dans .env.example.
+    echo "     User=root"
     echo "     WorkingDirectory=$SCRIPT_DIR"
     echo "     ExecStart=$SCRIPT_DIR/.venv/bin/python $SCRIPT_DIR/app.py"
     echo "     Restart=on-failure"
     echo "     RestartSec=5"
-    echo "     EnvironmentFile=$SCRIPT_DIR/.env"
     echo ""
     echo "     [Install]"
     echo "     WantedBy=multi-user.target"
@@ -175,6 +179,7 @@ else
     echo "     sudo systemctl enable --now jdmagent"
     echo "     sudo systemctl status jdmagent"
     echo ""
+    echo "  Ou bien : relance ./install.sh qui le cree automatiquement."
     echo "  Apres ca, ./update.sh restart automatiquement."
 fi
 echo ""

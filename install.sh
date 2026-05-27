@@ -68,6 +68,44 @@ if [ -f ".env" ] && [ ! -w ".env" ]; then
     warn "Config admin ne pourra pas sauvegarder. Fix : chmod u+w .env"
 fi
 
+# 6. Service systemd : creation automatique si systemctl dispo
+# Permet a ./update.sh de restart l'app sans intervention.
+SVC_CREATED=0
+SVC_PATH="/etc/systemd/system/jdmagent.service"
+if command -v systemctl >/dev/null 2>&1; then
+    if [ -f "$SVC_PATH" ]; then
+        warn "Le service $SVC_PATH existe deja — on ne le touche pas"
+    else
+        step "Creation du service systemd $SVC_PATH"
+        # sudo necessaire — peut prompter pour le mdp.
+        if sudo tee "$SVC_PATH" > /dev/null <<EOF
+[Unit]
+Description=JDMAgent
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=$SCRIPT_DIR
+ExecStart=$SCRIPT_DIR/.venv/bin/python $SCRIPT_DIR/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        then
+            sudo systemctl daemon-reload
+            sudo systemctl enable jdmagent >/dev/null 2>&1 || true
+            echo "   Service cree + enable (sera lance automatiquement au boot)"
+            SVC_CREATED=1
+        else
+            warn "Echec creation du service (sudo refuse ?). Tu pourras"
+            warn "le creer plus tard via ./update.sh (instructions affichees"
+            warn "en fin de script si pas de service detecte)."
+        fi
+    fi
+fi
+
 # ===== Message final tres visible =====
 echo ""
 echo -e "${CYAN}${BOLD}===============================================================${RESET}"
@@ -84,11 +122,22 @@ if [ "$ENV_NEW" = "1" ]; then
     echo "       - JDM_DROPS_API_KEY  (pour soumettre a JeuxDeMots)"
     echo "       - APP_SUBPATH=/MonChemin  (si reverse proxy sous-chemin)"
     echo ""
-    echo -e "  ${YELLOW}${BOLD}2.${RESET} ${BOLD}LANCE${RESET} l'app :"
+    NEXT_STEP=2
 else
-    echo -e "  ${YELLOW}${BOLD}1.${RESET} ${BOLD}RELANCE${RESET} l'app pour prendre en compte les changements :"
+    NEXT_STEP=1
 fi
-echo -e "         ${BOLD}.venv/bin/python app.py${RESET}"
+
+if [ "$SVC_CREATED" = "1" ]; then
+    echo -e "  ${YELLOW}${BOLD}${NEXT_STEP}.${RESET} ${BOLD}LANCE${RESET} le service systemd :"
+    echo -e "         ${BOLD}sudo systemctl start jdmagent${RESET}"
+    echo ""
+    echo "     Et pour le surveiller :"
+    echo -e "         ${BOLD}sudo systemctl status jdmagent${RESET}"
+    echo -e "         ${BOLD}sudo journalctl -u jdmagent -f${RESET}"
+else
+    echo -e "  ${YELLOW}${BOLD}${NEXT_STEP}.${RESET} ${BOLD}LANCE${RESET} l'app :"
+    echo -e "         ${BOLD}.venv/bin/python app.py${RESET}"
+fi
 echo ""
 echo "     L'app ecoute sur http://0.0.0.0:7860 (Gradio)."
 echo "     Acces admin : http://ton-domaine.fr/?admin=1"
