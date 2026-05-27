@@ -1424,6 +1424,10 @@ def run_jarvis_flow(
             consecutive_rate_limit_hits = 0
             MAX_CONSECUTIVE_RATE_LIMIT = 3
             proactive_condense_count = 0
+            # === DIAG TEMPORAIRE : numerotation des chunks reçus du stream
+            # pour traquer le bug Gemini 2.5 « fin de stream prematuree ».
+            # À supprimer une fois le bug identifie. ===
+            _diag_chunk_n = 0
             with budget_context(limit=limit) as budget:
                 # boucle retry quota : ILLIMITÉ tant que le délai
                 # retry est court (cf. detect_rate_limit_retry, cap
@@ -1450,6 +1454,38 @@ def run_jarvis_flow(
                                     accumulated_messages.append(m)
                                     if isinstance(m, AIMessage):
                                         tcs = getattr(m, "tool_calls", []) or []
+                                        # === DIAG TEMPORAIRE : dump complet de
+                                        # l'AIMessage reçue pour traquer le bug
+                                        # de fin de stream prematuree. ===
+                                        _diag_chunk_n += 1
+                                        try:
+                                            _diag_addl = getattr(m, "additional_kwargs", {}) or {}
+                                            _diag_meta = getattr(m, "response_metadata", {}) or {}
+                                            _diag_invalid = getattr(m, "invalid_tool_calls", None)
+                                            _diag_content_repr = repr(getattr(m, "content", ""))[:200]
+                                            _diag_finish = (
+                                                _diag_meta.get("finish_reason")
+                                                or _diag_meta.get("stop_reason")
+                                                or "?"
+                                            )
+                                            _diag_line = (
+                                                f"<div class=\"jdm-narration\">"
+                                                f"🐛 <b>chunk#{_diag_chunk_n}</b> "
+                                                f"AIMsg: tcs={len(tcs)} "
+                                                f"finish={_diag_finish} "
+                                                f"addl_keys={list(_diag_addl.keys())} "
+                                                f"invalid_tcs={_diag_invalid!r} "
+                                                f"content_len={len(str(getattr(m,'content','') or ''))} "
+                                                f"content_repr={_diag_content_repr}"
+                                                f"</div>"
+                                            )
+                                            _add_line(_diag_line)
+                                        except Exception as _diag_e:
+                                            _add_line(
+                                                f"<div class=\"jdm-narration\">"
+                                                f"🐛 chunk#{_diag_chunk_n} diag-error: {_diag_e}"
+                                                f"</div>"
+                                            )
                                         # 1) Chain-of-thought (Anthropic Extended,
                                         #    Gemini avec include_thoughts, o1/o3).
                                         #    Style : blockquote + <small> + couleur
