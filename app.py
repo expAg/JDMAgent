@@ -4480,11 +4480,12 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         "temperature": 0.1,
                         "client_kwargs": {"timeout": 600.0},
                         "keep_alive": "30m",
+                        # Force EXPLICITE reasoning (True ou False) plutot que
+                        # de laisser le defaut (qui pour les modeles thinking-
+                        # capable peut activer le CoT cote Ollama meme sans
+                        # qu'on demande → content vide + tout dans thinking).
+                        "reasoning": bool(use_reasoning),
                     }
-                    if use_reasoning:
-                        # active `think=true` cote Ollama. Si le modele ne
-                        # supporte pas → erreur 400 attrapee plus bas.
-                        kwargs["reasoning"] = True
                     llm = ChatOllama(**kwargs)
                     msgs = [SystemMessage(
                         content="Tu es un assistant qui répond en français de "
@@ -4501,58 +4502,128 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     # STREAMING : on yield à chaque chunk reçu
                     accumulated_content = ""
                     accumulated_reasoning = ""
+                    accumulated_tool_calls = []
+                    debug_first_chunks = []  # capture les 3 premiers pour debug
                     n_chunks = 0
                     for chunk in llm.stream(msgs):
                         n_chunks += 1
-                        if hasattr(chunk, "content") and chunk.content:
-                            # content peut être str ou list (multi-content)
-                            if isinstance(chunk.content, str):
-                                accumulated_content += chunk.content
-                            elif isinstance(chunk.content, list):
-                                for block in chunk.content:
+                        if n_chunks <= 3:
+                            # Debug : capture la structure brute du chunk
+                            try:
+                                debug_first_chunks.append(
+                                    f"chunk#{n_chunks}: content={chunk.content!r}, "
+                                    f"additional_kwargs={getattr(chunk, 'additional_kwargs', {})!r}, "
+                                    f"tool_call_chunks={getattr(chunk, 'tool_call_chunks', None)!r}"
+                                )
+                            except Exception:
+                                pass
+                        # 1) content classique (str ou list de blocks)
+                        c = getattr(chunk, "content", None)
+                        if c:
+                            if isinstance(c, str):
+                                accumulated_content += c
+                            elif isinstance(c, list):
+                                for block in c:
                                     if isinstance(block, str):
                                         accumulated_content += block
-                                    elif isinstance(block, dict) and block.get("text"):
-                                        accumulated_content += block["text"]
-                        # Le reasoning (CoT) peut arriver dans additional_kwargs
+                                    elif isinstance(block, dict):
+                                        if block.get("text"):
+                                            accumulated_content += block["text"]
+                                        # Ollama peut aussi mettre dans 'thinking' inline
+                                        if block.get("thinking"):
+                                            accumulated_reasoning += block["thinking"]
+                        # 2) additional_kwargs : reasoning, thinking
                         akw = getattr(chunk, "additional_kwargs", {}) or {}
-                        r = akw.get("reasoning") or akw.get("thinking") or ""
-                        if r:
-                            accumulated_reasoning += r if isinstance(r, str) else ""
+                        for key in ("reasoning", "thinking", "reasoning_content"):
+                            v = akw.get(key)
+                            if isinstance(v, str) and v:
+                                accumulated_reasoning += v
+                            elif isinstance(v, dict) and v.get("text"):
+                                accumulated_reasoning += v["text"]
+                        # 3) tool_call_chunks (si le modele genere des appels d'outil
+                        #    au lieu de content — cas du LLM qui se trompe)
+                        tcc = getattr(chunk, "tool_call_chunks", None) or []
+                        if tcc:
+                            accumulated_tool_calls.extend(tcc)
 
-                        # Update UI à chaque chunk
-                        display = accumulated_content or "*(en cours…)*"
+                        # Build display
+                        display_parts = []
                         if accumulated_reasoning:
-                            # Bloc CoT en haut, replié
-                            display = (
+                            display_parts.append(
                                 f"<details><summary>🧠 Raisonnement "
                                 f"({len(accumulated_reasoning)} chars)</summary>\n\n"
                                 f"<small><i>{accumulated_reasoning}</i></small>\n\n"
-                                f"</details>\n\n{display}"
+                                f"</details>"
                             )
-                        history[-1] = {"role": "assistant", "content": display}
+                        if accumulated_content:
+                            display_parts.append(accumulated_content)
+                        if accumulated_tool_calls:
+                            display_parts.append(
+                                f"<details><summary>🔧 Tool calls "
+                                f"({len(accumulated_tool_calls)})</summary>\n\n"
+                                f"<small><pre>{accumulated_tool_calls}</pre></small>\n\n"
+                                f"</details>"
+                            )
+                        if not display_parts and n_chunks >= 5:
+                            # 5+ chunks et toujours rien parsé → debug
+                            display_parts.append(
+                                f"<details open><summary>🔬 Debug — "
+                                f"chunks recus mais rien parse</summary>\n\n"
+                                f"<small><pre>"
+                                + "\n\n".join(debug_first_chunks)
+                                + f"</pre></small>\n\n</details>"
+                            )
+                        history[-1] = {
+                            "role": "assistant",
+                            "content": "\n\n".join(display_parts) or "*(en cours…)*"
+                        }
                         yield history, gr.update(
                             visible=True,
                             value=f"⏳ Streaming… {n_chunks} chunks, "
-                                  f"{len(accumulated_content)} chars content, "
-                                  f"{len(accumulated_reasoning)} chars CoT"
+                                  f"content={len(accumulated_content)}, "
+                                  f"CoT={len(accumulated_reasoning)}, "
+                                  f"tool_calls={len(accumulated_tool_calls)}"
                         )
 
                     elapsed = _t_chat.time() - t0
-                    final = accumulated_content or "*(réponse vide)*"
+                    # Assemble le rendu final : CoT, content, tool_calls,
+                    # debug si rien parse.
+                    final_parts = []
                     if accumulated_reasoning:
-                        final = (
+                        final_parts.append(
                             f"<details><summary>🧠 Raisonnement "
                             f"({len(accumulated_reasoning)} chars)</summary>\n\n"
                             f"<small><i>{accumulated_reasoning}</i></small>\n\n"
-                            f"</details>\n\n{final}"
+                            f"</details>"
                         )
-                    history[-1] = {"role": "assistant", "content": final}
+                    if accumulated_content:
+                        final_parts.append(accumulated_content)
+                    if accumulated_tool_calls:
+                        final_parts.append(
+                            f"<details><summary>🔧 Tool calls "
+                            f"({len(accumulated_tool_calls)})</summary>\n\n"
+                            f"<small><pre>{accumulated_tool_calls}</pre></small>\n\n"
+                            f"</details>"
+                        )
+                    if not final_parts:
+                        # Rien parse : on dump le debug des premiers chunks
+                        final_parts.append(
+                            f"*(réponse vide — rien parse dans {n_chunks} chunks)*\n\n"
+                            f"<details open><summary>🔬 Debug — chunks bruts</summary>\n\n"
+                            f"<small><pre>"
+                            + "\n\n".join(debug_first_chunks)
+                            + f"</pre></small>\n\n</details>"
+                        )
+                    history[-1] = {
+                        "role": "assistant",
+                        "content": "\n\n".join(final_parts)
+                    }
                     yield history, gr.update(
                         visible=True,
                         value=f"✅ {elapsed:.1f}s — {n_chunks} chunks, "
-                              f"{len(accumulated_content)} chars content, "
-                              f"{len(accumulated_reasoning)} chars CoT"
+                              f"content={len(accumulated_content)}, "
+                              f"CoT={len(accumulated_reasoning)}, "
+                              f"tool_calls={len(accumulated_tool_calls)}"
                     )
                 except Exception as e:
                     history[-1] = {"role": "assistant",
