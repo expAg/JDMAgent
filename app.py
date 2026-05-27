@@ -17,6 +17,16 @@ from pathlib import Path
 _root = Path(__file__).parent
 sys.path.insert(0, str(_root / "src"))
 
+# Charge un .env eventuel au demarrage pour que les variables soient lues
+# AVANT toute lecture os.environ.get(...). override=False : un secret deja
+# defini dans l'env reel (HF Spaces, systemd, export shell) garde priorite
+# sur .env. Optional : si python-dotenv n'est pas installe, on continue.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(override=False)
+except ImportError:
+    pass
+
 # Force le cache disque dans /tmp/jdm_cache : sur HF Spaces le CWD (/app)
 # est monté en read-only ou avec un overlay qui fait silencieusement échouer
 # les écritures diskcache → chaque requête refait l'aller-retour HTTP.
@@ -4262,6 +4272,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                     "JDM_CACHE_TTL_META",
                     "JDM_CACHE_TTL_DATA",
                     "OLLAMA_BASE_URL",
+                    "APP_SUBPATH",
                 ]
                 # Fallbacks pour les variables qui ont une valeur par defaut
                 # hardcodee dans le code et qu'on veut quand meme voir
@@ -4501,7 +4512,15 @@ if __name__ == "__main__":
     # pwa=True : Progressive Web App — permet au visiteur d'« installer »
     # la démo (icône bureau / écran d'accueil mobile, plein écran sans
     # barre URL, cache partiel des assets). Aucun coût si non utilisé.
+    # APP_SUBPATH : chemin sous lequel l'app est servie quand elle est
+    # derriere un reverse proxy avec sous-chemin (ex. monsite.fr/MaApp).
+    # Sans cette var, Gradio genere des liens d'assets en racine absolue
+    # (/assets/...) qui ne sont pas routes par le proxy → page blanche.
+    # Format attendu : "/MaApp" (avec slash initial). Vide = sert a la
+    # racine (cas par defaut, HF Space ou Docker direct).
+    _subpath = os.environ.get("APP_SUBPATH", "").strip()
     demo.launch(server_name="0.0.0.0", server_port=7860,
                 allowed_paths=[str(PRODUCTIONS_DIR)],
+                root_path=_subpath,
                 ssr_mode=False,
                 pwa=True)
