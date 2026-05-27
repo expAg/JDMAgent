@@ -2437,6 +2437,16 @@ _HEAD_JS = """
 """
 
 _CHATBOT_CSS = """
+/* ----- Mise en evidence des termes-cles dans les narrations Jarvis.
+   Le helper `_hi()` dans jarvis.py wrap les termes/cibles dans des
+   <span class="jarvis-term">. Couleur ambre saturee + bold leger →
+   le terme accroche l'oeil sans crier. Si Gradio strippe la classe,
+   le texte reste lisible (juste non colore). */
+.jarvis-term {
+  color: #d97706 !important;        /* ambre-600 — visible dark + light theme */
+  font-weight: 600 !important;
+}
+
 /* ----- Gate admin : .admin-only cache par defaut, revele si l'element
    recoit en plus la classe .admin-revealed (posee par le JS quand
    ?admin=1 dans URL, cf. _HEAD_JS).
