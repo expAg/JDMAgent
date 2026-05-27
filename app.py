@@ -4207,8 +4207,11 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
                     def _submit_production_file(selected_path, drops_key, jarvis_model_v):
                         """Upload le fichier sélectionné vers LLMDrops via
-                        jarvis.submit_existing_file (gère env override de
-                        JDM_DROPS_API_KEY le temps de l'appel)."""
+                        jarvis.submit_existing_file. Note : la fonction renvoie
+                        une LISTE de messages chat-format `[{role, content}]`
+                        (concue pour gr.Chatbot dans les sous-onglets Jarvis),
+                        donc ici on extrait juste le content du dernier message
+                        pour l'afficher dans notre gr.Markdown."""
                         if not selected_path:
                             return gr.update(visible=True,
                                              value="⚠️ Aucun fichier sélectionné.")
@@ -4219,18 +4222,23 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 drops_key=(drops_key or ""),
                                 model_name=(jarvis_model_v or "manual_submission"),
                             )
-                            if isinstance(res, dict) and res.get("ok"):
-                                uploaded = res.get("uploaded_as") or Path(selected_path).name
+                            # res = [{role:'assistant', content:'…verdict…'}]
+                            if isinstance(res, list) and res:
+                                last = res[-1]
+                                content = ""
+                                if isinstance(last, dict):
+                                    content = str(last.get("content", "") or "")
+                                else:
+                                    content = str(last)
                                 return gr.update(
                                     visible=True,
-                                    value=f"✅ **Soumis avec succès** sous le nom "
-                                          f"`{uploaded}`. Réponse serveur : "
-                                          f"`{str(res.get('response') or '')[:200]}`",
+                                    value=content or "(réponse vide)",
                                 )
-                            err = (res or {}).get("error") if isinstance(res, dict) else str(res)
+                            # Fallback si format inattendu
                             return gr.update(
                                 visible=True,
-                                value=f"❌ **Échec de soumission** : {err}",
+                                value=f"⚠️ Réponse inattendue de submit_existing_file : "
+                                      f"`{type(res).__name__}` — `{str(res)[:300]}`",
                             )
                         except Exception as e:
                             return gr.update(
