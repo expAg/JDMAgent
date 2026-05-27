@@ -4169,6 +4169,138 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
 
         # ----- Tab 6: Aide / Installation (Phase 13.7) -----
         with gr.Tab("🛠️ Aide / Installation"):
+            # === Panneau Export des Secrets HF (pour reconstituer un .env) ===
+            # Permet au PROPRIETAIRE du Space de recuperer ses variables
+            # d'environnement (cles API, config) au runtime, parce que la UI
+            # HF Settings affiche les Secrets en write-only (pas de read).
+            # PROTECTION : un mot de passe (defini par le Secret HF
+            # `EXPORT_SECRETS_PASSWORD`) gate l'acces. Sans ce mot de passe
+            # cote utilisateur ET cote Space, rien n'est revele. Allowlist
+            # stricte des cles exportees — pas tout l'env systeme.
+            gr.Markdown(
+                "## 🔐 Export des secrets HF (proprietaire uniquement)\n\n"
+                "Pour recuperer tes cles API stockees dans Settings HF "
+                "(reconstituer un `.env` pour deployer ailleurs : LIRMM, "
+                "Render, local…). Le mot de passe doit etre defini au "
+                "prealable comme Secret HF nomme `EXPORT_SECRETS_PASSWORD`."
+            )
+            with gr.Row():
+                _export_pw = gr.Textbox(
+                    label="Mot de passe (Secret HF `EXPORT_SECRETS_PASSWORD`)",
+                    type="password", placeholder="…",
+                    scale=3,
+                )
+                _export_btn = gr.Button(
+                    "🔓 Decrypter et afficher",
+                    variant="primary", scale=1,
+                )
+            _export_status = gr.Markdown(visible=False)
+            _export_textbox = gr.Textbox(
+                label=".env reconstruit (copie ou telecharge)",
+                lines=15, max_lines=30,
+                show_copy_button=True, interactive=False,
+                visible=False,
+            )
+            _export_dlfile = gr.File(
+                label="⬇️ Telecharger .env",
+                visible=False, interactive=False,
+            )
+
+            def _export_secrets(pw: str):
+                """Renvoie le .env reconstitue si le mot de passe match.
+                Cle d'autorisation = Secret HF `EXPORT_SECRETS_PASSWORD`.
+                """
+                import os as _os
+                import tempfile as _tmp
+                # Allowlist STRICTE — rien d'autre n'est expose
+                EXPORTABLE_ENV_VARS = [
+                    # Secrets sensibles
+                    "ANTHROPIC_API_KEY",
+                    "OPENAI_API_KEY",
+                    "GOOGLE_API_KEY",
+                    "GOOGLE_API_KEYS",  # pool CSV multi-cles
+                    "JDM_DROPS_API_KEY",
+                    "EXPORT_SECRETS_PASSWORD",  # le mdp lui-meme
+                    # Configuration (non sensible mais utile pour redeploy)
+                    "LLM_PROVIDER",
+                    "LLM_MODEL",
+                    "LLM_TEMPERATURE",
+                    "JDM_BASE_URL",
+                    "JDM_TIMEOUT",
+                    "JDM_DROPS_URL",
+                    "JDM_CACHE_TTL_META",
+                    "JDM_CACHE_TTL_DATA",
+                    "OLLAMA_BASE_URL",
+                ]
+                expected = _os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
+                if not expected:
+                    return (
+                        gr.update(
+                            visible=True,
+                            value="⚠️ **Non configure.** Le Secret HF "
+                                  "`EXPORT_SECRETS_PASSWORD` n'est pas defini "
+                                  "cote Space. Ajoute-le dans Settings → "
+                                  "Variables and secrets, puis re-essaie.",
+                        ),
+                        gr.update(visible=False),
+                        gr.update(visible=False),
+                    )
+                if not pw or pw.strip() != expected:
+                    return (
+                        gr.update(
+                            visible=True,
+                            value="❌ **Mot de passe incorrect.**",
+                        ),
+                        gr.update(visible=False),
+                        gr.update(visible=False),
+                    )
+                # Match : construire le .env
+                lines = [
+                    "# .env reconstitue depuis HF Space",
+                    f"# Genere le {_os.environ.get('HF_SPACE_NAME', 'jdmagent')}",
+                    "",
+                ]
+                present = []
+                missing = []
+                for key in EXPORTABLE_ENV_VARS:
+                    val = _os.environ.get(key, "")
+                    if val:
+                        # Echappe les retours ligne et guillemets
+                        safe = val.replace("\\", "\\\\").replace('"', '\\"')
+                        lines.append(f'{key}="{safe}"')
+                        present.append(key)
+                    else:
+                        missing.append(key)
+                content = "\n".join(lines) + "\n"
+                # Ecriture fichier temp pour le DownloadButton
+                tmp = _tmp.NamedTemporaryFile(
+                    mode="w", suffix=".env", prefix="jdmagent_",
+                    delete=False, encoding="utf-8",
+                )
+                tmp.write(content)
+                tmp.close()
+                status = (
+                    f"✅ **{len(present)} variables exportees** : "
+                    f"`{', '.join(present)}`"
+                )
+                if missing:
+                    status += (
+                        f"\n\nℹ️ **{len(missing)} variables non definies** "
+                        f"(omises) : `{', '.join(missing)}`"
+                    )
+                return (
+                    gr.update(visible=True, value=status),
+                    gr.update(visible=True, value=content),
+                    gr.update(visible=True, value=tmp.name),
+                )
+
+            _export_btn.click(
+                _export_secrets,
+                inputs=[_export_pw],
+                outputs=[_export_status, _export_textbox, _export_dlfile],
+            )
+
+            gr.Markdown("---")
             gr.Markdown(AIDE_MD)
 
         # ----- Sync des dropdowns modèle entre onglets -----
