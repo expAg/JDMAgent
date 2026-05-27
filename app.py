@@ -1636,7 +1636,31 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
 
 # ---------- UI ----------
 
-THEME = gr.themes.Soft(primary_hue="violet", secondary_hue="amber")
+# Theme construit avec .set() pour override les tokens — passe par l'API
+# officielle Gradio plutot que via CSS injection (qui etait scopee par
+# Gradio en `gradio-container.contain .gradio-container:not(.dark)` ce
+# qui ne matche pas le conteneur lui-meme et donc reste inoperante).
+# `neutral_hue="zinc"` decale toute la palette neutre vers les zincs
+# (gris doux) au lieu du slate par defaut.
+# Le `.set()` raffine ensuite chaque token de surface clair :
+# blanc pur #fff -> zinc-50/100 (#fafafa/#f4f4f5).
+# Pour le MODE SOMBRE, on ne touche pas — les defauts Soft sont bons.
+THEME = gr.themes.Soft(
+    primary_hue="violet",
+    secondary_hue="amber",
+    neutral_hue="zinc",
+).set(
+    # Surfaces de fond mode clair — du blanc aveuglant aux zinc doux
+    body_background_fill="#f4f4f5",                    # zinc-100
+    background_fill_primary="#fafafa",                  # zinc-50
+    background_fill_secondary="#f4f4f5",                # zinc-100
+    block_background_fill="#fafafa",                    # zinc-50
+    panel_background_fill="#f4f4f5",                    # zinc-100
+    # Inputs gardent un fond blanc pour ressortir des surfaces
+    input_background_fill="#ffffff",
+    # Bordures un peu plus marquees pour compenser le moindre contraste
+    border_color_primary="#d4d4d8",                     # zinc-300
+)
 
 PROJET_MD = """# JDMAgent — Démo interactive
 
@@ -2486,31 +2510,10 @@ _HEAD_JS = """
 """
 
 _CHATBOT_CSS = """
-/* ----- Theme clair : adoucir le blanc aveuglant.
-   Gradio v5 utilise des CSS variables tokenisees. En mode clair (pas
-   de classe .dark sur le container), on substitue les fonds blancs
-   purs par des gris zinc tres clairs — moins fatigant pour l'oeil.
-   Les inputs gardent un fond plus clair pour qu'ils restent distincts
-   des surfaces de fond. */
-.gradio-container:not(.dark) {
-  --body-background-fill: #f4f4f5 !important;        /* zinc-100 */
-  --background-fill-primary: #fafafa !important;     /* zinc-50 */
-  --background-fill-secondary: #f4f4f5 !important;   /* zinc-100 */
-  --block-background-fill: #fafafa !important;       /* zinc-50 */
-  --block-secondary-background-fill: #f4f4f5 !important;
-  --panel-background-fill: #f4f4f5 !important;
-  --neutral-50: #fafafa !important;
-  --neutral-100: #f4f4f5 !important;
-  --border-color-primary: #d4d4d8 !important;         /* zinc-300 */
-  --border-color-accent-subdued: #e4e4e7 !important;  /* zinc-200 */
-  /* Inputs restent presque blancs pour ressortir des surfaces */
-  --input-background-fill: #ffffff !important;
-  --chatbot-background-fill: #fafafa !important;
-}
-/* Fond global du body en clair = meme gris doux que le container */
-body:not(.dark) {
-  background: #f4f4f5 !important;
-}
+/* NB : les overrides de fond clair (zinc grays au lieu de blanc pur)
+   sont passes au constructeur du THEME via .set() — l'API officielle
+   Gradio plutot que via CSS injection (qui etait scopee et inoperante).
+   Cf. definition de THEME dans le module. */
 
 /* ----- Productions : CheckboxGroup uniforme (mm largeur + ellipsis).
    Cible par elem_id pour ne pas affecter les autres CheckboxGroup.
