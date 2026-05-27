@@ -147,6 +147,7 @@ def build_jdm_agent(
     llm: Optional[Any] = None,
     enrich_docstrings: bool = True,
     debug: bool = False,
+    light_tools: bool = False,
 ):
     """Construit un agent LangChain (LangGraph compilé) pour JDM.
 
@@ -156,11 +157,19 @@ def build_jdm_agent(
              Si None, `get_llm()` lit l'env (LLM_PROVIDER, LLM_MODEL).
         enrich_docstrings: ajoute les descriptions de relations aux docstrings.
         debug: trace verbose des appels.
+        light_tools: si True, ne fournit que le sous-ensemble réduit
+            (~10 outils, cf. `LIGHT_TOOL_NAMES`) — réservé aux modèles
+            sous-dimensionnés (Liquid LFM 1.2B/24B sur CPU LIRMM) qui
+            s'écroulent sous la charge cognitive de 27 outils.
 
     Returns:
         CompiledStateGraph — appeler `.invoke({"messages": [HumanMessage("...")]})`.
     """
-    tools = build_jdm_tools(client=client, enrich_docstrings=enrich_docstrings)
+    tools = build_jdm_tools(
+        client=client,
+        enrich_docstrings=enrich_docstrings,
+        light=light_tools,
+    )
     if llm is None:
         llm = get_llm()
     return create_agent(model=llm, tools=tools, system_prompt=SYSTEM_PROMPT, debug=debug)

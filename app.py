@@ -1137,6 +1137,30 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     )
 
 
+def build_jdm_agent_smart(client, llm, **kwargs):
+    """Wrapper de build_jdm_agent qui auto-detecte les modeles Liquid
+    (Ollama LIRMM) et passe `light_tools=True` pour eux. Utilise par
+    les flows Jarvis pour eviter de propager le param a tous les
+    callsites.
+
+    Phase 14 : le 24B-A2B sous 27 tools s'ecroule (content="" + 0
+    tool_calls en 156s). Le set leger (~10 tools, cf. LIGHT_TOOL_NAMES
+    dans jdm_tools.py) reduit la charge cognitive a un niveau gerable.
+
+    Detection : on regarde si l'attribut .model du LLM matche un tag
+    Ollama defini dans LIQUID_MODEL_ROUTING.
+    """
+    from jdm_agent.tools.jdm_agent import build_jdm_agent
+    model_name = (getattr(llm, "model", "") or "").strip()
+    is_liquid = any(
+        routed in model_name
+        for routed in LIQUID_MODEL_ROUTING.values()
+    )
+    return build_jdm_agent(
+        client=client, llm=llm, light_tools=is_liquid, **kwargs
+    )
+
+
 def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
                          api_key_override: Optional[str] = None):
     """Builder spécifique pour les Gemini 3.x preview via SDK natif Google.
@@ -1311,6 +1335,12 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
         _narrate_tool_call, _narrate_tool_result,
     )
 
+    # Phase 14 — modeles Liquid (Ollama LIRMM) recoivent le set leger
+    # de tools (~10 au lieu de 27). Le 24B-A2B s'ecroule sous 27 tools
+    # (test confirme : content="" + 0 tool_calls en 156s). Les autres
+    # modeles (Gemini, Claude, GPT) gardent le set complet.
+    _light_tools = model in LIQUID_MODELS
+
     # 2 listes parallèles (cf. jarvis.run_jarvis_flow) :
     # - progress_live : affiché pendant le streaming
     # - progress_full : version complète pour le <details> final
@@ -1334,7 +1364,7 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
     # retries.
     import time as _time
     from jarvis import detect_rate_limit_retry
-    agent = build_jdm_agent(client=get_client(), llm=llm)
+    agent = build_jdm_agent(client=get_client(), llm=llm, light_tools=_light_tools)
     accumulated_messages = _history_to_lc(history, message)
     rate_limit_attempts = 0
     consecutive_rate_limit_hits = 0
@@ -1467,7 +1497,8 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                                 gemini_key_override=current_gemini_key,
                             )
                             agent = build_jdm_agent(
-                                client=get_client(), llm=llm
+                                client=get_client(), llm=llm,
+                                light_tools=_light_tools,
                             )
                             switch_msg = (
                                 f"\n\n*🔑 Clé Google invalide détectée — "
@@ -1562,7 +1593,8 @@ def chat_with_agent(message: str, history: list[dict], api_key: str, model: str,
                                 gemini_key_override=current_gemini_key,
                             )
                             agent = build_jdm_agent(
-                                client=get_client(), llm=llm
+                                client=get_client(), llm=llm,
+                                light_tools=_light_tools,
                             )
                             switch_msg = (
                                 f"\n\n*🔄 Quota quotidien atteint sur cette "
@@ -3274,7 +3306,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
-                            build_agent_fn=build_jdm_agent,
+                            build_agent_fn=build_jdm_agent_smart,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
                             consolidation_target=(
@@ -3449,7 +3481,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
-                            build_agent_fn=build_jdm_agent,
+                            build_agent_fn=build_jdm_agent_smart,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
                             auto_switch_on_perday=bool(auto_switch),
@@ -3653,7 +3685,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
-                            build_agent_fn=build_jdm_agent,
+                            build_agent_fn=build_jdm_agent_smart,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
                             auto_switch_on_perday=bool(auto_switch),
@@ -3814,7 +3846,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
-                            build_agent_fn=build_jdm_agent,
+                            build_agent_fn=build_jdm_agent_smart,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
                             auto_switch_on_perday=bool(auto_switch),
@@ -3983,7 +4015,7 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             budget_label=str(budget_label),
                             drops_key=drops_key,
                             build_llm_fn=_build_llm,
-                            build_agent_fn=build_jdm_agent,
+                            build_agent_fn=build_jdm_agent_smart,
                             get_client_fn=get_client,
                             use_thinking=bool(use_thinking),
                             auto_switch_on_perday=bool(auto_switch),

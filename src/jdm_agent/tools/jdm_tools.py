@@ -2179,12 +2179,39 @@ ALL_TOOLS: list[StructuredTool] = [
 ]
 
 
+# Phase 14 — sous-ensemble "léger" d'outils pour les modèles Ollama locaux
+# (Liquid LFM 1.2B / 24B-A2B sur CPU LIRMM). Diagnostic confirmé : avec
+# 27 outils + system prompt 20k tokens, le 24B-A2B retourne content="" et
+# 0 tool_calls en 156s — il s'écroule sous la charge cognitive. Ce sous-
+# ensemble garde les outils strictement nécessaires au flow d'enrichissement
+# de base (lookup, désambiguïsation, lister, valider, écrire).
+LIGHT_TOOL_NAMES: set[str] = {
+    # Workflow obligatoire (déclaré dans le system prompt règle 13)
+    "enrichment_workflow",
+    # Lookup et désambiguïsation
+    "lookup_term", "disambiguate",
+    # Récupération de relations (les plus utilisées)
+    "get_relations_of_type", "list_existing_for_enrichment",
+    "get_synonyms", "get_hypernyms",
+    # Validation + consolidation (cœur du flux)
+    "validate_candidate", "infer",
+    # Écriture du fichier de soumission
+    "write_submission_file",
+}
+
+
 def build_jdm_tools(
     client: Optional[JDMClient] = None,
     enrich_docstrings: bool = True,
+    light: bool = False,
 ) -> list[StructuredTool]:
     """Renvoie la liste des outils LangChain, optionnellement avec docstrings
     enrichies des définitions tirées de `relation_definitions.md`.
+
+    `light=True` (Phase 14) : ne renvoie que le sous-ensemble
+    `LIGHT_TOOL_NAMES` (~10 outils), pensé pour les modèles Ollama
+    locaux qui s'écroulent sous la charge cognitive de 27 outils.
+    Réservé aux LLMs sous-dimensionnés (Liquid LFM 1.2B/24B sur CPU).
 
     Phase 13 — toute la liste est passée par `apply_budget_wrapping` :
     si une invocation agent est encapsulée dans `budget_context(N)`
@@ -2197,7 +2224,10 @@ def build_jdm_tools(
         set_default_client(client)
     if not enrich_docstrings:
         from jdm_agent.tools.budget import apply_budget_wrapping
-        return apply_budget_wrapping(list(ALL_TOOLS))
+        all_tools = list(ALL_TOOLS)
+        if light:
+            all_tools = [t for t in all_tools if t.name in LIGHT_TOOL_NAMES]
+        return apply_budget_wrapping(all_tools)
 
     docs = parse_relation_definitions()
     suffix_map = {
@@ -2227,4 +2257,7 @@ def build_jdm_tools(
         if rel and docs.get(rel):
             t.description = f"{t.description}\n\n[JDM] {describe_relation(rel, docs)}"
     from jdm_agent.tools.budget import apply_budget_wrapping
-    return apply_budget_wrapping(list(ALL_TOOLS))
+    all_tools = list(ALL_TOOLS)
+    if light:
+        all_tools = [t for t in all_tools if t.name in LIGHT_TOOL_NAMES]
+    return apply_budget_wrapping(all_tools)
