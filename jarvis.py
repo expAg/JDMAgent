@@ -251,9 +251,13 @@ def build_relance_summary(messages: list, n_done: int, target: int,
             lines.append(f"  📥 {p}")
     lines.append("")
     lines.append(
-        f"RECOMMENCE avec de NOUVEAUX candidats sur d'AUTRES relations / "
-        f"d'AUTRES cibles. Ne rends ta réponse finale QU'APRÈS avoir "
-        f"atteint le compte cible. (Relance auto {relance_num}"
+        f"CONTINUE — ne rends PAS de reponse finale, propose un NOUVEAU "
+        f"candidat. Reste de preference sur le **terme courant** (epuise "
+        f"d'autres relations / d'autres cibles avant de changer de terme), "
+        f"et evidemment ne reproposes PAS un triplet deja teste sans "
+        f"succes ci-dessus. Tu DOIS appeler `validate_candidate` pour "
+        f"chaque nouveau candidat — n'arrete pas tant que le compte cible "
+        f"({target}) n'est pas atteint. (Relance auto {relance_num}"
         + (f"/{max_relances}" if max_relances is not None else "") + ".)"
     )
     return "\n".join(lines)
@@ -2039,18 +2043,24 @@ def run_jarvis_flow(
             # On relance avec un nudge fort.
             persistence_relances += 1
             # Construit un résumé condensé (consolidés / échecs / pré-fetchs)
-            # à partir des accumulated_messages, PUIS reset à juste :
-            #   [HumanMessage initial, HumanMessage du résumé+nudge]
-            # → drop massif des tokens (de ~50k à ~2k typiquement).
-            # Le LLM reprend frais avec un état explicite plutôt que de
-            # devoir digérer 50+ messages avec leurs raisonnements.
+            # à partir des accumulated_messages.
             summary = build_relance_summary(
                 accumulated_messages, n_done, consolidation_target,
                 persistence_relances, max_persistence_relances,
             )
-            initial_human = accumulated_messages[0]  # HumanMessage(prompt)
-            accumulated_messages = [
-                initial_human,
+            # STRATEGIE DE RELANCE : on GARDE le contexte complet et on
+            # ajoute juste le summary comme nudge. Le modele voit alors
+            # sa propre derniere AIMessage (typiquement « j'ai teste X,
+            # rejete, donc j'arrete ») suivie d'un HumanMessage « non,
+            # continue avec un autre candidat sur le terme courant ».
+            # Beaucoup plus efficace que l'ancien reset complet, qui
+            # provoquait Gemini 2.5 a tirer un nouveau mot au hasard
+            # apres chaque rejet (perte de momentum + variabilite
+            # frustrante : ex. abricotier rejete → relance → canape).
+            # Si l'historique devient trop gros (> HISTORY_CONDENSE_-
+            # THRESHOLD_CHARS = 920k), le mecanisme de condense proactive
+            # en debut de prochaine iteration prendra le relais.
+            accumulated_messages = list(accumulated_messages) + [
                 HumanMessage(content=summary),
             ]
             _cap_label = (
