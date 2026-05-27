@@ -1108,24 +1108,24 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     # la connexion HTTP reste vivante, pas de coupure middleware sur
     # les longues generations. langchain_openai sait gerer le streaming
     # avec tool calling.
-    inner = ChatOpenAI(
+    # Retour direct du ChatOpenAI sans wrapper : le wrapper
+    # _LiquidChatOpenAI (proxy au-dessus de ChatOpenAI) etait suspecte
+    # de casser le bind_tools de langgraph (qui appelle des methodes
+    # internes que le proxy ne propage pas toujours correctement).
+    # Etant donne que les modeles fast-tools (sans PARSER thinking)
+    # retournent le content DIRECTEMENT dans .content cote API, le
+    # workaround reasoning→content n'est plus necessaire en pratique.
+    # Si un futur modele revient sur PARSER thinking, on revisitera.
+    return ChatOpenAI(
         model=routed,
         base_url=LIQUID_BASE_URL,
         api_key="ollama",  # placeholder — Ollama ne vérifie pas
         temperature=0.1,   # recommandé Liquid AI (cf. model card HF)
         timeout=600.0,     # 10 min, large pour prefill 20k tokens + reponse
-        # streaming=False (defaut) : observé que streaming=True + tools
-        # sur Ollama OpenAI-compat donnait des reponses vides au moment
-        # de l'assemblage des chunks cote langgraph. Sans streaming le
-        # serveur attend la fin et renvoie un dict complet, plus fiable
-        # pour l'agent. Cout : pas de keepalive HTTP intermediaire →
-        # le timeout 600s doit etre respecte cote proxy LIRMM (a verifier
-        # si le proxy a un timeout court avec un test depuis l'exterieur).
         extra_body={
             "keep_alive": "30m",  # garde modele + KV cache 30 min
         },
     )
-    return _LiquidChatOpenAI(inner)
 
 
 def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
