@@ -1938,18 +1938,38 @@ _HEAD_JS = """
 <script>
 (function() {
   // ---------- Gate admin (URL flag ?admin=1) ----------
-  // Si l'URL contient ?admin=1, on ajoute la classe .admin-mode sur
-  // <body>. Le CSS associe (cf. _CHATBOT_CSS) revele alors les blocs
-  // marques `elem_classes=["admin-only"]`. Sans ce flag, ces blocs
-  // restent invisibles pour le visiteur lambda.
+  // Si l'URL contient ?admin=1, on ajoute la classe .admin-revealed
+  // sur CHAQUE element .admin-only (pas sur <body>). Le CSS associe
+  // (cf. _CHATBOT_CSS) revele alors ces blocs.
+  //
+  // POURQUOI cette double-classe au lieu d'un selector d'ancetre :
+  // Gradio v5 scope automatiquement le CSS injecte via le param `css=`
+  // en prefixant chaque regle avec `gradio-container.gradio-container-X.X.X
+  // .contain `. Du coup un selector comme `body.admin-mode .admin-only`
+  // devient `gradio-container... .contain .admin-mode .admin-only` —
+  // qui demande que .admin-mode soit DESCENDANT de .contain. Or le body
+  // est ANCETRE de .contain, donc le selector ne matche jamais.
+  // En mettant la classe .admin-revealed sur l'element .admin-only
+  // lui-meme, on evite tout selector d'ancetre — la regle CSS
+  // `.admin-only.admin-revealed` resiste au scoping de Gradio.
   try {
     var qs = new URLSearchParams(window.location.search || '');
     if (qs.get('admin') === '1') {
-      var setAdminBody = function() {
-        if (document.body) document.body.classList.add('admin-mode');
+      var revealAdmin = function() {
+        document.querySelectorAll('.admin-only').forEach(function(el) {
+          if (!el.classList.contains('admin-revealed')) {
+            el.classList.add('admin-revealed');
+          }
+        });
       };
-      if (document.body) setAdminBody();
-      else document.addEventListener('DOMContentLoaded', setAdminBody);
+      if (document.readyState !== 'loading') revealAdmin();
+      else document.addEventListener('DOMContentLoaded', revealAdmin);
+      // Observer pour les .admin-only rendus apres le DOMContentLoaded
+      // (Gradio v5 monte la UI de facon asynchrone).
+      new MutationObserver(revealAdmin).observe(
+        document.body || document.documentElement,
+        { childList: true, subtree: true }
+      );
     }
   } catch (e) { /* navigateurs anciens : on ignore */ }
 
@@ -2417,17 +2437,19 @@ _HEAD_JS = """
 """
 
 _CHATBOT_CSS = """
-/* ----- Gate admin : .admin-only cache par defaut, revele si <body>
-   a la classe .admin-mode (posee par le JS quand ?admin=1 dans URL).
-   IMPORTANT : on EVITE le selector `body.admin-mode ...` parce que
-   Gradio v5 scope le CSS injecte via le param `css=` et la regle avec
-   `body` ne matche pas (constat empirique : computed display reste
-   `none` meme avec body.admin-mode set). On utilise `.admin-mode
-   .admin-only` (le body porte .admin-mode, ses descendants .admin-only
-   sont reveles). Specificite (0,2,0) > (0,1,0) → gagne sur la regle
-   hide. */
+/* ----- Gate admin : .admin-only cache par defaut, revele si l'element
+   recoit en plus la classe .admin-revealed (posee par le JS quand
+   ?admin=1 dans URL, cf. _HEAD_JS).
+   IMPORTANT : on EVITE TOUT selector d'ancetre (.admin-mode .admin-only,
+   body.admin-mode ...) parce que Gradio v5 scope le CSS injecte via
+   `css=` en prefixant chaque regle avec `gradio-container.gradio-
+   container-X.X.X .contain `. Du coup un selector base sur un ancetre
+   en dehors de .contain (le body par exemple) ne matche jamais apres
+   scoping. La double classe `.admin-only.admin-revealed` resout le
+   probleme : pas d'ancetre requis, le scoping de Gradio prefixe juste
+   les deux regles a l'identique, la specificite tranche. */
 .admin-only { display: none !important; }
-.admin-mode .admin-only { display: block !important; }
+.admin-only.admin-revealed { display: block !important; }
 
 /* Checkbox 'Raisonnement' flottante : position absolue dans le coin
    haut-droit du conteneur de la Column qui contient le dropdown modèle
