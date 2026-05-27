@@ -1615,13 +1615,13 @@ def _stage_viz_html(html_path: str) -> Optional[str]:
 
 THEME = gr.themes.Soft(primary_hue="violet", secondary_hue="amber")
 
-PROJET_MD = """# JDMAgent — Démo interactive
+PROJET_MD = """# Jarvis-web : Accès web à l'agent JeuxDeMots
 
 **Objectif** : agentification de [JeuxDeMots](https://www.jeuxdemots.org)
 (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées) pour les LLM modernes via
 **LangChain** et le **Model Context Protocol**.
 
-## Que peux-tu faire dans cette démo ?
+## Que peux-tu faire sur cette page ?
 
 - **🔎 Explorer JDM** — choisis un terme et une relation, vois les triplets
   triés par poids consensuel. Annotations sémantiques (constitutif,
@@ -1658,7 +1658,7 @@ PROJET_MD = """# JDMAgent — Démo interactive
 **Données** : JeuxDeMots — Mathieu Lafourcade, équipe TEXTE, LIRMM/CNRS.
 
 **Liens** :
-[Code source & README académique](https://github.com/expAg/JDMAgent) ·
+[Code source & README](https://github.com/expAg/JDMAgent) ·
 [USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md) ·
 [Notebook Colab](https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb)
 """
