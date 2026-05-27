@@ -788,6 +788,10 @@ THINKING_SUPPORTED_MODELS = (
     GEMINI_THINKING_SUPPORTED
     | set(ANTHROPIC_MODELS.keys())
     | set(OPENAI_MODELS.keys())
+    # Liquid Ollama LIRMM : les tags custom (fast-tools) reposent sur
+    # RENDERER/PARSER lfm2-thinking → capability `thinking` presente,
+    # active via reasoning=True dans le builder ChatOllama.
+    | set(LIQUID_MODELS.keys())
 )
 
 
@@ -1128,13 +1132,30 @@ def _build_liquid_ollama(model_id: str, *, use_thinking: bool = True):
     # parle l'API native /api/chat, format que les modeles Ollama
     # comprennent nativement → tool calling fiable.
     from langchain_ollama import ChatOllama
-    return ChatOllama(
-        model=routed,
-        base_url=LIQUID_BASE_URL,  # SANS /v1/ — ChatOllama append /api/chat
-        temperature=0.1,           # recommandé Liquid AI (cf. model card HF)
-        client_kwargs={"timeout": 600.0},  # 10 min couvre prefill 20k tokens
-        keep_alive="30m",          # garde modele + KV cache entre tours
-    )
+    # use_thinking : active le chain-of-thought cote Ollama (champ
+    # `reasoning` dans l'AIMessage). Compatible avec les modeles
+    # ayant `thinking` dans leurs capabilities (cf. /api/show) — c'est
+    # le cas de nos tags custom lfm2.5-1.2b-fast-tools et lfm2-24b-
+    # a2b-fast-tools (TEMPLATE custom + RENDERER/PARSER lfm2-thinking
+    # active la capability). Si use_thinking=False, on saute le CoT
+    # → reponse plus rapide.
+    kwargs = {
+        "model": routed,
+        "base_url": LIQUID_BASE_URL,  # SANS /v1/ — ChatOllama append /api/chat
+        "temperature": 0.1,           # recommandé Liquid AI (cf. model card HF)
+        "client_kwargs": {"timeout": 600.0},  # 10 min couvre prefill 20k tokens
+        "keep_alive": "30m",          # garde modele + KV cache entre tours
+        # streaming : ChatOllama streame nativement via .stream() ; pas de
+        # param explicite necessaire au constructeur. L'agent (langgraph)
+        # consomme via agent.stream() qui propage correctement.
+    }
+    if use_thinking:
+        # langchain-ollama ≥0.2 : param `reasoning=True` → l'API Ollama
+        # recoit `think=true` → le modele genere son CoT dans le champ
+        # `reasoning` de la reponse. Cote app, le code de _content_to_thoughts
+        # extrait deja les blocs reasoning pour affichage UI.
+        kwargs["reasoning"] = True
+    return ChatOllama(**kwargs)
 
 
 def build_jdm_agent_smart(client, llm, **kwargs):
