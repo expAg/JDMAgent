@@ -2441,10 +2441,30 @@ _CHATBOT_CSS = """
    Le helper `_hi()` dans jarvis.py wrap les termes/cibles dans des
    <span class="jarvis-term">. Couleur ambre saturee + bold leger →
    le terme accroche l'oeil sans crier. Si Gradio strippe la classe,
-   le texte reste lisible (juste non colore). */
+   le texte reste lisible (juste non colore).
+   IMPORTANT : la regle suivante `.jdm-narration *` plus loin applique
+   `color: #82aaff !important` a TOUS les enfants avec specificite
+   (0,1,1) qui battrait `.jarvis-term` (0,1,0). Donc on utilise
+   `.jdm-narration .jarvis-term` (0,2,0) pour gagner. Idem pour les
+   relations stylees dans le bloc plus bas. */
+.jdm-narration .jarvis-term,
 .jarvis-term {
   color: #d97706 !important;        /* ambre-600 — visible dark + light theme */
   font-weight: 600 !important;
+}
+
+/* Relations JDM en backticks → markdown rend en <code>. Couleur
+   distincte (violet doux) pour creer une 2eme couche visuelle :
+   termes en orange, relations en violet, prose en bleu-cyan.
+   Specificite (0,1,1) = celle de `.jdm-narration *`, mais code est
+   un element + .jdm-narration une classe → (0,1,2) vs (0,1,1) →
+   gagne. */
+.jdm-narration code {
+  color: #c4b5fd !important;        /* violet-300, lit dark + light */
+  font-weight: 500 !important;
+  background: rgba(196,181,253,0.08) !important;
+  padding: 0 4px !important;
+  border-radius: 3px !important;
 }
 
 /* ----- Gate admin : .admin-only cache par defaut, revele si l'element
