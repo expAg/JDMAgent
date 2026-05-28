@@ -458,13 +458,23 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
 
     if model.startswith("gemini-"):
         # SDK natif Google : préserve les thought_signature entre tours
-        # (cf. langchain issue #34056). Lit GOOGLE_API_KEY de l'env.
-        # Le pool (step 3) override l'env via /api/pool/rotate.
-        token = os.environ.get("GOOGLE_API_KEY", "").strip()
+        # (cf. langchain issue #34056).
+        # Résolution de la clé :
+        #   1. _CURRENT_POOL_KEY si une rotation a déjà eu lieu cette session
+        #   2. sinon, première clé du pool (parsing robuste : split sur tout
+        #      non-[A-Za-z0-9_-], gère GOOGLE_API_KEYS pluriel + GOOGLE_API_KEY
+        #      singulier qui contient parfois un CSV par accident).
+        # NB : lire directement os.environ["GOOGLE_API_KEY"] est INCORRECT car
+        # si l'utilisateur a collé un CSV dedans, la chaîne entière partirait
+        # comme « clé » et l'API Google renverrait INVALID_ARGUMENT.
+        token = (_CURRENT_POOL_KEY or "").strip()
+        if not token:
+            pool = _parse_pool_keys()
+            token = pool[0] if pool else ""
         if not token:
             raise ValueError(
-                "Aucune clé Google disponible côté serveur (GOOGLE_API_KEY). "
-                "Configure le pool via GOOGLE_API_KEYS ou la clé singulière."
+                "Aucune clé Google disponible côté serveur. "
+                "Configure GOOGLE_API_KEYS (CSV) ou GOOGLE_API_KEY (singulière)."
             )
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
