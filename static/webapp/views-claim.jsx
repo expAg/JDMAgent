@@ -1,4 +1,4 @@
-// View: Claim checker — verify subject | relation | object.
+// View: Claim checker — verify subject | relation | object via /api/factcheck.
 
 const CLAIM_RELATIONS_OPTS = [
   { value: 'r_isa', label: 'r_isa — est un' },
@@ -22,45 +22,11 @@ const EFFORT_OPTS = [
   { value: 2, label: '2 — + inférence complète', sub: 'tous les schémas (lent)' },
 ];
 
-const SCENARIOS = {
-  'tomate|r_isa|fruit': {
-    status: 'supported',
-    confidence: 0.94,
-    explanation: 'Triplet trouvé directement dans JDM avec poids 256.',
-    origin: 'contenance',
-    proof: [
-      { s: 'tomate', r: 'r_isa', t: 'fruit', w: 256 },
-    ],
-  },
-  'tomate|r_isa|légume': {
-    status: 'contradicted',
-    confidence: 0.82,
-    explanation: 'JDM contient tomate r_isa fruit (w=256). Aucune trace de tomate r_isa légume.',
-    origin: 'contenance',
-    counter: [
-      { s: 'tomate', r: 'r_isa', t: 'fruit', w: 256 },
-    ],
-  },
-  'chat|r_isa|animal': {
-    status: 'supported',
-    confidence: 0.97,
-    explanation: 'Verdict obtenu par inférence (isa-transitivité).',
-    origin: 'inférence',
-    proof: [
-      { s: 'chat', r: 'r_isa', t: 'mammifère', w: 198 },
-      { s: 'mammifère', r: 'r_isa', t: 'vertébré', w: 220 },
-      { s: 'vertébré', r: 'r_isa', t: 'animal', w: 305 },
-    ],
-  },
-  'chat|r_agent|aboyer': {
-    status: 'contradicted',
-    confidence: 0.78,
-    explanation: 'Le verbe aboyer a chien comme agent typique. Aucun lien chat-aboyer trouvé.',
-    origin: 'contenance',
-    counter: [
-      { s: 'aboyer', r: 'r_agent', t: 'chien', w: 312 },
-    ],
-  },
+// Mapping backend origin → libellé FR pour l'UI.
+const ORIGIN_LABEL = {
+  inference: 'inférence',
+  containment: 'contenance',
+  none: '—',
 };
 
 function ViewClaim() {
@@ -69,28 +35,65 @@ function ViewClaim() {
   const [object_, setObject] = useState('animal');
   const [effort, setEffort] = useState(1);
   const [bypass, setBypass] = useState(false);
-  const [result, setResult] = useState(SCENARIOS['chat|r_isa|animal']);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const run = () => {
+  const run = async () => {
     setLoading(true);
-    setTimeout(() => {
-      const key = `${subject}|${relation}|${object_}`;
-      setResult(SCENARIOS[key] || {
-        status: 'unknown',
-        confidence: 0.0,
-        explanation: 'Aucun triplet direct, aucune chaîne d\'inférence trouvée.',
-        origin: '—',
+    setError('');
+    try {
+      const res = await fetch('/api/factcheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject,
+          relation,
+          object: object_,
+          effort: Number(effort),
+          bypass: !!bypass,
+        }),
       });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      if (data.error) {
+        // Cas terme inconnu : on affiche le banner UNKNOWN avec le message
+        setResult({
+          status: 'unknown',
+          confidence: 0,
+          explanation: data.error,
+          origin: ORIGIN_LABEL[data.origin] || '—',
+        });
+      } else {
+        setResult({
+          status: data.status,
+          confidence: data.confidence,
+          explanation: data.explanation,
+          origin: ORIGIN_LABEL[data.origin] || '—',
+          inference_schema: data.inference_schema,
+          proof: data.proof,
+          counter: data.counter,
+        });
+      }
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+      setResult(null);
+    } finally {
       setLoading(false);
-    }, 460);
+    }
   };
 
+  // Auto-run au mount pour montrer un exemple
+  React.useEffect(() => { run(); }, []);
+
   const examples = [
-    ['chat', 'r_isa', 'animal', '✅'],
-    ['tomate', 'r_isa', 'fruit', '✅'],
-    ['tomate', 'r_isa', 'légume', '❌'],
-    ['chat', 'r_agent', 'aboyer', '❌'],
+    ['chat', 'r_isa', 'animal'],
+    ['tomate', 'r_isa', 'fruit'],
+    ['tomate', 'r_isa', 'légume'],
+    ['chat', 'r_agent', 'aboyer'],
   ];
 
   return (
@@ -136,7 +139,7 @@ function ViewClaim() {
           marginTop: 18,
         }}>
           <Field label="Effort de vérification">
-            <Select value={effort} options={EFFORT_OPTS} onChange={setEffort} />
+            <Select value={effort} options={EFFORT_OPTS} onChange={(v) => setEffort(Number(v))} />
           </Field>
           <label style={{
             display: 'flex', alignItems: 'center', gap: 8,
@@ -148,7 +151,7 @@ function ViewClaim() {
               style={{ accentColor: 'var(--accent)' }} />
             Bypass contenance
           </label>
-          <Button onClick={run} size="lg">
+          <Button onClick={run} size="lg" disabled={loading}>
             {loading ? 'Vérification…' : 'Vérifier'}
           </Button>
         </div>
@@ -164,15 +167,13 @@ function ViewClaim() {
           textTransform: 'uppercase', letterSpacing: '0.1em',
           alignSelf: 'center', marginRight: 6,
         }}>Exemples :</span>
-        {examples.map(([s, r, o, icon], i) => (
+        {examples.map(([s, r, o], i) => (
           <button key={i}
             className="focus-ring"
             onClick={() => {
               setSubject(s); setRelation(r); setObject(o);
-              setTimeout(() => {
-                const k = `${s}|${r}|${o}`;
-                setResult(SCENARIOS[k] || result);
-              }, 100);
+              // Délai pour laisser React appliquer les setState avant fetch
+              setTimeout(run, 50);
             }}
             style={{
               padding: '4px 10px',
@@ -184,10 +185,25 @@ function ViewClaim() {
               fontSize: 11,
               cursor: 'pointer',
             }}>
-            {icon} {s} | {r} | {o}
+            {s} | {r} | {o}
           </button>
         ))}
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          padding: 16,
+          marginBottom: 16,
+          background: 'rgba(200, 58, 115, 0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)',
+          fontSize: 13,
+        }}>
+          ⚠️ {error}
+        </div>
+      )}
 
       {/* Result */}
       {result && <ClaimResult result={result} subject={subject} relation={relation} object={object_} />}
@@ -211,7 +227,9 @@ function ClaimResult({ result, subject, relation, object }) {
     supported:    { icon: '✓', label: 'SUPPORTED',    color: 'var(--jdm-green)' },
     contradicted: { icon: '✗', label: 'CONTRADICTED', color: 'var(--jdm-magenta)' },
     unknown:      { icon: '?', label: 'UNKNOWN',      color: 'var(--ink-3)' },
-  }[result.status];
+  }[result.status] || { icon: '?', label: result.status, color: 'var(--ink-3)' };
+
+  const confidence = typeof result.confidence === 'number' ? result.confidence : 0;
 
   return (
     <div className="fade-up">
@@ -262,6 +280,14 @@ function ClaimResult({ result, subject, relation, object }) {
             }}>{object}</span>
           </div>
           <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{result.explanation}</div>
+          {result.inference_schema && (
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--ink-3)',
+              marginTop: 8,
+            }}>
+              schéma : <span style={{ color: 'var(--accent)' }}>{result.inference_schema}</span>
+            </div>
+          )}
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div className="mono" style={{
@@ -274,7 +300,7 @@ function ClaimResult({ result, subject, relation, object }) {
             color: 'var(--ink)',
             lineHeight: 1,
             marginTop: 6,
-          }}>{result.confidence.toFixed(2)}</div>
+          }}>{confidence.toFixed(2)}</div>
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
             {result.origin === 'inférence' ? '🧠 via inférence' :
              result.origin === 'contenance' ? '📦 via contenance' : ''}
@@ -283,7 +309,7 @@ function ClaimResult({ result, subject, relation, object }) {
       </div>
 
       {/* Proof chain */}
-      {result.proof && (
+      {result.proof && result.proof.length > 0 && (
         <Card>
           <div className="mono" style={{
             fontSize: 11, color: 'var(--ink-3)',
@@ -298,7 +324,7 @@ function ClaimResult({ result, subject, relation, object }) {
         </Card>
       )}
 
-      {result.counter && (
+      {result.counter && result.counter.length > 0 && (
         <Card>
           <div className="mono" style={{
             fontSize: 11, color: 'var(--jdm-magenta)',
