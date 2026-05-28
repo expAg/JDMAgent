@@ -100,7 +100,7 @@ function ViewProjet({ goto }) {
             Agent <em style={{
               fontFamily: 'var(--font-display)',
               fontStyle: 'italic', color: 'var(--accent)',
-            }}>Jarvis</em> : plateforme web.
+            }}>Jarvis</em> :<br/>plateforme web.
           </h1>
           <p style={{
             marginTop: 22,
