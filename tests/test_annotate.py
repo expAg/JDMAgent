@@ -267,3 +267,73 @@ def test_annotation_workflow_returns_canonical_dict():
     assert any(s.get("tool") == "write_submission_file" for s in out["steps"])
     assert any("signalement" in r.lower() or "SIGNALEMENT" in r
                for r in out["rules"])
+
+
+def test_annotation_workflow_no_directive_categories():
+    """Régression : la consigne 'pas de terme' ne doit PAS imposer un
+    type de mot (animal/objet/action…) qui biaise le LLM vers les
+    champs scolaires. On veut 'carte blanche dans tout le lexique'."""
+    from jdm_agent.tools.jdm_tools import annotation_workflow
+    out = annotation_workflow.invoke({})
+    # Cherche dans toutes les étapes + rules + if_no_term
+    blob = " ".join([
+        str(out.get("if_no_term", "")),
+        *(str(s.get("description", "")) for s in out.get("steps", [])),
+        *(str(r) for r in out.get("rules", [])),
+    ])
+    # Termes interdits dans la consigne (trop directifs)
+    forbidden_phrases = [
+        "2-3 termes",
+        "deux ou trois termes",
+        "(animal, objet, action",
+        "un animal, un objet, une action",
+    ]
+    for phrase in forbidden_phrases:
+        assert phrase.lower() not in blob.lower(), (
+            f"Phrase trop directive trouvée : {phrase!r}"
+        )
+    # Termes attendus (carte blanche)
+    assert "carte blanche" in blob.lower() or "tout le lexique" in blob.lower()
+
+
+# ─────────────────────── _iteration_block helper ───────────────────────
+
+def test_iteration_block_bounded_with_target():
+    """Cible + budget borné → mention des deux conditions d'arrêt."""
+    from jarvis import _iteration_block
+    txt = _iteration_block(target_count=10, budget_label="25", unit="triplet")
+    assert "10 triplets" in txt
+    assert "25" in txt
+    assert "épuisement du budget" in txt or "épuiser" in txt.lower()
+
+
+def test_iteration_block_unlimited_with_target():
+    """Cible + budget illimité → persistance absolue (pas d'abandon)."""
+    from jarvis import _iteration_block
+    txt = _iteration_block(target_count=10, budget_label="illimité",
+                           unit="annotation utile")
+    assert "10 annotation utile" in txt
+    assert "BUDGET" in txt and "ILLIMIT" in txt
+    assert "ABANDONNE" in txt.upper() or "abandonne" in txt.lower()
+
+
+def test_iteration_block_unbounded_no_target_falls_back():
+    """Ni cible ni budget : pas vide, mais persistance générale."""
+    from jarvis import _iteration_block
+    txt = _iteration_block(target_count=None, budget_label="illimité",
+                           unit="signalement")
+    assert txt.strip() != ""
+    assert "signalement" in txt.lower()
+
+
+def test_build_annotation_prompt_uses_iteration_block():
+    """Le pré-prompt annotation doit contenir un bloc d'itération non
+    vide et la mention de carte blanche en l'absence de terme."""
+    from jarvis import build_annotation_prompt
+    p = build_annotation_prompt(term="", relation=None, top_k=8,
+                                target_count=10, budget_label="25")
+    assert "carte blanche" in p.lower() or "TOUT le lexique" in p
+    assert "10" in p
+    # Mention de la sélectivité (mieux vaut peu et pertinent)
+    assert "selectivit" in p.lower().replace("é", "e") or \
+           "n'annote QUE" in p or "petit nombre" in p.lower()
