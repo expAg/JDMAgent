@@ -40,7 +40,7 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
   const center = centerNode.label || rootTerm;
   const centerId = centerNode.id;
 
-  // Index parent ↔ enfants à partir des arêtes (premier parent gardé).
+  // Index parent ↔ enfants
   const childrenOf = {};
   const parentOf = {};
   for (const e of edges || []) {
@@ -49,8 +49,6 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
     if (!(e.to in parentOf)) parentOf[e.to] = e.from;
   }
 
-  // Distances par anneau + palette
-  const DIST = [0, 130, 215, 280, 330];
   const COLOR_BY_KIND = {
     isa: 'jdm-magenta', hypo: 'jdm-green', syn: 'jdm-cyan',
     anto: 'jdm-magenta', carac: 'jdm-violet', part: 'jdm-orange',
@@ -58,90 +56,112 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
     assoc: 'jdm-violet', center: 'jdm-magenta',
   };
 
-  // BFS depuis centre, accumule angles. depth 1 = uniformément réparti
-  // autour du centre ; depth ≥ 2 = placé à l'angle parent ± offset
-  // proportionnel au nombre de frères (pas la couronne entière).
-  const placed = { [centerId]: { angle: 0, dist: 0, depth: 0 } };
-  const queue = [centerId];
-
-  // Pré-collecte des nœuds existants par id pour accès rapide
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-  // Pour chaque parent traité, on place ses enfants (depth+1) à des
-  // angles dérivés de l'angle parent. Le centre (depth 0) a un cas
-  // spécial : ses enfants se répartissent sur tout 360°.
+  // ───── Positionnement ─────
+  // Stockage : pour chaque id → { x, y, branchAngle, depth }
+  // - x, y    : position en repère cartésien (origine = centre).
+  // - branchAngle : direction radiale (degrés) utilisée pour
+  //                placer les enfants en sortant 'vers l'extérieur'.
+  const pos = { [centerId]: { x: 0, y: 0, branchAngle: 0, depth: 0 } };
+  const queue = [centerId];
+
+  const toRad = (a) => a * Math.PI / 180;
+
+  // Distance branche par profondeur — DESCEND avec depth pour donner
+  // un effet "fractal" : les rameaux plus profonds sont plus courts.
+  const BRANCH_LEN = [0, 130, 95, 75, 65];
+
   while (queue.length) {
-    const parentId = queue.shift();
-    const parentPos = placed[parentId];
-    const children = (childrenOf[parentId] || [])
-      .filter(id => byId[id] && !(id in placed));
+    const pid = queue.shift();
+    const pPos = pos[pid];
+    const children = (childrenOf[pid] || [])
+      .filter(id => byId[id] && !(id in pos));
     if (children.length === 0) continue;
 
-    const childDepth = parentPos.depth + 1;
-    const childDist = DIST[Math.min(childDepth, 4)] || 330;
+    const childDepth = pPos.depth + 1;
+    const len = BRANCH_LEN[Math.min(childDepth, 4)] || 65;
 
     children.forEach((id, i) => {
-      let angle;
+      // Direction de branche :
+      // - depth 1 : 360° uniformes autour du centre
+      // - depth ≥ 2 : ouvert autour de la direction radiale du parent
+      //   (= sa branchAngle), span proportionnel au nombre de frères
+      let branchAngle;
       if (layout === 'rings') {
-        // Mode 'rings' : tous les enfants d'un même depth sont étalés
-        // UNIFORMÉMENT sur 360°, peu importe leur parent. On agrège
-        // donc à plat par depth — voir post-traitement plus bas.
-        angle = 0;  // placeholder, recalculé après
-      } else if (parentPos.depth === 0) {
-        // 'tree' : enfants du centre = 360° uniformes
-        angle = (i / children.length) * 360 - 90;
+        branchAngle = 0;  // recalculé après
+      } else if (pPos.depth === 0) {
+        branchAngle = (i / children.length) * 360 - 90;
       } else {
-        // 'tree' : enfants d'un sous-arbre = serrés autour du parent
-        const span = Math.min(70, children.length * 22);
+        const span = Math.min(60, Math.max(20, children.length * 18));
         const off = children.length === 1
           ? 0
           : (i / (children.length - 1)) * span - span / 2;
-        angle = parentPos.angle + off;
+        branchAngle = pPos.branchAngle + off;
       }
-      placed[id] = { angle, dist: childDist, depth: childDepth };
+
+      // Position cartésienne = parent + vecteur radial
+      const rad = toRad(branchAngle);
+      pos[id] = {
+        x: pPos.x + len * Math.cos(rad),
+        y: pPos.y + len * Math.sin(rad),
+        branchAngle, depth: childDepth,
+      };
       queue.push(id);
     });
   }
 
-  // En mode 'rings' : re-répartir TOUS les enfants à plat sur 360°
-  // par depth (en ignorant la hiérarchie parent → enfant).
+  // Mode 'rings' : annule le placement cartésien, on rebatch par
+  // profondeur sur des cercles uniformes à distance fixe.
   if (layout === 'rings') {
+    const RING_DIST = [0, 130, 215, 280, 330];
     const byDepth = {};
-    for (const id of Object.keys(placed)) {
+    for (const id of Object.keys(pos)) {
       if (id === centerId) continue;
-      const d = placed[id].depth;
+      const d = pos[id].depth;
       if (!byDepth[d]) byDepth[d] = [];
       byDepth[d].push(id);
     }
     for (const dStr of Object.keys(byDepth)) {
       const d = Number(dStr);
       const arr = byDepth[d];
+      const dist = RING_DIST[Math.min(d, 4)] || 330;
       arr.forEach((id, i) => {
-        placed[id].angle = (i / arr.length) * 360 - 90 + d * 12;
+        const a = (i / arr.length) * 360 - 90 + d * 12;
+        const rad = toRad(a);
+        pos[id] = {
+          x: dist * Math.cos(rad), y: dist * Math.sin(rad),
+          branchAngle: a, depth: d,
+        };
       });
     }
   }
 
-  // Construit les listes finales (nodes / edges au format HeroAnimation).
-  // Delays : enfants de centre démarrent à 0.5 + i*0.15 ; sous-arbres
-  // démarrent après leur parent, propagation en cascade naturelle.
+  // ───── Conversion cartésien → polaire pour HeroAnimation ─────
+  // HeroAnimation place les nodes via { angle, dist } depuis le
+  // centre. On reconvertit le (x, y) calculé en polaire.
   const liveNodes = [];
   const nodeDelays = { [centerId]: 0 };
-  // Sort nodes by depth for a clean wave animation
-  const sortedIds = Object.keys(placed)
+  const sortedIds = Object.keys(pos)
     .filter(id => id !== centerId && byId[id])
-    .sort((a, b) => placed[a].depth - placed[b].depth);
+    .sort((a, b) => pos[a].depth - pos[b].depth);
+
   sortedIds.forEach((id, i) => {
-    const pos = placed[id];
+    const p = pos[id];
     const n = byId[id];
+    const angle = Math.atan2(p.y, p.x) * 180 / Math.PI;
+    const dist = Math.sqrt(p.x * p.x + p.y * p.y);
     const parentDelay = nodeDelays[parentOf[id] || centerId] || 0;
     const delay = Math.max(parentDelay + 0.18, 0.4 + i * 0.07);
     nodeDelays[id] = delay;
     liveNodes.push({
       id, label: n.label || id,
-      angle: pos.angle, dist: pos.dist,
+      angle, dist,
       color: COLOR_BY_KIND[n.kind] || 'jdm-violet',
-      delay, dim: pos.depth >= 3,
+      delay,
+      // dim dès depth ≥ 2 (comme la démo Projet hero) → claire
+      // hiérarchie visuelle parent / enfant.
+      dim: p.depth >= 2,
     });
   });
 
