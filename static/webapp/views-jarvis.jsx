@@ -1,49 +1,49 @@
-// View: Jarvis — autonomous looping pipelines.
+// View: Jarvis — agent-driven flows wired to /api/jarvis/{flow_id}/stream.
 //
-// Each flow runs as a background loop: the agent iterates, calls tools,
-// validates candidates, accumulates results. The user configures params
-// once, hits "Lancer", and watches the pipeline run. No manual stepping.
+// Conserve la structure visuelle du designer (cards de flow, page Run
+// avec params + metrics + log + résultats) mais branche maintenant les
+// 5 vrais flows backend : enrich / audit / gap / signalement / stats.
 
 const JARVIS_FLOWS = [
   {
     id: 'enrich',
     title: 'Enrichissement',
     kicker: 'Flux 1',
-    desc: 'Boucle de génération-validation : propose des triplets candidats, les valide via un panel de vérifications JDM, garde ceux qui passent.',
+    desc: 'Propose de nouveaux triplets pour un terme, les valide via JDM (factcheck + inférence), garde ceux qui passent, écrit un fichier .enrich prêt pour LLMDrops.',
     accent: 'var(--jdm-magenta)',
-    loopOf: 'génération → validation → mémoire',
+    loopOf: 'proposition → validation → consolidation',
   },
   {
     id: 'audit',
-    title: 'Audit de cohérence',
+    title: 'Audit sémantique',
     kicker: 'Flux 2',
-    desc: 'Parcourt le voisinage d\'un terme, détecte contradictions et triplets suspects par cross-checking entre relations.',
+    desc: 'Pour un terme polysémique, vérifie sens par sens quelles relations sont légitimes, contrastives, à corriger. Produit un fichier .audit.',
     accent: 'var(--jdm-cyan)',
-    loopOf: 'parcours → cross-check → flag',
+    loopOf: 'sens → triplet → verdict',
   },
   {
-    id: 'expand',
-    title: 'Expansion sémantique',
+    id: 'gap',
+    title: 'Détection de trous',
     kicker: 'Flux 3',
-    desc: 'Étend une requête initiale par strates : synonymes, hyponymes, termes culturellement liés, jusqu\'à saturation.',
+    desc: 'Identifie les relations manquantes ou faiblement couvertes pour un terme — pour relancer l\'enrichissement de façon ciblée.',
     accent: 'var(--jdm-green)',
-    loopOf: 'strate N → strate N+1',
+    loopOf: 'parcours → diagnostic → trous',
   },
   {
-    id: 'factcheck',
-    title: 'Fact-checking textuel',
+    id: 'signalement',
+    title: 'Signalement',
     kicker: 'Flux 4',
-    desc: 'Lit un paragraphe, en extrait les affirmations atomiques, vérifie chacune dans JDM, rend une synthèse.',
+    desc: 'Scanne un terme à la recherche de triplets suspects (incohérences, polarité douteuse, annotations oubliées). Produit un fichier .err.',
     accent: 'var(--jdm-orange)',
-    loopOf: 'extraction → vérification → synthèse',
+    loopOf: 'inventaire → flag → catégorisation',
   },
   {
-    id: 'synth',
-    title: 'Synthèse de concept',
+    id: 'stats',
+    title: 'Stats',
     kicker: 'Flux 5',
-    desc: 'Collecte les relations isa/parties/but/agents d\'un concept, assemble une définition lexicale riche.',
+    desc: 'Compte les relations, leur poids, leur distribution par terme et par relation. Renvoie un récapitulatif structuré.',
     accent: 'var(--jdm-violet)',
-    loopOf: 'collecte → assemblage',
+    loopOf: 'inventaire → agrégation',
   },
 ];
 
@@ -56,9 +56,9 @@ function ViewJarvis() {
   return (
     <PageShell>
       <SectionTitle
-        kicker="Pipelines autonomes"
+        kicker="Pipelines guidés"
         title="Jarvis"
-        desc="Cinq boucles d'agent qui itèrent sans intervention. Tu paramètres, tu lances, tu regardes. Pause / stop à tout moment."
+        desc="Cinq flux d'agent guidés par formulaire. Tu paramètres, tu lances, l'agent suit le workflow canonique du flux. Stoppable à tout moment."
       />
 
       <div style={{
@@ -127,7 +127,7 @@ function ViewJarvis() {
               color: 'var(--ink-3)',
             }}>
               <LoopGlyph color={f.accent} />
-              boucle : {f.loopOf}
+              {f.loopOf}
             </div>
           </div>
         ))}
@@ -146,46 +146,134 @@ function LoopGlyph({ color }) {
   );
 }
 
-// ───── Run view — the auto-loop interface ─────
+// ───── Run view — Sse-driven ─────
 function JarvisRun({ flow, onBack }) {
-  // Per-flow params
   const [params, setParams] = useState(defaultParamsFor(flow.id));
-  // Pipeline state
-  const [state, setState] = useState('idle'); // idle | running | paused | done
+  const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
   const [metrics, setMetrics] = useState({
-    iterations: 0,
-    toolsCalled: 0,
-    candidates: 0,
-    accepted: 0,
-    rejected: 0,
-    elapsed: 0,
+    toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0,
   });
   const [accepted, setAccepted] = useState([]);
+  const [finalText, setFinalText] = useState('');
+  const [headline, setHeadline] = useState('');
   const logRef = useRef(null);
-  const tickRef = useRef(null);
-
-  // Tick the loop
-  useEffect(() => {
-    if (state !== 'running') {
-      clearInterval(tickRef.current);
-      return;
-    }
-    tickRef.current = setInterval(() => {
-      step(flow.id, params, setLog, setMetrics, setAccepted, setState);
-    }, 650);
-    return () => clearInterval(tickRef.current);
-  }, [state, flow.id, params]);
+  const abortRef = useRef(null);
+  const startTimeRef = useRef(null);
 
   // Auto-scroll log
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
+  // Tick elapsed time
+  useEffect(() => {
+    if (state !== 'running') return;
+    const id = setInterval(() => {
+      setMetrics(m => ({ ...m, elapsed: Date.now() - (startTimeRef.current || Date.now()) }));
+    }, 250);
+    return () => clearInterval(id);
+  }, [state]);
+
   const reset = () => {
-    setLog([]); setAccepted([]);
-    setMetrics({ iterations: 0, toolsCalled: 0, candidates: 0, accepted: 0, rejected: 0, elapsed: 0 });
+    setLog([]); setAccepted([]); setFinalText(''); setHeadline('');
+    setMetrics({ toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0 });
     setState('idle');
+  };
+
+  const launch = async () => {
+    reset();
+    setState('running');
+    startTimeRef.current = Date.now();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    const flowParams = { ...params };
+    const ts = () => new Date().toTimeString().slice(0, 8);
+
+    try {
+      const res = await fetch(`/api/jarvis/${flow.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_id: flow.id, params: flowParams }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const rawEv = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const ev = parseSSEEventJarvis(rawEv);
+          if (!ev) continue;
+          const d = ev.data || {};
+          switch (ev.event) {
+            case 'headline':
+              setHeadline(d.text || '');
+              setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
+              break;
+            case 'thought':
+              setMetrics(m => ({ ...m, thoughts: m.thoughts + 1 }));
+              setLog(l => [...l, { t: ts(), tag: '[think]', kind: 'thought', msg: (d.text || '').slice(0, 200) }]);
+              break;
+            case 'spoken':
+              setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
+              break;
+            case 'tool_call':
+              setMetrics(m => ({ ...m, toolsCalled: m.toolsCalled + 1 }));
+              setLog(l => [...l, {
+                t: ts(), tag: '[tool]', kind: 'tool',
+                msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
+              }]);
+              break;
+            case 'tool_result':
+              if (d.narration) {
+                setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'accept', msg: d.narration }]);
+              } else if (d.preview) {
+                setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
+              }
+              // Détection write_submission_file : on accumule en "acceptés"
+              if (d.name === 'write_submission_file' && d.preview) {
+                setAccepted(a => [...a, { label: d.preview.slice(0, 80), score: 'soumis' }]);
+                setMetrics(m => ({ ...m, accepted: m.accepted + 1 }));
+              }
+              break;
+            case 'final':
+              setFinalText(d.text || '');
+              setLog(l => [...l, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]);
+              setState('done');
+              break;
+            case 'error':
+              setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }]);
+              setState('error');
+              break;
+            default: break;
+          }
+        }
+      }
+      if (state === 'running') setState('done');
+    } catch (e) {
+      if (ctrl.signal.aborted) {
+        setLog(l => [...l, { t: ts(), tag: '[stop]', kind: 'iter', msg: 'Annulé par l\'utilisateur.' }]);
+        setState('done');
+      } else {
+        setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }]);
+        setState('error');
+      }
+    }
+  };
+
+  const stop = () => {
+    if (abortRef.current) abortRef.current.abort();
   };
 
   return (
@@ -221,7 +309,7 @@ function JarvisRun({ flow, onBack }) {
               textTransform: 'uppercase', letterSpacing: '0.1em',
               marginBottom: 12,
             }}>Paramètres</div>
-            <ParamsForm flow={flow} params={params} setParams={setParams} locked={state === 'running' || state === 'paused'} />
+            <ParamsForm flow={flow} params={params} setParams={setParams} locked={state === 'running'} />
           </Card>
 
           <Card padding={16}>
@@ -231,18 +319,16 @@ function JarvisRun({ flow, onBack }) {
               marginBottom: 12,
             }}>Contrôles</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {state === 'idle' && <Button full onClick={() => setState('running')}>▶ Lancer la boucle</Button>}
-              {state === 'running' && <>
-                <Button variant="secondary" onClick={() => setState('paused')}>⏸ Pause</Button>
-                <Button variant="secondary" onClick={() => setState('done')}>⏹ Stop</Button>
-              </>}
-              {state === 'paused' && <>
-                <Button onClick={() => setState('running')}>▶ Reprendre</Button>
-                <Button variant="secondary" onClick={() => setState('done')}>⏹ Stop</Button>
-              </>}
-              {state === 'done' && <Button full variant="secondary" onClick={reset}>↻ Relancer</Button>}
+              {(state === 'idle' || state === 'done' || state === 'error') && (
+                <Button full onClick={launch}>
+                  {state === 'idle' ? '▶ Lancer' : '↻ Relancer'}
+                </Button>
+              )}
+              {state === 'running' && (
+                <Button variant="secondary" full onClick={stop}>⏹ Stop</Button>
+              )}
             </div>
-            {(state === 'running' || state === 'paused') && (
+            {state === 'running' && (
               <div style={{
                 marginTop: 10,
                 padding: '6px 10px',
@@ -252,7 +338,7 @@ function JarvisRun({ flow, onBack }) {
                 color: 'var(--ink-3)',
                 fontFamily: 'var(--font-mono)',
               }}>
-                Boucle auto · pas de validation manuelle
+                Streaming SSE · arrêt manuel possible
               </div>
             )}
           </Card>
@@ -262,17 +348,49 @@ function JarvisRun({ flow, onBack }) {
               fontSize: 11, color: 'var(--ink-3)',
               textTransform: 'uppercase', letterSpacing: '0.1em',
               marginBottom: 12,
-            }}>Critères d'arrêt</div>
-            <StopCriteria flow={flow.id} params={params} setParams={setParams} locked={state === 'running'} />
+            }}>Modèle</div>
+            <Field label="Choix">
+              <Select value={params.model || 'gemini-3.1-flash-lite'}
+                onChange={(v) => setParams(p => ({ ...p, model: v }))}
+                options={[
+                  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+                  { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
+                  { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
+                  { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
+                ]} />
+            </Field>
+            {(params.model || '').match(/^(claude|gpt)-/) && (
+              <Field label="Clé API">
+                <Input value={params.api_key || ''}
+                  onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
+                  placeholder={(params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…'}
+                  mono />
+              </Field>
+            )}
           </Card>
         </div>
 
         {/* Right: live monitor */}
         <div>
+          {/* Headline (résumé) */}
+          {headline && (
+            <div style={{
+              padding: '8px 14px',
+              marginBottom: 12,
+              background: 'var(--bg-elev)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--radius)',
+              fontSize: 13,
+              color: 'var(--ink-2)',
+            }}>
+              {headline}
+            </div>
+          )}
+
           {/* Metrics grid */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
+            gridTemplateColumns: 'repeat(4, 1fr)',
             gap: 1,
             background: 'var(--line)',
             border: '1px solid var(--line)',
@@ -280,11 +398,9 @@ function JarvisRun({ flow, onBack }) {
             overflow: 'hidden',
             marginBottom: 14,
           }}>
-            <Metric label="Itération" value={metrics.iterations} max={params.maxIter ?? 100} accent={flow.accent} />
-            <Metric label="Outils" value={metrics.toolsCalled} sub="appels" />
-            <Metric label="Candidats" value={metrics.candidates} sub="générés" />
-            <Metric label="Acceptés" value={metrics.accepted} sub="validés" color="var(--jdm-green)" />
-            <Metric label="Rejetés" value={metrics.rejected} sub="filtrés" color="var(--jdm-magenta)" />
+            <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
+            <Metric label="Pensées" value={metrics.thoughts} sub="thoughts" />
+            <Metric label="Soumis" value={metrics.accepted} sub="fichiers" color="var(--jdm-green)" />
             <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
           </div>
 
@@ -325,17 +441,22 @@ function JarvisRun({ flow, onBack }) {
                       color: l.kind === 'tool' ? 'var(--accent)' :
                              l.kind === 'accept' ? 'var(--jdm-green)' :
                              l.kind === 'reject' ? 'var(--jdm-magenta)' :
+                             l.kind === 'thought' ? 'var(--ink-3)' :
                              l.kind === 'iter' ? flow.accent :
                              'var(--ink-3)',
-                      minWidth: 56,
+                      minWidth: 64,
                     }}>{l.tag}</span>
-                    <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                    <span style={{
+                      color: l.kind === 'thought' ? 'var(--ink-3)' : 'var(--ink)',
+                      fontStyle: l.kind === 'thought' ? 'italic' : 'normal',
+                      wordBreak: 'break-word',
+                    }}>{l.msg}</span>
                   </div>
                 ))}
               </div>
             </Card>
 
-            {/* Accepted candidates accumulator */}
+            {/* Accepted / final answer */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 padding: '10px 14px',
@@ -345,49 +466,46 @@ function JarvisRun({ flow, onBack }) {
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>Résultats validés · {accepted.length}</div>
+                }}>
+                  {finalText ? 'Réponse finale' : `Fichiers soumis · ${accepted.length}`}
+                </div>
               </div>
               <div style={{
                 height: 420,
                 overflowY: 'auto',
                 padding: 12,
                 background: 'var(--bg-card)',
+                fontSize: 13,
+                lineHeight: 1.55,
+                color: 'var(--ink)',
+                whiteSpace: 'pre-wrap',
               }}>
-                {accepted.length === 0 ? (
-                  <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
-                    Aucun résultat encore.
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    {accepted.map((a, i) => (
-                      <div key={i} className="fade-up" style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev)',
-                        border: '1px solid var(--line-soft)',
-                        borderRadius: 'var(--radius)',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: 11,
-                      }}>
-                        <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>✓</span>
-                        <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
-                        <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{a.score}</span>
-                      </div>
-                    ))}
-                  </div>
+                {finalText ? finalText : (
+                  accepted.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
+                      Aucun fichier encore.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {accepted.map((a, i) => (
+                        <div key={i} className="fade-up" style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '6px 8px',
+                          background: 'var(--bg-elev)',
+                          border: '1px solid var(--line-soft)',
+                          borderRadius: 'var(--radius)',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 11,
+                        }}>
+                          <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>✓</span>
+                          <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
+                          <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{a.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
                 )}
               </div>
-              {accepted.length > 0 && state === 'done' && (
-                <div style={{
-                  padding: 10,
-                  borderTop: '1px solid var(--line-soft)',
-                  background: 'var(--bg-elev)',
-                  display: 'flex', gap: 6,
-                }}>
-                  <Button size="sm" variant="secondary">Exporter CSV</Button>
-                  <Button size="sm" variant="ghost">JSON</Button>
-                </div>
-              )}
             </Card>
           </div>
         </div>
@@ -396,13 +514,36 @@ function JarvisRun({ flow, onBack }) {
   );
 }
 
+// ───── Helpers ─────
+
+function parseSSEEventJarvis(raw) {
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  let parsed;
+  try { parsed = JSON.parse(data); } catch { parsed = { text: data }; }
+  return { event, data: parsed };
+}
+
+function shortArgs(args) {
+  if (!args) return '';
+  return Object.entries(args)
+    .slice(0, 3)
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v.slice(0, 20)}"` : JSON.stringify(v).slice(0, 25)}`)
+    .join(', ');
+}
+
 // ───── Status badge ─────
 function StatusBadge({ state, accent }) {
   const styles = {
-    idle:    { label: 'En attente', color: 'var(--ink-3)', dot: false },
-    running: { label: 'En cours',   color: accent,         dot: true  },
-    paused:  { label: 'En pause',   color: 'var(--jdm-orange)', dot: false },
-    done:    { label: 'Terminé',    color: 'var(--jdm-green)',  dot: false },
+    idle:    { label: 'En attente', color: 'var(--ink-3)',       dot: false },
+    running: { label: 'En cours',   color: accent,               dot: true  },
+    done:    { label: 'Terminé',    color: 'var(--jdm-green)',   dot: false },
+    error:   { label: 'Erreur',     color: 'var(--jdm-magenta)', dot: false },
   }[state];
   return (
     <div style={{
@@ -453,225 +594,121 @@ function Metric({ label, value, sub, max, accent, color, mono }) {
   );
 }
 
-// ───── Per-flow params ─────
+// ───── Per-flow form ─────
+
+const REL_OPTS_COMMON = [
+  { value: 'r_isa', label: 'r_isa — est un' },
+  { value: 'r_hypo', label: 'r_hypo — exemple de' },
+  { value: 'r_carac', label: 'r_carac — caractéristique' },
+  { value: 'r_has_part', label: 'r_has_part — parties' },
+  { value: 'r_has_color', label: 'r_has_color — couleur' },
+  { value: 'r_agent', label: 'r_agent — agent typique' },
+  { value: 'r_patient', label: 'r_patient — patient typique' },
+  { value: 'r_lieu', label: 'r_lieu — lieu typique' },
+  { value: 'r_telic_role', label: 'r_telic_role — à quoi sert' },
+];
+
+const BUDGET_OPTS = [
+  { value: '10', label: '10' },
+  { value: '25', label: '25' },
+  { value: '50', label: '50' },
+  { value: '100', label: '100' },
+  { value: 'illimité', label: 'illimité' },
+];
+
 function defaultParamsFor(flowId) {
+  const common = { model: 'gemini-3.1-flash-lite', api_key: '', use_thinking: true };
   switch (flowId) {
-    case 'enrich': return { term: 'chat', relation: 'r_carac', maxIter: 30, minConf: 0.5 };
-    case 'audit':  return { term: 'chat', depth: 2, maxIter: 50 };
-    case 'expand': return { term: 'félin', depth: 3, maxIter: 25 };
-    case 'factcheck': return { text: 'Le chat est un mammifère. Il mange des croquettes et chasse des souris. Sa moustache lui sert à mesurer les ouvertures.', maxIter: 6 };
-    case 'synth': return { concept: 'chat', maxIter: 8 };
+    case 'enrich':      return { ...common, term: 'chat', relation: 'r_carac', target_count: 10, vary_relations: false, iterate: false, budget_label: '25', upload: false };
+    case 'audit':       return { ...common, term: 'avocat', relation: '', budget_label: '50', upload: false };
+    case 'gap':         return { ...common, term: 'chat', budget_label: '25' };
+    case 'signalement': return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
+    case 'stats':       return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
   }
+  return common;
 }
 
 function ParamsForm({ flow, params, setParams, locked }) {
   const set = (k, v) => setParams(p => ({ ...p, [k]: v }));
-  if (flow.id === 'enrich') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme à enrichir">
-          <Input value={params.term} onChange={(v) => set('term', v)} mono />
-        </Field>
-        <Field label="Type de relation">
-          <Select value={params.relation} onChange={(v) => set('relation', v)} options={[
-            { value: 'r_carac', label: 'r_carac — caractéristiques' },
-            { value: 'r_isa', label: 'r_isa — hyperonymes' },
-            { value: 'r_has_part', label: 'r_has_part — parties' },
-            { value: 'r_agent', label: 'r_agent — agents typiques' },
-            { value: 'r_lieu', label: 'r_lieu — lieux typiques' },
-          ]} />
-        </Field>
-        <Field label={`Confiance minimum · ${params.minConf}`}>
-          <Slider value={params.minConf * 100} onChange={(v) => set('minConf', v / 100)} min={0} max={100} step={5} suffix="%" />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'audit') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme racine"><Input value={params.term} onChange={(v) => set('term', v)} mono /></Field>
-        <Field label={`Profondeur · ${params.depth}`}>
-          <Slider value={params.depth} onChange={(v) => set('depth', v)} min={1} max={4} step={1} />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'expand') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme initial"><Input value={params.term} onChange={(v) => set('term', v)} mono /></Field>
-        <Field label={`Strates · ${params.depth}`}>
-          <Slider value={params.depth} onChange={(v) => set('depth', v)} min={1} max={5} step={1} />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'factcheck') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Texte à vérifier">
-          <textarea
-            value={params.text}
-            onChange={(e) => set('text', e.target.value)}
-            rows={6}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              background: 'var(--bg-card)',
-              border: '1px solid var(--line)',
-              borderRadius: 'var(--radius)',
-              color: 'var(--ink)',
-              fontFamily: 'inherit',
-              fontSize: 13,
-              outline: 'none',
-              resize: 'vertical',
-            }}
-          />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'synth') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Concept à définir"><Input value={params.concept} onChange={(v) => set('concept', v)} mono /></Field>
-      </div>
-    );
-  }
-}
-
-function StopCriteria({ flow, params, setParams, locked }) {
-  return (
+  const wrap = (children) => (
     <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-      <Field label={`Itérations max · ${params.maxIter}`}>
-        <Slider value={params.maxIter} onChange={(v) => setParams(p => ({ ...p, maxIter: v }))} min={5} max={100} step={1} />
-      </Field>
-      <div style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        lineHeight: 1.5, marginTop: 4,
-      }}>
-        La boucle s'arrête aussi si plus aucun candidat n'est généré pendant 5 itérations consécutives.
-      </div>
+      {children}
     </div>
   );
-}
 
-// ───── Simulated step — fake but realistic ─────
-const FLOW_FAKES = {
-  enrich: {
-    tools: ['relations_from', 'relations_to', 'analogies', 'common_ancestors', 'validate_candidate'],
-    candidatesPool: [
-      { label: 'chat | r_carac | curieux',    s: 0.92, ok: true },
-      { label: 'chat | r_carac | indépendant', s: 0.89, ok: true },
-      { label: 'chat | r_carac | propre',      s: 0.81, ok: true },
-      { label: 'chat | r_carac | nocturne',    s: 0.77, ok: true },
-      { label: 'chat | r_carac | silencieux',  s: 0.71, ok: true },
-      { label: 'chat | r_carac | hautain',     s: 0.54, ok: true },
-      { label: 'chat | r_carac | aboyeur',     s: 0.12, ok: false, reason: 'contradicted by r_agent(aboyer, chien)' },
-      { label: 'chat | r_carac | aquatique',   s: 0.18, ok: false, reason: 'no support in r_lieu' },
-      { label: 'chat | r_carac | énorme',      s: 0.22, ok: false, reason: 'contradicted by r_size' },
-      { label: 'chat | r_carac | gracieux',    s: 0.86, ok: true },
-      { label: 'chat | r_carac | affectueux',  s: 0.79, ok: true },
-      { label: 'chat | r_carac | chasseur',    s: 0.88, ok: true },
-    ],
-  },
-  audit: {
-    tools: ['relations_from', 'cross_check', 'detect_contradiction', 'flag_suspect'],
-    candidatesPool: [
-      { label: 'chat | r_isa | chien',         s: 0.04, ok: false, reason: 'contradicted by r_isa(chat, félin)' },
-      { label: 'chat | r_has_part | aile',     s: 0.02, ok: false, reason: 'no support in JDM' },
-      { label: 'chat | r_has_color | bleu',    s: 0.31, ok: false, reason: 'suspicious — low weight (w=3)' },
-      { label: 'chat | r_isa | félin',         s: 0.97, ok: true },
-      { label: 'chat | r_has_part | patte',    s: 0.95, ok: true },
-    ],
-  },
-  expand: {
-    tools: ['refinements_decoded', 'relations_from', 'common_ancestors'],
-    candidatesPool: [
-      { label: 'félin → chat',                 s: 0.95, ok: true },
-      { label: 'félin → lion',                 s: 0.91, ok: true },
-      { label: 'félin → tigre',                s: 0.88, ok: true },
-      { label: 'félin → léopard',              s: 0.82, ok: true },
-      { label: 'félin → panthère',             s: 0.79, ok: true },
-      { label: 'félin → guépard',              s: 0.76, ok: true },
-      { label: 'félin → lynx',                 s: 0.71, ok: true },
-      { label: 'félin → puma',                 s: 0.65, ok: true },
-      { label: 'félin → ocelot',               s: 0.42, ok: true },
-      { label: 'félin → serval',               s: 0.31, ok: true },
-    ],
-  },
-  factcheck: {
-    tools: ['extract_claims', 'verify_claim'],
-    candidatesPool: [
-      { label: '✓ chat | r_isa | mammifère',          s: 0.97, ok: true },
-      { label: '✓ chat | r_patient | manger croquette', s: 0.91, ok: true },
-      { label: '✓ chat | r_agent | chasser souris',    s: 0.88, ok: true },
-      { label: '✓ moustache | r_telic_role | mesurer', s: 0.74, ok: true },
-    ],
-  },
-  synth: {
-    tools: ['relations_from', 'refinements_decoded', 'common_ancestors'],
-    candidatesPool: [
-      { label: 'isa: mammifère, félin, animal',        s: 0.95, ok: true },
-      { label: 'parties: patte, queue, oreille',       s: 0.92, ok: true },
-      { label: 'agents typiques: ronronner, miauler',  s: 0.87, ok: true },
-      { label: 'but: chasser, garder compagnie',       s: 0.81, ok: true },
-      { label: 'caractéristiques: agile, curieux',     s: 0.85, ok: true },
-    ],
-  },
-};
+  if (flow.id === 'enrich') {
+    return wrap(<>
+      <Field label="Terme à enrichir">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relation cible (optionnelle)">
+        <Select value={params.relation || ''}
+          onChange={(v) => set('relation', v)}
+          options={[{ value: '', label: '— libre —' }, ...REL_OPTS_COMMON]} />
+      </Field>
+      <Field label={`Nombre cible · ${params.target_count}`}>
+        <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
+      </Field>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginBottom: 8 }}>
+        <input type="checkbox" checked={!!params.vary_relations}
+          onChange={(e) => set('vary_relations', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Varier les relations
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginBottom: 8 }}>
+        <input type="checkbox" checked={!!params.iterate}
+          onChange={(e) => set('iterate', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Itérer jusqu'à la cible
+      </label>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+        <input type="checkbox" checked={!!params.upload}
+          onChange={(e) => set('upload', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Soumettre à LLMDrops
+      </label>
+    </>);
+  }
 
-function step(flowId, params, setLog, setMetrics, setAccepted, setState) {
-  const fake = FLOW_FAKES[flowId];
-  if (!fake) return;
-  const t = new Date();
-  const tStr = t.toTimeString().slice(0, 8);
-  const minConf = params.minConf ?? 0.5;
+  if (flow.id === 'audit' || flow.id === 'signalement' || flow.id === 'stats') {
+    return wrap(<>
+      <Field label="Terme">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relation (optionnelle)">
+        <Select value={params.relation || ''}
+          onChange={(v) => set('relation', v)}
+          options={[{ value: '', label: '— toutes —' }, ...REL_OPTS_COMMON]} />
+      </Field>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      {flow.id !== 'stats' && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!params.upload}
+            onChange={(e) => set('upload', e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }} />
+          Soumettre à LLMDrops
+        </label>
+      )}
+    </>);
+  }
 
-  setMetrics(m => {
-    const newIter = m.iterations + 1;
-    // Stop conditions
-    if (newIter > (params.maxIter ?? 30) || newIter > fake.candidatesPool.length + 2) {
-      setLog(l => [...l, { t: tStr, tag: '[stop]', kind: 'iter', msg: 'Critère d\'arrêt atteint — fin de boucle' }]);
-      setTimeout(() => setState('done'), 100);
-      return m;
-    }
+  if (flow.id === 'gap') {
+    return wrap(<>
+      <Field label="Terme">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+    </>);
+  }
 
-    const newLogs = [];
-    const idx = (newIter - 1) % fake.candidatesPool.length;
-    const cand = fake.candidatesPool[idx];
-
-    newLogs.push({ t: tStr, tag: `[iter ${newIter}]`, kind: 'iter', msg: 'Génération de candidats…' });
-
-    // Pick 1-2 tool calls
-    const nTools = 2 + (newIter % 2);
-    for (let i = 0; i < nTools; i++) {
-      const tool = fake.tools[(newIter + i) % fake.tools.length];
-      newLogs.push({ t: tStr, tag: '[tool]', kind: 'tool', msg: `${tool}(…) → ${20 + (newIter * 7) % 80}ms` });
-    }
-
-    // Decision
-    const passesConf = cand.s >= minConf;
-    if (cand.ok && passesConf) {
-      newLogs.push({ t: tStr, tag: '[accept]', kind: 'accept', msg: `${cand.label} · score=${cand.s.toFixed(2)}` });
-      setAccepted(a => [...a, { label: cand.label, score: cand.s.toFixed(2) }]);
-    } else {
-      const reason = cand.reason || `score ${cand.s.toFixed(2)} < ${minConf.toFixed(2)}`;
-      newLogs.push({ t: tStr, tag: '[reject]', kind: 'reject', msg: `${cand.label} · ${reason}` });
-    }
-
-    setLog(l => [...l, ...newLogs]);
-
-    return {
-      iterations: newIter,
-      toolsCalled: m.toolsCalled + nTools,
-      candidates: m.candidates + 1,
-      accepted: m.accepted + (cand.ok && passesConf ? 1 : 0),
-      rejected: m.rejected + (cand.ok && passesConf ? 0 : 1),
-      elapsed: m.elapsed + 650,
-    };
-  });
+  return null;
 }
 
 window.ViewJarvis = ViewJarvis;
