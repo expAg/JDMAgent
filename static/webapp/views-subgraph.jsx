@@ -46,7 +46,7 @@ function ViewSubgraph() {
   const [activeRelsD4, setActiveRelsD4] = useState(SUBGRAPH_DEFAULT_D4);
   const [minWeight, setMinWeight] = useState(0);
   const [maxNodes, setMaxNodes] = useState(40);
-  const [format, setFormat] = useState('html');  // 'html' par défaut (vis-network)
+  const [format, setFormat] = useState('live');  // 'live' par défaut (animation graphique)
   const [data, setData] = useState({ nodes: [], edges: [], stats: {}, html: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -147,24 +147,42 @@ function ViewSubgraph() {
               </div>
             </Field>
             <Field label="Format de rendu">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-                {['html', 'svg'].map(f => (
-                  <button key={f}
-                    onClick={() => setFormat(f === 'svg' ? 'json' : 'html')}
-                    className="focus-ring"
-                    style={{
-                      padding: '8px',
-                      background: (f === 'svg' ? format === 'json' : format === 'html')
-                                  ? 'var(--accent)' : 'var(--bg-elev)',
-                      border: '1px solid var(--line)',
-                      color: (f === 'svg' ? format === 'json' : format === 'html')
-                             ? 'var(--bg)' : 'var(--ink)',
-                      borderRadius: 'var(--radius)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      textTransform: 'uppercase',
-                    }}>{f}</button>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+                {[
+                  { id: 'html', value: 'html', label: 'HTML' },
+                  { id: 'svg',  value: 'json', label: 'SVG' },
+                  { id: 'live', value: 'live', label: 'LIVE', dot: true },
+                ].map(f => {
+                  const active = format === f.value;
+                  return (
+                    <button key={f.id}
+                      onClick={() => setFormat(f.value)}
+                      className="focus-ring"
+                      style={{
+                        padding: '8px',
+                        background: active ? 'var(--accent)' : 'var(--bg-elev)',
+                        border: '1px solid var(--line)',
+                        color: active ? 'var(--bg)' : 'var(--ink)',
+                        borderRadius: 'var(--radius)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        textTransform: 'uppercase',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 5,
+                      }}>
+                      {f.dot && (
+                        <span style={{
+                          width: 7, height: 7, borderRadius: '50%',
+                          background: active ? 'var(--bg)' : 'var(--jdm-green)',
+                          animation: 'pulse-dot 1.2s ease-in-out infinite',
+                        }}/>
+                      )}
+                      {f.label}
+                    </button>
+                  );
+                })}
               </div>
             </Field>
             <Field label={`Poids minimum · ${minWeight}`}>
@@ -248,10 +266,19 @@ function ViewSubgraph() {
               </div>
             </div>
             <div style={{
-              height: 'min(900px, calc(100vh - 220px))',
-              minHeight: 600,
+              // Hauteur adaptative selon le format :
+              //  - HTML (vis-network iframe) : gros canvas, prend la viewport
+              //  - SVG (rendu natif sur dataset) : moyen
+              //  - LIVE (animation graphique) : 600px pour matcher l'anim
+              height: format === 'live'
+                ? 620
+                : format === 'json'
+                  ? 'min(720px, calc(100vh - 220px))'
+                  : 'min(900px, calc(100vh - 220px))',
+              minHeight: format === 'live' ? 620 : 560,
               background: 'var(--bg-card)',
               position: 'relative',
+              transition: 'height 0.32s cubic-bezier(0.4, 0, 0.2, 1)',
             }}>
               {data.format === 'html' && data.html ? (
                 <iframe
@@ -266,6 +293,13 @@ function ViewSubgraph() {
                     background: 'var(--bg)',
                   }}
                 />
+              ) : format === 'live' ? (
+                // Mode LIVE — graphe animé en boucle (sans chat).
+                // À brancher sur /api/subgraph/live (SSE) — voir brief.
+                // Pour l'instant : scénarios pré-enregistrés en démo.
+                <div style={{ padding: 12, height: '100%' }}>
+                  <HeroAnimation height={560} showChat={false} />
+                </div>
               ) : data.nodes && data.nodes.length > 0 ? (
                 <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
               ) : (

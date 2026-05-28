@@ -1,42 +1,49 @@
-// View: Aide — installation, usage, MCP, soumission.
-// Conserve le layout designer (SectionTitle / Card / kbd / image-slot)
-// mais le remplit avec notre contenu canonique AIDE_MD réparti dans
-// des sections visuellement structurées.
+// View: Aide — refonte visuelle "plus jolie".
+// Sticky TOC à gauche, contenu structuré à droite, blocs colorés, icônes.
+// Tous les textes canoniques sont préservés.
 
-// Navigation : table des onglets — version "card" du tableau markdown.
+const AIDE_SECTIONS = [
+  { id: 'tour',    num: '01', label: 'Tour des onglets' },
+  { id: 'jarvis',  num: '02', label: 'Jarvis en détail' },
+  { id: 'install', num: '03', label: 'Installation locale' },
+  { id: 'mcp',     num: '04', label: 'Serveur MCP' },
+  { id: 'keys',    num: '05', label: 'Clés API' },
+  { id: 'kbd',     num: '06', label: 'Raccourcis' },
+  { id: 'format',  num: '07', label: 'Formats de fichiers' },
+];
+
 const TABS_TABLE = [
   { icon: '📋', name: 'Projet',        what: 'Présentation, liens code source.',                                 key: 'Aucune' },
   { icon: '🔎', name: 'Explorer JDM',  what: 'Table de triplets pour un terme/relation. Déterministe.',          key: 'Aucune' },
   { icon: '⚖️', name: 'Claim checker', what: 'SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet. Déterministe.', key: 'Aucune' },
   { icon: '🕸️', name: 'Sous-graphe',   what: 'Visualisation vis-network interactive du voisinage.',              key: 'Aucune' },
-  { icon: '🤖', name: 'Agent',         what: 'Chat libre avec un agent LLM qui utilise les outils JDM.',         key: 'Gemini (gratuit) ou BYOK Claude/GPT' },
-  { icon: '🦾', name: 'Jarvis',        what: 'Flux guidés par formulaires (5 sous-onglets).',                    key: 'Gemini gratuit · LLMDrops si soumission' },
+  { icon: '🤖', name: 'Agent',         what: 'Chat libre avec un agent LLM qui utilise les outils JDM.',         key: 'Gemini gratuit · BYOK Claude/GPT' },
+  { icon: '🦾', name: 'Jarvis',        what: 'Flux guidés par formulaires (5 sous-onglets).',                    key: 'Gemini · LLMDrops si soumission' },
   { icon: '🛠️', name: 'Aide',          what: 'Ce document.',                                                      key: '—' },
 ];
 
-// Les 5 flows Jarvis avec leur description.
 const JARVIS_FLOWS_HELP = [
-  { id: 'enrich',      icon: '🌱', name: 'Enrichissement', wf: 'enrichment_workflow()',
+  { id: 'enrich',      icon: '🌱', accent: 'var(--jdm-green)',   name: 'Enrichissement', wf: 'enrichment_workflow()',
     desc: 'Propose et consolide de nouveaux triplets pour un terme. Form : terme, relation cible (optionnelle), nombre cible, varier les relations, itérer jusqu\'au but, soumettre. Output : chatbot + fichier .enrich.' },
-  { id: 'audit',       icon: '🔍', name: 'Audit',          wf: 'audit_workflow()',
+  { id: 'audit',       icon: '🔍', accent: 'var(--jdm-cyan)',    name: 'Audit',          wf: 'audit_workflow()',
     desc: 'Audit sémantique de la répartition des sens d\'un terme polysémique. Verdict par triplet (LEGITIME / DEVRAIT_ETRE_CONTRASTIF / NON_CONTRASTIF / NEGATIVE) + section META narrative. Fichier .audit.' },
-  { id: 'gap',         icon: '🕳️', name: 'Détection de trous', wf: 'gap_detection_workflow()',
+  { id: 'gap',         icon: '🕳️', accent: 'var(--jdm-violet)',  name: 'Détection de trous', wf: 'gap_detection_workflow()',
     desc: 'Identifie les trous de couverture (MISSING / NEGATIVE_FILLED / LOW_COVERAGE). Tableau déterministe + synthèse narrative. Routage vers Enrich / Audit / Stats.' },
-  { id: 'signalement', icon: '⚠️', name: 'Signalement',    wf: 'signalement_workflow()',
+  { id: 'signalement', icon: '⚠️', accent: 'var(--jdm-magenta)', name: 'Signalement',    wf: 'signalement_workflow()',
     desc: 'Le LLM utilise son jugement linguistique pour flagger les triplets suspects (pas besoin de preuve d\'outil). Fichier .err avec catégorie de suspicion et justification.' },
-  { id: 'stats',       icon: '📊', name: 'Stats',          wf: 'stats_workflow()',
+  { id: 'stats',       icon: '📊', accent: 'var(--jdm-yellow)',  name: 'Stats',          wf: 'stats_workflow()',
     desc: 'Statistiques de couverture par terme et/ou par relation : n_total, n_pos, n_neg, max_w, min_w, mean_w par relation + 3-5 observations clés en prose.' },
 ];
 
 const API_KEYS_TABLE = [
-  { name: 'Gemini',          where: 'aistudio.google.com/apikey',     cost: 'Gratuit (500 req/jour pour 3.1 Flash Lite)', when: 'Pré-configurée côté serveur',
-    url: 'https://aistudio.google.com/apikey' },
-  { name: 'LLMDrops JDM',    where: 'jeuxdemots.org (contacter M. Lafourcade)', cost: 'Gratuit sur demande', when: 'Pousser .enrich / .audit / .err vers JDM',
-    url: 'https://www.jeuxdemots.org' },
+  { name: 'Gemini',          where: 'aistudio.google.com/apikey',     cost: 'Gratuit (500 req/jour, 3.1 Flash Lite)', when: 'Pré-configurée côté serveur',
+    url: 'https://aistudio.google.com/apikey', tone: 'free' },
+  { name: 'LLMDrops JDM',    where: 'jeuxdemots.org (contact M. Lafourcade)', cost: 'Gratuit sur demande', when: 'Pousser .enrich / .audit / .err',
+    url: 'https://www.jeuxdemots.org', tone: 'free' },
   { name: 'Anthropic (Claude)', where: 'console.anthropic.com',       cost: 'Payant ($)',                              when: 'BYOK Claude dans Agent / Jarvis',
-    url: 'https://console.anthropic.com' },
+    url: 'https://console.anthropic.com', tone: 'paid' },
   { name: 'OpenAI (GPT)',    where: 'platform.openai.com',            cost: 'Payant ($)',                              when: 'BYOK GPT dans Agent / Jarvis',
-    url: 'https://platform.openai.com/api-keys' },
+    url: 'https://platform.openai.com/api-keys', tone: 'paid' },
 ];
 
 const SHORTCUTS = [
@@ -88,248 +95,453 @@ term | relation | target | annotation | verdict | justification
 # .err (suspects flaggés par le LLM)
 term | relation | target | catégorie_suspect | justification`;
 
+// ── Code block stylisé avec header type "terminal" ───────────────────
+function CodeBlock({ label, language, children }) {
+  return (
+    <div style={{
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden',
+      border: '1px solid var(--line)',
+      background: 'var(--bg-card)',
+      marginBottom: 16,
+    }}>
+      <div style={{
+        padding: '8px 14px',
+        background: 'var(--bg-elev)',
+        borderBottom: '1px solid var(--line-soft)',
+        display: 'flex', alignItems: 'center', gap: 10,
+        fontFamily: 'var(--font-mono)', fontSize: 11,
+        color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.12em',
+      }}>
+        <div style={{ display: 'flex', gap: 5 }}>
+          {['#ff5f56','#ffbd2e','#27c93f'].map((c, i) => (
+            <span key={i} style={{
+              width: 9, height: 9, borderRadius: '50%',
+              background: c, opacity: 0.55,
+            }}/>
+          ))}
+        </div>
+        <span style={{ marginLeft: 4 }}>{label}</span>
+        {language && (
+          <span style={{ marginLeft: 'auto', color: 'var(--accent)' }}>{language}</span>
+        )}
+      </div>
+      <pre style={{
+        margin: 0, padding: '16px 18px',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 12, lineHeight: 1.65,
+        color: 'var(--ink)',
+        overflowX: 'auto', whiteSpace: 'pre',
+      }}>{children}</pre>
+    </div>
+  );
+}
+
+// ── Header de section : numéro accent + titre serif + ligne ──────────
+function AideSectionHeader({ num, title, kicker }) {
+  return (
+    <div id={`aide-${num}`} style={{
+      marginBottom: 20,
+      paddingTop: 8,
+      scrollMarginTop: 80,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 14,
+        marginBottom: kicker ? 8 : 0,
+      }}>
+        <span className="mono" style={{
+          fontSize: 12, color: 'var(--accent)',
+          fontWeight: 700, letterSpacing: '0.08em',
+        }}>{num}</span>
+        <h2 className="display" style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 26, fontWeight: 600,
+          letterSpacing: '-0.015em',
+          margin: 0, color: 'var(--ink)',
+        }}>{title}</h2>
+        <div style={{
+          flex: 1, height: 1,
+          background: 'linear-gradient(to right, var(--line) 0%, transparent 100%)',
+          marginLeft: 6,
+        }}/>
+      </div>
+      {kicker && (
+        <p style={{
+          margin: 0, marginLeft: 38,
+          fontSize: 13, color: 'var(--ink-2)',
+          lineHeight: 1.55, maxWidth: '64ch',
+        }}>{kicker}</p>
+      )}
+    </div>
+  );
+}
+
+// ── Table des matières sticky (left rail) ────────────────────────────
+function AideTOC() {
+  const [active, setActive] = useState('tour');
+  useEffect(() => {
+    const onScroll = () => {
+      // Trouve la section dont le top est le plus proche du viewport
+      let best = 'tour', bestDist = Infinity;
+      AIDE_SECTIONS.forEach(s => {
+        const el = document.getElementById(`aide-${s.num}`);
+        if (!el) return;
+        const top = el.getBoundingClientRect().top;
+        const dist = Math.abs(top - 100);
+        if (top < 200 && dist < bestDist) {
+          bestDist = dist; best = s.id;
+        }
+      });
+      setActive(best);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const go = (s) => {
+    const el = document.getElementById(`aide-${s.num}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <nav aria-label="Table des matières" style={{
+      position: 'sticky', top: 80,
+      display: 'flex', flexDirection: 'column', gap: 2,
+      paddingLeft: 14,
+      borderLeft: '1px solid var(--line-soft)',
+    }}>
+      <div className="mono" style={{
+        fontSize: 10, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.14em',
+        marginBottom: 10, fontWeight: 600,
+      }}>Sommaire</div>
+      {AIDE_SECTIONS.map(s => {
+        const on = active === s.id;
+        return (
+          <button key={s.id}
+            type="button"
+            onClick={() => go(s)}
+            style={{
+              display: 'flex', alignItems: 'baseline', gap: 8,
+              padding: '6px 0',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              textAlign: 'left',
+              fontFamily: 'inherit',
+              color: on ? 'var(--accent)' : 'var(--ink-2)',
+              transition: 'color 0.18s',
+              position: 'relative',
+            }}>
+            {on && (
+              <span style={{
+                position: 'absolute',
+                left: -15, top: '50%',
+                transform: 'translateY(-50%)',
+                width: 2, height: 16,
+                background: 'var(--accent)',
+              }}/>
+            )}
+            <span className="mono" style={{
+              fontSize: 10, opacity: 0.7,
+              minWidth: 18,
+            }}>{s.num}</span>
+            <span style={{
+              fontSize: 13,
+              fontWeight: on ? 600 : 400,
+            }}>{s.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
 function ViewAide() {
   return (
     <PageShell>
-      <SectionTitle
-        kicker="Documentation"
-        title="Aide & Installation"
-        desc="Naviguer la démo, installer en local, brancher le MCP, comprendre les formats de soumission JDM."
-      />
-
-      {/* 1. Naviguer dans la démo — cards par onglet */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>1 · Naviguer dans la démo</h2>
-
+      {/* HERO bloc compact : intro + chips de raccourcis vers sections */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-        gap: 1,
-        background: 'var(--line)', border: '1px solid var(--line)',
-        borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+        gridTemplateColumns: 'auto 1fr',
+        gap: 28,
+        alignItems: 'center',
+        padding: '24px 28px',
+        background: 'var(--bg-card)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)',
         marginBottom: 40,
       }}>
-        {TABS_TABLE.map((t) => (
-          <div key={t.name} style={{ background: 'var(--bg-card)', padding: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 18 }}>{t.icon}</span>
-              <strong style={{ fontSize: 14, color: 'var(--ink)' }}>{t.name}</strong>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5, marginBottom: 8 }}>
-              {t.what}
-            </div>
-            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Clé : <span style={{ color: 'var(--accent)' }}>{t.key}</span>
-            </div>
-          </div>
-        ))}
+        <div style={{
+          width: 64, height: 64,
+          borderRadius: '50%',
+          background: 'var(--accent)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 30, color: 'var(--bg)' }}>?</span>
+        </div>
+        <div>
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.18em',
+            marginBottom: 6,
+          }}>Documentation</div>
+          <h1 className="display" style={{
+            fontFamily: 'var(--font-display)',
+            margin: 0,
+            fontSize: 30, fontWeight: 600,
+            letterSpacing: '-0.02em',
+            color: 'var(--ink)',
+          }}>Aide &amp; Installation</h1>
+          <p style={{
+            margin: '6px 0 0',
+            fontSize: 14,
+            color: 'var(--ink-2)',
+            lineHeight: 1.55,
+            maxWidth: '70ch',
+          }}>
+            Naviguer la démo, installer en local, brancher le MCP, comprendre
+            les formats de soumission JDM. Sommaire à gauche, contenu à droite.
+          </p>
+        </div>
       </div>
 
-      {/* 2. Jarvis en détail */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 8px',
-      }}>2 · Jarvis en détail — 5 flows guidés</h2>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 18, lineHeight: 1.55 }}>
-        Tous les sous-onglets Jarvis partagent un <strong>bandeau</strong> en haut :
-        clé LLMDrops (override env), modèle LLM (Gemini par défaut, BYOK possible),
-        budget d&apos;appels d&apos;outils (10 / 25 / 50 / 100 / illimité — au-delà, le LLM reçoit un sentinel et consolide ce qu&apos;il a).
-      </p>
-
+      {/* Layout 2 colonnes : TOC sticky | contenu */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: 12, marginBottom: 40,
+        gridTemplateColumns: '200px 1fr',
+        gap: 40,
+        alignItems: 'start',
       }}>
-        {JARVIS_FLOWS_HELP.map(f => (
-          <Card key={f.id} padding={18}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 20 }}>{f.icon}</span>
-              <strong style={{ fontSize: 16, color: 'var(--ink)' }}>{f.name}</strong>
-              <code className="mono" style={{
-                marginLeft: 'auto', background: 'var(--bg-elev)',
-                padding: '2px 6px', borderRadius: 3,
-                fontSize: 10, color: 'var(--accent)',
-              }}>{f.wf}</code>
-            </div>
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>{f.desc}</p>
-          </Card>
-        ))}
-      </div>
+        <AideTOC />
 
-      {/* 3. Installation locale */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>3 · Installation locale</h2>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14, lineHeight: 1.55 }}>
-        Déployer la même app sur ta machine ou un serveur. Sur <strong>Debian 12 / Ubuntu 24.04</strong> (PEP 668),
-        le venv est <strong>obligatoire</strong> (pip refuse hors venv).
-      </p>
-      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
-        <pre style={{
-          margin: 0, padding: 18,
-          background: 'var(--bg-elev)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12, lineHeight: 1.6,
-          color: 'var(--ink)',
-          overflowX: 'auto',
-          whiteSpace: 'pre',
-        }}>{INSTALL_SCRIPT}</pre>
-      </Card>
-      <div style={{
-        fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.55, marginBottom: 40,
-        padding: 12, background: 'var(--bg-elev)',
-        borderLeft: '3px solid var(--accent)', borderRadius: 'var(--radius)',
-      }}>
-        <strong style={{ color: 'var(--ink)' }}>Sous reverse-proxy</strong> (Apache/Nginx sur sous-chemin <code className="mono">/Jarvis/</code> par ex.) :
-        mets <code className="mono">APP_SUBPATH=/Jarvis</code> dans <code className="mono">.env</code>. Le frontend injecte <code className="mono">&lt;base href&gt;</code> automatiquement et les fetch API se résolvent.
-      </div>
-
-      {/* 4. MCP */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>4 · Serveur MCP — outils JDM dans Claude Code / Cursor</h2>
-      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
-        <pre style={{
-          margin: 0, padding: 18,
-          background: 'var(--bg-elev)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12, lineHeight: 1.6,
-          color: 'var(--ink)',
-          overflowX: 'auto',
-        }}>{MCP_SCRIPT}</pre>
-      </Card>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 40, lineHeight: 1.55 }}>
-        Ensuite depuis Claude Code : <em>« Donne-moi les synonymes de voiture dans JDM »</em> → l&apos;agent appelle automatiquement les outils MCP exposés.
-      </p>
-
-      {/* 5. Clés API + Raccourcis (2 colonnes) */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 40,
-      }}>
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>5 · Clés API</h2>
-          <Card padding={0}>
-            {API_KEYS_TABLE.map((k, i) => (
-              <a key={k.name} href={k.url}
-                style={{
-                  display: 'block', padding: 14,
-                  borderBottom: i < API_KEYS_TABLE.length - 1 ? '1px solid var(--line-soft)' : 'none',
-                  textDecoration: 'none', color: 'inherit',
-                  transition: 'background 0.12s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-elev)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = ''}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                  <strong style={{ fontSize: 13, color: 'var(--ink)' }}>{k.name}</strong>
-                  <span style={{ fontSize: 11, color: 'var(--accent)' }}>↗</span>
+        <div style={{ minWidth: 0 }}>
+          {/* 01 — Tour des onglets */}
+          <AideSectionHeader num="01" title="Tour des onglets"
+            kicker="7 onglets, chacun avec sa fonction. Cartes ci-dessous : ce que fait l'onglet et quelle clé API il consomme." />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+            gap: 10, marginBottom: 48,
+          }}>
+            {TABS_TABLE.map((t) => (
+              <div key={t.name} style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-lg)',
+                padding: 14,
+                transition: 'border-color 0.15s',
+              }}
+                onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--line)'}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 18 }}>{t.icon}</span>
+                  <strong style={{ fontSize: 13, color: 'var(--ink)' }}>{t.name}</strong>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>{k.where}</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-2)' }}>{k.cost} · <em>{k.when}</em></div>
-              </a>
-            ))}
-          </Card>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 10, lineHeight: 1.55 }}>
-            ⚠️ Sécurité : les clés que tu colles dans l&apos;UI ne sont <strong>jamais persistées</strong> côté serveur — elles vivent uniquement le temps de ton onglet navigateur.
-          </div>
-        </div>
-
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>Raccourcis clavier</h2>
-          <Card padding={0}>
-            {SHORTCUTS.map((s, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '12px 16px',
-                borderBottom: i < SHORTCUTS.length - 1 ? '1px solid var(--line-soft)' : 'none',
-              }}>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {s.keys.map((k, j) => <span key={j} className="kbd">{k}</span>)}
+                <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55, marginBottom: 8 }}>
+                  {t.what}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--ink-2)', marginLeft: 12 }}>{s.desc}</div>
+                <div className="mono" style={{
+                  fontSize: 10, color: 'var(--ink-3)',
+                  textTransform: 'uppercase', letterSpacing: '0.08em',
+                }}>
+                  Clé : <span style={{ color: 'var(--accent)' }}>{t.key}</span>
+                </div>
               </div>
             ))}
-          </Card>
-        </div>
-      </div>
+          </div>
 
-      {/* 6. Formats de fichiers de soumission */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>6 · Format des fichiers de soumission</h2>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14, lineHeight: 1.55 }}>
-        Tous les fichiers produits par Jarvis suivent un <strong>format pipe</strong>.
-      </p>
-      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
-        <pre style={{
-          margin: 0, padding: 18,
-          background: 'var(--bg-elev)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12, lineHeight: 1.6,
-          color: 'var(--ink)',
-          overflowX: 'auto', whiteSpace: 'pre',
-        }}>{FORMAT_TEXT}</pre>
-      </Card>
-      <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 40, lineHeight: 1.55 }}>
-        Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
-        <ul style={{ marginTop: 6, paddingLeft: 20 }}>
-          <li>coche <strong>Soumettre directement</strong> dans le formulaire (clé <code className="mono">JDM_DROPS_API_KEY</code> requise) ;</li>
-          <li>ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.</li>
-        </ul>
-      </div>
+          {/* 02 — Jarvis */}
+          <AideSectionHeader num="02" title="Jarvis en détail"
+            kicker="5 flows guidés. Tous partagent un bandeau (clé LLMDrops, modèle, budget d'appels d'outils 10 / 25 / 50 / 100 / illimité)." />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+            gap: 12, marginBottom: 48,
+          }}>
+            {JARVIS_FLOWS_HELP.map(f => (
+              <div key={f.id} style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--line)',
+                borderLeft: `3px solid ${f.accent}`,
+                borderRadius: 'var(--radius-lg)',
+                padding: 18,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 22 }}>{f.icon}</span>
+                  <strong style={{ fontSize: 15, color: 'var(--ink)' }}>{f.name}</strong>
+                  <code className="mono" style={{
+                    marginLeft: 'auto',
+                    background: 'var(--bg-elev)',
+                    padding: '3px 8px', borderRadius: 4,
+                    fontSize: 10, color: f.accent, fontWeight: 600,
+                  }}>{f.wf}</code>
+                </div>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>{f.desc}</p>
+              </div>
+            ))}
+          </div>
 
-      {/* 7. Panneau admin — réservé ?admin=1 (positionné en bas, avant
-          le footer institutionnel, comme requis par l'utilisateur). */}
-      <div className="admin-only" style={{ marginTop: 40, marginBottom: 28 }}>
-        <h2 className="display" style={{
-          fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-          margin: '0 0 14px',
-        }}>7 · Panneau admin</h2>
-        <AdminPanel />
-      </div>
+          {/* 03 — Installation */}
+          <AideSectionHeader num="03" title="Installation locale"
+            kicker="Sur Debian 12 / Ubuntu 24.04 (PEP 668), le venv est obligatoire — pip refuse hors venv." />
+          <CodeBlock label="install.sh" language="bash">{INSTALL_SCRIPT}</CodeBlock>
+          <div style={{
+            fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6,
+            padding: '12px 16px',
+            background: 'var(--bg-elev)',
+            borderLeft: '3px solid var(--accent)',
+            borderRadius: '0 var(--radius) var(--radius) 0',
+            marginBottom: 48,
+          }}>
+            <strong style={{ color: 'var(--ink)' }}>Reverse-proxy</strong> — pour servir sur un sous-chemin (<code className="mono">/Jarvis/</code> par ex.),
+            mets <code className="mono">APP_SUBPATH=/Jarvis</code> dans <code className="mono">.env</code>. Le frontend injecte <code className="mono">&lt;base href&gt;</code> automatiquement et les fetch API se résolvent.
+          </div>
 
-      {/* 8. Footer institutionnel — crédits + liens cliquables */}
-      <div style={{
-        padding: 28, background: 'var(--bg-elev)',
-        border: '1px solid var(--line-soft)', borderRadius: 'var(--radius-lg)',
-      }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 16,
-        }}>
-          <JDMMark size={36} />
-          <div>
-            <div className="display" style={{
-              fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600,
-              marginBottom: 4,
-            }}>
-              jdmAgent
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              Mathieu Lafourcade ·{' '}
-              <a href="https://www.lirmm.fr/" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--accent)' }}>LIRMM</a>{' '}
-              (Université de Montpellier — CNRS) ·{' '}
-              <a href="https://www.lirmm.fr/equipes/slice/" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--accent)' }}>Équipe SLICE</a>
-            </div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
-              <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
-              {' · '}
-              <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
+          {/* 04 — MCP */}
+          <AideSectionHeader num="04" title="Serveur MCP"
+            kicker="Expose les outils JDM dans Claude Code / Cursor / tout client MCP-compatible." />
+          <CodeBlock label="claude-code" language="bash">{MCP_SCRIPT}</CodeBlock>
+          <p style={{
+            fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6,
+            margin: '0 0 48px',
+          }}>
+            Ensuite depuis Claude Code : <em>« Donne-moi les synonymes de voiture dans JDM »</em> → l'agent appelle automatiquement les outils MCP exposés.
+          </p>
+
+          {/* 05 — Clés API */}
+          <AideSectionHeader num="05" title="Clés API"
+            kicker="Quatre fournisseurs possibles, deux gratuits et deux payants." />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: 10, marginBottom: 12,
+          }}>
+            {API_KEYS_TABLE.map(k => (
+              <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: 'block',
+                  padding: 16,
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--line)',
+                  borderRadius: 'var(--radius-lg)',
+                  textDecoration: 'none', color: 'inherit',
+                  transition: 'transform 0.18s, border-color 0.15s, box-shadow 0.15s',
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = k.tone === 'free' ? 'var(--jdm-green)' : 'var(--jdm-yellow)';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 6px 16px -10px rgba(0,0,0,0.3)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--line)';
+                  e.currentTarget.style.transform = '';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                  <strong style={{ fontSize: 14, color: 'var(--ink)' }}>{k.name}</strong>
+                  <Pill color={k.tone === 'free' ? 'var(--jdm-green)' : 'var(--jdm-yellow)'} tone="outline">
+                    {k.tone === 'free' ? 'Gratuit' : 'Payant'}
+                  </Pill>
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', marginBottom: 8 }}>{k.where}</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-2)', marginBottom: 6 }}>{k.cost}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic' }}>{k.when}</div>
+                <span style={{ position: 'absolute', bottom: 12, right: 14, color: 'var(--accent)', fontSize: 14 }}>↗</span>
+              </a>
+            ))}
+          </div>
+          <div style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            marginBottom: 48, lineHeight: 1.6,
+            padding: '10px 14px',
+            background: 'var(--bg-elev)',
+            border: '1px dashed var(--line)',
+            borderRadius: 'var(--radius)',
+          }}>
+            ⚠ <strong style={{ color: 'var(--ink-2)' }}>Sécurité</strong> — les clés que tu colles dans l'UI ne sont
+            <strong style={{ color: 'var(--ink)' }}> jamais persistées</strong> côté serveur — elles vivent uniquement le temps de ton onglet.
+          </div>
+
+          {/* 06 — Raccourcis */}
+          <AideSectionHeader num="06" title="Raccourcis clavier" />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: 10, marginBottom: 48,
+          }}>
+            {SHORTCUTS.map((s, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '12px 16px',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-lg)',
+              }}>
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                  {s.keys.map((k, j) => <span key={j} className="kbd">{k}</span>)}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{s.desc}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* 07 — Formats */}
+          <AideSectionHeader num="07" title="Format des fichiers de soumission"
+            kicker="Tous les fichiers produits par Jarvis suivent un format pipe." />
+          <CodeBlock label="formats" language="pipe">{FORMAT_TEXT}</CodeBlock>
+          <div style={{
+            fontSize: 13, color: 'var(--ink-2)',
+            marginBottom: 48, lineHeight: 1.6,
+          }}>
+            Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
+            <ul style={{ marginTop: 8, paddingLeft: 22 }}>
+              <li style={{ marginBottom: 4 }}>coche <strong style={{ color: 'var(--ink)' }}>Soumettre directement</strong> dans le formulaire (clé <code className="mono">JDM_DROPS_API_KEY</code> requise) ;</li>
+              <li>ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.</li>
+            </ul>
+          </div>
+
+          {/* Panneau admin — réservé ?admin=1 */}
+          <div className="admin-only" style={{ marginBottom: 40 }}>
+            <AideSectionHeader num="08" title="Panneau admin" />
+            <AdminPanel />
+          </div>
+
+          {/* Footer institutionnel */}
+          <div style={{
+            padding: 28,
+            background: 'var(--bg-elev)',
+            border: '1px solid var(--line-soft)',
+            borderRadius: 'var(--radius-lg)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: 18,
+          }}>
+            <JDMMark size={36} />
+            <div>
+              <div className="display" style={{
+                fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600,
+                marginBottom: 4,
+              }}>jdmAgent</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+                Mathieu Lafourcade ·{' '}
+                <a href="https://www.lirmm.fr/" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--accent)' }}>LIRMM</a>{' '}
+                (Université de Montpellier — CNRS) ·{' '}
+                <a href="https://www.lirmm.fr/equipes/slice/" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--accent)' }}>Équipe SLICE</a>
+              </div>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+                <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
+                {' · '}
+                <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
+              </div>
             </div>
           </div>
         </div>
@@ -338,7 +550,7 @@ function ViewAide() {
   );
 }
 
-// ─── Panneau admin (gate par mot de passe) ─────────────────────
+// ─── Panneau admin (gate par mot de passe) — inchangé ─────────────────
 
 function AdminPanel() {
   const [info, setInfo] = useState(null);
@@ -346,9 +558,8 @@ function AdminPanel() {
   const [authed, setAuthed] = useState(false);
   const [authErr, setAuthErr] = useState('');
   const [busy, setBusy] = useState(false);
-  // Edition env vars
-  const [allVars, setAllVars] = useState({});  // {NAME: currentValue}
-  const [edits, setEdits] = useState({});      // {NAME: newValue}
+  const [allVars, setAllVars] = useState({});
+  const [edits, setEdits] = useState({});
   const [editMsg, setEditMsg] = useState('');
   const [cacheMsg, setCacheMsg] = useState('');
 
@@ -371,7 +582,6 @@ function AdminPanel() {
       }
       if (!r.ok) { setAuthErr(`HTTP ${r.status}`); return; }
       setAuthed(true);
-      // Charge les valeurs actuelles (via export — réutilise l'endpoint)
       const exp = await fetch('api/admin/export-secrets', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
@@ -406,7 +616,6 @@ function AdminPanel() {
       const d = await r.json();
       if (r.ok) {
         setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour · .env persisté : ${d.persisted_to_dotenv ? 'oui' : 'non'}`);
-        // Reload current values
         setAllVars(av => ({ ...av, ...vars }));
         setEdits({});
       } else {
@@ -447,8 +656,6 @@ function AdminPanel() {
     URL.revokeObjectURL(url);
   };
 
-  // Liste complète des vars autorisées côté backend
-  // (matchée à _EXPORTABLE_ENV_VARS).
   const EDITABLE_VARS = [
     'JDM_BASE_URL', 'JDM_TIMEOUT',
     'JDM_CACHE_DIR', 'JDM_CACHE_TTL_META', 'JDM_CACHE_TTL_DATA',
@@ -478,7 +685,6 @@ function AdminPanel() {
         )}
       </div>
 
-      {/* Diag info (toujours visible si admin URL) */}
       {info && (
         <div style={{
           background: 'var(--bg-elev)',
@@ -497,8 +703,6 @@ function AdminPanel() {
         </div>
       )}
 
-      {/* AVANT auth : juste le champ password. Les contrôles d'édition,
-          cache clear, export ne s'affichent QU'après validation OK. */}
       {!authed ? (
         <>
           <div className="mono" style={{
@@ -534,7 +738,6 @@ function AdminPanel() {
             fontFamily: 'var(--font-mono)',
           }}>✓ Mot de passe accepté — contrôles débloqués</div>
 
-          {/* 1 · Edition env vars */}
           <div className="mono" style={{
             fontSize: 11, color: 'var(--ink-3)',
             textTransform: 'uppercase', letterSpacing: '0.1em',
@@ -548,9 +751,6 @@ function AdminPanel() {
             {EDITABLE_VARS.map(k => {
               const isSecret = /KEY|TOKEN|PASSWORD/.test(k);
               const cur = allVars[k] || '';
-              // Affiche la valeur in extenso quand non-secret. Les secrets
-              // restent masqués (premier 4 / dernier 4) — copie copie la
-              // valeur COMPLÈTE quand même.
               const displayMask = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
               return (
                 <AdminVarRow key={k}
@@ -575,7 +775,6 @@ function AdminPanel() {
             }}>{editMsg}</div>
           )}
 
-          {/* 2 · Cache JDM */}
           <div className="mono" style={{
             fontSize: 11, color: 'var(--ink-3)',
             textTransform: 'uppercase', letterSpacing: '0.1em',
@@ -600,10 +799,6 @@ function AdminPanel() {
   );
 }
 
-// ─── Ligne d'édition d'une variable d'env (admin) ──────────────
-// Layout : nom (compact) | valeur actuelle (flex 2, monoespace, tronquée
-// si trop longue mais TITLE = valeur complète) | bouton copier |
-// nouvelle valeur (flex 1, étroit pour laisser de la place à la valeur).
 function AdminVarRow({ name, current, displayMask, editValue, onEdit }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {

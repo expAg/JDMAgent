@@ -82,24 +82,8 @@ function JDMWordmark({ small = false }) {
     </span>
   );
 
-  if (theme === 'lab') {
-    return (
-      <span style={{
-        display: 'inline-flex',
-        alignItems: 'baseline',
-        gap: 1,
-      }}>
-        {jdmLetters}
-        <span className="mono" style={{
-          fontWeight: 600,
-          fontSize: small ? 12 : 14,
-          letterSpacing: '0.04em',
-          color: 'var(--ink-2)',
-          marginLeft: 2,
-        }}>·agent</span>
-      </span>
-    );
-  }
+  // Wordmark unifié pour les deux thèmes (Paper et Lab) :
+  // « jdm » en Lilita One coloré + « Agent » serif italic.
   return (
     <span style={{
       display: 'inline-flex',
@@ -234,6 +218,7 @@ function Input({ value, onChange, placeholder, mono, ...rest }) {
       className="focus-ring"
       style={{
         width: '100%',
+        boxSizing: 'border-box',
         padding: '10px 12px',
         background: 'var(--bg-card)',
         border: '1px solid var(--line)',
@@ -241,8 +226,13 @@ function Input({ value, onChange, placeholder, mono, ...rest }) {
         color: 'var(--ink)',
         fontFamily: mono ? 'var(--font-mono)' : 'inherit',
         fontSize: 13,
+        lineHeight: 1.35,
         outline: 'none',
         transition: 'border-color 0.12s',
+        // Reset des styles inputs proper aux navigateurs — assure une
+        // hauteur calculée identique au Select trigger (button flex).
+        appearance: 'none',
+        WebkitAppearance: 'none',
       }}
       {...rest}
     />
@@ -538,10 +528,7 @@ function TopNav({ active, setActive, theme, setTheme }) {
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
           {setTheme && <ThemeSwitcher theme={theme} setTheme={setTheme} />}
-          <Pill color="var(--jdm-green)" tone="outline">
-            <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
-            API JDM
-          </Pill>
+          <ProductionsCountPill />
         </div>
       </div>
     </header>
@@ -619,6 +606,34 @@ function ThemeSwitcher({ theme, setTheme }) {
         );
       })}
     </div>
+  );
+}
+
+// ───────── Productions count pill — sticky en haut, polling léger ─────
+// Affiche le nombre de productions actives (fichiers sortie de Jarvis)
+// dans la nav. Recharge toutes les 30s ; échec silencieux si l'API
+// n'est pas dispo.
+function ProductionsCountPill() {
+  const [n, setN] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('api/productions');
+        if (!r.ok || !alive) return;
+        const d = await r.json();
+        setN((d.productions || []).length);
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  return (
+    <Pill color="var(--jdm-green)" tone="outline">
+      <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
+      {n == null ? '— productions' : `${n} production${n > 1 ? 's' : ''} soumise${n > 1 ? 's' : ''}`}
+    </Pill>
   );
 }
 

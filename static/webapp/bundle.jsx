@@ -1,3 +1,4 @@
+
 // === webapp/shared.jsx ===
 // Shared components — custom Select (fix dropdown hit-area bug),
 // Field wrapper, Button, Card, Pill, Sparkline, JDMLogo mark.
@@ -83,24 +84,8 @@ function JDMWordmark({ small = false }) {
     </span>
   );
 
-  if (theme === 'lab') {
-    return (
-      <span style={{
-        display: 'inline-flex',
-        alignItems: 'baseline',
-        gap: 1,
-      }}>
-        {jdmLetters}
-        <span className="mono" style={{
-          fontWeight: 600,
-          fontSize: small ? 12 : 14,
-          letterSpacing: '0.04em',
-          color: 'var(--ink-2)',
-          marginLeft: 2,
-        }}>·agent</span>
-      </span>
-    );
-  }
+  // Wordmark unifié pour les deux thèmes (Paper et Lab) :
+  // « jdm » en Lilita One coloré + « Agent » serif italic.
   return (
     <span style={{
       display: 'inline-flex',
@@ -235,6 +220,7 @@ function Input({ value, onChange, placeholder, mono, ...rest }) {
       className="focus-ring"
       style={{
         width: '100%',
+        boxSizing: 'border-box',
         padding: '10px 12px',
         background: 'var(--bg-card)',
         border: '1px solid var(--line)',
@@ -242,8 +228,13 @@ function Input({ value, onChange, placeholder, mono, ...rest }) {
         color: 'var(--ink)',
         fontFamily: mono ? 'var(--font-mono)' : 'inherit',
         fontSize: 13,
+        lineHeight: 1.35,
         outline: 'none',
         transition: 'border-color 0.12s',
+        // Reset des styles inputs proper aux navigateurs — assure une
+        // hauteur calculée identique au Select trigger (button flex).
+        appearance: 'none',
+        WebkitAppearance: 'none',
       }}
       {...rest}
     />
@@ -539,10 +530,7 @@ function TopNav({ active, setActive, theme, setTheme }) {
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
           {setTheme && <ThemeSwitcher theme={theme} setTheme={setTheme} />}
-          <Pill color="var(--jdm-green)" tone="outline">
-            <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
-            API JDM
-          </Pill>
+          <ProductionsCountPill />
         </div>
       </div>
     </header>
@@ -623,6 +611,34 @@ function ThemeSwitcher({ theme, setTheme }) {
   );
 }
 
+// ───────── Productions count pill — sticky en haut, polling léger ─────
+// Affiche le nombre de productions actives (fichiers sortie de Jarvis)
+// dans la nav. Recharge toutes les 30s ; échec silencieux si l'API
+// n'est pas dispo.
+function ProductionsCountPill() {
+  const [n, setN] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('api/productions');
+        if (!r.ok || !alive) return;
+        const d = await r.json();
+        setN((d.productions || []).length);
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  return (
+    <Pill color="var(--jdm-green)" tone="outline">
+      <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
+      {n == null ? '— productions' : `${n} production${n > 1 ? 's' : ''} soumise${n > 1 ? 's' : ''}`}
+    </Pill>
+  );
+}
+
 // ───────── Page shell — bg + padding ─────────
 function PageShell({ children }) {
   return (
@@ -640,9 +656,507 @@ Object.assign(window, {
   Triplet, TopNav, ThemeSwitcher, PageShell, JDMMark, JDMWordmark,
 });
 
+
+// === webapp/hero-animation.jsx ===
+// hero-animation.jsx — animated graph + simulated chat for Projet hero.
+// Loops indefinitely with 2 alternating scenarios.
+//
+// Mount with <HeroAnimation height={380} /> inside Panel 1.
+// Skin-aware (uses --bg, --bg-card, --line, --accent, --jdm-* vars).
+//
+// Size is configurable via `height` prop (default 380). The internal
+// graph layout & font sizes stay constant — they're tuned for 380px.
+
+const { useState: useStateHero, useEffect: useEffectHero, useRef: useRefHero } = React;
+
+function HeroAnimation({ height = 380, showChat = true }) {
+  const scenarios = [
+    {
+      id: 'voiture',
+      question: 'quels sont les sens de "voiture" ?',
+      streamChunks: [
+        'Dans JeuxDeMots, ',
+        '**voiture** est polysémique. ',
+        'Quatre sens principaux sont identifiés :\n',
+        '\n• **véhicule automobile**',
+        ' — le plus fréquent (w=842)',
+        '\n• **wagon ferroviaire**',
+        ' — sens technique (w=312)',
+        '\n• **moyen de transport**',
+        ' — sens générique (w=198)',
+        '\n• **véhicule hippomobile**',
+        ' — sens historique (w=89)',
+        '\n\nChacun a son propre voisinage lexical.',
+      ],
+      graph: {
+        center: 'voiture',
+        nodes: [
+          { id: 'auto',    label: 'automobile',     angle: -60, dist: 110, color: 'jdm-magenta', delay: 0.6 },
+          { id: 'wagon',   label: 'wagon',          angle: 30,  dist: 110, color: 'jdm-cyan',    delay: 1.6 },
+          { id: 'tpt',     label: 'transport',      angle: 120, dist: 110, color: 'jdm-green',   delay: 2.3 },
+          { id: 'hippo',   label: 'hippomobile',    angle: 210, dist: 110, color: 'jdm-violet',  delay: 3.2 },
+          { id: 'moteur',  label: 'moteur',         angle: -90, dist: 180, color: 'jdm-magenta', delay: 3.8, dim: true },
+          { id: 'roue',    label: 'roue',           angle: -30, dist: 180, color: 'jdm-magenta', delay: 4.1, dim: true },
+          { id: 'rail',    label: 'rail',           angle: 60,  dist: 180, color: 'jdm-cyan',    delay: 4.4, dim: true },
+          { id: 'voyage',  label: 'voyage',         angle: 150, dist: 180, color: 'jdm-green',   delay: 4.7, dim: true },
+          { id: 'cheval',  label: 'cheval',         angle: 240, dist: 180, color: 'jdm-violet',  delay: 5.0, dim: true },
+        ],
+        edges: [
+          { from: 'voiture', to: 'auto',   delay: 0.7, label: 'r_raff', highlight: true },
+          { from: 'voiture', to: 'wagon',  delay: 1.7, label: 'r_raff', highlight: true },
+          { from: 'voiture', to: 'tpt',    delay: 2.4, label: 'r_raff', highlight: true },
+          { from: 'voiture', to: 'hippo',  delay: 3.3, label: 'r_raff', highlight: true },
+          { from: 'auto',  to: 'moteur', delay: 3.9, label: 'r_has_part' },
+          { from: 'auto',  to: 'roue',   delay: 4.2, label: 'r_has_part' },
+          { from: 'wagon', to: 'rail',   delay: 4.5, label: 'r_lieu' },
+          { from: 'tpt',   to: 'voyage', delay: 4.8, label: 'r_telic_role' },
+          { from: 'hippo', to: 'cheval', delay: 5.1, label: 'r_agent' },
+        ],
+      },
+    },
+    {
+      id: 'velo-pneu',
+      question: 'comment sont liés vélo et pneumatique ?',
+      streamChunks: [
+        'Dans JeuxDeMots, ',
+        'il **n\'existe pas de lien direct**',
+        ' entre *vélo* et *pneumatique*.\n',
+        '\nMais en passant par **pneu** :\n',
+        '\n• vélo `r_has_part` **pneu** (w=110)',
+        '\n• pneu `r_syn` **pneumatique** (w=87)',
+        '\n\nLa chaîne fait **2 sauts**.',
+        ' L\'agent infère donc une relation indirecte.',
+      ],
+      graph: {
+        center: null,
+        layout: 'path',
+        nodes: [
+          { id: 'velo',  label: 'vélo',        x: -150, y: 0,   color: 'jdm-green',   delay: 0.3 },
+          { id: 'pneu',  label: 'pneu',        x: 0,    y: 0,   color: 'jdm-orange',  delay: 1.5 },
+          { id: 'pneuma',label: 'pneumatique', x: 155,  y: 0,   color: 'jdm-magenta', delay: 2.7 },
+          { id: 'cadre', label: 'cadre',       x: -195, y: -90, color: 'jdm-green',   delay: 3.6, dim: true },
+          { id: 'guidon',label: 'guidon',      x: -195, y: 90,  color: 'jdm-green',   delay: 3.9, dim: true },
+          { id: 'caoutchouc', label: 'caoutchouc', x: 200, y: -90, color: 'jdm-magenta', delay: 4.3, dim: true },
+        ],
+        edges: [
+          { from: 'velo', to: 'pneu',   delay: 1.8, label: 'r_has_part', highlight: true },
+          { from: 'pneu', to: 'pneuma', delay: 3.0, label: 'r_syn',      highlight: true },
+          { from: 'velo', to: 'cadre',  delay: 3.7, label: 'r_has_part' },
+          { from: 'velo', to: 'guidon', delay: 4.0, label: 'r_has_part' },
+          { from: 'pneuma', to: 'caoutchouc', delay: 4.4, label: 'r_made_of' },
+        ],
+      },
+    },
+  ];
+
+  const [scenarioIdx, setScenarioIdx] = useStateHero(0);
+  const [phase, setPhase] = useStateHero('typing');
+  const [userText, setUserText] = useStateHero('');
+  const [streamText, setStreamText] = useStateHero('');
+  const [tick, setTick] = useStateHero(0);
+
+  const scenario = scenarios[scenarioIdx];
+
+  // Wait for the graph to finish drawing before swapping scenarios.
+  const graphEndTime = (() => {
+    const lastNode = Math.max(...scenario.graph.nodes.map(n => n.delay + 0.5));
+    const lastEdge = scenario.graph.edges.length
+      ? Math.max(...scenario.graph.edges.map(e => e.delay + 0.7))
+      : 0;
+    return Math.max(lastNode, lastEdge);
+  })();
+
+  useEffectHero(() => {
+    let cancelled = false;
+    const run = async () => {
+      setUserText(''); setStreamText(''); setPhase('typing'); setTick(0);
+
+      const q = scenario.question;
+      for (let i = 0; i <= q.length; i++) {
+        if (cancelled) return;
+        setUserText(q.slice(0, i));
+        await sleepHero(22 + Math.random() * 22);
+      }
+      await sleepHero(350);
+
+      if (cancelled) return;
+      setPhase('streaming');
+      const startTick = Date.now();
+      const tickInterval = setInterval(() => {
+        if (!cancelled) setTick((Date.now() - startTick) / 1000);
+      }, 80);
+
+      let acc = '';
+      for (const chunk of scenario.streamChunks) {
+        if (cancelled) { clearInterval(tickInterval); return; }
+        for (let i = 0; i < chunk.length; i++) {
+          acc += chunk[i];
+          setStreamText(acc);
+          await sleepHero(6 + Math.random() * 11);
+        }
+        await sleepHero(90);
+      }
+      clearInterval(tickInterval);
+
+      if (cancelled) return;
+      setPhase('done');
+      const elapsedNow = (Date.now() - startTick) / 1000;
+      const waitForGraph = Math.max(0, graphEndTime - elapsedNow) * 1000;
+      if (waitForGraph > 0) {
+        const waitTick = setInterval(() => {
+          if (!cancelled) setTick((Date.now() - startTick) / 1000);
+        }, 80);
+        await sleepHero(waitForGraph);
+        clearInterval(waitTick);
+      }
+      await sleepHero(1600);
+      if (cancelled) return;
+      setScenarioIdx(i => (i + 1) % scenarios.length);
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [scenarioIdx]);
+
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: showChat ? 'minmax(0, 1.05fr) minmax(0, 1fr)' : '1fr',
+      gap: 16,
+      borderRadius: 'var(--radius-lg)',
+    }}>
+      {/* Left — graph */}
+      <div style={{
+        position: 'relative',
+        background: 'var(--bg-card)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)',
+        height,
+        overflow: 'hidden',
+      }}>
+        <GraphCanvas scenario={scenario} tick={tick} height={height} />
+        <div style={{
+          position: 'absolute', top: 14, left: 16,
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: 'var(--ink-3)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+        }}>
+          <span className="pulse-dot" style={{ background: 'var(--accent)' }} />
+          Graphe JDM · en direct
+        </div>
+      </div>
+
+      {/* Right — chat (caché si showChat=false) */}
+      {showChat && (
+      <div style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)',
+        height,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: '10px 16px',
+          borderBottom: '1px solid var(--line-soft)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: 'var(--ink-3)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+        }}>
+          <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
+          Chatbot LLM · démo
+          <span style={{ marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }}>
+            gemini-3.1-flash-lite
+          </span>
+        </div>
+        <ChatView userText={userText} streamText={streamText} phase={phase} />
+      </div>
+      )}
+    </div>
+  );
+}
+
+function sleepHero(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function GraphCanvas({ scenario, tick, height }) {
+  const W = 560, H = height;
+  const cx = W / 2, cy = H / 2;
+  const g = scenario.graph;
+
+  const positions = {};
+  if (g.center) positions[g.center] = { x: 0, y: 0 };
+  g.nodes.forEach(n => {
+    if (n.x !== undefined) {
+      positions[n.id] = { x: n.x, y: n.y };
+    } else {
+      const rad = (n.angle * Math.PI) / 180;
+      positions[n.id] = { x: Math.cos(rad) * n.dist, y: Math.sin(rad) * n.dist };
+    }
+  });
+
+  // Path layout doesn't rotate — labels need to stay axis-aligned and
+  // not drift off-frame. Radial layout has a slow drift.
+  const isPath = g.layout === 'path';
+  const breathScale = 1 + (isPath ? 0.008 : 0.012) * Math.sin(tick * 0.6);
+  const rotateAll = isPath ? 0 : tick * 1.2;
+
+  const transform = `translate(${cx} ${cy}) rotate(${rotateAll}) scale(${breathScale})`;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`}
+         preserveAspectRatio="xMidYMid meet"
+         width="100%" height="100%"
+         style={{ display: 'block' }}>
+      <defs>
+        <radialGradient id="hero-glow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.10"/>
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0"/>
+        </radialGradient>
+      </defs>
+
+      <circle cx={cx} cy={cy} r={Math.min(W, H) / 3} fill="url(#hero-glow)"/>
+
+      <g transform={transform}>
+        {g.edges.map((e, i) => {
+          const visible = tick >= e.delay;
+          if (!visible) return null;
+          const t = Math.min(1, (tick - e.delay) / 0.7);
+          const a = positions[e.from], b = positions[e.to];
+          if (!a || !b) return null;
+          const x = a.x + (b.x - a.x) * t;
+          const y = a.y + (b.y - a.y) * t;
+          return (
+            <g key={i}>
+              <line
+                x1={a.x} y1={a.y} x2={x} y2={y}
+                stroke={e.highlight ? 'var(--accent)' : 'var(--ink-3)'}
+                strokeWidth={e.highlight ? 2 : 1}
+                strokeOpacity={e.highlight ? 0.9 : 0.45}
+                strokeLinecap="round"
+              />
+              {e.label && t > 0.6 && (
+                <text
+                  x={(a.x + b.x) / 2}
+                  y={(a.y + b.y) / 2 - 6}
+                  textAnchor="middle"
+                  fontFamily="var(--font-mono)"
+                  fontSize="9"
+                  fill={e.highlight ? 'var(--accent)' : 'var(--ink-3)'}
+                  opacity={(t - 0.6) / 0.4}
+                  transform={`rotate(${-rotateAll}, ${(a.x + b.x) / 2}, ${(a.y + b.y) / 2 - 6})`}
+                >
+                  {e.label}
+                </text>
+              )}
+            </g>
+          );
+        })}
+
+        {g.center && (
+          <CenterNode label={g.center} tick={tick} counterRotate={-rotateAll} />
+        )}
+
+        {g.nodes.map((n, i) => {
+          const p = positions[n.id];
+          if (!p) return null;
+          const visible = tick >= n.delay;
+          if (!visible) return null;
+          const t = Math.min(1, (tick - n.delay) / 0.5);
+          const floatY = Math.sin(tick * 1.2 + i) * 1.5;
+          return (
+            <NodeBubble
+              key={n.id}
+              x={p.x} y={p.y + floatY}
+              label={n.label}
+              color={n.color}
+              dim={n.dim}
+              appearT={t}
+              counterRotate={-rotateAll}
+            />
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
+
+function CenterNode({ label, tick, counterRotate }) {
+  const pulse = 0.5 + 0.5 * Math.sin(tick * 2);
+  return (
+    <g>
+      <circle r={28} fill="var(--accent)" opacity={0.08 + pulse * 0.06}/>
+      <circle r={20} fill="var(--accent)" opacity={0.18}/>
+      <circle r={13} fill="var(--accent)"/>
+      <text
+        y={5}
+        textAnchor="middle"
+        fontFamily="var(--font-display)"
+        fontSize="13"
+        fontWeight="600"
+        fill="var(--bg)"
+        transform={`rotate(${counterRotate})`}
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
+function NodeBubble({ x, y, label, color, dim, appearT, counterRotate }) {
+  const c = `var(--${color})`;
+  const r = (dim ? 5 : 9) * appearT;
+  const fontSize = dim ? 10 : 12;
+  return (
+    <g transform={`translate(${x} ${y})`} opacity={appearT}>
+      <circle r={r + 5} fill={c} opacity="0.12"/>
+      <circle r={r} fill={c}/>
+      <g transform={`rotate(${counterRotate})`}>
+        <text
+          y={r + fontSize + 4}
+          textAnchor="middle"
+          fontFamily="var(--font-sans)"
+          fontSize={fontSize}
+          fontWeight={dim ? 400 : 600}
+          fill="var(--ink)"
+          opacity={dim ? 0.65 : 1}
+        >
+          {label}
+        </text>
+      </g>
+    </g>
+  );
+}
+
+function ChatView({ userText, streamText, phase }) {
+  const scrollRef = useRefHero(null);
+  useEffectHero(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [streamText]);
+
+  return (
+    <div ref={scrollRef} style={{
+      flex: 1,
+      padding: '16px 18px',
+      overflowY: 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 14,
+    }}>
+      {userText && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{
+            maxWidth: '85%',
+            padding: '8px 12px',
+            background: 'var(--accent)',
+            color: 'var(--bg)',
+            borderRadius: 'var(--radius-lg)',
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}>
+            {userText}
+            {phase === 'typing' && (
+              <span style={{
+                display: 'inline-block',
+                width: 2, height: 13,
+                background: 'var(--bg)',
+                marginLeft: 2,
+                verticalAlign: 'text-bottom',
+                animation: 'hero-caret 0.7s steps(2) infinite',
+              }}/>
+            )}
+          </div>
+        </div>
+      )}
+
+      {(phase === 'streaming' || phase === 'done') && (
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{
+            width: 26, height: 26, flexShrink: 0,
+            borderRadius: 6, marginTop: 2,
+            background: 'var(--bg-elev)',
+            border: '1px solid var(--line)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <JDMMark size={16} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {streamText.length === 0 ? (
+              <TypingDots />
+            ) : (
+              <div style={{
+                fontSize: 13,
+                color: 'var(--ink)',
+                lineHeight: 1.55,
+              }} dangerouslySetInnerHTML={{ __html: renderStreamMd(streamText, phase === 'streaming') }}/>
+            )}
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes hero-caret { 50% { opacity: 0; } }
+        @keyframes hero-typing {
+          0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+          40% { opacity: 1; transform: translateY(-2px); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function TypingDots() {
+  return (
+    <div style={{ display: 'flex', gap: 4, padding: '6px 0' }}>
+      {[0, 1, 2].map(i => (
+        <span key={i} style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: 'var(--ink-3)',
+          animation: `hero-typing 1.2s infinite ${i * 0.15}s`,
+        }}/>
+      ))}
+    </div>
+  );
+}
+
+function renderStreamMd(s, withCaret) {
+  let html = s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.88em;color:var(--accent);">$1</code>')
+    .replace(/\n• /g, '<br/><span style="color:var(--accent);">•</span> ')
+    .replace(/\n/g, '<br/>');
+  if (withCaret) {
+    html += '<span style="display:inline-block;width:2px;height:1em;background:var(--accent);margin-left:2px;vertical-align:text-bottom;animation:hero-caret 0.7s steps(2) infinite;"></span>';
+  }
+  return html;
+}
+
+window.HeroAnimation = HeroAnimation;
+
+
 // === webapp/views-projet.jsx ===
-// View: Projet — landing page using the designer layout (hero / stats /
-// feature cards / footer) populated avec notre texte canonique PROJET_MD.
+// View: Projet — landing page.
+//
+// Three vertical panels with scroll-snap:
+//   1. Hero        : animated graph + chat demo (top), then text + stats (bottom)
+//   2. Modules     : SectionTitle + carousel of 5 feature cards
+//   3. Sous le capot : 4 briefs + footer
+//
+// Skin-aware (uses --bg, --bg-card, --line, --accent, --jdm-* vars).
+// All canonical text from the original views-projet.jsx is preserved.
 
 // Palette commune (stats + feature cards) — accents JDM.
 const ACCENT_PALETTE = [
@@ -662,52 +1176,144 @@ function useShuffledAccents(n) {
       const j = Math.floor(Math.random() * (i + 1));
       [a[i], a[j]] = [a[j], a[i]];
     }
-    // Si on a besoin de plus que la palette, on cycle.
     const out = [];
     for (let k = 0; k < n; k++) out.push(a[k % a.length]);
     return out;
   }, [n]);
 }
 
-// 3 sections-panneaux : hero / features / briefs+footer. Chaque section
-// remplit le viewport (min-height: 100vh − nav) et s'aligne via
-// scroll-snap. Les dots latéraux pilotent la navigation entre panneaux.
+// PANELS — ordre VISUEL pour navigation :
+//   • bref     (Sous le capot)  → à gauche / en haut
+//   • hero     (Présentation)   → au centre (entrée par défaut)
+//   • modules  (Modules)        → à droite / en bas
+// Cet ordre détermine la position sur la track ; index initial = 1 (hero).
 const PANELS = [
-  { id: 'hero',     label: 'Présentation' },
-  { id: 'modules',  label: 'Modules' },
-  { id: 'bref',     label: 'Sous le capot' },
+  { id: 'bref',     label: 'Sous le capot',  symbol: '♠' },
+  { id: 'hero',     label: 'Présentation',   symbol: '♥' },
+  { id: 'modules',  label: 'Modules',        symbol: '♦' },
 ];
 
 function ViewProjet({ goto }) {
-  const heroRef = useRef(null);
-  const modulesRef = useRef(null);
-  const brefRef = useRef(null);
-  const refs = { hero: heroRef, modules: modulesRef, bref: brefRef };
-  const [activePanel, setActivePanel] = useState('hero');
+  // ─── Carousel state ───
+  // Au lieu de scroll-snap natif, on utilise une track translatée. C'est
+  // un "carousel géant" — toute la page glisse comme un bloc.
+  // direction = 'vertical' (translateY) ou 'horizontal' (translateX).
+  // La nav du bas force horizontal, le rail gauche force vertical.
+  const [panelIndex, setPanelIndex] = useState(1);  // hero = milieu = entrée par défaut
+  const [direction, setDirection] = useState('vertical');
+  const [transitioning, setTransitioning] = useState(true);
+  const totalPanels = PANELS.length;
 
-  // IntersectionObserver — quand un panneau couvre >50% du viewport,
-  // le dot correspondant devient actif.
-  React.useEffect(() => {
-    const observer = new IntersectionObserver((entries) => {
-      // On prend l'entry la plus visible
-      let best = null, bestRatio = 0;
-      for (const e of entries) {
-        if (e.intersectionRatio > bestRatio) {
-          bestRatio = e.intersectionRatio;
-          best = e.target;
-        }
-      }
-      if (best && best.dataset.panel) setActivePanel(best.dataset.panel);
-    }, { threshold: [0.3, 0.55, 0.8] });
-    Object.values(refs).forEach(r => { if (r.current) observer.observe(r.current); });
-    return () => observer.disconnect();
-  }, []);
+  const goToIndex = useCallback((i) => {
+    setPanelIndex(Math.max(0, Math.min(totalPanels - 1, i)));
+  }, [totalPanels]);
 
-  const scrollToPanel = (id) => {
-    const r = refs[id];
-    if (r && r.current) r.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const activePanel = PANELS[panelIndex].id;
+
+  // Handlers spécifiques aux 2 navs : forcent la direction d'anim.
+  // Si on switche de direction (V→H ou H→V), on snap d'abord au même
+  // panelIndex dans la nouvelle direction (sans anim), puis on anime
+  // vers la cible. Évite le « slide diagonal » disgracieux.
+  const switchTo = (newDir, targetIdx) => {
+    if (direction === newDir) {
+      goToIndex(targetIdx);
+      return;
+    }
+    // Phase 1 — snap sans anim à la nouvelle direction, panelIndex inchangé.
+    setTransitioning(false);
+    setDirection(newDir);
+    // Phase 2 — sur le frame suivant (double rAF pour que React ait
+    // committé le snap), on ré-active l'anim et on bouge vers la cible.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTransitioning(true);
+        goToIndex(targetIdx);
+      });
+    });
   };
-  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+  const goFromBottom = (id) => {
+    const idx = PANELS.findIndex(p => p.id === id);
+    if (idx >= 0) switchTo('horizontal', idx);
+  };
+  const goFromLeft = (id) => {
+    const idx = PANELS.findIndex(p => p.id === id);
+    if (idx >= 0) switchTo('vertical', idx);
+  };
+
+  // ─── Wheel : un cran de molette = un panneau, debouncé ───
+  useEffect(() => {
+    let lock = false;
+    let resetTimer = null;
+    const onWheel = (e) => {
+      // Ne pas bloquer le scroll dans les zones internes scrollables
+      // (carousel des cards, log Jarvis, etc.) — on check si le scroll
+      // peut être absorbé par un ancêtre.
+      let el = e.target;
+      while (el && el !== document.body) {
+        const cs = getComputedStyle(el);
+        if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll')
+            && el.scrollHeight > el.clientHeight) {
+          return;  // un parent gère, on laisse passer
+        }
+        el = el.parentElement;
+      }
+      e.preventDefault();
+      if (lock) return;
+      lock = true;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      setPanelIndex(prev => Math.max(0, Math.min(totalPanels - 1, prev + dir)));
+      clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => { lock = false; }, 850);
+    };
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      clearTimeout(resetTimer);
+    };
+  }, [totalPanels]);
+
+  // ─── Clavier : flèches up/down, page up/down, home/end ───
+  useEffect(() => {
+    const onKey = (e) => {
+      // N'interfère pas si on est dans un input/textarea
+      if (e.target.matches('input, textarea, [contenteditable]')) return;
+      if (e.key === 'ArrowDown' || e.key === 'PageDown') {
+        e.preventDefault();
+        goToIndex(panelIndex + 1);
+      } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault();
+        goToIndex(panelIndex - 1);
+      } else if (e.key === 'Home') {
+        goToIndex(0);
+      } else if (e.key === 'End') {
+        goToIndex(totalPanels - 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelIndex, goToIndex, totalPanels]);
+
+  // ─── Touch : swipe haut/bas ───
+  useEffect(() => {
+    let startY = null;
+    const onStart = (e) => { startY = e.touches[0].clientY; };
+    const onEnd = (e) => {
+      if (startY == null) return;
+      const endY = e.changedTouches[0].clientY;
+      const dy = startY - endY;
+      if (Math.abs(dy) > 50) {
+        goToIndex(panelIndex + (dy > 0 ? 1 : -1));
+      }
+      startY = null;
+    };
+    window.addEventListener('touchstart', onStart, { passive: true });
+    window.addEventListener('touchend', onEnd, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart);
+      window.removeEventListener('touchend', onEnd);
+    };
+  }, [panelIndex, goToIndex]);
+
   // Stats — chiffres tirés du README JDM (LIRMM/CNRS) et du projet.
   const stats = [
     { label: 'Termes JDM',   value: '2M+',    sub: 'JeuxDeMots'    },
@@ -716,16 +1322,13 @@ function ViewProjet({ goto }) {
     { label: 'Flux Jarvis',  value: '5',      sub: 'guidés'        },
   ];
 
-  // Features — ordre demandé par utilisateur :
-  // 1. Jarvis (primary)  2. Chatbot LLM  3. Sous-graphe
-  // 4. Claim checker     5. Explorer
-  // Icônes alignées sur app.py : 🤖 Jarvis (robot), 💬 Chatbot (bulle).
+  // Features
   const features = [
     {
       id: 'jarvis',
       title: '🤖 Jarvis',
       kind: '5 flux',
-      primary: true,  // carte mise en avant : fond accent + texte adapté
+      primary: true,
       desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
       example: 'enrichissement → 17 triplets consolidés',
     },
@@ -759,7 +1362,6 @@ function ViewProjet({ goto }) {
     },
   ];
 
-  // « Le projet en bref » — bullets du PROJET_MD canonique.
   const briefs = [
     {
       title: 'Client typé + cache disque',
@@ -779,227 +1381,526 @@ function ViewProjet({ goto }) {
     },
   ];
 
+  // Pan style : on rend les DEUX navs en même temps maintenant.
   return (
-    <PageShell>
-      {/* Dots latéraux (panneau actif) */}
-      <PanelDots activePanel={activePanel} onSelect={scrollToPanel} />
+    <>
+      <NavLeftRail   activePanel={activePanel} onSelect={goFromLeft} />
+      <NavBottomDots activePanel={activePanel} onSelect={goFromBottom} />
+      <style>{`
+        @media (max-width: 720px) {
+          nav[aria-label="Navigation entre panneaux bas"] {
+            bottom: 14px !important;
+            transform: translateX(-50%) scale(0.85) !important;
+            transform-origin: bottom center !important;
+          }
+        }
+      `}</style>
 
-      {/* Back-to-top — bouton flottant bottom-center, visible UNIQUEMENT
-          sur le 3ᵉ panneau. Placé loin des dots et du carousel. */}
-      <BackToTopBtn visible={activePanel === 'bref'} onClick={scrollToTop} />
-
-      {/* Panneau 1 — Hero. min-height calc(100vh − nav) → remplit la
-          viewport. Snap-align start aligne propre au sticky top. */}
-      <div ref={heroRef} data-panel="hero" style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
-        gap: 48,
-        alignItems: 'center',
-        minHeight: 'calc(100vh - 56px)',
-        scrollSnapAlign: 'start',
-        scrollMarginTop: 56,
-      }}>
-        <div>
-          <div className="mono" style={{
-            fontSize: 11, color: 'var(--ink-3)',
-            textTransform: 'uppercase', letterSpacing: '0.18em',
-            marginBottom: 16,
-          }}>
-            LIRMM · CNRS · Université de Montpellier
-          </div>
-          <h1 className="display" style={{
-            fontFamily: 'var(--font-display)',
-            margin: 0,
-            fontSize: 'clamp(36px, 5vw, 60px)',
-            fontWeight: 500,
-            letterSpacing: '-0.02em',
-            lineHeight: 1.05,
-            color: 'var(--ink)',
-          }}>
-            Agent <em style={{
-              fontFamily: 'var(--font-display)',
-              fontStyle: 'italic', color: 'var(--accent)',
-            }}>Jarvis</em> :<br/>Plateforme web.
-          </h1>
-          <p style={{
-            marginTop: 22,
-            fontSize: 17,
-            lineHeight: 1.55,
-            color: 'var(--ink-2)',
-            maxWidth: '52ch',
-          }}>
-            Projet d&apos;agentification de la ressource lexico-sémantique{' '}
-            <a href="https://www.jeuxdemots.org" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>JeuxDeMots</a>{' '}
-            (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées et pondérées) pour les{' '}
-            <strong style={{ color: 'var(--ink)' }}>LLM modernes</strong> via{' '}
-            <strong style={{ color: 'var(--ink)' }}>LangChain</strong> et le{' '}
-            <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
-          </p>
-          <div style={{ display: 'flex', gap: 10, marginTop: 28, flexWrap: 'wrap' }}>
-            <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
-            <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
-            <Button variant="secondary" onClick={() => goto('subgraph')}>Visualiser</Button>
-            <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
-          </div>
-        </div>
-
-        {/* Stats column — chiffres animés count-up au hover.
-            Chaque tuile reçoit une couleur DIFFÉRENTE de la palette
-            jaune/orange/rouge/vert/bleu, randomisée à chaque mount. */}
-        <StatsGrid stats={stats} />
-      </div>
-
-      {/* Panneau 2 — Modules. Grid avec place-content: center ET grille
-          auto sur 1 colonne : centre VERTICALEMENT + HORIZONTALEMENT
-          le bloc contenu, peu importe sa hauteur. */}
-      <div ref={modulesRef} data-panel="modules" style={{
-        scrollSnapAlign: 'start', scrollMarginTop: 56,
-        minHeight: 'calc(100vh - 56px)',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'flex-start',
-        paddingTop: 'clamp(60px, 12vh, 140px)',
-        paddingBottom: 'clamp(40px, 8vh, 100px)',
-        gap: 28,
-      }}>
-        <SectionTitle
-          kicker="Que peux-tu faire sur cette page ?"
-          title="Cinq modules · une seule API"
-          desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu sauf quand c'est explicitement utile."
-        />
-        <FeaturesGrid features={features} goto={goto} />
-      </div>
-
-      {/* Panneau 3 — Sous le capot + footer. Même technique de centrage
-          que le panneau 2. */}
-      <div ref={brefRef} data-panel="bref" style={{
-        scrollSnapAlign: 'start', scrollMarginTop: 56,
-        minHeight: 'calc(100vh - 56px)',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'flex-start',
-        paddingTop: 'clamp(60px, 12vh, 140px)',
-        paddingBottom: 'clamp(40px, 8vh, 100px)',
-        gap: 28,
-      }}>
-      <SectionTitle
-        kicker="Sous le capot"
-        title="Le projet en bref"
-        desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
-      />
-
+      {/* Carousel container — viewport plein, sous la nav */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-        gap: 12, marginBottom: 32,
+        position: 'relative',
+        height: 'calc(100vh - 56px)',
+        overflow: 'hidden',
       }}>
-        {briefs.map((b, i) => (
-          <div key={i} style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--line)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 20,
-          }}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--accent)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 8, fontWeight: 600,
-            }}>0{i + 1}</div>
-            <div className="display" style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 18, fontWeight: 600,
-              marginBottom: 8, color: 'var(--ink)',
-            }}>{b.title}</div>
-            <p style={{
-              margin: 0, fontSize: 13,
-              color: 'var(--ink-2)', lineHeight: 1.55,
-            }}>{b.body}</p>
-          </div>
-        ))}
-      </div>
+        {/* Track : N panneaux empilés (vertical) ou alignés (horizontal),
+            transform: translateY OU translateX selon direction. */}
+        <div style={{
+          height: direction === 'vertical' ? `${totalPanels * 100}%` : '100%',
+          width:  direction === 'vertical' ? '100%' : `${totalPanels * 100}%`,
+          display: 'flex',
+          flexDirection: direction === 'vertical' ? 'column' : 'row',
+          transform: direction === 'vertical'
+            ? `translate3d(0, -${(panelIndex / totalPanels) * 100}%, 0)`
+            : `translate3d(-${(panelIndex / totalPanels) * 100}%, 0, 0)`,
+          transition: transitioning
+            ? 'transform 0.85s cubic-bezier(0.65, 0, 0.35, 1)'
+            : 'none',
+          willChange: 'transform',
+        }}>
+          {/* ── Panneau 1 — Sous le capot (gauche / haut) ── */}
+          <CarouselPanel>
+            <div style={{
+              width: '100%',
+              maxWidth: 1320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 28,
+            }}>
+              <SectionTitle
+                kicker="Sous le capot"
+                title="Le projet en bref"
+                desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
+              />
 
-      {/* Footer — crédits + liens */}
-      <div style={{
-        padding: 24,
-        background: 'var(--bg-elev)',
-        border: '1px solid var(--line-soft)',
-        borderRadius: 'var(--radius-lg)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 24,
-        flexWrap: 'wrap',
-      }}>
-        <div style={{ flex: 1, minWidth: 240 }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            fontFamily: 'var(--font-display)',
-            fontSize: 18, fontWeight: 600, marginBottom: 6,
-          }}>
-            <GitHubMark size={20} />
-            <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--ink)', textDecoration: 'none' }}>
-              Projet open-source
-            </a>
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-            Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe SLICE, LIRMM/CNRS.
-          </div>
-          <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
-            <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>Code source</a>
-            <span style={{ color: 'var(--ink-3)' }}>·</span>
-            <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>USAGE.md</a>
-            <span style={{ color: 'var(--ink-3)' }}>·</span>
-            <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>Notebook Colab</a>
-          </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                gap: 12, marginBottom: 24,
+              }}>
+                {briefs.map((b, i) => (
+                  <div key={i} style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--line)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: 20,
+                  }}>
+                    <div className="mono" style={{
+                      fontSize: 11, color: 'var(--accent)',
+                      textTransform: 'uppercase', letterSpacing: '0.1em',
+                      marginBottom: 8, fontWeight: 600,
+                    }}>0{i + 1}</div>
+                    <div className="display" style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: 18, fontWeight: 600,
+                      marginBottom: 8, color: 'var(--ink)',
+                    }}>{b.title}</div>
+                    <p style={{
+                      margin: 0, fontSize: 13,
+                      color: 'var(--ink-2)', lineHeight: 1.55,
+                    }}>{b.body}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{
+                padding: 24,
+                background: 'var(--bg-elev)',
+                border: '1px solid var(--line-soft)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 24,
+                flexWrap: 'wrap',
+              }}>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 18, fontWeight: 600, marginBottom: 6,
+                  }}>
+                    <GitHubMark size={20} />
+                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--ink)', textDecoration: 'none' }}>
+                      Projet open-source
+                    </a>
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+                    Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe SLICE, LIRMM/CNRS.
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
+                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>Code source</a>
+                    <span style={{ color: 'var(--ink-3)' }}>·</span>
+                    <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>USAGE.md</a>
+                    <span style={{ color: 'var(--ink-3)' }}>·</span>
+                    <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>Notebook Colab</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CarouselPanel>{/* ── Panneau 2 — Présentation (centre, entrée) ── */}
+          <CarouselPanel>
+            <div style={{
+              width: '100%',
+              maxWidth: 1320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'clamp(20px, 3vh, 36px)',
+            }}>
+              <HeroAnimation height={Math.min(420, Math.round(window.innerHeight * 0.44))} />
+
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
+                gap: 48,
+                alignItems: 'center',
+              }}>
+                <div>
+                  <div className="mono" style={{
+                    fontSize: 11, color: 'var(--ink-3)',
+                    textTransform: 'uppercase', letterSpacing: '0.18em',
+                    marginBottom: 14,
+                  }}>
+                    LIRMM · CNRS · Université de Montpellier
+                  </div>
+                  <h1 className="display" style={{
+                    fontFamily: 'var(--font-display)',
+                    margin: 0,
+                    fontSize: 'clamp(32px, 4.5vw, 56px)',
+                    fontWeight: 500,
+                    letterSpacing: '-0.02em',
+                    lineHeight: 1.05,
+                    color: 'var(--ink)',
+                  }}>
+                    Agent <em style={{
+                      fontFamily: 'var(--font-display)',
+                      fontStyle: 'italic', color: 'var(--accent)',
+                    }}>Jarvis</em> :<br/>Plateforme web.
+                  </h1>
+                  <p style={{
+                    marginTop: 18,
+                    fontSize: 16,
+                    lineHeight: 1.55,
+                    color: 'var(--ink-2)',
+                    maxWidth: '52ch',
+                  }}>
+                    Projet d&apos;agentification de la ressource lexico-sémantique{' '}
+                    <a href="https://www.jeuxdemots.org" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>JeuxDeMots</a>{' '}
+                    (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées et pondérées) pour les{' '}
+                    <strong style={{ color: 'var(--ink)' }}>LLM modernes</strong> via{' '}
+                    <strong style={{ color: 'var(--ink)' }}>LangChain</strong> et le{' '}
+                    <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
+                  </p>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
+                    <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
+                    <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
+                    <Button variant="secondary" onClick={() => goto('subgraph')}>Visualiser</Button>
+                    <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
+                  </div>
+                </div>
+
+                <StatsGrid stats={stats} />
+              </div>
+            </div>
+          </CarouselPanel>
+
+          {/* ── Panneau 3 — Modules (droite / bas) ── */}
+          <CarouselPanel>
+            <div style={{
+              width: '100%',
+              maxWidth: 1320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 32,
+            }}>
+              <SectionTitle
+                kicker="Que peux-tu faire sur cette page ?"
+                title={<>Fonctionnalités de l'API :<br/>Utilisation CLI, distant (à venir)</>}
+                desc="Chaque fonctionnalité est accessible via remote API et en ligne de commande."
+              />
+              <FeaturesGrid features={features} goto={goto} />
+            </div>
+          </CarouselPanel>
+
+          
         </div>
       </div>
-      </div>{/* /panneau 3 */}
-    </PageShell>
+    </>
   );
 }
 
-// ─── PanelDots : navigation latérale entre les 3 panneaux du Projet.
-// Position fixed à droite, vertical-center. Skin-aware (vars CSS).
-function PanelDots({ activePanel, onSelect }) {
+// ─── Wrapper pour chaque panneau dans le carousel ───
+// flex 1/N de la track (en main axis), padding uniforme.
+function CarouselPanel({ children }) {
   return (
-    <div className="jdm-panel-dots" style={{
-      position: 'fixed',
-      right: 22, top: '50%',
-      transform: 'translateY(-50%)',
-      display: 'flex', flexDirection: 'column', gap: 14,
-      zIndex: 40,
+    <div style={{
+      flex: '0 0 33.3333%',
+      height: '100%',
+      width: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      padding: '40px 28px 28px',
+      overflow: 'auto',
     }}>
-      {PANELS.map(p => {
-        const active = activePanel === p.id;
-        return (
-          <button key={p.id}
-            type="button"
-            onClick={() => onSelect(p.id)}
-            aria-label={`Aller à ${p.label}`}
-            title={p.label}
-            className="jdm-panel-dot"
-            style={{
-              width: 10, height: 10, padding: 0,
-              borderRadius: '50%',
-              border: `1px solid ${active ? 'var(--accent)' : 'var(--ink-3)'}`,
-              background: active ? 'var(--accent)' : 'transparent',
-              cursor: 'pointer',
-              transition: 'background 0.18s, border-color 0.18s, transform 0.18s',
-              transform: active ? 'scale(1.25)' : 'scale(1)',
-            }} />
-        );
-      })}
+      {children}
     </div>
   );
 }
 
-// ─── BackToTopBtn : bouton flottant bottom-center, fade in/out selon
-// `visible`. Placé EN BAS de la fenêtre (loin des dots latéraux et du
-// carousel). Skin-aware.
+// ─── PanelNav : 2 variantes, l'indicateur ACTIF glisse entre items.
+//   'bottom' (défaut) : pill horizontal en bas — indicateur glisse en X
+//   'left'           : rail vertical à gauche — indicateur glisse en Y
+//
+// La variante est choisie via tweaks.navStyle (Tweaks panel ou
+// window.__JDM_TWEAKS__.navStyle = 'left' | 'bottom').
+function PanelDots({ activePanel, onSelect }) {
+  // Re-read on tweaks change.
+  const [style, setStyle] = useState(() =>
+    (typeof window !== 'undefined' && window.__JDM_TWEAKS__ && window.__JDM_TWEAKS__.navStyle) || 'bottom'
+  );
+  useEffect(() => {
+    const sync = () => setStyle(
+      (window.__JDM_TWEAKS__ && window.__JDM_TWEAKS__.navStyle) || 'bottom'
+    );
+    window.addEventListener('__jdm_tweaks_changed', sync);
+    return () => window.removeEventListener('__jdm_tweaks_changed', sync);
+  }, []);
+
+  if (style === 'left') return <NavLeftRail   activePanel={activePanel} onSelect={onSelect} />;
+  return                       <NavBottomDots activePanel={activePanel} onSelect={onSelect} />;
+}
+
+// ─── Variant : Bottom dots avec indicateur glissant ──────────────────
+function NavBottomDots({ activePanel, onSelect }) {
+  const containerRef = useRef(null);
+  const itemRefs = useRef({});
+  const [indicator, setIndicator] = useState({ x: 0, w: 0, ready: false });
+
+  // Mesure la position/largeur du bouton actif et anime l'indicateur.
+  useEffect(() => {
+    const activeEl = itemRefs.current[activePanel];
+    const cont = containerRef.current;
+    if (!activeEl || !cont) return;
+    const cr = cont.getBoundingClientRect();
+    const ir = activeEl.getBoundingClientRect();
+    setIndicator({
+      x: ir.left - cr.left + cont.scrollLeft,
+      w: ir.width,
+      ready: true,
+    });
+  }, [activePanel]);
+
+  // Re-mesure au resize (les labels peuvent changer de largeur).
+  useEffect(() => {
+    const onResize = () => {
+      const activeEl = itemRefs.current[activePanel];
+      const cont = containerRef.current;
+      if (!activeEl || !cont) return;
+      const cr = cont.getBoundingClientRect();
+      const ir = activeEl.getBoundingClientRect();
+      setIndicator(prev => ({ ...prev, x: ir.left - cr.left, w: ir.width }));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [activePanel]);
+
+  return (
+    <nav
+      ref={containerRef}
+      aria-label="Navigation entre panneaux bas"
+      style={{
+        position: 'fixed',
+        bottom: 28,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        padding: 6,
+        background: 'var(--bg-card)',
+        border: '1px solid var(--line)',
+        borderRadius: 999,
+        boxShadow: 'var(--shadow)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        zIndex: 40,
+      }}>
+      {/* Pill d'indicateur — glisse en horizontal */}
+      <span aria-hidden="true" style={{
+        position: 'absolute',
+        left: indicator.x,
+        width: indicator.w,
+        top: 6, bottom: 6,
+        background: 'var(--accent)',
+        borderRadius: 999,
+        opacity: indicator.ready ? 1 : 0,
+        transition: 'left 0.42s cubic-bezier(0.4, 0, 0.2, 1), width 0.42s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s',
+        zIndex: 0,
+      }}/>
+      {PANELS.map((p, i) => {
+        const active = activePanel === p.id;
+        return (
+          <button key={p.id}
+            ref={el => { if (el) itemRefs.current[p.id] = el; }}
+            type="button"
+            onClick={() => onSelect(p.id)}
+            aria-label={`Aller à ${p.label}`}
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '8px 14px',
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 999,
+              cursor: 'pointer',
+              color: active ? 'var(--bg)' : 'var(--ink-3)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              fontWeight: active ? 600 : 400,
+              transition: 'color 0.32s 0.05s',  // léger délai pour matcher l'arrivée du pill
+              whiteSpace: 'nowrap',
+            }}>
+            <span style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 13,
+              opacity: active ? 0.95 : 0.55,
+              fontWeight: 600,
+              letterSpacing: 0,
+              textTransform: 'none',
+              lineHeight: 1,
+            }}>{p.symbol}</span>
+            <span>{p.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+// ─── Variant : Left rail avec indicateur glissant verticalement ──────
+//
+// Comportement adaptatif piloté par la largeur du viewport :
+//   - ≥ 1440px : rail complet avec symbole + label (mode 'full')
+//   - 1180-1439 : rail compact, symbole uniquement (mode 'compact')
+//   - < 1180px : rail entièrement caché (mode 'hidden')
+//
+// Cette logique est doublée par une mesure réelle de collision avec le
+// contenu principal (.jdm-projet-content si présent) — si le rail
+// chevauche le contenu, on bascule en hidden quelle que soit la largeur.
+function NavLeftRail({ activePanel, onSelect }) {
+  const containerRef = useRef(null);
+  const itemRefs = useRef({});
+  const [indicator, setIndicator] = useState({ y: 0, h: 0, ready: false });
+  const [mode, setMode] = useState('full');  // 'full' | 'compact' | 'hidden'
+
+  useEffect(() => {
+    const activeEl = itemRefs.current[activePanel];
+    const cont = containerRef.current;
+    if (!activeEl || !cont) return;
+    const cr = cont.getBoundingClientRect();
+    const ir = activeEl.getBoundingClientRect();
+    setIndicator({ y: ir.top - cr.top, h: ir.height, ready: true });
+  }, [activePanel, mode]);
+
+  // Détection de largeur + collision avec le contenu hero.
+  useEffect(() => {
+    const compute = () => {
+      const w = window.innerWidth;
+      // Choix nominal basé sur la largeur.
+      let next = w >= 1440 ? 'full' : w >= 1180 ? 'compact' : 'hidden';
+
+      // Test de collision : on cherche un élément qui marque la zone
+      // de contenu (h1.display dans le panneau hero, ou main centré).
+      // Si le rail prévu (à gauche, 32px + 110-200px de large) chevauche,
+      // on cache.
+      if (next !== 'hidden') {
+        const heroTextEl = document.querySelector('main h1.display');
+        if (heroTextEl) {
+          const r = heroTextEl.getBoundingClientRect();
+          const railEdge = 32 + (next === 'full' ? 170 : 50);
+          if (r.left < railEdge + 24) {
+            // Si collision en mode full, tenter compact avant de cacher.
+            if (next === 'full') {
+              const compactEdge = 32 + 50;
+              next = r.left < compactEdge + 24 ? 'hidden' : 'compact';
+            } else {
+              next = 'hidden';
+            }
+          }
+        }
+      }
+      setMode(next);
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    // Re-mesure après que le contenu hero ait bougé (changement de
+    // panneau ou de thème).
+    const id = setInterval(compute, 800);
+    return () => { window.removeEventListener('resize', compute); clearInterval(id); };
+  }, []);
+
+  if (mode === 'hidden') return null;
+
+  const compact = mode === 'compact';
+
+  return (
+    <nav
+      ref={containerRef}
+      aria-label="Navigation entre panneaux gauche"
+      style={{
+        position: 'fixed',
+        left: compact ? 24 : 32,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        zIndex: 40,
+        borderLeft: '1px solid var(--line)',
+        paddingLeft: compact ? 10 : 16,
+      }}>
+      <span aria-hidden="true" style={{
+        position: 'absolute',
+        left: -1, top: indicator.y,
+        height: indicator.h,
+        width: 2,
+        background: 'var(--accent)',
+        opacity: indicator.ready ? 1 : 0,
+        transition: 'top 0.42s cubic-bezier(0.4, 0, 0.2, 1), height 0.42s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s',
+      }}/>
+      {PANELS.map((p) => (
+        <PanelNavItem
+          key={p.id}
+          ref={el => { if (el) itemRefs.current[p.id] = el; }}
+          symbol={p.symbol}
+          label={p.label}
+          showLabel={!compact}
+          active={activePanel === p.id}
+          onClick={() => onSelect(p.id)}
+        />
+      ))}
+    </nav>
+  );
+}
+
+const PanelNavItem = React.forwardRef(function PanelNavItem({ symbol, label, showLabel, active, onClick }, ref) {
+  const [hover, setHover] = useState(false);
+  const color = active ? 'var(--accent)' : (hover ? 'var(--ink)' : 'var(--ink-3)');
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      aria-label={`Aller à ${label}`}
+      title={!showLabel ? label : undefined}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        padding: showLabel ? '16px 0' : '14px 0',
+        cursor: 'pointer',
+        textAlign: 'left',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 2,
+        position: 'relative',
+        color,
+        transition: 'color 0.32s',
+        fontFamily: 'inherit',
+      }}>
+      <span style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: showLabel ? 22 : 18,
+        fontWeight: 600,
+        lineHeight: 1,
+        color: 'inherit',
+      }}>{symbol}</span>
+      {showLabel && (
+        <span className="mono" style={{
+          fontSize: 10,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+          color: 'inherit',
+          fontWeight: active ? 600 : 400,
+          whiteSpace: 'nowrap',
+        }}>{label}</span>
+      )}
+    </button>
+  );
+});
+
 function BackToTopBtn({ visible, onClick }) {
   return (
     <button
@@ -1045,7 +1946,6 @@ function BackToTopBtn({ visible, onClick }) {
   );
 }
 
-// ─── StatsGrid : 4 tuiles avec couleur de hover distincte par tuile
 function StatsGrid({ stats }) {
   const colors = useShuffledAccents(stats.length);
   return (
@@ -1065,9 +1965,19 @@ function StatsGrid({ stats }) {
   );
 }
 
-// ─── FeaturesGrid : carrousel horizontal (rangée unique scrollable)
-// avec snap, scrollbar masquée, boutons prev/next skin-aware aux bords,
-// et gradient de fade qui s'estompe quand on est en bout de course.
+// ─── FeaturesGrid : carrousel avec FADE PAR MASK-IMAGE (pas par overlay).
+//
+// Solution aux deux bugs précédents :
+//
+//   1. Bleed à droite : mask-image fond GRADUELLEMENT le contenu en
+//      transparent — au lieu d'un overlay opaque var(--bg), ce sont les
+//      pixels eux-mêmes qui disparaissent. Aucun bleed possible.
+//
+//   2. Hover lift clippé : on ne touche plus à overflow. Le carousel a
+//      `overflow-x: auto` et `overflow-y: hidden`, mais avec une padding
+//      verticale (14px haut + bas) + margin négative compensatrice, le
+//      hover lift (+ son ombre) s'épanouit dans la zone padded — pas
+//      clippé visuellement. La mask-image fait le boulot du gradient.
 function FeaturesGrid({ features, goto }) {
   const colors = useShuffledAccents(features.length);
   const scrollRef = useRef(null);
@@ -1095,38 +2005,30 @@ function FeaturesGrid({ features, goto }) {
     };
   }, [updateBounds]);
 
-  // Animation JS du scroll : interpolation ralentie, élégante.
-  // Pendant l'anim, on désactive scroll-snap (mandatory snape sinon
-  // les positions intermédiaires → saccades). On rétablit en fin.
-  // ease-out quint ralentit plus que cubic → effet 'glissé'.
-  // En cas de clic rapide, on annule l'anim en cours (cancelAnimationFrame).
+  // Animation JS du scroll : interpolation ease-out quint, 900ms.
   const animFrameRef = useRef(null);
-
   const animScroll = (dir) => {
     const el = scrollRef.current;
     if (!el) return;
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
-    // Désactive le snap pendant l'animation (évite les saccades).
     const prevSnap = el.style.scrollSnapType;
     el.style.scrollSnapType = 'none';
 
     const step = Math.max(320, el.clientWidth * 0.78);
     const start = el.scrollLeft;
     const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, start + dir * step));
-    const duration = 900;  // 900ms = sensation 'élégante' sans être lent
+    const duration = 900;
     const t0 = performance.now();
 
     const tick = (now) => {
       const t = Math.min(1, (now - t0) / duration);
-      // ease-out quint : décélération douce et marquée à la fin
       const eased = 1 - Math.pow(1 - t, 5);
       el.scrollLeft = start + (target - start) * eased;
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(tick);
       } else {
         animFrameRef.current = null;
-        // Restaure le snap (mandatory) en fin d'anim
         el.style.scrollSnapType = prevSnap || 'x mandatory';
       }
     };
@@ -1137,7 +2039,6 @@ function FeaturesGrid({ features, goto }) {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
   }, []);
 
-  // Style commun des boutons (skin-aware via vars CSS).
   const btnStyle = (enabled) => ({
     width: 44, height: 44,
     borderRadius: '50%',
@@ -1159,9 +2060,7 @@ function FeaturesGrid({ features, goto }) {
   const hoverIn = (e) => {
     e.currentTarget.style.background = 'var(--accent)';
     e.currentTarget.style.color = 'var(--bg)';
-    e.currentTarget.style.transform = e.currentTarget.dataset.side === 'left'
-      ? 'translateY(-50%) scale(1.08)'
-      : 'translateY(-50%) scale(1.08)';
+    e.currentTarget.style.transform = 'translateY(-50%) scale(1.08)';
   };
   const hoverOut = (e) => {
     e.currentTarget.style.background = 'var(--bg-card)';
@@ -1169,14 +2068,10 @@ function FeaturesGrid({ features, goto }) {
     e.currentTarget.style.transform = 'translateY(-50%)';
   };
 
-  // Structure : wrapper-clip (overflow: hidden, clipe TOUT bleed) avec
-  // boutons + carousel à l'intérieur.
   return (
     <div style={{ position: 'relative' }}>
-      {/* Bouton gauche — hors de la rangée à gauche, sur la marge */}
       <button
         type="button"
-        data-side="left"
         onClick={() => animScroll(-1)}
         aria-label="Défiler à gauche"
         onMouseEnter={hoverIn} onMouseLeave={hoverOut}
@@ -1188,63 +2083,41 @@ function FeaturesGrid({ features, goto }) {
           zIndex: 6,
         }}>‹</button>
 
-      {/* Wrapper SANS overflow:hidden (qui clippait le hover lift).
-          Le bleed est maintenant couvert par un gradient + bloc
-          solide plus large à droite. */}
-      <div style={{ position: 'relative' }}>
-        {/* Carousel — pleine largeur, padding/margin HORIZONTAL only */}
-        <div
-          ref={scrollRef}
-          className="jdm-carousel"
-          style={{
+      <div
+        ref={scrollRef}
+        className={`jdm-carousel ${canNext ? 'jdm-carousel--fade-right' : ''}`}
+        style={{
+          display: 'flex',
+          gap: 14,
+          overflowX: 'auto',
+          // Padding vertical = breathing room pour le hover lift + son
+          // ombre. Margin négative compense pour conserver l'alignement
+          // visuel avec les autres éléments de la page.
+          padding: '14px 4px',
+          margin: '-14px -4px',
+          scrollSnapType: 'x mandatory',
+        }}>
+        {features.map((f, i) => (
+          <div key={f.id} style={{
+            flex: '0 0 clamp(280px, 28vw, 340px)',
+            scrollSnapAlign: 'start',
             display: 'flex',
-            gap: 14,
-            overflowX: 'auto',
-            overflowY: 'visible',
-            scrollSnapType: 'x mandatory',
-            padding: '0 4px',
-            margin: '0 -4px',
+            transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}>
-          {features.map((f, i) => (
-            <div key={f.id} style={{
-              flex: '0 0 clamp(280px, 28vw, 340px)',
-              scrollSnapAlign: 'start',
-              display: 'flex',
-              transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
-            }}>
-              <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
-            </div>
-          ))}
-        </div>
-
-        {/* Gradient fade SUR la dernière carte (style 'estompé') —
-            ÉLARGI à 180px pour couvrir tout bleed visible. var(--bg)
-            opaque sur 50% droite (= 90px solide), fade sur 90px à
-            gauche. Plus de wrapper clip donc le gradient doit faire
-            tout le job de masquage tout seul. */}
-        <div style={{
-          position: 'absolute',
-          right: 0, top: 0, bottom: 0,
-          width: 180,
-          pointerEvents: 'none',
-          zIndex: 3,
-          background: 'linear-gradient(to left, var(--bg) 50%, transparent 100%)',
-          opacity: canNext ? 1 : 0,
-          transition: 'opacity 0.25s',
-        }} />
+            <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
+          </div>
+        ))}
       </div>
 
-      {/* Bouton droit — par-dessus le gradient, au niveau du wrapper */}
       <button
         type="button"
-        data-side="right"
         onClick={() => animScroll(1)}
         aria-label="Défiler à droite"
         onMouseEnter={hoverIn} onMouseLeave={hoverOut}
         style={{
           ...btnStyle(canNext),
           position: 'absolute',
-          right: 16, top: '50%',
+          right: 8, top: '50%',
           transform: 'translateY(-50%)',
           zIndex: 6,
         }}>›</button>
@@ -1256,11 +2129,6 @@ function FeatureCard({ f, goto, hoverColor }) {
   const [hovering, setHovering] = useState(false);
   const primary = !!f.primary;
 
-  // Couleurs de base selon primary/standard.
-  // Pour la carte primary : on désature l'accent en le mixant avec un
-  // peu de noir (12%) — l'accent pur (#c0411a ou #7eb5c5 selon skin)
-  // était trop saturé en grand aplat. color-mix() est skin-aware
-  // (utilise les vars d'accent du thème courant).
   const bg = primary
     ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
     : 'var(--bg-card)';
@@ -1270,8 +2138,6 @@ function FeatureCard({ f, goto, hoverColor }) {
   const borderColor = primary
     ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
     : (hovering ? hoverColor : 'var(--line)');
-  // Hover de la primary : on lift + ombre dans la couleur accent, pas
-  // de changement de couleurs internes (sinon ça pulse trop).
   const shadow = hovering
     ? (primary
         ? '0 10px 24px -10px var(--accent)'
@@ -1300,7 +2166,6 @@ function FeatureCard({ f, goto, hoverColor }) {
         position: 'relative',
         overflow: 'hidden',
       }}>
-      {/* Badge "PRINCIPAL" en haut à droite sur Jarvis */}
       {primary && (
         <div className="mono" style={{
           position: 'absolute',
@@ -1352,10 +2217,7 @@ function FeatureCard({ f, goto, hoverColor }) {
   );
 }
 
-// ─── StatTile : tuile de stat avec animation count-up au hover ─────
 function StatTile({ stat, hoverColor }) {
-  // Parse la valeur : "2M+" → {num: 2, suffix: "M+"}, "350M+" → {350, "M+"},
-  // "35" → {35, ""}, "5" → {5, ""}.
   const parsed = React.useMemo(() => {
     const m = String(stat.value).match(/^([\d.]+)(.*)$/);
     if (!m) return { num: 0, suffix: stat.value };
@@ -1366,27 +2228,63 @@ function StatTile({ stat, hoverColor }) {
   const [hovering, setHovering] = useState(false);
   const rafRef = useRef(null);
 
-  // Au hover : reset à 0 puis ease-out cubic vers la valeur cible.
-  // Classy : durée ~900ms, démarre rapide, ralentit, s'arrête pile.
   const animate = () => {
     cancelAnimationFrame(rafRef.current);
     const start = performance.now();
-    const duration = 900;
+    const duration = 1200;
     const target = parsed.num;
+    const suffix = parsed.suffix || '';
+    const hasM = /M/.test(suffix);
+    // Pour les stats en "M+" on commence à 700k (= 0.7M) et on passe
+    // de k vers M lorsqu'on atteint 1M.
+    // Pour les stats sans magnitude (180+, 35, 5) : start = 0.45 * target.
+    const startVal = hasM ? 0.7 : target * 0.45;
+    // Format dynamique : sous 1M on affiche "Xk" (entier), au-dessus "X.YM"
+    // sans le .0 (donc "2M" plutôt que "2.0M", mais "1.5M" reste).
+    const fmtNum = (v) => {
+      if (hasM) {
+        if (v < 1) return Math.round(v * 1000) + 'k';  // 700, 800, 900k
+        // ≥ 1M : 1 décimale, mais on retire le .0 final
+        const s = v.toFixed(1);
+        return s.endsWith('.0') ? s.slice(0, -2) : s;
+      }
+      // Pas de magnitude : entier
+      return String(Math.floor(v));
+    };
     const tick = (now) => {
       const t = Math.min(1, (now - start) / duration);
-      // ease-out cubic
       const eased = 1 - Math.pow(1 - t, 3);
-      const v = target * eased;
-      // Pour les valeurs entières (35, 5) : pas de décimale ; pour
-      // les valeurs déjà décimales (2.0, 5.4) : 1 décimale en cours,
-      // valeur finale exacte.
-      const isInt = target === Math.floor(target);
-      setDisplay(t === 1 ? target : (isInt ? Math.floor(v) : v.toFixed(1)));
+      const v = startVal + (target - startVal) * eased;
+      if (t === 1) {
+        // Snap final exact
+        if (hasM) {
+          const s = target.toFixed(1);
+          setDisplay(s.endsWith('.0') ? s.slice(0, -2) : s);
+        } else {
+          setDisplay(Number.isInteger(target) ? target : target);
+        }
+      } else {
+        setDisplay(fmtNum(v));
+      }
       if (t < 1) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
   };
+
+  // Au mount : affichage initial = valeur formatée selon les règles ci-dessus
+  // (donc "2M" pas "2M+" partial, "180" entier, etc.). Sans toucher au suffix
+  // qui reste "+".
+  React.useEffect(() => {
+    const target = parsed.num;
+    const suffix = parsed.suffix || '';
+    const hasM = /M/.test(suffix);
+    if (hasM) {
+      const s = target.toFixed(1);
+      setDisplay(s.endsWith('.0') ? s.slice(0, -2) : s);
+    } else {
+      setDisplay(target);
+    }
+  }, [parsed]);
 
   React.useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
@@ -1396,30 +2294,29 @@ function StatTile({ stat, hoverColor }) {
       onMouseLeave={() => setHovering(false)}
       style={{
         background: 'var(--bg-card)',
-        padding: '20px 22px',
+        padding: '18px 20px',
         transition: 'background 0.2s',
         cursor: 'default',
       }}>
       <div className="mono" style={{
         fontSize: 11, color: 'var(--ink-3)',
         textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
+        marginBottom: 6,
       }}>{stat.label}</div>
       <div className="display" style={{
         fontFamily: 'var(--font-display)',
-        fontSize: 32, fontWeight: 600,
+        fontSize: 28, fontWeight: 600,
         color: hovering ? (hoverColor || 'var(--accent)') : 'var(--ink)',
         lineHeight: 1,
         letterSpacing: '-0.02em',
         transition: 'color 0.18s',
-        fontVariantNumeric: 'tabular-nums',  // évite le sautillement
+        fontVariantNumeric: 'tabular-nums',
       }}>{display}{parsed.suffix}</div>
-      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>{stat.sub}</div>
+      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{stat.sub}</div>
     </div>
   );
 }
 
-// ─── Petite icône GitHub (Octicon-like, SVG inline) ─────────────
 function GitHubMark({ size = 22 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"
@@ -1430,6 +2327,7 @@ function GitHubMark({ size = 22 }) {
 }
 
 window.ViewProjet = ViewProjet;
+
 
 // === webapp/views-explorer.jsx ===
 // View: Explorer — fetch relations for a term.
@@ -1696,6 +2594,7 @@ function exportCSV(rows, term, rel) {
 }
 
 window.ViewExplorer = ViewExplorer;
+
 
 // === webapp/views-claim.jsx ===
 // View: Claim checker — verify subject | relation | object via /api/factcheck.
@@ -2097,6 +2996,7 @@ function ClaimResult({ result, subject, relation, object }) {
 
 window.ViewClaim = ViewClaim;
 
+
 // === webapp/views-subgraph.jsx ===
 // View: Sous-graphe — extract & visualise a term's neighbourhood via /api/subgraph.
 // Deux formats : HTML interactif (iframe vis-network) par défaut, ou SVG natif.
@@ -2146,7 +3046,7 @@ function ViewSubgraph() {
   const [activeRelsD4, setActiveRelsD4] = useState(SUBGRAPH_DEFAULT_D4);
   const [minWeight, setMinWeight] = useState(0);
   const [maxNodes, setMaxNodes] = useState(40);
-  const [format, setFormat] = useState('html');  // 'html' par défaut (vis-network)
+  const [format, setFormat] = useState('live');  // 'live' par défaut (animation graphique)
   const [data, setData] = useState({ nodes: [], edges: [], stats: {}, html: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -2247,24 +3147,42 @@ function ViewSubgraph() {
               </div>
             </Field>
             <Field label="Format de rendu">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-                {['html', 'svg'].map(f => (
-                  <button key={f}
-                    onClick={() => setFormat(f === 'svg' ? 'json' : 'html')}
-                    className="focus-ring"
-                    style={{
-                      padding: '8px',
-                      background: (f === 'svg' ? format === 'json' : format === 'html')
-                                  ? 'var(--accent)' : 'var(--bg-elev)',
-                      border: '1px solid var(--line)',
-                      color: (f === 'svg' ? format === 'json' : format === 'html')
-                             ? 'var(--bg)' : 'var(--ink)',
-                      borderRadius: 'var(--radius)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      textTransform: 'uppercase',
-                    }}>{f}</button>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+                {[
+                  { id: 'html', value: 'html', label: 'HTML' },
+                  { id: 'svg',  value: 'json', label: 'SVG' },
+                  { id: 'live', value: 'live', label: 'LIVE', dot: true },
+                ].map(f => {
+                  const active = format === f.value;
+                  return (
+                    <button key={f.id}
+                      onClick={() => setFormat(f.value)}
+                      className="focus-ring"
+                      style={{
+                        padding: '8px',
+                        background: active ? 'var(--accent)' : 'var(--bg-elev)',
+                        border: '1px solid var(--line)',
+                        color: active ? 'var(--bg)' : 'var(--ink)',
+                        borderRadius: 'var(--radius)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        textTransform: 'uppercase',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 5,
+                      }}>
+                      {f.dot && (
+                        <span style={{
+                          width: 7, height: 7, borderRadius: '50%',
+                          background: active ? 'var(--bg)' : 'var(--jdm-green)',
+                          animation: 'pulse-dot 1.2s ease-in-out infinite',
+                        }}/>
+                      )}
+                      {f.label}
+                    </button>
+                  );
+                })}
               </div>
             </Field>
             <Field label={`Poids minimum · ${minWeight}`}>
@@ -2348,10 +3266,19 @@ function ViewSubgraph() {
               </div>
             </div>
             <div style={{
-              height: 'min(900px, calc(100vh - 220px))',
-              minHeight: 600,
+              // Hauteur adaptative selon le format :
+              //  - HTML (vis-network iframe) : gros canvas, prend la viewport
+              //  - SVG (rendu natif sur dataset) : moyen
+              //  - LIVE (animation graphique) : 600px pour matcher l'anim
+              height: format === 'live'
+                ? 620
+                : format === 'json'
+                  ? 'min(720px, calc(100vh - 220px))'
+                  : 'min(900px, calc(100vh - 220px))',
+              minHeight: format === 'live' ? 620 : 560,
               background: 'var(--bg-card)',
               position: 'relative',
+              transition: 'height 0.32s cubic-bezier(0.4, 0, 0.2, 1)',
             }}>
               {data.format === 'html' && data.html ? (
                 <iframe
@@ -2366,6 +3293,13 @@ function ViewSubgraph() {
                     background: 'var(--bg)',
                   }}
                 />
+              ) : format === 'live' ? (
+                // Mode LIVE — graphe animé en boucle (sans chat).
+                // À brancher sur /api/subgraph/live (SSE) — voir brief.
+                // Pour l'instant : scénarios pré-enregistrés en démo.
+                <div style={{ padding: 12, height: '100%' }}>
+                  <HeroAnimation height={560} showChat={false} />
+                </div>
               ) : data.nodes && data.nodes.length > 0 ? (
                 <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
               ) : (
@@ -2521,6 +3455,7 @@ function GraphViz({ nodes, edges }) {
 }
 
 window.ViewSubgraph = ViewSubgraph;
+
 
 // === webapp/views-agent.jsx ===
 // View: Agent — conversational chat with the LLM + JDM tools (via SSE).
@@ -3128,6 +4063,7 @@ function PoolWidget({ model }) {
 
 window.ViewAgent = ViewAgent;
 
+
 // === webapp/views-jarvis.jsx ===
 // View: Jarvis — agent-driven flows wired to /api/jarvis/{flow_id}/stream.
 //
@@ -3603,61 +4539,11 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
             <div className="mono" style={{
               fontSize: 11, color: 'var(--ink-3)',
               textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 12,
-            }}>Modèle</div>
-            <Field label="Choix">
-              <Select value={params.model || 'gemini-3.1-flash-lite'}
-                onChange={(v) => setParams(p => ({ ...p, model: v }))}
-                options={[
-                  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
-                  { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
-                  { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
-                  { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
-                ].map(m => {
-                  // Grise les Gemini blown sur TOUTES les clés du pool.
-                  if (poolStatus && m.value.startsWith('gemini-')) {
-                    const allBlown = (poolStatus.keys || []).every(
-                      k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
-                    );
-                    if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
-                      return { ...m, label: `❌ ${m.label} — épuisé`,
-                               sub: 'pool entièrement consommé aujourd\'hui' };
-                    }
-                  }
-                  return m;
-                })} />
-            </Field>
-            {(params.model || '').match(/^(claude|gpt)-/) && (
-              <Field label="Clé API">
-                <Input value={params.api_key || ''}
-                  onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
-                  placeholder={(params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…'}
-                  mono />
-              </Field>
-            )}
-            <Field label="Budget d'outils">
-              <Select value={params.budget_label || 'illimité'}
-                onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
-                options={BUDGET_OPTS} />
-            </Field>
-          </Card>
-
-          <Card padding={16}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 12,
-            }}>LLMDrops</div>
-            <Field label="Clé API" hint="Override l'env JDM_DROPS_API_KEY. Vide = utilise la clé serveur.">
-              <Input value={params.drops_key || ''}
-                onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
-                placeholder="optionnel…" mono />
-            </Field>
-            <div style={{
-              fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5,
-            }}>
-              Sans clé, la case « Soumettre » écrit juste le fichier local
-              sans pousser à JDM.
+              marginBottom: 8,
+            }}>Note</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+              Modèle, budget et clés sont configurés dans la barre horizontale
+              en bas de l'écran (sous la vue temps réel).
             </div>
           </Card>
         </div>
@@ -3679,6 +4565,60 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
             </div>
           )}
 
+          {/* ── Barre horizontale Modèle / Budget / Clé LLMDrops :
+              Modèle / Budget / Clé LLMDrops (et clé BYOK si applicable).
+              Positionnée AU-DESSUS des compteurs (remontée depuis sidebar). */}
+          <Card padding={14} style={{ marginBottom: 14 }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: (params.model || '').match(/^(claude|gpt)-/)
+                ? 'minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr)'
+                : 'minmax(220px, 1.6fr) minmax(160px, 1fr) minmax(200px, 1.2fr)',
+              gap: 12,
+              alignItems: 'end',
+            }}>
+              <Field label="Modèle">
+                <Select value={params.model || 'gemini-3.1-flash-lite'}
+                  onChange={(v) => setParams(p => ({ ...p, model: v }))}
+                  options={[
+                    { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+                    { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
+                    { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
+                    { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
+                  ].map(m => {
+                    if (poolStatus && m.value.startsWith('gemini-')) {
+                      const allBlown = (poolStatus.keys || []).every(
+                        k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
+                      );
+                      if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
+                        return { ...m, label: `❌ ${m.label} — épuisé`,
+                                 sub: 'pool entièrement consommé aujourd\'hui' };
+                      }
+                    }
+                    return m;
+                  })} />
+              </Field>
+              <Field label="Budget outils">
+                <Select value={params.budget_label || 'illimité'}
+                  onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
+                  options={BUDGET_OPTS} />
+              </Field>
+              <Field label="Clé LLMDrops">
+                <Input value={params.drops_key || ''}
+                  onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
+                  placeholder="vide = clé serveur…" mono />
+              </Field>
+              {(params.model || '').match(/^(claude|gpt)-/) && (
+                <Field label="Clé API LLM">
+                  <Input value={params.api_key || ''}
+                    onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
+                    placeholder={(params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…'}
+                    mono />
+                </Field>
+              )}
+            </div>
+          </Card>
+
           {/* Metrics grid */}
           <div style={{
             display: 'grid',
@@ -3693,7 +4633,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
             <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
             <Metric label="Tokens" value={fmtTokens(metrics.tokens)} sub="estimés" mono />
             <Metric label="Consolidés" value={metrics.accepted} sub="triplets" color="var(--jdm-green)" />
-            <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
+            <Metric label="Temps" value={fmtElapsed(metrics.elapsed)} sub="écoulé" mono />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
@@ -3727,17 +4667,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   </div>
                 )}
                 {narrationHTML ? (
-                  // marked.js parse le markdown (**bold**, *italic*,
-                  // `code`, listes) MAIS laisse intactes les balises
-                  // HTML déjà présentes (div.jdm-narration, div.jdm-thinking,
-                  // span.jarvis-term, etc.). Fallback : raw HTML si
-                  // marked.js indisponible.
-                  <div className="jdm-agent-bubble"
-                    dangerouslySetInnerHTML={{
-                      __html: (typeof window !== 'undefined' && window.marked)
-                        ? (window.marked.setOptions({ gfm: true, breaks: true }), window.marked.parse(narrationHTML))
-                        : narrationHTML
-                    }} />
+                  <div dangerouslySetInnerHTML={{ __html: narrationHTML }} />
                 ) : (
                   // Fallback : entrées tag/temps des events headline/file/etc.
                   log.map((l, i) => (
@@ -3825,6 +4755,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
               </div>
             </Card>
           </div>
+
         </div>
       </div>
     </PageShell>
@@ -3892,6 +4823,15 @@ function StatusBadge({ state, accent }) {
       {styles.label}
     </div>
   );
+}
+
+// ───── fmtElapsed : ms → "12.4s" ou "2m 14.8s" (passe en minutes ≥ 60s) ─
+function fmtElapsed(ms) {
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  const rem = sec - m * 60;
+  return `${m}m ${rem.toFixed(1)}s`;
 }
 
 // ───── Metric tile ─────
@@ -4058,6 +4998,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
 }
 
 window.ViewJarvis = ViewJarvis;
+
 
 // === webapp/views-productions.jsx ===
 // View: Productions — fichiers .enrich / .audit / .err / .stat /
@@ -4487,46 +5428,54 @@ function formatAge(s) {
 
 window.ViewProductions = ViewProductions;
 
-// === webapp/views-aide.jsx ===
-// View: Aide — installation, usage, MCP, soumission.
-// Conserve le layout designer (SectionTitle / Card / kbd / image-slot)
-// mais le remplit avec notre contenu canonique AIDE_MD réparti dans
-// des sections visuellement structurées.
 
-// Navigation : table des onglets — version "card" du tableau markdown.
+// === webapp/views-aide.jsx ===
+// View: Aide — refonte visuelle "plus jolie".
+// Sticky TOC à gauche, contenu structuré à droite, blocs colorés, icônes.
+// Tous les textes canoniques sont préservés.
+
+const AIDE_SECTIONS = [
+  { id: 'tour',    num: '01', label: 'Tour des onglets' },
+  { id: 'jarvis',  num: '02', label: 'Jarvis en détail' },
+  { id: 'install', num: '03', label: 'Installation locale' },
+  { id: 'mcp',     num: '04', label: 'Serveur MCP' },
+  { id: 'keys',    num: '05', label: 'Clés API' },
+  { id: 'kbd',     num: '06', label: 'Raccourcis' },
+  { id: 'format',  num: '07', label: 'Formats de fichiers' },
+];
+
 const TABS_TABLE = [
   { icon: '📋', name: 'Projet',        what: 'Présentation, liens code source.',                                 key: 'Aucune' },
   { icon: '🔎', name: 'Explorer JDM',  what: 'Table de triplets pour un terme/relation. Déterministe.',          key: 'Aucune' },
   { icon: '⚖️', name: 'Claim checker', what: 'SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet. Déterministe.', key: 'Aucune' },
   { icon: '🕸️', name: 'Sous-graphe',   what: 'Visualisation vis-network interactive du voisinage.',              key: 'Aucune' },
-  { icon: '🤖', name: 'Agent',         what: 'Chat libre avec un agent LLM qui utilise les outils JDM.',         key: 'Gemini (gratuit) ou BYOK Claude/GPT' },
-  { icon: '🦾', name: 'Jarvis',        what: 'Flux guidés par formulaires (5 sous-onglets).',                    key: 'Gemini gratuit · LLMDrops si soumission' },
+  { icon: '🤖', name: 'Agent',         what: 'Chat libre avec un agent LLM qui utilise les outils JDM.',         key: 'Gemini gratuit · BYOK Claude/GPT' },
+  { icon: '🦾', name: 'Jarvis',        what: 'Flux guidés par formulaires (5 sous-onglets).',                    key: 'Gemini · LLMDrops si soumission' },
   { icon: '🛠️', name: 'Aide',          what: 'Ce document.',                                                      key: '—' },
 ];
 
-// Les 5 flows Jarvis avec leur description.
 const JARVIS_FLOWS_HELP = [
-  { id: 'enrich',      icon: '🌱', name: 'Enrichissement', wf: 'enrichment_workflow()',
+  { id: 'enrich',      icon: '🌱', accent: 'var(--jdm-green)',   name: 'Enrichissement', wf: 'enrichment_workflow()',
     desc: 'Propose et consolide de nouveaux triplets pour un terme. Form : terme, relation cible (optionnelle), nombre cible, varier les relations, itérer jusqu\'au but, soumettre. Output : chatbot + fichier .enrich.' },
-  { id: 'audit',       icon: '🔍', name: 'Audit',          wf: 'audit_workflow()',
+  { id: 'audit',       icon: '🔍', accent: 'var(--jdm-cyan)',    name: 'Audit',          wf: 'audit_workflow()',
     desc: 'Audit sémantique de la répartition des sens d\'un terme polysémique. Verdict par triplet (LEGITIME / DEVRAIT_ETRE_CONTRASTIF / NON_CONTRASTIF / NEGATIVE) + section META narrative. Fichier .audit.' },
-  { id: 'gap',         icon: '🕳️', name: 'Détection de trous', wf: 'gap_detection_workflow()',
+  { id: 'gap',         icon: '🕳️', accent: 'var(--jdm-violet)',  name: 'Détection de trous', wf: 'gap_detection_workflow()',
     desc: 'Identifie les trous de couverture (MISSING / NEGATIVE_FILLED / LOW_COVERAGE). Tableau déterministe + synthèse narrative. Routage vers Enrich / Audit / Stats.' },
-  { id: 'signalement', icon: '⚠️', name: 'Signalement',    wf: 'signalement_workflow()',
+  { id: 'signalement', icon: '⚠️', accent: 'var(--jdm-magenta)', name: 'Signalement',    wf: 'signalement_workflow()',
     desc: 'Le LLM utilise son jugement linguistique pour flagger les triplets suspects (pas besoin de preuve d\'outil). Fichier .err avec catégorie de suspicion et justification.' },
-  { id: 'stats',       icon: '📊', name: 'Stats',          wf: 'stats_workflow()',
+  { id: 'stats',       icon: '📊', accent: 'var(--jdm-yellow)',  name: 'Stats',          wf: 'stats_workflow()',
     desc: 'Statistiques de couverture par terme et/ou par relation : n_total, n_pos, n_neg, max_w, min_w, mean_w par relation + 3-5 observations clés en prose.' },
 ];
 
 const API_KEYS_TABLE = [
-  { name: 'Gemini',          where: 'aistudio.google.com/apikey',     cost: 'Gratuit (500 req/jour pour 3.1 Flash Lite)', when: 'Pré-configurée côté serveur',
-    url: 'https://aistudio.google.com/apikey' },
-  { name: 'LLMDrops JDM',    where: 'jeuxdemots.org (contacter M. Lafourcade)', cost: 'Gratuit sur demande', when: 'Pousser .enrich / .audit / .err vers JDM',
-    url: 'https://www.jeuxdemots.org' },
+  { name: 'Gemini',          where: 'aistudio.google.com/apikey',     cost: 'Gratuit (500 req/jour, 3.1 Flash Lite)', when: 'Pré-configurée côté serveur',
+    url: 'https://aistudio.google.com/apikey', tone: 'free' },
+  { name: 'LLMDrops JDM',    where: 'jeuxdemots.org (contact M. Lafourcade)', cost: 'Gratuit sur demande', when: 'Pousser .enrich / .audit / .err',
+    url: 'https://www.jeuxdemots.org', tone: 'free' },
   { name: 'Anthropic (Claude)', where: 'console.anthropic.com',       cost: 'Payant ($)',                              when: 'BYOK Claude dans Agent / Jarvis',
-    url: 'https://console.anthropic.com' },
+    url: 'https://console.anthropic.com', tone: 'paid' },
   { name: 'OpenAI (GPT)',    where: 'platform.openai.com',            cost: 'Payant ($)',                              when: 'BYOK GPT dans Agent / Jarvis',
-    url: 'https://platform.openai.com/api-keys' },
+    url: 'https://platform.openai.com/api-keys', tone: 'paid' },
 ];
 
 const SHORTCUTS = [
@@ -4578,248 +5527,453 @@ term | relation | target | annotation | verdict | justification
 # .err (suspects flaggés par le LLM)
 term | relation | target | catégorie_suspect | justification`;
 
+// ── Code block stylisé avec header type "terminal" ───────────────────
+function CodeBlock({ label, language, children }) {
+  return (
+    <div style={{
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden',
+      border: '1px solid var(--line)',
+      background: 'var(--bg-card)',
+      marginBottom: 16,
+    }}>
+      <div style={{
+        padding: '8px 14px',
+        background: 'var(--bg-elev)',
+        borderBottom: '1px solid var(--line-soft)',
+        display: 'flex', alignItems: 'center', gap: 10,
+        fontFamily: 'var(--font-mono)', fontSize: 11,
+        color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.12em',
+      }}>
+        <div style={{ display: 'flex', gap: 5 }}>
+          {['#ff5f56','#ffbd2e','#27c93f'].map((c, i) => (
+            <span key={i} style={{
+              width: 9, height: 9, borderRadius: '50%',
+              background: c, opacity: 0.55,
+            }}/>
+          ))}
+        </div>
+        <span style={{ marginLeft: 4 }}>{label}</span>
+        {language && (
+          <span style={{ marginLeft: 'auto', color: 'var(--accent)' }}>{language}</span>
+        )}
+      </div>
+      <pre style={{
+        margin: 0, padding: '16px 18px',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 12, lineHeight: 1.65,
+        color: 'var(--ink)',
+        overflowX: 'auto', whiteSpace: 'pre',
+      }}>{children}</pre>
+    </div>
+  );
+}
+
+// ── Header de section : numéro accent + titre serif + ligne ──────────
+function AideSectionHeader({ num, title, kicker }) {
+  return (
+    <div id={`aide-${num}`} style={{
+      marginBottom: 20,
+      paddingTop: 8,
+      scrollMarginTop: 80,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 14,
+        marginBottom: kicker ? 8 : 0,
+      }}>
+        <span className="mono" style={{
+          fontSize: 12, color: 'var(--accent)',
+          fontWeight: 700, letterSpacing: '0.08em',
+        }}>{num}</span>
+        <h2 className="display" style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 26, fontWeight: 600,
+          letterSpacing: '-0.015em',
+          margin: 0, color: 'var(--ink)',
+        }}>{title}</h2>
+        <div style={{
+          flex: 1, height: 1,
+          background: 'linear-gradient(to right, var(--line) 0%, transparent 100%)',
+          marginLeft: 6,
+        }}/>
+      </div>
+      {kicker && (
+        <p style={{
+          margin: 0, marginLeft: 38,
+          fontSize: 13, color: 'var(--ink-2)',
+          lineHeight: 1.55, maxWidth: '64ch',
+        }}>{kicker}</p>
+      )}
+    </div>
+  );
+}
+
+// ── Table des matières sticky (left rail) ────────────────────────────
+function AideTOC() {
+  const [active, setActive] = useState('tour');
+  useEffect(() => {
+    const onScroll = () => {
+      // Trouve la section dont le top est le plus proche du viewport
+      let best = 'tour', bestDist = Infinity;
+      AIDE_SECTIONS.forEach(s => {
+        const el = document.getElementById(`aide-${s.num}`);
+        if (!el) return;
+        const top = el.getBoundingClientRect().top;
+        const dist = Math.abs(top - 100);
+        if (top < 200 && dist < bestDist) {
+          bestDist = dist; best = s.id;
+        }
+      });
+      setActive(best);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const go = (s) => {
+    const el = document.getElementById(`aide-${s.num}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <nav aria-label="Table des matières" style={{
+      position: 'sticky', top: 80,
+      display: 'flex', flexDirection: 'column', gap: 2,
+      paddingLeft: 14,
+      borderLeft: '1px solid var(--line-soft)',
+    }}>
+      <div className="mono" style={{
+        fontSize: 10, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.14em',
+        marginBottom: 10, fontWeight: 600,
+      }}>Sommaire</div>
+      {AIDE_SECTIONS.map(s => {
+        const on = active === s.id;
+        return (
+          <button key={s.id}
+            type="button"
+            onClick={() => go(s)}
+            style={{
+              display: 'flex', alignItems: 'baseline', gap: 8,
+              padding: '6px 0',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              textAlign: 'left',
+              fontFamily: 'inherit',
+              color: on ? 'var(--accent)' : 'var(--ink-2)',
+              transition: 'color 0.18s',
+              position: 'relative',
+            }}>
+            {on && (
+              <span style={{
+                position: 'absolute',
+                left: -15, top: '50%',
+                transform: 'translateY(-50%)',
+                width: 2, height: 16,
+                background: 'var(--accent)',
+              }}/>
+            )}
+            <span className="mono" style={{
+              fontSize: 10, opacity: 0.7,
+              minWidth: 18,
+            }}>{s.num}</span>
+            <span style={{
+              fontSize: 13,
+              fontWeight: on ? 600 : 400,
+            }}>{s.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
 function ViewAide() {
   return (
     <PageShell>
-      <SectionTitle
-        kicker="Documentation"
-        title="Aide & Installation"
-        desc="Naviguer la démo, installer en local, brancher le MCP, comprendre les formats de soumission JDM."
-      />
-
-      {/* 1. Naviguer dans la démo — cards par onglet */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>1 · Naviguer dans la démo</h2>
-
+      {/* HERO bloc compact : intro + chips de raccourcis vers sections */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-        gap: 1,
-        background: 'var(--line)', border: '1px solid var(--line)',
-        borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+        gridTemplateColumns: 'auto 1fr',
+        gap: 28,
+        alignItems: 'center',
+        padding: '24px 28px',
+        background: 'var(--bg-card)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)',
         marginBottom: 40,
       }}>
-        {TABS_TABLE.map((t) => (
-          <div key={t.name} style={{ background: 'var(--bg-card)', padding: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 18 }}>{t.icon}</span>
-              <strong style={{ fontSize: 14, color: 'var(--ink)' }}>{t.name}</strong>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5, marginBottom: 8 }}>
-              {t.what}
-            </div>
-            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Clé : <span style={{ color: 'var(--accent)' }}>{t.key}</span>
-            </div>
-          </div>
-        ))}
+        <div style={{
+          width: 64, height: 64,
+          borderRadius: '50%',
+          background: 'var(--accent)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 30, color: 'var(--bg)' }}>?</span>
+        </div>
+        <div>
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.18em',
+            marginBottom: 6,
+          }}>Documentation</div>
+          <h1 className="display" style={{
+            fontFamily: 'var(--font-display)',
+            margin: 0,
+            fontSize: 30, fontWeight: 600,
+            letterSpacing: '-0.02em',
+            color: 'var(--ink)',
+          }}>Aide &amp; Installation</h1>
+          <p style={{
+            margin: '6px 0 0',
+            fontSize: 14,
+            color: 'var(--ink-2)',
+            lineHeight: 1.55,
+            maxWidth: '70ch',
+          }}>
+            Naviguer la démo, installer en local, brancher le MCP, comprendre
+            les formats de soumission JDM. Sommaire à gauche, contenu à droite.
+          </p>
+        </div>
       </div>
 
-      {/* 2. Jarvis en détail */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 8px',
-      }}>2 · Jarvis en détail — 5 flows guidés</h2>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 18, lineHeight: 1.55 }}>
-        Tous les sous-onglets Jarvis partagent un <strong>bandeau</strong> en haut :
-        clé LLMDrops (override env), modèle LLM (Gemini par défaut, BYOK possible),
-        budget d&apos;appels d&apos;outils (10 / 25 / 50 / 100 / illimité — au-delà, le LLM reçoit un sentinel et consolide ce qu&apos;il a).
-      </p>
-
+      {/* Layout 2 colonnes : TOC sticky | contenu */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: 12, marginBottom: 40,
+        gridTemplateColumns: '200px 1fr',
+        gap: 40,
+        alignItems: 'start',
       }}>
-        {JARVIS_FLOWS_HELP.map(f => (
-          <Card key={f.id} padding={18}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 20 }}>{f.icon}</span>
-              <strong style={{ fontSize: 16, color: 'var(--ink)' }}>{f.name}</strong>
-              <code className="mono" style={{
-                marginLeft: 'auto', background: 'var(--bg-elev)',
-                padding: '2px 6px', borderRadius: 3,
-                fontSize: 10, color: 'var(--accent)',
-              }}>{f.wf}</code>
-            </div>
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>{f.desc}</p>
-          </Card>
-        ))}
-      </div>
+        <AideTOC />
 
-      {/* 3. Installation locale */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>3 · Installation locale</h2>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14, lineHeight: 1.55 }}>
-        Déployer la même app sur ta machine ou un serveur. Sur <strong>Debian 12 / Ubuntu 24.04</strong> (PEP 668),
-        le venv est <strong>obligatoire</strong> (pip refuse hors venv).
-      </p>
-      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
-        <pre style={{
-          margin: 0, padding: 18,
-          background: 'var(--bg-elev)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12, lineHeight: 1.6,
-          color: 'var(--ink)',
-          overflowX: 'auto',
-          whiteSpace: 'pre',
-        }}>{INSTALL_SCRIPT}</pre>
-      </Card>
-      <div style={{
-        fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.55, marginBottom: 40,
-        padding: 12, background: 'var(--bg-elev)',
-        borderLeft: '3px solid var(--accent)', borderRadius: 'var(--radius)',
-      }}>
-        <strong style={{ color: 'var(--ink)' }}>Sous reverse-proxy</strong> (Apache/Nginx sur sous-chemin <code className="mono">/Jarvis/</code> par ex.) :
-        mets <code className="mono">APP_SUBPATH=/Jarvis</code> dans <code className="mono">.env</code>. Le frontend injecte <code className="mono">&lt;base href&gt;</code> automatiquement et les fetch API se résolvent.
-      </div>
-
-      {/* 4. MCP */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>4 · Serveur MCP — outils JDM dans Claude Code / Cursor</h2>
-      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
-        <pre style={{
-          margin: 0, padding: 18,
-          background: 'var(--bg-elev)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12, lineHeight: 1.6,
-          color: 'var(--ink)',
-          overflowX: 'auto',
-        }}>{MCP_SCRIPT}</pre>
-      </Card>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 40, lineHeight: 1.55 }}>
-        Ensuite depuis Claude Code : <em>« Donne-moi les synonymes de voiture dans JDM »</em> → l&apos;agent appelle automatiquement les outils MCP exposés.
-      </p>
-
-      {/* 5. Clés API + Raccourcis (2 colonnes) */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 40,
-      }}>
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>5 · Clés API</h2>
-          <Card padding={0}>
-            {API_KEYS_TABLE.map((k, i) => (
-              <a key={k.name} href={k.url}
-                style={{
-                  display: 'block', padding: 14,
-                  borderBottom: i < API_KEYS_TABLE.length - 1 ? '1px solid var(--line-soft)' : 'none',
-                  textDecoration: 'none', color: 'inherit',
-                  transition: 'background 0.12s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-elev)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = ''}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                  <strong style={{ fontSize: 13, color: 'var(--ink)' }}>{k.name}</strong>
-                  <span style={{ fontSize: 11, color: 'var(--accent)' }}>↗</span>
+        <div style={{ minWidth: 0 }}>
+          {/* 01 — Tour des onglets */}
+          <AideSectionHeader num="01" title="Tour des onglets"
+            kicker="7 onglets, chacun avec sa fonction. Cartes ci-dessous : ce que fait l'onglet et quelle clé API il consomme." />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+            gap: 10, marginBottom: 48,
+          }}>
+            {TABS_TABLE.map((t) => (
+              <div key={t.name} style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-lg)',
+                padding: 14,
+                transition: 'border-color 0.15s',
+              }}
+                onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--line)'}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 18 }}>{t.icon}</span>
+                  <strong style={{ fontSize: 13, color: 'var(--ink)' }}>{t.name}</strong>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>{k.where}</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-2)' }}>{k.cost} · <em>{k.when}</em></div>
-              </a>
-            ))}
-          </Card>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 10, lineHeight: 1.55 }}>
-            ⚠️ Sécurité : les clés que tu colles dans l&apos;UI ne sont <strong>jamais persistées</strong> côté serveur — elles vivent uniquement le temps de ton onglet navigateur.
-          </div>
-        </div>
-
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>Raccourcis clavier</h2>
-          <Card padding={0}>
-            {SHORTCUTS.map((s, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '12px 16px',
-                borderBottom: i < SHORTCUTS.length - 1 ? '1px solid var(--line-soft)' : 'none',
-              }}>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {s.keys.map((k, j) => <span key={j} className="kbd">{k}</span>)}
+                <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55, marginBottom: 8 }}>
+                  {t.what}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--ink-2)', marginLeft: 12 }}>{s.desc}</div>
+                <div className="mono" style={{
+                  fontSize: 10, color: 'var(--ink-3)',
+                  textTransform: 'uppercase', letterSpacing: '0.08em',
+                }}>
+                  Clé : <span style={{ color: 'var(--accent)' }}>{t.key}</span>
+                </div>
               </div>
             ))}
-          </Card>
-        </div>
-      </div>
+          </div>
 
-      {/* 6. Formats de fichiers de soumission */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-        margin: '40px 0 14px',
-      }}>6 · Format des fichiers de soumission</h2>
-      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14, lineHeight: 1.55 }}>
-        Tous les fichiers produits par Jarvis suivent un <strong>format pipe</strong>.
-      </p>
-      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
-        <pre style={{
-          margin: 0, padding: 18,
-          background: 'var(--bg-elev)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12, lineHeight: 1.6,
-          color: 'var(--ink)',
-          overflowX: 'auto', whiteSpace: 'pre',
-        }}>{FORMAT_TEXT}</pre>
-      </Card>
-      <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 40, lineHeight: 1.55 }}>
-        Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
-        <ul style={{ marginTop: 6, paddingLeft: 20 }}>
-          <li>coche <strong>Soumettre directement</strong> dans le formulaire (clé <code className="mono">JDM_DROPS_API_KEY</code> requise) ;</li>
-          <li>ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.</li>
-        </ul>
-      </div>
+          {/* 02 — Jarvis */}
+          <AideSectionHeader num="02" title="Jarvis en détail"
+            kicker="5 flows guidés. Tous partagent un bandeau (clé LLMDrops, modèle, budget d'appels d'outils 10 / 25 / 50 / 100 / illimité)." />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+            gap: 12, marginBottom: 48,
+          }}>
+            {JARVIS_FLOWS_HELP.map(f => (
+              <div key={f.id} style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--line)',
+                borderLeft: `3px solid ${f.accent}`,
+                borderRadius: 'var(--radius-lg)',
+                padding: 18,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 22 }}>{f.icon}</span>
+                  <strong style={{ fontSize: 15, color: 'var(--ink)' }}>{f.name}</strong>
+                  <code className="mono" style={{
+                    marginLeft: 'auto',
+                    background: 'var(--bg-elev)',
+                    padding: '3px 8px', borderRadius: 4,
+                    fontSize: 10, color: f.accent, fontWeight: 600,
+                  }}>{f.wf}</code>
+                </div>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>{f.desc}</p>
+              </div>
+            ))}
+          </div>
 
-      {/* 7. Panneau admin — réservé ?admin=1 (positionné en bas, avant
-          le footer institutionnel, comme requis par l'utilisateur). */}
-      <div className="admin-only" style={{ marginTop: 40, marginBottom: 28 }}>
-        <h2 className="display" style={{
-          fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
-          margin: '0 0 14px',
-        }}>7 · Panneau admin</h2>
-        <AdminPanel />
-      </div>
+          {/* 03 — Installation */}
+          <AideSectionHeader num="03" title="Installation locale"
+            kicker="Sur Debian 12 / Ubuntu 24.04 (PEP 668), le venv est obligatoire — pip refuse hors venv." />
+          <CodeBlock label="install.sh" language="bash">{INSTALL_SCRIPT}</CodeBlock>
+          <div style={{
+            fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6,
+            padding: '12px 16px',
+            background: 'var(--bg-elev)',
+            borderLeft: '3px solid var(--accent)',
+            borderRadius: '0 var(--radius) var(--radius) 0',
+            marginBottom: 48,
+          }}>
+            <strong style={{ color: 'var(--ink)' }}>Reverse-proxy</strong> — pour servir sur un sous-chemin (<code className="mono">/Jarvis/</code> par ex.),
+            mets <code className="mono">APP_SUBPATH=/Jarvis</code> dans <code className="mono">.env</code>. Le frontend injecte <code className="mono">&lt;base href&gt;</code> automatiquement et les fetch API se résolvent.
+          </div>
 
-      {/* 8. Footer institutionnel — crédits + liens cliquables */}
-      <div style={{
-        padding: 28, background: 'var(--bg-elev)',
-        border: '1px solid var(--line-soft)', borderRadius: 'var(--radius-lg)',
-      }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 16,
-        }}>
-          <JDMMark size={36} />
-          <div>
-            <div className="display" style={{
-              fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600,
-              marginBottom: 4,
-            }}>
-              jdmAgent
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-              Mathieu Lafourcade ·{' '}
-              <a href="https://www.lirmm.fr/" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--accent)' }}>LIRMM</a>{' '}
-              (Université de Montpellier — CNRS) ·{' '}
-              <a href="https://www.lirmm.fr/equipes/slice/" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--accent)' }}>Équipe SLICE</a>
-            </div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
-              <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
-              {' · '}
-              <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
+          {/* 04 — MCP */}
+          <AideSectionHeader num="04" title="Serveur MCP"
+            kicker="Expose les outils JDM dans Claude Code / Cursor / tout client MCP-compatible." />
+          <CodeBlock label="claude-code" language="bash">{MCP_SCRIPT}</CodeBlock>
+          <p style={{
+            fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6,
+            margin: '0 0 48px',
+          }}>
+            Ensuite depuis Claude Code : <em>« Donne-moi les synonymes de voiture dans JDM »</em> → l'agent appelle automatiquement les outils MCP exposés.
+          </p>
+
+          {/* 05 — Clés API */}
+          <AideSectionHeader num="05" title="Clés API"
+            kicker="Quatre fournisseurs possibles, deux gratuits et deux payants." />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: 10, marginBottom: 12,
+          }}>
+            {API_KEYS_TABLE.map(k => (
+              <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: 'block',
+                  padding: 16,
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--line)',
+                  borderRadius: 'var(--radius-lg)',
+                  textDecoration: 'none', color: 'inherit',
+                  transition: 'transform 0.18s, border-color 0.15s, box-shadow 0.15s',
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = k.tone === 'free' ? 'var(--jdm-green)' : 'var(--jdm-yellow)';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 6px 16px -10px rgba(0,0,0,0.3)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--line)';
+                  e.currentTarget.style.transform = '';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                  <strong style={{ fontSize: 14, color: 'var(--ink)' }}>{k.name}</strong>
+                  <Pill color={k.tone === 'free' ? 'var(--jdm-green)' : 'var(--jdm-yellow)'} tone="outline">
+                    {k.tone === 'free' ? 'Gratuit' : 'Payant'}
+                  </Pill>
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', marginBottom: 8 }}>{k.where}</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-2)', marginBottom: 6 }}>{k.cost}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic' }}>{k.when}</div>
+                <span style={{ position: 'absolute', bottom: 12, right: 14, color: 'var(--accent)', fontSize: 14 }}>↗</span>
+              </a>
+            ))}
+          </div>
+          <div style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            marginBottom: 48, lineHeight: 1.6,
+            padding: '10px 14px',
+            background: 'var(--bg-elev)',
+            border: '1px dashed var(--line)',
+            borderRadius: 'var(--radius)',
+          }}>
+            ⚠ <strong style={{ color: 'var(--ink-2)' }}>Sécurité</strong> — les clés que tu colles dans l'UI ne sont
+            <strong style={{ color: 'var(--ink)' }}> jamais persistées</strong> côté serveur — elles vivent uniquement le temps de ton onglet.
+          </div>
+
+          {/* 06 — Raccourcis */}
+          <AideSectionHeader num="06" title="Raccourcis clavier" />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: 10, marginBottom: 48,
+          }}>
+            {SHORTCUTS.map((s, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '12px 16px',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-lg)',
+              }}>
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                  {s.keys.map((k, j) => <span key={j} className="kbd">{k}</span>)}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{s.desc}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* 07 — Formats */}
+          <AideSectionHeader num="07" title="Format des fichiers de soumission"
+            kicker="Tous les fichiers produits par Jarvis suivent un format pipe." />
+          <CodeBlock label="formats" language="pipe">{FORMAT_TEXT}</CodeBlock>
+          <div style={{
+            fontSize: 13, color: 'var(--ink-2)',
+            marginBottom: 48, lineHeight: 1.6,
+          }}>
+            Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
+            <ul style={{ marginTop: 8, paddingLeft: 22 }}>
+              <li style={{ marginBottom: 4 }}>coche <strong style={{ color: 'var(--ink)' }}>Soumettre directement</strong> dans le formulaire (clé <code className="mono">JDM_DROPS_API_KEY</code> requise) ;</li>
+              <li>ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.</li>
+            </ul>
+          </div>
+
+          {/* Panneau admin — réservé ?admin=1 */}
+          <div className="admin-only" style={{ marginBottom: 40 }}>
+            <AideSectionHeader num="08" title="Panneau admin" />
+            <AdminPanel />
+          </div>
+
+          {/* Footer institutionnel */}
+          <div style={{
+            padding: 28,
+            background: 'var(--bg-elev)',
+            border: '1px solid var(--line-soft)',
+            borderRadius: 'var(--radius-lg)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: 18,
+          }}>
+            <JDMMark size={36} />
+            <div>
+              <div className="display" style={{
+                fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600,
+                marginBottom: 4,
+              }}>jdmAgent</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+                Mathieu Lafourcade ·{' '}
+                <a href="https://www.lirmm.fr/" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--accent)' }}>LIRMM</a>{' '}
+                (Université de Montpellier — CNRS) ·{' '}
+                <a href="https://www.lirmm.fr/equipes/slice/" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--accent)' }}>Équipe SLICE</a>
+              </div>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+                <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
+                {' · '}
+                <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
+              </div>
             </div>
           </div>
         </div>
@@ -4828,7 +5982,7 @@ function ViewAide() {
   );
 }
 
-// ─── Panneau admin (gate par mot de passe) ─────────────────────
+// ─── Panneau admin (gate par mot de passe) — inchangé ─────────────────
 
 function AdminPanel() {
   const [info, setInfo] = useState(null);
@@ -4836,9 +5990,8 @@ function AdminPanel() {
   const [authed, setAuthed] = useState(false);
   const [authErr, setAuthErr] = useState('');
   const [busy, setBusy] = useState(false);
-  // Edition env vars
-  const [allVars, setAllVars] = useState({});  // {NAME: currentValue}
-  const [edits, setEdits] = useState({});      // {NAME: newValue}
+  const [allVars, setAllVars] = useState({});
+  const [edits, setEdits] = useState({});
   const [editMsg, setEditMsg] = useState('');
   const [cacheMsg, setCacheMsg] = useState('');
 
@@ -4861,7 +6014,6 @@ function AdminPanel() {
       }
       if (!r.ok) { setAuthErr(`HTTP ${r.status}`); return; }
       setAuthed(true);
-      // Charge les valeurs actuelles (via export — réutilise l'endpoint)
       const exp = await fetch('api/admin/export-secrets', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
@@ -4896,7 +6048,6 @@ function AdminPanel() {
       const d = await r.json();
       if (r.ok) {
         setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour · .env persisté : ${d.persisted_to_dotenv ? 'oui' : 'non'}`);
-        // Reload current values
         setAllVars(av => ({ ...av, ...vars }));
         setEdits({});
       } else {
@@ -4937,8 +6088,6 @@ function AdminPanel() {
     URL.revokeObjectURL(url);
   };
 
-  // Liste complète des vars autorisées côté backend
-  // (matchée à _EXPORTABLE_ENV_VARS).
   const EDITABLE_VARS = [
     'JDM_BASE_URL', 'JDM_TIMEOUT',
     'JDM_CACHE_DIR', 'JDM_CACHE_TTL_META', 'JDM_CACHE_TTL_DATA',
@@ -4968,7 +6117,6 @@ function AdminPanel() {
         )}
       </div>
 
-      {/* Diag info (toujours visible si admin URL) */}
       {info && (
         <div style={{
           background: 'var(--bg-elev)',
@@ -4987,8 +6135,6 @@ function AdminPanel() {
         </div>
       )}
 
-      {/* AVANT auth : juste le champ password. Les contrôles d'édition,
-          cache clear, export ne s'affichent QU'après validation OK. */}
       {!authed ? (
         <>
           <div className="mono" style={{
@@ -5024,7 +6170,6 @@ function AdminPanel() {
             fontFamily: 'var(--font-mono)',
           }}>✓ Mot de passe accepté — contrôles débloqués</div>
 
-          {/* 1 · Edition env vars */}
           <div className="mono" style={{
             fontSize: 11, color: 'var(--ink-3)',
             textTransform: 'uppercase', letterSpacing: '0.1em',
@@ -5038,9 +6183,6 @@ function AdminPanel() {
             {EDITABLE_VARS.map(k => {
               const isSecret = /KEY|TOKEN|PASSWORD/.test(k);
               const cur = allVars[k] || '';
-              // Affiche la valeur in extenso quand non-secret. Les secrets
-              // restent masqués (premier 4 / dernier 4) — copie copie la
-              // valeur COMPLÈTE quand même.
               const displayMask = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
               return (
                 <AdminVarRow key={k}
@@ -5065,7 +6207,6 @@ function AdminPanel() {
             }}>{editMsg}</div>
           )}
 
-          {/* 2 · Cache JDM */}
           <div className="mono" style={{
             fontSize: 11, color: 'var(--ink-3)',
             textTransform: 'uppercase', letterSpacing: '0.1em',
@@ -5090,10 +6231,6 @@ function AdminPanel() {
   );
 }
 
-// ─── Ligne d'édition d'une variable d'env (admin) ──────────────
-// Layout : nom (compact) | valeur actuelle (flex 2, monoespace, tronquée
-// si trop longue mais TITLE = valeur complète) | bouton copier |
-// nouvelle valeur (flex 1, étroit pour laisser de la place à la valeur).
 function AdminVarRow({ name, current, displayMask, editValue, onEdit }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -5147,6 +6284,7 @@ function AdminVarRow({ name, current, displayMask, editValue, onEdit }) {
 }
 
 window.ViewAide = ViewAide;
+
 
 // === webapp/app.jsx ===
 // Main app: theme switcher + router + Tweaks panel wiring.

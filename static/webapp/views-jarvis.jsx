@@ -472,61 +472,11 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
             <div className="mono" style={{
               fontSize: 11, color: 'var(--ink-3)',
               textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 12,
-            }}>Modèle</div>
-            <Field label="Choix">
-              <Select value={params.model || 'gemini-3.1-flash-lite'}
-                onChange={(v) => setParams(p => ({ ...p, model: v }))}
-                options={[
-                  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
-                  { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
-                  { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
-                  { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
-                ].map(m => {
-                  // Grise les Gemini blown sur TOUTES les clés du pool.
-                  if (poolStatus && m.value.startsWith('gemini-')) {
-                    const allBlown = (poolStatus.keys || []).every(
-                      k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
-                    );
-                    if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
-                      return { ...m, label: `❌ ${m.label} — épuisé`,
-                               sub: 'pool entièrement consommé aujourd\'hui' };
-                    }
-                  }
-                  return m;
-                })} />
-            </Field>
-            {(params.model || '').match(/^(claude|gpt)-/) && (
-              <Field label="Clé API">
-                <Input value={params.api_key || ''}
-                  onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
-                  placeholder={(params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…'}
-                  mono />
-              </Field>
-            )}
-            <Field label="Budget d'outils">
-              <Select value={params.budget_label || 'illimité'}
-                onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
-                options={BUDGET_OPTS} />
-            </Field>
-          </Card>
-
-          <Card padding={16}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 12,
-            }}>LLMDrops</div>
-            <Field label="Clé API" hint="Override l'env JDM_DROPS_API_KEY. Vide = utilise la clé serveur.">
-              <Input value={params.drops_key || ''}
-                onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
-                placeholder="optionnel…" mono />
-            </Field>
-            <div style={{
-              fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5,
-            }}>
-              Sans clé, la case « Soumettre » écrit juste le fichier local
-              sans pousser à JDM.
+              marginBottom: 8,
+            }}>Note</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+              Modèle, budget et clés sont configurés dans la barre horizontale
+              en bas de l'écran (sous la vue temps réel).
             </div>
           </Card>
         </div>
@@ -548,6 +498,60 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
             </div>
           )}
 
+          {/* ── Barre horizontale Modèle / Budget / Clé LLMDrops :
+              Modèle / Budget / Clé LLMDrops (et clé BYOK si applicable).
+              Positionnée AU-DESSUS des compteurs (remontée depuis sidebar). */}
+          <Card padding={14} style={{ marginBottom: 14 }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: (params.model || '').match(/^(claude|gpt)-/)
+                ? 'minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr)'
+                : 'minmax(220px, 1.6fr) minmax(160px, 1fr) minmax(200px, 1.2fr)',
+              gap: 12,
+              alignItems: 'end',
+            }}>
+              <Field label="Modèle">
+                <Select value={params.model || 'gemini-3.1-flash-lite'}
+                  onChange={(v) => setParams(p => ({ ...p, model: v }))}
+                  options={[
+                    { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+                    { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
+                    { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
+                    { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
+                  ].map(m => {
+                    if (poolStatus && m.value.startsWith('gemini-')) {
+                      const allBlown = (poolStatus.keys || []).every(
+                        k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
+                      );
+                      if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
+                        return { ...m, label: `❌ ${m.label} — épuisé`,
+                                 sub: 'pool entièrement consommé aujourd\'hui' };
+                      }
+                    }
+                    return m;
+                  })} />
+              </Field>
+              <Field label="Budget outils">
+                <Select value={params.budget_label || 'illimité'}
+                  onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
+                  options={BUDGET_OPTS} />
+              </Field>
+              <Field label="Clé LLMDrops">
+                <Input value={params.drops_key || ''}
+                  onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
+                  placeholder="vide = clé serveur…" mono />
+              </Field>
+              {(params.model || '').match(/^(claude|gpt)-/) && (
+                <Field label="Clé API LLM">
+                  <Input value={params.api_key || ''}
+                    onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
+                    placeholder={(params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…'}
+                    mono />
+                </Field>
+              )}
+            </div>
+          </Card>
+
           {/* Metrics grid */}
           <div style={{
             display: 'grid',
@@ -562,7 +566,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
             <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
             <Metric label="Tokens" value={fmtTokens(metrics.tokens)} sub="estimés" mono />
             <Metric label="Consolidés" value={metrics.accepted} sub="triplets" color="var(--jdm-green)" />
-            <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
+            <Metric label="Temps" value={fmtElapsed(metrics.elapsed)} sub="écoulé" mono />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
@@ -596,17 +600,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   </div>
                 )}
                 {narrationHTML ? (
-                  // marked.js parse le markdown (**bold**, *italic*,
-                  // `code`, listes) MAIS laisse intactes les balises
-                  // HTML déjà présentes (div.jdm-narration, div.jdm-thinking,
-                  // span.jarvis-term, etc.). Fallback : raw HTML si
-                  // marked.js indisponible.
-                  <div className="jdm-agent-bubble"
-                    dangerouslySetInnerHTML={{
-                      __html: (typeof window !== 'undefined' && window.marked)
-                        ? (window.marked.setOptions({ gfm: true, breaks: true }), window.marked.parse(narrationHTML))
-                        : narrationHTML
-                    }} />
+                  <div dangerouslySetInnerHTML={{ __html: narrationHTML }} />
                 ) : (
                   // Fallback : entrées tag/temps des events headline/file/etc.
                   log.map((l, i) => (
@@ -694,6 +688,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
               </div>
             </Card>
           </div>
+
         </div>
       </div>
     </PageShell>
@@ -761,6 +756,15 @@ function StatusBadge({ state, accent }) {
       {styles.label}
     </div>
   );
+}
+
+// ───── fmtElapsed : ms → "12.4s" ou "2m 14.8s" (passe en minutes ≥ 60s) ─
+function fmtElapsed(ms) {
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  const rem = sec - m * 60;
+  return `${m}m ${rem.toFixed(1)}s`;
 }
 
 // ───── Metric tile ─────

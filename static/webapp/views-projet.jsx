@@ -1,5 +1,12 @@
-// View: Projet — landing page using the designer layout (hero / stats /
-// feature cards / footer) populated avec notre texte canonique PROJET_MD.
+// View: Projet — landing page.
+//
+// Three vertical panels with scroll-snap:
+//   1. Hero        : animated graph + chat demo (top), then text + stats (bottom)
+//   2. Modules     : SectionTitle + carousel of 5 feature cards
+//   3. Sous le capot : 4 briefs + footer
+//
+// Skin-aware (uses --bg, --bg-card, --line, --accent, --jdm-* vars).
+// All canonical text from the original views-projet.jsx is preserved.
 
 // Palette commune (stats + feature cards) — accents JDM.
 const ACCENT_PALETTE = [
@@ -19,52 +26,144 @@ function useShuffledAccents(n) {
       const j = Math.floor(Math.random() * (i + 1));
       [a[i], a[j]] = [a[j], a[i]];
     }
-    // Si on a besoin de plus que la palette, on cycle.
     const out = [];
     for (let k = 0; k < n; k++) out.push(a[k % a.length]);
     return out;
   }, [n]);
 }
 
-// 3 sections-panneaux : hero / features / briefs+footer. Chaque section
-// remplit le viewport (min-height: 100vh − nav) et s'aligne via
-// scroll-snap. Les dots latéraux pilotent la navigation entre panneaux.
+// PANELS — ordre VISUEL pour navigation :
+//   • bref     (Sous le capot)  → à gauche / en haut
+//   • hero     (Présentation)   → au centre (entrée par défaut)
+//   • modules  (Modules)        → à droite / en bas
+// Cet ordre détermine la position sur la track ; index initial = 1 (hero).
 const PANELS = [
-  { id: 'hero',     label: 'Présentation' },
-  { id: 'modules',  label: 'Modules' },
-  { id: 'bref',     label: 'Sous le capot' },
+  { id: 'bref',     label: 'Sous le capot',  symbol: '♠' },
+  { id: 'hero',     label: 'Présentation',   symbol: '♥' },
+  { id: 'modules',  label: 'Modules',        symbol: '♦' },
 ];
 
 function ViewProjet({ goto }) {
-  const heroRef = useRef(null);
-  const modulesRef = useRef(null);
-  const brefRef = useRef(null);
-  const refs = { hero: heroRef, modules: modulesRef, bref: brefRef };
-  const [activePanel, setActivePanel] = useState('hero');
+  // ─── Carousel state ───
+  // Au lieu de scroll-snap natif, on utilise une track translatée. C'est
+  // un "carousel géant" — toute la page glisse comme un bloc.
+  // direction = 'vertical' (translateY) ou 'horizontal' (translateX).
+  // La nav du bas force horizontal, le rail gauche force vertical.
+  const [panelIndex, setPanelIndex] = useState(1);  // hero = milieu = entrée par défaut
+  const [direction, setDirection] = useState('vertical');
+  const [transitioning, setTransitioning] = useState(true);
+  const totalPanels = PANELS.length;
 
-  // IntersectionObserver — quand un panneau couvre >50% du viewport,
-  // le dot correspondant devient actif.
-  React.useEffect(() => {
-    const observer = new IntersectionObserver((entries) => {
-      // On prend l'entry la plus visible
-      let best = null, bestRatio = 0;
-      for (const e of entries) {
-        if (e.intersectionRatio > bestRatio) {
-          bestRatio = e.intersectionRatio;
-          best = e.target;
-        }
-      }
-      if (best && best.dataset.panel) setActivePanel(best.dataset.panel);
-    }, { threshold: [0.3, 0.55, 0.8] });
-    Object.values(refs).forEach(r => { if (r.current) observer.observe(r.current); });
-    return () => observer.disconnect();
-  }, []);
+  const goToIndex = useCallback((i) => {
+    setPanelIndex(Math.max(0, Math.min(totalPanels - 1, i)));
+  }, [totalPanels]);
 
-  const scrollToPanel = (id) => {
-    const r = refs[id];
-    if (r && r.current) r.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const activePanel = PANELS[panelIndex].id;
+
+  // Handlers spécifiques aux 2 navs : forcent la direction d'anim.
+  // Si on switche de direction (V→H ou H→V), on snap d'abord au même
+  // panelIndex dans la nouvelle direction (sans anim), puis on anime
+  // vers la cible. Évite le « slide diagonal » disgracieux.
+  const switchTo = (newDir, targetIdx) => {
+    if (direction === newDir) {
+      goToIndex(targetIdx);
+      return;
+    }
+    // Phase 1 — snap sans anim à la nouvelle direction, panelIndex inchangé.
+    setTransitioning(false);
+    setDirection(newDir);
+    // Phase 2 — sur le frame suivant (double rAF pour que React ait
+    // committé le snap), on ré-active l'anim et on bouge vers la cible.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTransitioning(true);
+        goToIndex(targetIdx);
+      });
+    });
   };
-  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+  const goFromBottom = (id) => {
+    const idx = PANELS.findIndex(p => p.id === id);
+    if (idx >= 0) switchTo('horizontal', idx);
+  };
+  const goFromLeft = (id) => {
+    const idx = PANELS.findIndex(p => p.id === id);
+    if (idx >= 0) switchTo('vertical', idx);
+  };
+
+  // ─── Wheel : un cran de molette = un panneau, debouncé ───
+  useEffect(() => {
+    let lock = false;
+    let resetTimer = null;
+    const onWheel = (e) => {
+      // Ne pas bloquer le scroll dans les zones internes scrollables
+      // (carousel des cards, log Jarvis, etc.) — on check si le scroll
+      // peut être absorbé par un ancêtre.
+      let el = e.target;
+      while (el && el !== document.body) {
+        const cs = getComputedStyle(el);
+        if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll')
+            && el.scrollHeight > el.clientHeight) {
+          return;  // un parent gère, on laisse passer
+        }
+        el = el.parentElement;
+      }
+      e.preventDefault();
+      if (lock) return;
+      lock = true;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      setPanelIndex(prev => Math.max(0, Math.min(totalPanels - 1, prev + dir)));
+      clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => { lock = false; }, 850);
+    };
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      clearTimeout(resetTimer);
+    };
+  }, [totalPanels]);
+
+  // ─── Clavier : flèches up/down, page up/down, home/end ───
+  useEffect(() => {
+    const onKey = (e) => {
+      // N'interfère pas si on est dans un input/textarea
+      if (e.target.matches('input, textarea, [contenteditable]')) return;
+      if (e.key === 'ArrowDown' || e.key === 'PageDown') {
+        e.preventDefault();
+        goToIndex(panelIndex + 1);
+      } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault();
+        goToIndex(panelIndex - 1);
+      } else if (e.key === 'Home') {
+        goToIndex(0);
+      } else if (e.key === 'End') {
+        goToIndex(totalPanels - 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelIndex, goToIndex, totalPanels]);
+
+  // ─── Touch : swipe haut/bas ───
+  useEffect(() => {
+    let startY = null;
+    const onStart = (e) => { startY = e.touches[0].clientY; };
+    const onEnd = (e) => {
+      if (startY == null) return;
+      const endY = e.changedTouches[0].clientY;
+      const dy = startY - endY;
+      if (Math.abs(dy) > 50) {
+        goToIndex(panelIndex + (dy > 0 ? 1 : -1));
+      }
+      startY = null;
+    };
+    window.addEventListener('touchstart', onStart, { passive: true });
+    window.addEventListener('touchend', onEnd, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart);
+      window.removeEventListener('touchend', onEnd);
+    };
+  }, [panelIndex, goToIndex]);
+
   // Stats — chiffres tirés du README JDM (LIRMM/CNRS) et du projet.
   const stats = [
     { label: 'Termes JDM',   value: '2M+',    sub: 'JeuxDeMots'    },
@@ -73,16 +172,13 @@ function ViewProjet({ goto }) {
     { label: 'Flux Jarvis',  value: '5',      sub: 'guidés'        },
   ];
 
-  // Features — ordre demandé par utilisateur :
-  // 1. Jarvis (primary)  2. Chatbot LLM  3. Sous-graphe
-  // 4. Claim checker     5. Explorer
-  // Icônes alignées sur app.py : 🤖 Jarvis (robot), 💬 Chatbot (bulle).
+  // Features
   const features = [
     {
       id: 'jarvis',
       title: '🤖 Jarvis',
       kind: '5 flux',
-      primary: true,  // carte mise en avant : fond accent + texte adapté
+      primary: true,
       desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
       example: 'enrichissement → 17 triplets consolidés',
     },
@@ -116,7 +212,6 @@ function ViewProjet({ goto }) {
     },
   ];
 
-  // « Le projet en bref » — bullets du PROJET_MD canonique.
   const briefs = [
     {
       title: 'Client typé + cache disque',
@@ -136,227 +231,526 @@ function ViewProjet({ goto }) {
     },
   ];
 
+  // Pan style : on rend les DEUX navs en même temps maintenant.
   return (
-    <PageShell>
-      {/* Dots latéraux (panneau actif) */}
-      <PanelDots activePanel={activePanel} onSelect={scrollToPanel} />
+    <>
+      <NavLeftRail   activePanel={activePanel} onSelect={goFromLeft} />
+      <NavBottomDots activePanel={activePanel} onSelect={goFromBottom} />
+      <style>{`
+        @media (max-width: 720px) {
+          nav[aria-label="Navigation entre panneaux bas"] {
+            bottom: 14px !important;
+            transform: translateX(-50%) scale(0.85) !important;
+            transform-origin: bottom center !important;
+          }
+        }
+      `}</style>
 
-      {/* Back-to-top — bouton flottant bottom-center, visible UNIQUEMENT
-          sur le 3ᵉ panneau. Placé loin des dots et du carousel. */}
-      <BackToTopBtn visible={activePanel === 'bref'} onClick={scrollToTop} />
-
-      {/* Panneau 1 — Hero. min-height calc(100vh − nav) → remplit la
-          viewport. Snap-align start aligne propre au sticky top. */}
-      <div ref={heroRef} data-panel="hero" style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
-        gap: 48,
-        alignItems: 'center',
-        minHeight: 'calc(100vh - 56px)',
-        scrollSnapAlign: 'start',
-        scrollMarginTop: 56,
-      }}>
-        <div>
-          <div className="mono" style={{
-            fontSize: 11, color: 'var(--ink-3)',
-            textTransform: 'uppercase', letterSpacing: '0.18em',
-            marginBottom: 16,
-          }}>
-            LIRMM · CNRS · Université de Montpellier
-          </div>
-          <h1 className="display" style={{
-            fontFamily: 'var(--font-display)',
-            margin: 0,
-            fontSize: 'clamp(36px, 5vw, 60px)',
-            fontWeight: 500,
-            letterSpacing: '-0.02em',
-            lineHeight: 1.05,
-            color: 'var(--ink)',
-          }}>
-            Agent <em style={{
-              fontFamily: 'var(--font-display)',
-              fontStyle: 'italic', color: 'var(--accent)',
-            }}>Jarvis</em> :<br/>Plateforme web.
-          </h1>
-          <p style={{
-            marginTop: 22,
-            fontSize: 17,
-            lineHeight: 1.55,
-            color: 'var(--ink-2)',
-            maxWidth: '52ch',
-          }}>
-            Projet d&apos;agentification de la ressource lexico-sémantique{' '}
-            <a href="https://www.jeuxdemots.org" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>JeuxDeMots</a>{' '}
-            (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées et pondérées) pour les{' '}
-            <strong style={{ color: 'var(--ink)' }}>LLM modernes</strong> via{' '}
-            <strong style={{ color: 'var(--ink)' }}>LangChain</strong> et le{' '}
-            <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
-          </p>
-          <div style={{ display: 'flex', gap: 10, marginTop: 28, flexWrap: 'wrap' }}>
-            <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
-            <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
-            <Button variant="secondary" onClick={() => goto('subgraph')}>Visualiser</Button>
-            <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
-          </div>
-        </div>
-
-        {/* Stats column — chiffres animés count-up au hover.
-            Chaque tuile reçoit une couleur DIFFÉRENTE de la palette
-            jaune/orange/rouge/vert/bleu, randomisée à chaque mount. */}
-        <StatsGrid stats={stats} />
-      </div>
-
-      {/* Panneau 2 — Modules. Grid avec place-content: center ET grille
-          auto sur 1 colonne : centre VERTICALEMENT + HORIZONTALEMENT
-          le bloc contenu, peu importe sa hauteur. */}
-      <div ref={modulesRef} data-panel="modules" style={{
-        scrollSnapAlign: 'start', scrollMarginTop: 56,
-        minHeight: 'calc(100vh - 56px)',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'flex-start',
-        paddingTop: 'clamp(60px, 12vh, 140px)',
-        paddingBottom: 'clamp(40px, 8vh, 100px)',
-        gap: 28,
-      }}>
-        <SectionTitle
-          kicker="Que peux-tu faire sur cette page ?"
-          title="Cinq modules · une seule API"
-          desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu sauf quand c'est explicitement utile."
-        />
-        <FeaturesGrid features={features} goto={goto} />
-      </div>
-
-      {/* Panneau 3 — Sous le capot + footer. Même technique de centrage
-          que le panneau 2. */}
-      <div ref={brefRef} data-panel="bref" style={{
-        scrollSnapAlign: 'start', scrollMarginTop: 56,
-        minHeight: 'calc(100vh - 56px)',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'flex-start',
-        paddingTop: 'clamp(60px, 12vh, 140px)',
-        paddingBottom: 'clamp(40px, 8vh, 100px)',
-        gap: 28,
-      }}>
-      <SectionTitle
-        kicker="Sous le capot"
-        title="Le projet en bref"
-        desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
-      />
-
+      {/* Carousel container — viewport plein, sous la nav */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-        gap: 12, marginBottom: 32,
+        position: 'relative',
+        height: 'calc(100vh - 56px)',
+        overflow: 'hidden',
       }}>
-        {briefs.map((b, i) => (
-          <div key={i} style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--line)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 20,
-          }}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--accent)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 8, fontWeight: 600,
-            }}>0{i + 1}</div>
-            <div className="display" style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 18, fontWeight: 600,
-              marginBottom: 8, color: 'var(--ink)',
-            }}>{b.title}</div>
-            <p style={{
-              margin: 0, fontSize: 13,
-              color: 'var(--ink-2)', lineHeight: 1.55,
-            }}>{b.body}</p>
-          </div>
-        ))}
-      </div>
+        {/* Track : N panneaux empilés (vertical) ou alignés (horizontal),
+            transform: translateY OU translateX selon direction. */}
+        <div style={{
+          height: direction === 'vertical' ? `${totalPanels * 100}%` : '100%',
+          width:  direction === 'vertical' ? '100%' : `${totalPanels * 100}%`,
+          display: 'flex',
+          flexDirection: direction === 'vertical' ? 'column' : 'row',
+          transform: direction === 'vertical'
+            ? `translate3d(0, -${(panelIndex / totalPanels) * 100}%, 0)`
+            : `translate3d(-${(panelIndex / totalPanels) * 100}%, 0, 0)`,
+          transition: transitioning
+            ? 'transform 0.85s cubic-bezier(0.65, 0, 0.35, 1)'
+            : 'none',
+          willChange: 'transform',
+        }}>
+          {/* ── Panneau 1 — Sous le capot (gauche / haut) ── */}
+          <CarouselPanel>
+            <div style={{
+              width: '100%',
+              maxWidth: 1320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 28,
+            }}>
+              <SectionTitle
+                kicker="Sous le capot"
+                title="Le projet en bref"
+                desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
+              />
 
-      {/* Footer — crédits + liens */}
-      <div style={{
-        padding: 24,
-        background: 'var(--bg-elev)',
-        border: '1px solid var(--line-soft)',
-        borderRadius: 'var(--radius-lg)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 24,
-        flexWrap: 'wrap',
-      }}>
-        <div style={{ flex: 1, minWidth: 240 }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            fontFamily: 'var(--font-display)',
-            fontSize: 18, fontWeight: 600, marginBottom: 6,
-          }}>
-            <GitHubMark size={20} />
-            <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--ink)', textDecoration: 'none' }}>
-              Projet open-source
-            </a>
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-            Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe SLICE, LIRMM/CNRS.
-          </div>
-          <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
-            <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>Code source</a>
-            <span style={{ color: 'var(--ink-3)' }}>·</span>
-            <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>USAGE.md</a>
-            <span style={{ color: 'var(--ink-3)' }}>·</span>
-            <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--accent)' }}>Notebook Colab</a>
-          </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                gap: 12, marginBottom: 24,
+              }}>
+                {briefs.map((b, i) => (
+                  <div key={i} style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--line)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: 20,
+                  }}>
+                    <div className="mono" style={{
+                      fontSize: 11, color: 'var(--accent)',
+                      textTransform: 'uppercase', letterSpacing: '0.1em',
+                      marginBottom: 8, fontWeight: 600,
+                    }}>0{i + 1}</div>
+                    <div className="display" style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: 18, fontWeight: 600,
+                      marginBottom: 8, color: 'var(--ink)',
+                    }}>{b.title}</div>
+                    <p style={{
+                      margin: 0, fontSize: 13,
+                      color: 'var(--ink-2)', lineHeight: 1.55,
+                    }}>{b.body}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{
+                padding: 24,
+                background: 'var(--bg-elev)',
+                border: '1px solid var(--line-soft)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 24,
+                flexWrap: 'wrap',
+              }}>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 18, fontWeight: 600, marginBottom: 6,
+                  }}>
+                    <GitHubMark size={20} />
+                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--ink)', textDecoration: 'none' }}>
+                      Projet open-source
+                    </a>
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+                    Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe SLICE, LIRMM/CNRS.
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
+                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>Code source</a>
+                    <span style={{ color: 'var(--ink-3)' }}>·</span>
+                    <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>USAGE.md</a>
+                    <span style={{ color: 'var(--ink-3)' }}>·</span>
+                    <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>Notebook Colab</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CarouselPanel>{/* ── Panneau 2 — Présentation (centre, entrée) ── */}
+          <CarouselPanel>
+            <div style={{
+              width: '100%',
+              maxWidth: 1320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'clamp(20px, 3vh, 36px)',
+            }}>
+              <HeroAnimation height={Math.min(420, Math.round(window.innerHeight * 0.44))} />
+
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
+                gap: 48,
+                alignItems: 'center',
+              }}>
+                <div>
+                  <div className="mono" style={{
+                    fontSize: 11, color: 'var(--ink-3)',
+                    textTransform: 'uppercase', letterSpacing: '0.18em',
+                    marginBottom: 14,
+                  }}>
+                    LIRMM · CNRS · Université de Montpellier
+                  </div>
+                  <h1 className="display" style={{
+                    fontFamily: 'var(--font-display)',
+                    margin: 0,
+                    fontSize: 'clamp(32px, 4.5vw, 56px)',
+                    fontWeight: 500,
+                    letterSpacing: '-0.02em',
+                    lineHeight: 1.05,
+                    color: 'var(--ink)',
+                  }}>
+                    Agent <em style={{
+                      fontFamily: 'var(--font-display)',
+                      fontStyle: 'italic', color: 'var(--accent)',
+                    }}>Jarvis</em> :<br/>Plateforme web.
+                  </h1>
+                  <p style={{
+                    marginTop: 18,
+                    fontSize: 16,
+                    lineHeight: 1.55,
+                    color: 'var(--ink-2)',
+                    maxWidth: '52ch',
+                  }}>
+                    Projet d&apos;agentification de la ressource lexico-sémantique{' '}
+                    <a href="https://www.jeuxdemots.org" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>JeuxDeMots</a>{' '}
+                    (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées et pondérées) pour les{' '}
+                    <strong style={{ color: 'var(--ink)' }}>LLM modernes</strong> via{' '}
+                    <strong style={{ color: 'var(--ink)' }}>LangChain</strong> et le{' '}
+                    <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
+                  </p>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
+                    <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
+                    <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
+                    <Button variant="secondary" onClick={() => goto('subgraph')}>Visualiser</Button>
+                    <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
+                  </div>
+                </div>
+
+                <StatsGrid stats={stats} />
+              </div>
+            </div>
+          </CarouselPanel>
+
+          {/* ── Panneau 3 — Modules (droite / bas) ── */}
+          <CarouselPanel>
+            <div style={{
+              width: '100%',
+              maxWidth: 1320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 32,
+            }}>
+              <SectionTitle
+                kicker="Que peux-tu faire sur cette page ?"
+                title={<>Fonctionnalités de l'API :<br/>Utilisation CLI, distant (à venir)</>}
+                desc="Chaque fonctionnalité est accessible via remote API et en ligne de commande."
+              />
+              <FeaturesGrid features={features} goto={goto} />
+            </div>
+          </CarouselPanel>
+
+          
         </div>
       </div>
-      </div>{/* /panneau 3 */}
-    </PageShell>
+    </>
   );
 }
 
-// ─── PanelDots : navigation latérale entre les 3 panneaux du Projet.
-// Position fixed à droite, vertical-center. Skin-aware (vars CSS).
-function PanelDots({ activePanel, onSelect }) {
+// ─── Wrapper pour chaque panneau dans le carousel ───
+// flex 1/N de la track (en main axis), padding uniforme.
+function CarouselPanel({ children }) {
   return (
-    <div className="jdm-panel-dots" style={{
-      position: 'fixed',
-      right: 22, top: '50%',
-      transform: 'translateY(-50%)',
-      display: 'flex', flexDirection: 'column', gap: 14,
-      zIndex: 40,
+    <div style={{
+      flex: '0 0 33.3333%',
+      height: '100%',
+      width: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      padding: '40px 28px 28px',
+      overflow: 'auto',
     }}>
-      {PANELS.map(p => {
-        const active = activePanel === p.id;
-        return (
-          <button key={p.id}
-            type="button"
-            onClick={() => onSelect(p.id)}
-            aria-label={`Aller à ${p.label}`}
-            title={p.label}
-            className="jdm-panel-dot"
-            style={{
-              width: 10, height: 10, padding: 0,
-              borderRadius: '50%',
-              border: `1px solid ${active ? 'var(--accent)' : 'var(--ink-3)'}`,
-              background: active ? 'var(--accent)' : 'transparent',
-              cursor: 'pointer',
-              transition: 'background 0.18s, border-color 0.18s, transform 0.18s',
-              transform: active ? 'scale(1.25)' : 'scale(1)',
-            }} />
-        );
-      })}
+      {children}
     </div>
   );
 }
 
-// ─── BackToTopBtn : bouton flottant bottom-center, fade in/out selon
-// `visible`. Placé EN BAS de la fenêtre (loin des dots latéraux et du
-// carousel). Skin-aware.
+// ─── PanelNav : 2 variantes, l'indicateur ACTIF glisse entre items.
+//   'bottom' (défaut) : pill horizontal en bas — indicateur glisse en X
+//   'left'           : rail vertical à gauche — indicateur glisse en Y
+//
+// La variante est choisie via tweaks.navStyle (Tweaks panel ou
+// window.__JDM_TWEAKS__.navStyle = 'left' | 'bottom').
+function PanelDots({ activePanel, onSelect }) {
+  // Re-read on tweaks change.
+  const [style, setStyle] = useState(() =>
+    (typeof window !== 'undefined' && window.__JDM_TWEAKS__ && window.__JDM_TWEAKS__.navStyle) || 'bottom'
+  );
+  useEffect(() => {
+    const sync = () => setStyle(
+      (window.__JDM_TWEAKS__ && window.__JDM_TWEAKS__.navStyle) || 'bottom'
+    );
+    window.addEventListener('__jdm_tweaks_changed', sync);
+    return () => window.removeEventListener('__jdm_tweaks_changed', sync);
+  }, []);
+
+  if (style === 'left') return <NavLeftRail   activePanel={activePanel} onSelect={onSelect} />;
+  return                       <NavBottomDots activePanel={activePanel} onSelect={onSelect} />;
+}
+
+// ─── Variant : Bottom dots avec indicateur glissant ──────────────────
+function NavBottomDots({ activePanel, onSelect }) {
+  const containerRef = useRef(null);
+  const itemRefs = useRef({});
+  const [indicator, setIndicator] = useState({ x: 0, w: 0, ready: false });
+
+  // Mesure la position/largeur du bouton actif et anime l'indicateur.
+  useEffect(() => {
+    const activeEl = itemRefs.current[activePanel];
+    const cont = containerRef.current;
+    if (!activeEl || !cont) return;
+    const cr = cont.getBoundingClientRect();
+    const ir = activeEl.getBoundingClientRect();
+    setIndicator({
+      x: ir.left - cr.left + cont.scrollLeft,
+      w: ir.width,
+      ready: true,
+    });
+  }, [activePanel]);
+
+  // Re-mesure au resize (les labels peuvent changer de largeur).
+  useEffect(() => {
+    const onResize = () => {
+      const activeEl = itemRefs.current[activePanel];
+      const cont = containerRef.current;
+      if (!activeEl || !cont) return;
+      const cr = cont.getBoundingClientRect();
+      const ir = activeEl.getBoundingClientRect();
+      setIndicator(prev => ({ ...prev, x: ir.left - cr.left, w: ir.width }));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [activePanel]);
+
+  return (
+    <nav
+      ref={containerRef}
+      aria-label="Navigation entre panneaux bas"
+      style={{
+        position: 'fixed',
+        bottom: 28,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        padding: 6,
+        background: 'var(--bg-card)',
+        border: '1px solid var(--line)',
+        borderRadius: 999,
+        boxShadow: 'var(--shadow)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        zIndex: 40,
+      }}>
+      {/* Pill d'indicateur — glisse en horizontal */}
+      <span aria-hidden="true" style={{
+        position: 'absolute',
+        left: indicator.x,
+        width: indicator.w,
+        top: 6, bottom: 6,
+        background: 'var(--accent)',
+        borderRadius: 999,
+        opacity: indicator.ready ? 1 : 0,
+        transition: 'left 0.42s cubic-bezier(0.4, 0, 0.2, 1), width 0.42s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s',
+        zIndex: 0,
+      }}/>
+      {PANELS.map((p, i) => {
+        const active = activePanel === p.id;
+        return (
+          <button key={p.id}
+            ref={el => { if (el) itemRefs.current[p.id] = el; }}
+            type="button"
+            onClick={() => onSelect(p.id)}
+            aria-label={`Aller à ${p.label}`}
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '8px 14px',
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 999,
+              cursor: 'pointer',
+              color: active ? 'var(--bg)' : 'var(--ink-3)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              fontWeight: active ? 600 : 400,
+              transition: 'color 0.32s 0.05s',  // léger délai pour matcher l'arrivée du pill
+              whiteSpace: 'nowrap',
+            }}>
+            <span style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 13,
+              opacity: active ? 0.95 : 0.55,
+              fontWeight: 600,
+              letterSpacing: 0,
+              textTransform: 'none',
+              lineHeight: 1,
+            }}>{p.symbol}</span>
+            <span>{p.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+// ─── Variant : Left rail avec indicateur glissant verticalement ──────
+//
+// Comportement adaptatif piloté par la largeur du viewport :
+//   - ≥ 1440px : rail complet avec symbole + label (mode 'full')
+//   - 1180-1439 : rail compact, symbole uniquement (mode 'compact')
+//   - < 1180px : rail entièrement caché (mode 'hidden')
+//
+// Cette logique est doublée par une mesure réelle de collision avec le
+// contenu principal (.jdm-projet-content si présent) — si le rail
+// chevauche le contenu, on bascule en hidden quelle que soit la largeur.
+function NavLeftRail({ activePanel, onSelect }) {
+  const containerRef = useRef(null);
+  const itemRefs = useRef({});
+  const [indicator, setIndicator] = useState({ y: 0, h: 0, ready: false });
+  const [mode, setMode] = useState('full');  // 'full' | 'compact' | 'hidden'
+
+  useEffect(() => {
+    const activeEl = itemRefs.current[activePanel];
+    const cont = containerRef.current;
+    if (!activeEl || !cont) return;
+    const cr = cont.getBoundingClientRect();
+    const ir = activeEl.getBoundingClientRect();
+    setIndicator({ y: ir.top - cr.top, h: ir.height, ready: true });
+  }, [activePanel, mode]);
+
+  // Détection de largeur + collision avec le contenu hero.
+  useEffect(() => {
+    const compute = () => {
+      const w = window.innerWidth;
+      // Choix nominal basé sur la largeur.
+      let next = w >= 1440 ? 'full' : w >= 1180 ? 'compact' : 'hidden';
+
+      // Test de collision : on cherche un élément qui marque la zone
+      // de contenu (h1.display dans le panneau hero, ou main centré).
+      // Si le rail prévu (à gauche, 32px + 110-200px de large) chevauche,
+      // on cache.
+      if (next !== 'hidden') {
+        const heroTextEl = document.querySelector('main h1.display');
+        if (heroTextEl) {
+          const r = heroTextEl.getBoundingClientRect();
+          const railEdge = 32 + (next === 'full' ? 170 : 50);
+          if (r.left < railEdge + 24) {
+            // Si collision en mode full, tenter compact avant de cacher.
+            if (next === 'full') {
+              const compactEdge = 32 + 50;
+              next = r.left < compactEdge + 24 ? 'hidden' : 'compact';
+            } else {
+              next = 'hidden';
+            }
+          }
+        }
+      }
+      setMode(next);
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    // Re-mesure après que le contenu hero ait bougé (changement de
+    // panneau ou de thème).
+    const id = setInterval(compute, 800);
+    return () => { window.removeEventListener('resize', compute); clearInterval(id); };
+  }, []);
+
+  if (mode === 'hidden') return null;
+
+  const compact = mode === 'compact';
+
+  return (
+    <nav
+      ref={containerRef}
+      aria-label="Navigation entre panneaux gauche"
+      style={{
+        position: 'fixed',
+        left: compact ? 24 : 32,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        zIndex: 40,
+        borderLeft: '1px solid var(--line)',
+        paddingLeft: compact ? 10 : 16,
+      }}>
+      <span aria-hidden="true" style={{
+        position: 'absolute',
+        left: -1, top: indicator.y,
+        height: indicator.h,
+        width: 2,
+        background: 'var(--accent)',
+        opacity: indicator.ready ? 1 : 0,
+        transition: 'top 0.42s cubic-bezier(0.4, 0, 0.2, 1), height 0.42s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s',
+      }}/>
+      {PANELS.map((p) => (
+        <PanelNavItem
+          key={p.id}
+          ref={el => { if (el) itemRefs.current[p.id] = el; }}
+          symbol={p.symbol}
+          label={p.label}
+          showLabel={!compact}
+          active={activePanel === p.id}
+          onClick={() => onSelect(p.id)}
+        />
+      ))}
+    </nav>
+  );
+}
+
+const PanelNavItem = React.forwardRef(function PanelNavItem({ symbol, label, showLabel, active, onClick }, ref) {
+  const [hover, setHover] = useState(false);
+  const color = active ? 'var(--accent)' : (hover ? 'var(--ink)' : 'var(--ink-3)');
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      aria-label={`Aller à ${label}`}
+      title={!showLabel ? label : undefined}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        padding: showLabel ? '16px 0' : '14px 0',
+        cursor: 'pointer',
+        textAlign: 'left',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 2,
+        position: 'relative',
+        color,
+        transition: 'color 0.32s',
+        fontFamily: 'inherit',
+      }}>
+      <span style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: showLabel ? 22 : 18,
+        fontWeight: 600,
+        lineHeight: 1,
+        color: 'inherit',
+      }}>{symbol}</span>
+      {showLabel && (
+        <span className="mono" style={{
+          fontSize: 10,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+          color: 'inherit',
+          fontWeight: active ? 600 : 400,
+          whiteSpace: 'nowrap',
+        }}>{label}</span>
+      )}
+    </button>
+  );
+});
+
 function BackToTopBtn({ visible, onClick }) {
   return (
     <button
@@ -402,7 +796,6 @@ function BackToTopBtn({ visible, onClick }) {
   );
 }
 
-// ─── StatsGrid : 4 tuiles avec couleur de hover distincte par tuile
 function StatsGrid({ stats }) {
   const colors = useShuffledAccents(stats.length);
   return (
@@ -422,9 +815,19 @@ function StatsGrid({ stats }) {
   );
 }
 
-// ─── FeaturesGrid : carrousel horizontal (rangée unique scrollable)
-// avec snap, scrollbar masquée, boutons prev/next skin-aware aux bords,
-// et gradient de fade qui s'estompe quand on est en bout de course.
+// ─── FeaturesGrid : carrousel avec FADE PAR MASK-IMAGE (pas par overlay).
+//
+// Solution aux deux bugs précédents :
+//
+//   1. Bleed à droite : mask-image fond GRADUELLEMENT le contenu en
+//      transparent — au lieu d'un overlay opaque var(--bg), ce sont les
+//      pixels eux-mêmes qui disparaissent. Aucun bleed possible.
+//
+//   2. Hover lift clippé : on ne touche plus à overflow. Le carousel a
+//      `overflow-x: auto` et `overflow-y: hidden`, mais avec une padding
+//      verticale (14px haut + bas) + margin négative compensatrice, le
+//      hover lift (+ son ombre) s'épanouit dans la zone padded — pas
+//      clippé visuellement. La mask-image fait le boulot du gradient.
 function FeaturesGrid({ features, goto }) {
   const colors = useShuffledAccents(features.length);
   const scrollRef = useRef(null);
@@ -452,38 +855,30 @@ function FeaturesGrid({ features, goto }) {
     };
   }, [updateBounds]);
 
-  // Animation JS du scroll : interpolation ralentie, élégante.
-  // Pendant l'anim, on désactive scroll-snap (mandatory snape sinon
-  // les positions intermédiaires → saccades). On rétablit en fin.
-  // ease-out quint ralentit plus que cubic → effet 'glissé'.
-  // En cas de clic rapide, on annule l'anim en cours (cancelAnimationFrame).
+  // Animation JS du scroll : interpolation ease-out quint, 900ms.
   const animFrameRef = useRef(null);
-
   const animScroll = (dir) => {
     const el = scrollRef.current;
     if (!el) return;
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
-    // Désactive le snap pendant l'animation (évite les saccades).
     const prevSnap = el.style.scrollSnapType;
     el.style.scrollSnapType = 'none';
 
     const step = Math.max(320, el.clientWidth * 0.78);
     const start = el.scrollLeft;
     const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, start + dir * step));
-    const duration = 900;  // 900ms = sensation 'élégante' sans être lent
+    const duration = 900;
     const t0 = performance.now();
 
     const tick = (now) => {
       const t = Math.min(1, (now - t0) / duration);
-      // ease-out quint : décélération douce et marquée à la fin
       const eased = 1 - Math.pow(1 - t, 5);
       el.scrollLeft = start + (target - start) * eased;
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(tick);
       } else {
         animFrameRef.current = null;
-        // Restaure le snap (mandatory) en fin d'anim
         el.style.scrollSnapType = prevSnap || 'x mandatory';
       }
     };
@@ -494,7 +889,6 @@ function FeaturesGrid({ features, goto }) {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
   }, []);
 
-  // Style commun des boutons (skin-aware via vars CSS).
   const btnStyle = (enabled) => ({
     width: 44, height: 44,
     borderRadius: '50%',
@@ -516,9 +910,7 @@ function FeaturesGrid({ features, goto }) {
   const hoverIn = (e) => {
     e.currentTarget.style.background = 'var(--accent)';
     e.currentTarget.style.color = 'var(--bg)';
-    e.currentTarget.style.transform = e.currentTarget.dataset.side === 'left'
-      ? 'translateY(-50%) scale(1.08)'
-      : 'translateY(-50%) scale(1.08)';
+    e.currentTarget.style.transform = 'translateY(-50%) scale(1.08)';
   };
   const hoverOut = (e) => {
     e.currentTarget.style.background = 'var(--bg-card)';
@@ -526,14 +918,10 @@ function FeaturesGrid({ features, goto }) {
     e.currentTarget.style.transform = 'translateY(-50%)';
   };
 
-  // Structure : wrapper-clip (overflow: hidden, clipe TOUT bleed) avec
-  // boutons + carousel à l'intérieur.
   return (
     <div style={{ position: 'relative' }}>
-      {/* Bouton gauche — hors de la rangée à gauche, sur la marge */}
       <button
         type="button"
-        data-side="left"
         onClick={() => animScroll(-1)}
         aria-label="Défiler à gauche"
         onMouseEnter={hoverIn} onMouseLeave={hoverOut}
@@ -545,63 +933,41 @@ function FeaturesGrid({ features, goto }) {
           zIndex: 6,
         }}>‹</button>
 
-      {/* Wrapper SANS overflow:hidden (qui clippait le hover lift).
-          Le bleed est maintenant couvert par un gradient + bloc
-          solide plus large à droite. */}
-      <div style={{ position: 'relative' }}>
-        {/* Carousel — pleine largeur, padding/margin HORIZONTAL only */}
-        <div
-          ref={scrollRef}
-          className="jdm-carousel"
-          style={{
+      <div
+        ref={scrollRef}
+        className={`jdm-carousel ${canNext ? 'jdm-carousel--fade-right' : ''}`}
+        style={{
+          display: 'flex',
+          gap: 14,
+          overflowX: 'auto',
+          // Padding vertical = breathing room pour le hover lift + son
+          // ombre. Margin négative compense pour conserver l'alignement
+          // visuel avec les autres éléments de la page.
+          padding: '14px 4px',
+          margin: '-14px -4px',
+          scrollSnapType: 'x mandatory',
+        }}>
+        {features.map((f, i) => (
+          <div key={f.id} style={{
+            flex: '0 0 clamp(280px, 28vw, 340px)',
+            scrollSnapAlign: 'start',
             display: 'flex',
-            gap: 14,
-            overflowX: 'auto',
-            overflowY: 'visible',
-            scrollSnapType: 'x mandatory',
-            padding: '0 4px',
-            margin: '0 -4px',
+            transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}>
-          {features.map((f, i) => (
-            <div key={f.id} style={{
-              flex: '0 0 clamp(280px, 28vw, 340px)',
-              scrollSnapAlign: 'start',
-              display: 'flex',
-              transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
-            }}>
-              <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
-            </div>
-          ))}
-        </div>
-
-        {/* Gradient fade SUR la dernière carte (style 'estompé') —
-            ÉLARGI à 180px pour couvrir tout bleed visible. var(--bg)
-            opaque sur 50% droite (= 90px solide), fade sur 90px à
-            gauche. Plus de wrapper clip donc le gradient doit faire
-            tout le job de masquage tout seul. */}
-        <div style={{
-          position: 'absolute',
-          right: 0, top: 0, bottom: 0,
-          width: 180,
-          pointerEvents: 'none',
-          zIndex: 3,
-          background: 'linear-gradient(to left, var(--bg) 50%, transparent 100%)',
-          opacity: canNext ? 1 : 0,
-          transition: 'opacity 0.25s',
-        }} />
+            <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
+          </div>
+        ))}
       </div>
 
-      {/* Bouton droit — par-dessus le gradient, au niveau du wrapper */}
       <button
         type="button"
-        data-side="right"
         onClick={() => animScroll(1)}
         aria-label="Défiler à droite"
         onMouseEnter={hoverIn} onMouseLeave={hoverOut}
         style={{
           ...btnStyle(canNext),
           position: 'absolute',
-          right: 16, top: '50%',
+          right: 8, top: '50%',
           transform: 'translateY(-50%)',
           zIndex: 6,
         }}>›</button>
@@ -613,11 +979,6 @@ function FeatureCard({ f, goto, hoverColor }) {
   const [hovering, setHovering] = useState(false);
   const primary = !!f.primary;
 
-  // Couleurs de base selon primary/standard.
-  // Pour la carte primary : on désature l'accent en le mixant avec un
-  // peu de noir (12%) — l'accent pur (#c0411a ou #7eb5c5 selon skin)
-  // était trop saturé en grand aplat. color-mix() est skin-aware
-  // (utilise les vars d'accent du thème courant).
   const bg = primary
     ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
     : 'var(--bg-card)';
@@ -627,8 +988,6 @@ function FeatureCard({ f, goto, hoverColor }) {
   const borderColor = primary
     ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
     : (hovering ? hoverColor : 'var(--line)');
-  // Hover de la primary : on lift + ombre dans la couleur accent, pas
-  // de changement de couleurs internes (sinon ça pulse trop).
   const shadow = hovering
     ? (primary
         ? '0 10px 24px -10px var(--accent)'
@@ -657,7 +1016,6 @@ function FeatureCard({ f, goto, hoverColor }) {
         position: 'relative',
         overflow: 'hidden',
       }}>
-      {/* Badge "PRINCIPAL" en haut à droite sur Jarvis */}
       {primary && (
         <div className="mono" style={{
           position: 'absolute',
@@ -709,10 +1067,7 @@ function FeatureCard({ f, goto, hoverColor }) {
   );
 }
 
-// ─── StatTile : tuile de stat avec animation count-up au hover ─────
 function StatTile({ stat, hoverColor }) {
-  // Parse la valeur : "2M+" → {num: 2, suffix: "M+"}, "350M+" → {350, "M+"},
-  // "35" → {35, ""}, "5" → {5, ""}.
   const parsed = React.useMemo(() => {
     const m = String(stat.value).match(/^([\d.]+)(.*)$/);
     if (!m) return { num: 0, suffix: stat.value };
@@ -723,27 +1078,63 @@ function StatTile({ stat, hoverColor }) {
   const [hovering, setHovering] = useState(false);
   const rafRef = useRef(null);
 
-  // Au hover : reset à 0 puis ease-out cubic vers la valeur cible.
-  // Classy : durée ~900ms, démarre rapide, ralentit, s'arrête pile.
   const animate = () => {
     cancelAnimationFrame(rafRef.current);
     const start = performance.now();
-    const duration = 900;
+    const duration = 1200;
     const target = parsed.num;
+    const suffix = parsed.suffix || '';
+    const hasM = /M/.test(suffix);
+    // Pour les stats en "M+" on commence à 700k (= 0.7M) et on passe
+    // de k vers M lorsqu'on atteint 1M.
+    // Pour les stats sans magnitude (180+, 35, 5) : start = 0.45 * target.
+    const startVal = hasM ? 0.7 : target * 0.45;
+    // Format dynamique : sous 1M on affiche "Xk" (entier), au-dessus "X.YM"
+    // sans le .0 (donc "2M" plutôt que "2.0M", mais "1.5M" reste).
+    const fmtNum = (v) => {
+      if (hasM) {
+        if (v < 1) return Math.round(v * 1000) + 'k';  // 700, 800, 900k
+        // ≥ 1M : 1 décimale, mais on retire le .0 final
+        const s = v.toFixed(1);
+        return s.endsWith('.0') ? s.slice(0, -2) : s;
+      }
+      // Pas de magnitude : entier
+      return String(Math.floor(v));
+    };
     const tick = (now) => {
       const t = Math.min(1, (now - start) / duration);
-      // ease-out cubic
       const eased = 1 - Math.pow(1 - t, 3);
-      const v = target * eased;
-      // Pour les valeurs entières (35, 5) : pas de décimale ; pour
-      // les valeurs déjà décimales (2.0, 5.4) : 1 décimale en cours,
-      // valeur finale exacte.
-      const isInt = target === Math.floor(target);
-      setDisplay(t === 1 ? target : (isInt ? Math.floor(v) : v.toFixed(1)));
+      const v = startVal + (target - startVal) * eased;
+      if (t === 1) {
+        // Snap final exact
+        if (hasM) {
+          const s = target.toFixed(1);
+          setDisplay(s.endsWith('.0') ? s.slice(0, -2) : s);
+        } else {
+          setDisplay(Number.isInteger(target) ? target : target);
+        }
+      } else {
+        setDisplay(fmtNum(v));
+      }
       if (t < 1) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
   };
+
+  // Au mount : affichage initial = valeur formatée selon les règles ci-dessus
+  // (donc "2M" pas "2M+" partial, "180" entier, etc.). Sans toucher au suffix
+  // qui reste "+".
+  React.useEffect(() => {
+    const target = parsed.num;
+    const suffix = parsed.suffix || '';
+    const hasM = /M/.test(suffix);
+    if (hasM) {
+      const s = target.toFixed(1);
+      setDisplay(s.endsWith('.0') ? s.slice(0, -2) : s);
+    } else {
+      setDisplay(target);
+    }
+  }, [parsed]);
 
   React.useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
@@ -753,30 +1144,29 @@ function StatTile({ stat, hoverColor }) {
       onMouseLeave={() => setHovering(false)}
       style={{
         background: 'var(--bg-card)',
-        padding: '20px 22px',
+        padding: '18px 20px',
         transition: 'background 0.2s',
         cursor: 'default',
       }}>
       <div className="mono" style={{
         fontSize: 11, color: 'var(--ink-3)',
         textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
+        marginBottom: 6,
       }}>{stat.label}</div>
       <div className="display" style={{
         fontFamily: 'var(--font-display)',
-        fontSize: 32, fontWeight: 600,
+        fontSize: 28, fontWeight: 600,
         color: hovering ? (hoverColor || 'var(--accent)') : 'var(--ink)',
         lineHeight: 1,
         letterSpacing: '-0.02em',
         transition: 'color 0.18s',
-        fontVariantNumeric: 'tabular-nums',  // évite le sautillement
+        fontVariantNumeric: 'tabular-nums',
       }}>{display}{parsed.suffix}</div>
-      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>{stat.sub}</div>
+      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{stat.sub}</div>
     </div>
   );
 }
 
-// ─── Petite icône GitHub (Octicon-like, SVG inline) ─────────────
 function GitHubMark({ size = 22 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"
