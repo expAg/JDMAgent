@@ -335,6 +335,19 @@
   .jdm-prose hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
   .jdm-prose small { font-size: 11px; opacity: 0.85; }
 
+  /* ── Carrousel horizontal (Projet : feature cards) ──
+     Masque la scrollbar mais garde le scroll fonctionnel.
+     scroll-padding pour que snap-align: start n'aligne pas sur le bord
+     absolu (laisse 4px de marge pour les ombres). */
+  .jdm-carousel {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-padding-left: 4px;
+    scroll-behavior: smooth;
+  }
+  .jdm-carousel::-webkit-scrollbar { display: none; }
+  .jdm-carousel > * { scroll-snap-stop: always; }
+
   /* ── Gate admin ── Tout élément .admin-only est masqué par défaut.
      Si l'URL contient ?admin=1, un script (plus bas) ajoute la classe
      .admin-revealed sur chaque .admin-only → affichage débloqué.

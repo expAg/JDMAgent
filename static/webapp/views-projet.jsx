@@ -35,9 +35,18 @@ function ViewProjet({ goto }) {
     { label: 'Flux Jarvis',  value: '5',      sub: 'guidés'        },
   ];
 
-  // Features — descriptions issues mot pour mot du PROJET_MD du projet
-  // (cf. branche deploy-self / app.py PROJET_MD).
+  // Features — Jarvis en premier (carte principale, mise en avant
+  // accent). Icônes alignées sur app.py : 🤖 pour Jarvis (robot),
+  // 💬 pour le Chatbot LLM (bulle de dialogue).
   const features = [
+    {
+      id: 'jarvis',
+      title: '🤖 Jarvis',
+      kind: '5 flux',
+      primary: true,  // carte mise en avant : fond accent + texte adapté
+      desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
+      example: 'enrichissement → 17 triplets consolidés',
+    },
     {
       id: 'explorer',
       title: '🔎 Explorer JDM',
@@ -61,17 +70,10 @@ function ViewProjet({ goto }) {
     },
     {
       id: 'agent',
-      title: '🤖 Agent',
+      title: '💬 Chatbot LLM',
       kind: 'LLM · BYOK',
       desc: 'Conversation avec un agent (Gemini hébergé gratuit, ou BYOK Claude/GPT) qui n\'utilise QUE les outils JDM et cite ses sources.',
       example: '« Que mange typiquement un chat ? »',
-    },
-    {
-      id: 'jarvis',
-      title: '🦾 Jarvis',
-      kind: '5 flux',
-      desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
-      example: 'enrichissement → 17 triplets consolidés',
     },
   ];
 
@@ -97,12 +99,15 @@ function ViewProjet({ goto }) {
 
   return (
     <PageShell>
-      {/* Hero — designer layout, texte canonique */}
+      {/* Hero — designer layout, texte canonique.
+          marginBottom élastique (clamp 48..120px selon viewport hauteur)
+          → l'espace entre hero et 'Cinq modules' s'adapte au format
+          d'écran, évite que la rangée de cards arrive coupée. */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
         gap: 48,
-        marginBottom: 56,
+        marginBottom: 'clamp(48px, 10vh, 120px)',
         alignItems: 'center',
       }}>
         <div>
@@ -269,24 +274,62 @@ function StatsGrid({ stats }) {
   );
 }
 
-// ─── FeaturesGrid : 5 cards features avec couleur de hover distincte
+// ─── FeaturesGrid : carrousel horizontal (rangée unique scrollable)
+// avec snap, scrollbar masquée, gradient de fade aux bords pour
+// suggérer le débordement. La carte primary (Jarvis) reste en 1ère
+// position et garde la même taille — c'est l'accent qui la distingue.
 function FeaturesGrid({ features, goto }) {
   const colors = useShuffledAccents(features.length);
+  const scrollRef = useRef(null);
+
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-      gap: 12,
-    }}>
-      {features.map((f, i) => (
-        <FeatureCard key={f.id} f={f} goto={goto} hoverColor={colors[i]} />
-      ))}
+    <div style={{ position: 'relative' }}>
+      <div
+        ref={scrollRef}
+        className="jdm-carousel"
+        style={{
+          display: 'flex',
+          gap: 12,
+          overflowX: 'auto',
+          overflowY: 'visible',
+          scrollSnapType: 'x mandatory',
+          padding: '4px 4px 16px',
+          // Marge interne pour que les ombres au hover ne soient pas
+          // coupées par overflow-x.
+          margin: '-4px -4px 0',
+        }}>
+        {features.map((f, i) => (
+          <div key={f.id} style={{
+            flex: '0 0 clamp(280px, 28vw, 340px)',
+            scrollSnapAlign: 'start',
+            display: 'flex',
+          }}>
+            <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 function FeatureCard({ f, goto, hoverColor }) {
   const [hovering, setHovering] = useState(false);
+  const primary = !!f.primary;
+
+  // Couleurs de base selon primary/standard.
+  const bg = primary ? 'var(--accent)' : 'var(--bg-card)';
+  const inkColor = primary ? 'var(--bg)' : 'var(--ink)';
+  const ink2Color = primary ? 'rgba(255,255,255,0.88)' : 'var(--ink-2)';
+  const ink3Color = primary ? 'rgba(255,255,255,0.72)' : 'var(--ink-3)';
+  const borderColor = primary ? 'var(--accent)' : (hovering ? hoverColor : 'var(--line)');
+  // Hover de la primary : on lift + ombre dans la couleur accent, pas
+  // de changement de couleurs internes (sinon ça pulse trop).
+  const shadow = hovering
+    ? (primary
+        ? '0 10px 24px -10px var(--accent)'
+        : `0 6px 18px -8px ${hoverColor}`)
+    : 'none';
+
   return (
     <div
       onClick={() => goto(f.id)}
@@ -296,36 +339,65 @@ function FeatureCard({ f, goto, hoverColor }) {
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
       style={{
-        background: 'var(--bg-card)',
-        // Bordure + ombre colorées au hover, anim douce.
-        border: `1px solid ${hovering ? hoverColor : 'var(--line)'}`,
-        boxShadow: hovering ? `0 6px 18px -8px ${hoverColor}` : 'none',
+        background: bg,
+        border: `1px solid ${borderColor}`,
+        boxShadow: shadow,
         borderRadius: 'var(--radius-lg)',
         padding: 22,
         cursor: 'pointer',
         transform: hovering ? 'translateY(-2px)' : 'none',
         transition: 'transform 0.18s, border-color 0.18s, box-shadow 0.18s',
         display: 'flex', flexDirection: 'column', gap: 10,
+        width: '100%',
+        position: 'relative',
+        overflow: 'hidden',
       }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Badge "PRINCIPAL" en haut à droite sur Jarvis */}
+      {primary && (
+        <div className="mono" style={{
+          position: 'absolute',
+          top: 10, right: 10,
+          fontSize: 9,
+          color: 'rgba(255,255,255,0.85)',
+          background: 'rgba(0,0,0,0.18)',
+          padding: '2px 8px',
+          borderRadius: 999,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+          fontWeight: 600,
+        }}>★ principal</div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <div className="display" style={{
           fontFamily: 'var(--font-display)',
           fontSize: 22, fontWeight: 600,
           letterSpacing: '-0.01em',
-          color: hovering ? hoverColor : 'var(--ink)',
+          color: primary ? inkColor : (hovering ? hoverColor : 'var(--ink)'),
           transition: 'color 0.18s',
         }}>{f.title}</div>
-        <Pill>{f.kind}</Pill>
+        {!primary && <Pill>{f.kind}</Pill>}
+        {primary && (
+          <span style={{
+            padding: '3px 10px', borderRadius: 999,
+            background: 'rgba(255,255,255,0.18)',
+            color: '#fff',
+            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 500,
+          }}>{f.kind}</span>
+        )}
       </div>
       <p style={{
         margin: 0, fontSize: 13,
-        color: 'var(--ink-2)', lineHeight: 1.55, flex: 1,
+        color: ink2Color, lineHeight: 1.55, flex: 1,
       }}>{f.desc}</p>
       <div className="mono" style={{
         fontSize: 11,
-        color: hovering ? hoverColor : 'var(--ink-3)',
+        color: primary ? ink3Color : (hovering ? hoverColor : 'var(--ink-3)'),
         paddingTop: 10,
-        borderTop: `1px dashed ${hovering ? hoverColor : 'var(--line-soft)'}`,
+        borderTop: `1px dashed ${primary
+          ? 'rgba(255,255,255,0.30)'
+          : (hovering ? hoverColor : 'var(--line-soft)')}`,
         transition: 'color 0.18s, border-top-color 0.18s',
       }}>{f.example}</div>
     </div>
