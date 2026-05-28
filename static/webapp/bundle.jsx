@@ -761,9 +761,9 @@ function ViewProjet({ goto }) {
             <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
           </p>
           <div style={{ display: 'flex', gap: 10, marginTop: 28 }}>
-            <Button onClick={() => goto('explorer')}>Commencer à explorer →</Button>
-            <Button variant="secondary" onClick={() => goto('jarvis')}>Flux Jarvis</Button>
-            <Button variant="ghost" onClick={() => goto('aide')}>Documentation</Button>
+            <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
+            <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
+            <Button variant="ghost" onClick={() => goto('explorer')}>Explorer</Button>
           </div>
         </div>
 
