@@ -275,15 +275,107 @@ function StatsGrid({ stats }) {
 }
 
 // ─── FeaturesGrid : carrousel horizontal (rangée unique scrollable)
-// avec snap, scrollbar masquée, gradient de fade aux bords pour
-// suggérer le débordement. La carte primary (Jarvis) reste en 1ère
-// position et garde la même taille — c'est l'accent qui la distingue.
+// avec snap, scrollbar masquée, boutons prev/next skin-aware aux bords,
+// et gradient de fade qui s'estompe quand on est en bout de course.
 function FeaturesGrid({ features, goto }) {
   const colors = useShuffledAccents(features.length);
   const scrollRef = useRef(null);
+  const [canPrev, setCanPrev] = useState(false);
+  const [canNext, setCanNext] = useState(true);
+
+  // Détection des bords : montre/cache les boutons + le fade selon
+  // que le scroll est en début / milieu / fin.
+  const updateBounds = React.useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atStart = el.scrollLeft <= 2;
+    const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
+    setCanPrev(!atStart);
+    setCanNext(!atEnd);
+  }, []);
+
+  React.useEffect(() => {
+    updateBounds();
+    const el = scrollRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', updateBounds, { passive: true });
+    window.addEventListener('resize', updateBounds);
+    return () => {
+      el.removeEventListener('scroll', updateBounds);
+      window.removeEventListener('resize', updateBounds);
+    };
+  }, [updateBounds]);
+
+  // Défile d'une largeur de viewport carrousel (≈ 3 cartes).
+  const scrollBy = (dir) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const step = Math.max(280, el.clientWidth * 0.7);
+    el.scrollBy({ left: dir * step, behavior: 'smooth' });
+  };
+
+  // Bouton de défilement — skin-aware (vars CSS), absolute sur le carousel.
+  const arrowBtn = (side, enabled) => (
+    <button
+      type="button"
+      onClick={() => scrollBy(side === 'left' ? -1 : 1)}
+      aria-label={side === 'left' ? 'Défiler à gauche' : 'Défiler à droite'}
+      style={{
+        position: 'absolute',
+        top: '50%', transform: 'translateY(-50%)',
+        [side]: -6,
+        width: 38, height: 38,
+        borderRadius: '50%',
+        border: '1px solid var(--line)',
+        background: 'var(--bg-card)',
+        color: 'var(--ink-2)',
+        cursor: enabled ? 'pointer' : 'default',
+        opacity: enabled ? 1 : 0,
+        pointerEvents: enabled ? 'auto' : 'none',
+        boxShadow: 'var(--shadow)',
+        fontSize: 16,
+        lineHeight: 1,
+        zIndex: 3,
+        transition: 'opacity 0.2s, background 0.15s, color 0.15s, transform 0.15s',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'var(--accent)';
+        e.currentTarget.style.color = 'var(--bg)';
+        e.currentTarget.style.transform = 'translateY(-50%) scale(1.05)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'var(--bg-card)';
+        e.currentTarget.style.color = 'var(--ink-2)';
+        e.currentTarget.style.transform = 'translateY(-50%)';
+      }}>
+      {side === 'left' ? '‹' : '›'}
+    </button>
+  );
+
+  // Gradient de fade aux bords — s'estompe automatiquement quand on
+  // arrive en début/fin de scroll (canPrev/canNext = false).
+  const fade = (side, visible) => (
+    <div style={{
+      position: 'absolute',
+      top: 0, bottom: 16, [side]: 0,
+      width: 56,
+      pointerEvents: 'none',
+      zIndex: 2,
+      background: `linear-gradient(to ${side === 'left' ? 'right' : 'left'}, var(--bg) 0%, transparent 100%)`,
+      opacity: visible ? 1 : 0,
+      transition: 'opacity 0.25s',
+    }} />
+  );
 
   return (
     <div style={{ position: 'relative' }}>
+      {fade('left', canPrev)}
+      {fade('right', canNext)}
+      {arrowBtn('left', canPrev)}
+      {arrowBtn('right', canNext)}
       <div
         ref={scrollRef}
         className="jdm-carousel"
@@ -294,8 +386,6 @@ function FeaturesGrid({ features, goto }) {
           overflowY: 'visible',
           scrollSnapType: 'x mandatory',
           padding: '4px 4px 16px',
-          // Marge interne pour que les ombres au hover ne soient pas
-          // coupées par overflow-x.
           margin: '-4px -4px 0',
         }}>
         {features.map((f, i) => (
@@ -317,11 +407,19 @@ function FeatureCard({ f, goto, hoverColor }) {
   const primary = !!f.primary;
 
   // Couleurs de base selon primary/standard.
-  const bg = primary ? 'var(--accent)' : 'var(--bg-card)';
+  // Pour la carte primary : on désature l'accent en le mixant avec un
+  // peu de noir (12%) — l'accent pur (#c0411a ou #7eb5c5 selon skin)
+  // était trop saturé en grand aplat. color-mix() est skin-aware
+  // (utilise les vars d'accent du thème courant).
+  const bg = primary
+    ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
+    : 'var(--bg-card)';
   const inkColor = primary ? 'var(--bg)' : 'var(--ink)';
   const ink2Color = primary ? 'rgba(255,255,255,0.88)' : 'var(--ink-2)';
   const ink3Color = primary ? 'rgba(255,255,255,0.72)' : 'var(--ink-3)';
-  const borderColor = primary ? 'var(--accent)' : (hovering ? hoverColor : 'var(--line)');
+  const borderColor = primary
+    ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
+    : (hovering ? hoverColor : 'var(--line)');
   // Hover de la primary : on lift + ombre dans la couleur accent, pas
   // de changement de couleurs internes (sinon ça pulse trop).
   const shadow = hovering
