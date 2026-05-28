@@ -612,13 +612,18 @@ async def api_agent_stream(req: AgentRequest):
                     lc_messages.append(AIMessage(content=ans))
         lc_messages.append(HumanMessage(content=req.message))
 
-        # 3) Accumulateurs pour le markdown cumulatif
-        # `progress` = lignes finalisées (narration tools, blocs anciens)
-        # `current_text` = texte spoken en cours de génération (token-stream)
-        # `current_thinking` = chain-of-thought en cours
+        # 3) Accumulateurs
+        # progress       = lignes narration finalisées (tool_calls, tool_results,
+        #                  thoughts/spoken finalisés avant un nouveau tour LLM)
+        # current_text   = texte LLM en cours de streaming (delta tokens)
+        # current_thinking = chain-of-thought en cours
+        # NB : pendant le stream, on affiche TOUT inline pour suivre.
+        # À la FIN, on bascule sur un rendu "réponse seule + <details>"
+        # (cf. app.py chat_with_agent ligne ~1495).
         progress: list[str] = ["*🧠 Réflexion en cours…*"]
         current_text = ""
         current_thinking = ""
+        use_thinking_flag = bool(req.use_thinking)
 
         def html_escape(s: str) -> str:
             return (s.replace("&", "&amp;")
@@ -626,7 +631,8 @@ async def api_agent_stream(req: AgentRequest):
                      .replace(">", "&gt;")
                      .replace("\n", "<br>"))
 
-        def render() -> str:
+        def render_live() -> str:
+            """Markdown LIVE pendant la génération — tout inline (suivi)."""
             live = list(progress)
             if current_thinking.strip():
                 live.append(f'<div class="jdm-thinking">💭 {html_escape(current_thinking)}</div>')
@@ -635,7 +641,39 @@ async def api_agent_stream(req: AgentRequest):
             return "\n\n".join(live)
 
         def render_with_pending() -> str:
-            return render() + "\n\n*⏳ Génération en cours…*"
+            return render_live() + "\n\n*⏳ Génération en cours…*"
+
+        def render_final() -> str:
+            """Markdown FINAL — réponse en haut, raisonnement collapsible en bas.
+
+            Reproduit le pattern app.py : la trace (thoughts, tool calls,
+            tool results) est cachée dans un <details><summary>...</summary>.
+            La 1ère ligne de progress ('🧠 Réflexion en cours…') est
+            écartée car elle n'apporte rien dans le résumé final.
+            """
+            # Filtre la ligne 'Réflexion en cours' si présente en tête.
+            steps = list(progress)
+            if steps and steps[0].startswith("*🧠 Réflexion"):
+                steps = steps[1:]
+            if current_thinking.strip():
+                steps.append(f'<div class="jdm-thinking">💭 {html_escape(current_thinking)}</div>')
+
+            final = current_text.strip() or "*(réponse vide)*"
+
+            if not steps:
+                return final
+
+            n = len(steps)
+            plural = "s" if n > 1 else ""
+            label = (f"🧠 Voir le résumé du raisonnement ({n} étape{plural})"
+                     if use_thinking_flag
+                     else f"🧠 Voir les étapes ({n} étape{plural})")
+            details = (
+                "\n\n<details><summary>" + label + "</summary>\n\n"
+                + "\n\n".join(steps)
+                + "\n\n</details>"
+            )
+            return final + details
 
         # 4) Premier yield immédiat — l'utilisateur voit "Réflexion en cours…"
         yield {
@@ -719,10 +757,12 @@ async def api_agent_stream(req: AgentRequest):
                             "data": json.dumps({"text": render_with_pending()}, ensure_ascii=False),
                         }
 
-            # Final : strip le "Génération en cours…"
+            # Final : réponse seule en haut + raisonnement dans <details>
+            # (= pattern app.py chat_with_agent, qui scinde
+            # progress_live / progress_full pour le résumé collapsible).
             yield {
                 "event": "text",
-                "data": json.dumps({"text": render()}, ensure_ascii=False),
+                "data": json.dumps({"text": render_final()}, ensure_ascii=False),
             }
             yield {"event": "done", "data": "{}"}
 

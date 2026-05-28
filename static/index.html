@@ -257,6 +257,36 @@
     font-style: italic;
     line-height: 1.55;
   }
+  /* <details> de fin de réponse (raisonnement collapsible) */
+  .jdm-agent-bubble details {
+    margin-top: 16px;
+    border-top: 1px dashed var(--line);
+    padding-top: 12px;
+  }
+  .jdm-agent-bubble details summary {
+    cursor: pointer;
+    list-style: none;
+    font-size: 12px;
+    color: var(--ink-3);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 4px 0;
+    user-select: none;
+  }
+  .jdm-agent-bubble details summary::-webkit-details-marker { display: none; }
+  .jdm-agent-bubble details summary::before {
+    content: '▸';
+    display: inline-block;
+    margin-right: 8px;
+    transition: transform 0.18s;
+  }
+  .jdm-agent-bubble details[open] summary::before {
+    transform: rotate(90deg);
+  }
+  .jdm-agent-bubble details summary:hover { color: var(--accent); }
+  .jdm-agent-bubble details > *:not(summary) { margin-top: 10px; }
+
   /* Termes mis en valeur par le LLM (terme JDM, raffinement, etc.) */
   .jarvis-term, .jdm-term {
     background: var(--accent-soft);
