@@ -483,20 +483,98 @@ async def api_agent_stream(req: AgentRequest):
 
 
 # ────────────────────────────────────────────────────────────────────
-# Route: Jarvis stream (STUB)
+# Route: Jarvis stream
 # ────────────────────────────────────────────────────────────────────
+# Mapping flow_id → (prompt_builder, headline_builder).
+# `params` est le dict envoyé par l'UI ; on en extrait ce que le
+# builder accepte. On filtre via inspect.signature pour rester
+# tolérant aux paramètres inconnus.
+def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
+    """Construit (prompt, headline) pour un flow donné. Lève ValueError
+    si le flow est inconnu."""
+    import inspect
+    from jarvis import (
+        build_enrich_prompt, build_audit_prompt, build_gap_prompt,
+        build_signalement_prompt, build_stats_prompt,
+    )
+    BUILDERS = {
+        "enrich":      (build_enrich_prompt,      lambda p: f"🌱 Enrichir « {p.get('term', '?')} »"),
+        "audit":       (build_audit_prompt,       lambda p: f"🔍 Auditer « {p.get('term', '?')} »"),
+        "gap":         (build_gap_prompt,         lambda p: f"🕳️ Trous sur « {p.get('term', '?')} »"),
+        "signalement": (build_signalement_prompt, lambda p: f"⚠️ Signaler sur « {p.get('term', '?')} »"),
+        "stats":       (build_stats_prompt,       lambda p: f"📊 Stats sur « {p.get('term', '?')} »"),
+    }
+    if flow_id not in BUILDERS:
+        raise ValueError(
+            f"flow_id inconnu : {flow_id!r}. "
+            f"Attendu : {sorted(BUILDERS)}."
+        )
+    builder, headline_fn = BUILDERS[flow_id]
+    # Garde seulement les params acceptés par la signature du builder.
+    sig = inspect.signature(builder)
+    accepted = {k: v for k, v in (params or {}).items() if k in sig.parameters}
+    prompt = builder(**accepted)
+    headline = headline_fn(params or {})
+    return prompt, headline
+
+
 @app.post("/api/jarvis/{flow_id}/stream")
 async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
     """Lancer un flux Jarvis et streamer ses events.
 
-    TODO: dispatcher sur le bon flow (enrich/audit/expand/factcheck/synth)
-    et émettre events typés (iter/tool/accept/reject/log/done).
-    Voir README §2.6.
+    Le `flow_id` identifie le flow ; `params` contient les valeurs du
+    formulaire (term, relation, target_count, …). On compose le prompt
+    via le `build_*_prompt` correspondant puis on streame comme l'agent.
+
+    Émet un event supplémentaire `event: headline` (1er event) avec
+    le résumé court à afficher dans la bulle « user ».
     """
+    from jdm_agent.streaming import chat_stream
+
+    # 1) Build prompt + headline
+    try:
+        prompt, headline = _jarvis_dispatch(flow_id, req.params or {})
+    except ValueError as e:
+        async def err_gen():
+            yield {"event": "error", "data": json.dumps({"text": str(e)})}
+        return EventSourceResponse(err_gen())
+
+    # 2) Build LLM (model/api_key passés dans params pour rester compat
+    # avec la signature JarvisRequest existante).
+    p = req.params or {}
+    model = p.get("model", "gemini-3.1-flash-lite")
+    api_key = p.get("api_key", "")
+    use_thinking = bool(p.get("use_thinking", True))
+    try:
+        llm = _build_llm(model, api_key, use_thinking=use_thinking)
+    except ValueError as e:
+        async def err_gen():
+            yield {"event": "error", "data": json.dumps({"text": str(e)})}
+        return EventSourceResponse(err_gen())
+
     async def gen():
-        yield {"event": "error", "data": json.dumps({
-            "error": f"Flow {flow_id} pas encore implémenté. Voir README §2.6."
-        })}
+        # Headline immédiate
+        yield {
+            "event": "headline",
+            "data": json.dumps({"text": headline, "flow_id": flow_id},
+                              ensure_ascii=False),
+        }
+        try:
+            for ev in chat_stream(
+                message=prompt,
+                history=[],  # Jarvis flows sont one-shot, pas de continuation
+                llm=llm,
+                client=get_client(),
+            ):
+                yield {
+                    "event": ev.get("type", "update"),
+                    "data": json.dumps(ev, ensure_ascii=False),
+                }
+        except Exception as e:
+            yield {"event": "error", "data": json.dumps({
+                "text": f"{type(e).__name__}: {e}"
+            }, ensure_ascii=False)}
+
     return EventSourceResponse(gen())
 
 
