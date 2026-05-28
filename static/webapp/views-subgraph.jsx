@@ -124,17 +124,30 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
 
   // ──────────────────────────────────────────────────────────────
   // 3. POSITIONNEMENT POLAIRE (angle, dist) — imite la démo voiture
+  //    mais avec des distances qui s'adaptent au volume et au
+  //    canvas élargi (viewBox 920×H en mode interactif).
   // ──────────────────────────────────────────────────────────────
-  const RING_DIST = [0, 110, 180, 245, 300];
-  // ↑ même 110 / 180 que le scénario voiture de la démo.
+  const d1Count = byDepth[1].length;
+  // Distances de base — adaptées à un viewBox de 920×560 (LIVE).
+  // Pour ≥ 12 nœuds en depth-1, on espace plus radialement et on
+  // alterne légèrement la distance pour éviter le chevauchement
+  // de labels longs.
+  const RING_DIST = [
+    0,
+    d1Count >= 12 ? 220 : (d1Count >= 8 ? 200 : 180),
+    320, 410, 470,
+  ];
   const polar = { [centerId]: { angle: 0, dist: 0 } };
   const branchColorOf = { [centerId]: 'jdm-magenta' };
 
-  // depth-1 : uniforme autour du centre, dist 110, couleur de branche unique
+  // depth-1 : uniforme autour du centre. Alternance dist±18 sur les
+  // index pairs/impairs quand il y a beaucoup de frères (≥ 8) →
+  // les labels ne se collent plus dans la même couronne.
   const d1 = byDepth[1];
   d1.forEach((n, i) => {
     const angle = (i / Math.max(d1.length, 1)) * 360 - 90;
-    polar[n.id] = { angle, dist: RING_DIST[1] };
+    const stagger = d1.length >= 8 ? (i % 2 === 0 ? -22 : 22) : 0;
+    polar[n.id] = { angle, dist: RING_DIST[1] + stagger };
     branchColorOf[n.id] = BRANCH_COLORS[i % BRANCH_COLORS.length];
   });
 
@@ -389,7 +402,7 @@ function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
             ? 'none'
             : 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
         }}>
-          <HeroAnimation height={560} showChat={false}
+          <HeroAnimation height={720} showChat={false}
                          liveScenario={scenario}
                          interactive={true}
                          onNodeClick={handleNodeClick} />
@@ -786,13 +799,13 @@ function ViewSubgraph() {
               // Hauteur adaptative selon le format :
               //  - HTML (vis-network iframe) : gros canvas, prend la viewport
               //  - SVG (rendu natif sur dataset) : moyen
-              //  - LIVE (animation graphique) : 600px pour matcher l'anim
+              //  - LIVE (animation graphique) : prend toute la viewport dispo
               height: format === 'live'
-                ? 620
+                ? 'min(820px, calc(100vh - 180px))'
                 : format === 'json'
                   ? 'min(720px, calc(100vh - 220px))'
                   : 'min(900px, calc(100vh - 220px))',
-              minHeight: format === 'live' ? 620 : 560,
+              minHeight: format === 'live' ? 640 : 560,
               background: 'var(--bg-card)',
               position: 'relative',
               transition: 'height 0.32s cubic-bezier(0.4, 0, 0.2, 1)',

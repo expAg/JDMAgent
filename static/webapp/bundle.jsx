@@ -842,14 +842,17 @@ function HeroAnimation({ height = 380, showChat = true, liveScenario = null,
       gridTemplateColumns: showChat ? 'minmax(0, 1.05fr) minmax(0, 1fr)' : '1fr',
       gap: 16,
       borderRadius: 'var(--radius-lg)',
+      height: interactive ? '100%' : 'auto',
     }}>
       {/* Left — graph */}
+      {/* En mode interactif (LIVE), on prend toute la hauteur dispo
+          du parent (height: 100%) ; sinon hauteur fixe (démo accueil). */}
       <div style={{
         position: 'relative',
         background: 'var(--bg-card)',
         border: '1px solid var(--line)',
         borderRadius: 'var(--radius-lg)',
-        height,
+        height: interactive ? '100%' : height,
         overflow: 'hidden',
       }}>
         <GraphCanvas scenario={scenario} tick={tick} height={height}
@@ -907,7 +910,11 @@ function sleepHero(ms) {
 }
 
 function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick = null }) {
-  const W = 560, H = height;
+  // viewBox élargi en mode interactif (LIVE) pour que les nœuds
+  // utilisent toute la largeur du canvas, pas juste le carré central.
+  // Les scénarios démo (typing+chat) gardent 560×H (carré centré).
+  const W = interactive ? 920 : 560;
+  const H = height;
   const cx = W / 2, cy = H / 2;
   const g = scenario.graph;
 
@@ -1098,10 +1105,16 @@ function NodeBubble({ x, y, label, color, dim, appearT, counterRotate,
                      onMouseEnter, onMouseLeave, onClick, tooltip }) {
   const c = `var(--${color})`;
   // Hot = boost taille + opacité ; dimmed = recule visuellement.
-  const baseR = dim ? 5 : 9;
-  const r = (hot ? baseR * 1.4 : baseR) * appearT;
-  const fontSize = (dim ? 10 : 12) + (hot ? 2 : 0);
+  // Bulles plus grosses en mode interactif (LIVE) — viewBox étendu.
+  const baseR = (dim ? 7 : 12) * (interactive ? 1 : 0.75);
+  const r = (hot ? baseR * 1.35 : baseR) * appearT;
+  const fontSize = (dim ? 11 : 13) + (hot ? 2 : 0);
   const opacity = dimmed ? 0.25 : appearT;
+  // Tronque les labels très longs pour limiter le chevauchement.
+  // Le tooltip natif (title) garde la version complète.
+  const shownLabel = (label && label.length > 22)
+    ? label.slice(0, 21) + '…'
+    : label;
   return (
     <g
       transform={`translate(${x} ${y})`}
@@ -1130,9 +1143,10 @@ function NodeBubble({ x, y, label, color, dim, appearT, counterRotate,
           fontSize={fontSize}
           fontWeight={hot ? 700 : (dim ? 400 : 600)}
           fill="var(--ink)"
-          opacity={dim && !hot ? 0.65 : 1}
+          opacity={dim && !hot ? 0.7 : 1}
+          style={{ paintOrder: 'stroke', stroke: 'var(--bg)', strokeWidth: 3, strokeLinejoin: 'round' }}
         >
-          {label}
+          {shownLabel}
         </text>
       </g>
     </g>
@@ -3224,17 +3238,30 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
 
   // ──────────────────────────────────────────────────────────────
   // 3. POSITIONNEMENT POLAIRE (angle, dist) — imite la démo voiture
+  //    mais avec des distances qui s'adaptent au volume et au
+  //    canvas élargi (viewBox 920×H en mode interactif).
   // ──────────────────────────────────────────────────────────────
-  const RING_DIST = [0, 110, 180, 245, 300];
-  // ↑ même 110 / 180 que le scénario voiture de la démo.
+  const d1Count = byDepth[1].length;
+  // Distances de base — adaptées à un viewBox de 920×560 (LIVE).
+  // Pour ≥ 12 nœuds en depth-1, on espace plus radialement et on
+  // alterne légèrement la distance pour éviter le chevauchement
+  // de labels longs.
+  const RING_DIST = [
+    0,
+    d1Count >= 12 ? 220 : (d1Count >= 8 ? 200 : 180),
+    320, 410, 470,
+  ];
   const polar = { [centerId]: { angle: 0, dist: 0 } };
   const branchColorOf = { [centerId]: 'jdm-magenta' };
 
-  // depth-1 : uniforme autour du centre, dist 110, couleur de branche unique
+  // depth-1 : uniforme autour du centre. Alternance dist±18 sur les
+  // index pairs/impairs quand il y a beaucoup de frères (≥ 8) →
+  // les labels ne se collent plus dans la même couronne.
   const d1 = byDepth[1];
   d1.forEach((n, i) => {
     const angle = (i / Math.max(d1.length, 1)) * 360 - 90;
-    polar[n.id] = { angle, dist: RING_DIST[1] };
+    const stagger = d1.length >= 8 ? (i % 2 === 0 ? -22 : 22) : 0;
+    polar[n.id] = { angle, dist: RING_DIST[1] + stagger };
     branchColorOf[n.id] = BRANCH_COLORS[i % BRANCH_COLORS.length];
   });
 
@@ -3489,7 +3516,7 @@ function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
             ? 'none'
             : 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
         }}>
-          <HeroAnimation height={560} showChat={false}
+          <HeroAnimation height={720} showChat={false}
                          liveScenario={scenario}
                          interactive={true}
                          onNodeClick={handleNodeClick} />
@@ -3886,13 +3913,13 @@ function ViewSubgraph() {
               // Hauteur adaptative selon le format :
               //  - HTML (vis-network iframe) : gros canvas, prend la viewport
               //  - SVG (rendu natif sur dataset) : moyen
-              //  - LIVE (animation graphique) : 600px pour matcher l'anim
+              //  - LIVE (animation graphique) : prend toute la viewport dispo
               height: format === 'live'
-                ? 620
+                ? 'min(820px, calc(100vh - 180px))'
                 : format === 'json'
                   ? 'min(720px, calc(100vh - 220px))'
                   : 'min(900px, calc(100vh - 220px))',
-              minHeight: format === 'live' ? 620 : 560,
+              minHeight: format === 'live' ? 640 : 560,
               background: 'var(--bg-card)',
               position: 'relative',
               transition: 'height 0.32s cubic-bezier(0.4, 0, 0.2, 1)',
