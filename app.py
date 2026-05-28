@@ -893,11 +893,11 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
             # 'low' chez Gemini.
             kwargs["reasoning_effort"] = "low"
         # Sinon le fallback factory mettait temp=0 (= argmax greedy →
-        # mêmes mots à chaque session). 1.3 = compromis variété / cohérence
-        # éprouvé sur GPT (cf. _build_openai_compat pour Gemini-compat).
+        # mêmes mots à chaque session). 1.5 = compromis variété / cohérence
+        # éprouvé sur GPT (bump from 1.3 after user feedback).
         # + seed aléatoire pour casser les sorties identiques sur prompts
         # proches (primitive standard de l'API OpenAI).
-        kwargs.setdefault("temperature", 1.3)
+        kwargs.setdefault("temperature", 1.5)
         kwargs.setdefault("seed", _random.randint(0, 2**31 - 1))
         return get_llm(provider="openai", model=model, **kwargs)
 
@@ -982,7 +982,10 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     # significativement l'espace de choix sans rendre incohérent.
     # GPT (autres endpoints OpenAI-compat) tolère 0..2 aussi → on
     # met 1.3 pour eux, un peu moins agressif (GPT plus instable au-dessus).
-    temp = 1.5 if "gemini" in routed_model.lower() else 1.3
+    # Échelle 0..2 pour Gemini et GPT. Bump à 1.7/1.5 après feedback
+    # user (1.5/1.3 produisait encore trop souvent les mêmes mots).
+    # Au-delà : risque de tokens incohérents sur les tool_calls.
+    temp = 1.7 if "gemini" in routed_model.lower() else 1.5
     # SEED ALÉATOIRE par instance : sans seed explicite, Gemini OpenAI-compat
     # et OpenAI tendent à retomber sur des sorties identiques pour des
     # prompts proches (cf. pb du LLM qui re-pioche les mêmes mots même
@@ -1062,12 +1065,11 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
     base_kwargs = {
         "model": routed_model,
         "google_api_key": token,
-        # temperature=1.5 sur Gemini natif (échelle 0..2). Variété
-        # forte pour l'enrichissement : 1.0 collait aux mots les
-        # plus fréquents (« voiture », « chat »…), 1.5 ouvre
-        # significativement l'espace de tirage sans casser la
-        # cohérence des tool_calls.
-        "temperature": 1.5,
+        # Échelle 0..2. Bump à 1.7 après feedback user (1.5 produisait
+        # encore les mêmes mots récurrents). 1.7 ouvre nettement plus
+        # l'espace de tirage sans casser les tool_calls — au-delà
+        # commencent les artefacts.
+        "temperature": 1.7,
         # Passé au SDK Google via model_kwargs → atterrit dans le
         # generation_config de l'API REST de Gemini.
         "model_kwargs": {"seed": _random.randint(0, 2**31 - 1)},
