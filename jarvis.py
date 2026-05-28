@@ -1169,8 +1169,14 @@ def build_annotation_prompt(
         )
         parts.append(_RANDOM_TERM_INSTRUCTION)
     parts.append(
-        f"Top-K par relation : {int(top_k)} (triplets candidats récupérés "
-        "par appel à `get_relations_of_type`)."
+        f"Top-K par relation : {int(top_k)}. APPELLE :\n"
+        f"  `get_relations_of_type(term, relation, limit={int(top_k)}, "
+        "with_annotations=True)`\n"
+        "Le flag `with_annotations=True` est CRUCIAL pour ce flow : il "
+        "inline les annotations JDM existantes dans chaque triplet "
+        "(champ `annotations`). Tu n'as PAS BESOIN d'appeler "
+        "`get_triplet_annotations` séparément pour CHAQUE triplet — "
+        "tu obtiens tout en UN tour, économise N round-trips."
     )
     parts.append(
         "TAXONOMIE STRICTE (4 catégories) :\n"
@@ -1202,13 +1208,14 @@ def build_annotation_prompt(
         "`sujet | relation | objet | JDM:[existant] | LLM:[tien] < argument >`"
     )
     parts.append(
-        "Section SIGNALEMENT du `.annot` : pour CHAQUE triplet annoté, "
-        "vérifie via `get_triplet_annotations` si JDM a déjà une "
-        "annotation parmi la taxonomie. ⚠️ N'écris en SIGNALEMENT que "
-        "si ton annotation DIFFÈRE STRICTEMENT de celle de JDM. Si JDM "
-        "et toi êtes d'accord (même catégorie), garde le triplet en "
-        "section principale — NE PAS écrire « JDM:[X] | LLM:[X] < Aucun "
-        "désaccord… > », c'est inutile et trompeur."
+        "Section SIGNALEMENT du `.annot` : lis le champ `annotations` "
+        "de chaque triplet (renvoyé par with_annotations=True) pour "
+        "voir si JDM a déjà une annotation parmi la taxonomie. ⚠️ "
+        "N'écris en SIGNALEMENT que si ton annotation DIFFÈRE "
+        "STRICTEMENT de celle de JDM. Si JDM et toi êtes d'accord "
+        "(même catégorie), garde le triplet en section principale — "
+        "NE PAS écrire « JDM:[X] | LLM:[X] < Aucun désaccord… > », "
+        "c'est inutile et trompeur."
     )
     if upload:
         parts.append(

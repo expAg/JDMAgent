@@ -294,6 +294,43 @@ def test_annotation_workflow_returns_canonical_dict():
                for r in out["rules"])
 
 
+def test_annotation_workflow_uses_inline_annotations():
+    """Régression : pour le flow annotation, l'étape de récupération des
+    triplets DOIT instruire le LLM d'appeler `get_relations_of_type` avec
+    `with_annotations=True`, et NE DOIT PAS imposer une étape séparée
+    d'appel à `get_triplet_annotations` (= N+1 round-trips inutiles)."""
+    from jdm_agent.tools.jdm_tools import annotation_workflow
+    out = annotation_workflow.invoke({})
+    # Trouve l'étape de récupération des triplets
+    fetch_steps = [s for s in out["steps"]
+                   if "get_relations_of_type" in s.get("tool", "")
+                   or "get_relations_of_type" in s.get("description", "")]
+    assert fetch_steps, "Aucune étape get_relations_of_type trouvée"
+    blob = " ".join(s["description"] for s in fetch_steps)
+    assert "with_annotations=True" in blob, (
+        "L'étape de fetch doit explicitement demander with_annotations=True"
+    )
+    # Aucune étape séparée get_triplet_annotations dans le tool field
+    steps_calling_gta = [s for s in out["steps"]
+                        if s.get("tool", "").startswith("get_triplet_annotations")]
+    assert not steps_calling_gta, (
+        "annotation_workflow ne doit plus inclure d'étape séparée "
+        "get_triplet_annotations (les annotations viennent inline)"
+    )
+
+
+def test_get_relations_of_type_exposes_with_annotations():
+    """Régression : le tool MCP get_relations_of_type DOIT exposer
+    with_annotations dans sa signature accessible au LLM."""
+    from jdm_agent.tools.jdm_tools import get_relations_of_type
+    schema = get_relations_of_type.args_schema.model_json_schema()
+    props = schema.get("properties", {})
+    assert "with_annotations" in props, (
+        "with_annotations doit être exposé pour que les flows annotation/"
+        "audit puissent inliner les annotations en un seul appel"
+    )
+
+
 def test_annotation_workflow_no_directive_categories():
     """Régression : la consigne 'pas de terme' ne doit PAS imposer un
     type de mot (animal/objet/action…) qui biaise le LLM vers les

@@ -290,6 +290,7 @@ def get_relations_of_type(
     direction: str = "from",
     min_weight: Optional[float] = None,
     limit: Optional[int] = None,
+    with_annotations: bool = False,
 ) -> list[dict]:
     """Renvoie les relations d'un type donné pour un terme, dans une direction.
 
@@ -308,6 +309,15 @@ def get_relations_of_type(
         direction: "from" (relations sortantes du terme) ou "to" (entrantes vers lui).
         min_weight: filtrage (25 par défaut).
         limit: max résultats (30 par défaut).
+        with_annotations: si True, chaque triplet renvoyé contient un champ
+            `annotations` listant les annotations JDM déjà attachées (kind,
+            value, w). Pratique pour le flow annotation/audit/signalement :
+            au lieu d'appeler get_triplet_annotations(s,r,t) pour CHAQUE
+            triplet (= N+1 round-trips agent), on récupère tout en un appel.
+            Coût HTTP identique côté backend (N+1 calls internes cachés)
+            mais l'agent ne fait qu'UN tour de boucle.
+            ⚠️ Hors flow annotation/audit, laisse False — c'est ~10× plus
+            lent que sans annotations (Phase 10c).
     """
     c = _client()
     rid = c.relation_type_id(relation_name)
@@ -319,7 +329,11 @@ def get_relations_of_type(
         res = c.relations_to(term, types_ids=[rid], min_weight=mw)
     else:
         res = c.relations_from(term, types_ids=[rid], min_weight=mw)
-    return _resolve_targets(c, term, relation_name, res, incoming=incoming, limit=lm)
+    return _resolve_targets(
+        c, term, relation_name, res,
+        incoming=incoming, limit=lm,
+        with_annotations=bool(with_annotations),
+    )
 
 
 @tool
@@ -1734,47 +1748,44 @@ def annotation_workflow() -> dict:
             },
             {
                 "order": 2,
-                "name": "Récupérer les triplets à annoter",
+                "name": "Récupérer triplets + annotations JDM existantes",
                 "description": (
                     "Pour chaque relation cible (ou liste par défaut : "
                     "r_isa, r_has_part, r_carac, r_telic_role, r_lieu, "
-                    "r_anto, r_syn), appelle `get_relations_of_type(term, "
-                    "relation, limit=8)` — top-8 par poids suffit pour "
-                    "annoter, plus = bruit."
+                    "r_anto, r_syn), appelle :\n\n"
+                    "  `get_relations_of_type(term, relation, limit=8, "
+                    "with_annotations=True)`\n\n"
+                    "Top-8 par poids suffit pour annoter, plus = bruit. "
+                    "Le flag `with_annotations=True` est ESSENTIEL pour "
+                    "ce flow : il inline les annotations JDM préexistantes "
+                    "dans chaque triplet retourné (champ `annotations`), "
+                    "ce qui t'évite N appels supplémentaires à "
+                    "`get_triplet_annotations` (1 par triplet). Tu obtiens "
+                    "tout en UN seul tour d'agent au lieu de N+1."
                 ),
-                "tool": "get_relations_of_type",
+                "tool": "get_relations_of_type(with_annotations=True)",
             },
             {
                 "order": 3,
-                "name": "Récupérer les annotations JDM existantes (signalement)",
-                "description": (
-                    "Pour CHAQUE triplet récupéré, appelle "
-                    "`get_triplet_annotations(subject, relation, target)` "
-                    "pour voir si JDM a déjà une annotation parmi notre "
-                    "taxonomie (constitutif/contrastif/non spécifique/"
-                    "exception). Note cette annotation pour la phase de "
-                    "comparaison. NE PAS skipper les triplets déjà annotés — "
-                    "on les compare."
-                ),
-                "tool": "get_triplet_annotations",
-            },
-            {
-                "order": 4,
                 "name": "Annoter selon ton jugement linguistique",
                 "description": (
                     "Pour chaque triplet, choisis UNE catégorie de la "
                     "taxonomie OU laisse vide si aucune ne convient. "
                     "Justifie en 1 phrase courte (< 25 mots). Règles : "
                     "(a) profondeur sémantique, pas vérité factuelle ; "
-                    "(b) l'annotation qualifie le LIEN avec la cible, pas "
-                    "l'objet ; (c) traite les raffinements comme unités "
-                    "distinctes : 'avocat(juriste) r_isa juriste' ≠ "
-                    "'avocat(fruit) r_isa juriste'."
+                    "(b) l'annotation qualifie le LIEN avec la cible, "
+                    "pas l'objet ; (c) traite les raffinements comme "
+                    "unités distinctes : 'avocat(juriste) r_isa juriste' "
+                    "≠ 'avocat(fruit) r_isa juriste'.\n\n"
+                    "Lis le champ `annotations` du triplet (renvoyé par "
+                    "l'étape 2 grâce à with_annotations=True) pour voir "
+                    "si JDM a DÉJÀ une annotation parmi la taxonomie. "
+                    "Compare à TON jugement avant d'écrire."
                 ),
                 "tool": "(jugement — pas d'appel)",
             },
             {
-                "order": 5,
+                "order": 4,
                 "name": "Écrire le fichier .annot (deux sections)",
                 "description": (
                     "Appelle `write_submission_file(triplets=[...], "
