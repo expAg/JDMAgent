@@ -1695,6 +1695,16 @@ def annotation_workflow() -> dict:
             "`exception` (ou rien si aucune ne convient). L'annotation "
             "qualifie le LIEN, pas l'objet. Soumission au format .annot."
         ),
+        "⚠️ exclusivité": (
+            "Tu es dans le flow ANNOTATION. NE PAS appeler "
+            "`signalement_workflow()`, `audit_workflow()` ni "
+            "`enrichment_workflow()` même si tu vois les mots "
+            "« signalement » ou « audit » plus loin dans la description "
+            "de ce workflow — ce sont des noms internes de SECTIONS du "
+            "fichier .annot, PAS des flows à déclencher. Le seul "
+            "fichier à produire est un `.annot` (PAS .err, PAS .audit, "
+            "PAS .stat, PAS .enrich)."
+        ),
         "taxonomy": {
             "constitutif": (
                 "Le trait est une DÉFINITION ESSENTIELLE, sans laquelle "
@@ -1788,6 +1798,12 @@ def annotation_workflow() -> dict:
                 "order": 4,
                 "name": "Écrire le fichier .annot (deux sections)",
                 "description": (
+                    "⚠️ EXTENSION OBLIGATOIRE : le `path` DOIT se terminer "
+                    "par `.annot`. JAMAIS `.err` (= flow signalement), "
+                    "JAMAIS `.audit` (= flow audit), JAMAIS `.stat` "
+                    "(= flow stats), JAMAIS `.enrich` (= flow enrichissement). "
+                    "Si tu écris dans une autre extension, ta production "
+                    "se retrouve mélangée avec celle d'un autre flow.\n\n"
                     "Appelle `write_submission_file(triplets=[...], "
                     "path='<term>_annotation.annot', upload=...)` en mode "
                     "LIGNES `{\"line\": \"...\"}` avec DEUX sections.\n\n"
@@ -1841,6 +1857,12 @@ def annotation_workflow() -> dict:
             "désaccord réel… > » → c'est un anti-pattern absolu.",
             "Pas de consolidation par inférence — l'annotation est un "
             "jugement de locuteur, pas un fait à vérifier.",
+            "EXTENSION FIXE : le fichier produit DOIT avoir l'extension "
+            "`.annot`. PAS `.err` (= flow signalement), PAS `.audit`, "
+            "PAS `.stat`, PAS `.enrich`. Le mot SIGNALEMENT dans la "
+            "description d'écriture est juste le NOM d'une SECTION du "
+            ".annot, ce n'est PAS une instruction pour appeler "
+            "`signalement_workflow()`.",
             "ITÉRATION : si AUCUN terme/relation n'est imposé, tire UN "
             "terme à la fois, annote ses triplets utiles, RECOMMENCE "
             "avec un AUTRE terme (sans répétition de domaine) tant que "

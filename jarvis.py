@@ -1235,7 +1235,12 @@ def build_annotation_prompt(
             "(`write_submission_file(..., upload=False)`)."
         )
     parts.append(
-        "Tu SUIVRAS `annotation_workflow()` en TOUT PREMIER. Obligatoire."
+        "⚠️ Tu SUIVRAS `annotation_workflow()` EN TOUT PREMIER, et "
+        "UNIQUEMENT lui. NE PAS appeler `signalement_workflow()` ni "
+        "`audit_workflow()` même si tu vois le mot « SIGNALEMENT » "
+        "plus loin — c'est le nom d'une SECTION du fichier `.annot`, "
+        "pas un flow à déclencher. Le fichier final DOIT avoir "
+        "l'extension `.annot` (jamais `.err` / `.audit` / `.stat`)."
     )
     return "\n".join(parts)
 
