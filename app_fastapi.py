@@ -619,6 +619,34 @@ async def api_subgraph_live(req: SubgraphLiveRequest):
             touched.add(e["from"]); touched.add(e["to"])
         nodes = [n for n in nodes if n["id"] in touched]
 
+    # ─────────────────────────────────────────────────────────────
+    # PROPAGATION POSITIVE UNIQUEMENT :
+    # une arête négative `A -[NEG]-> B` est gardée (terminaison
+    # informative) mais B n'est PAS exploré pour la profondeur
+    # suivante — sauf si B est aussi atteint positivement par
+    # ailleurs. Ça évite que les enfants de B viennent polluer le
+    # sous-graphe alors qu'on a explicitement dit « A n'est pas B ».
+    # ─────────────────────────────────────────────────────────────
+    reachable_pos = {"ROOT"}
+    frontier = ["ROOT"]
+    while frontier:
+        nxt: list[str] = []
+        for src in frontier:
+            for e in edges:
+                if e["from"] == src and not e["negative"]:
+                    if e["to"] not in reachable_pos:
+                        reachable_pos.add(e["to"])
+                        nxt.append(e["to"])
+        frontier = nxt
+    # On retire les arêtes qui PARTENT d'un nœud non atteint positivement
+    # (donc atteint uniquement par négation, ou détaché). Les arêtes
+    # entrant vers ces nœuds (les négations elles-mêmes) restent.
+    edges = [e for e in edges if e["from"] in reachable_pos]
+    touched2: set[str] = {"ROOT"}
+    for e in edges:
+        touched2.add(e["from"]); touched2.add(e["to"])
+    nodes = [n for n in nodes if n["id"] in touched2]
+
     # Cap par max_nodes via BFS depuis ROOT (idem /api/subgraph).
     if req.max_nodes and len(nodes) > req.max_nodes:
         out_edges_idx: dict[str, list[dict]] = {}

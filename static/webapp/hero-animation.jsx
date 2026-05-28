@@ -340,6 +340,27 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
           <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.10"/>
           <stop offset="100%" stopColor="var(--accent)" stopOpacity="0"/>
         </radialGradient>
+        {/* Marqueurs de flèche — un par couleur unique présente dans
+            les arêtes. Permet à chaque arête d'avoir une flèche de
+            même couleur que sa ligne (pas de context-stroke universel
+            cross-browser). */}
+        {Array.from(new Set(g.edges.map(e =>
+          e.color || (e.highlight ? '__accent__' : '__ink3__')
+        ))).map(c => {
+          const fill = c === '__accent__' ? 'var(--accent)'
+                     : c === '__ink3__'   ? 'var(--ink-3)'
+                     : c;
+          const id = 'arrow-' + (c || 'none').replace(/[^a-zA-Z0-9_-]/g, '');
+          return (
+            <marker key={c} id={id}
+                    viewBox="0 0 10 10" refX="9" refY="5"
+                    markerUnits="userSpaceOnUse"
+                    markerWidth="11" markerHeight="11"
+                    orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={fill}/>
+            </marker>
+          );
+        })}
       </defs>
 
       <circle cx={cx} cy={cy} r={Math.min(W, H) / 3} fill="url(#hero-glow)"/>
@@ -351,8 +372,15 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
           const t = Math.min(1, (tick - e.delay) / 0.7);
           const a = positions[e.from], b = positions[e.to];
           if (!a || !b) return null;
-          const x = a.x + (b.x - a.x) * t;
-          const y = a.y + (b.y - a.y) * t;
+          // Tronque la ligne avant le nœud destination pour que la
+          // flèche ne plonge pas dans la bulle (marge = rayon + padding).
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const segLen = Math.max(1, Math.sqrt(dx*dx + dy*dy));
+          const trim = interactive ? 16 : 0;
+          const bx = b.x - (dx / segLen) * trim;
+          const by = b.y - (dy / segLen) * trim;
+          const x = a.x + (bx - a.x) * t;
+          const y = a.y + (by - a.y) * t;
           const edgeColor = e.color
             || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
           const labelColor = e.color
@@ -392,6 +420,10 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
                 strokeOpacity={dimmed ? 0.15 : (isHot ? 1 : (e.color ? 0.82 : (e.highlight ? 0.9 : 0.45)))}
                 strokeLinecap="round"
                 strokeDasharray={e.negative ? '4 3' : undefined}
+                markerEnd={interactive && t > 0.85 ? `url(#arrow-${
+                  (e.color || (e.highlight ? '__accent__' : '__ink3__'))
+                    .replace(/[^a-zA-Z0-9_-]/g, '')
+                })` : undefined}
                 style={{ pointerEvents: 'none', transition: 'stroke-width 0.12s, stroke-opacity 0.12s' }}
               />
               {((e.label && t > 0.6) || isHot) && (
