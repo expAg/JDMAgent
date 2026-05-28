@@ -740,10 +740,10 @@ function ViewProjet({ goto }) {
             lineHeight: 1.05,
             color: 'var(--ink)',
           }}>
-            Accès web à l&apos;agent <em style={{
+            Agent <em style={{
               fontFamily: 'var(--font-display)',
               fontStyle: 'italic', color: 'var(--accent)',
-            }}>Jarvis</em>.
+            }}>Jarvis</em> : plateforme web.
           </h1>
           <p style={{
             marginTop: 22,
