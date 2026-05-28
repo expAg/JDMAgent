@@ -12,7 +12,7 @@ import pytest
 from jdm_agent.tools.jdm_tools import (
     audit_workflow,
     gap_detection_workflow,
-    signalement_workflow,
+    error_detection_workflow,
     stats_workflow,
     enrichment_workflow,  # ref pour s'assurer qu'on suit le même pattern
 )
@@ -22,7 +22,7 @@ from jdm_agent.tools.jdm_tools import (
 WORKFLOWS = [
     ("audit_workflow", audit_workflow),
     ("gap_detection_workflow", gap_detection_workflow),
-    ("signalement_workflow", signalement_workflow),
+    ("error_detection_workflow", error_detection_workflow),
     ("stats_workflow", stats_workflow),
 ]
 
@@ -109,14 +109,14 @@ def test_audit_workflow_handles_no_term():
     assert "hasard" in full or "TIRE" in full or "tire" in full
 
 
-def test_signalement_workflow_mentions_judgment():
-    """signalement_workflow doit explicitement dire que le jugement du LLM compte."""
-    result = signalement_workflow.invoke({})
+def test_error_detection_workflow_mentions_judgment():
+    """error_detection_workflow doit explicitement dire que le jugement du LLM compte."""
+    result = error_detection_workflow.invoke({})
     intent = result.get("intent", "")
     # Au moins une mention du jugement linguistique / sans preuve d'outil
     text = intent + " ".join(result["rules"])
     assert "jugement" in text.lower() or "intuition" in text.lower(), \
-        "signalement_workflow doit explicitement légitimer le jugement LLM"
+        "error_detection_workflow doit explicitement légitimer le jugement LLM"
 
 
 def test_gap_detection_proposes_three_actions():
@@ -142,7 +142,7 @@ def test_all_workflows_exposed_in_ALL_TOOLS():
     from jdm_agent.tools.jdm_tools import ALL_TOOLS
     names = {t.name for t in ALL_TOOLS}
     for new_wf in ("audit_workflow", "gap_detection_workflow",
-                   "signalement_workflow", "stats_workflow"):
+                   "error_detection_workflow", "stats_workflow"):
         assert new_wf in names, f"{new_wf} doit être dans ALL_TOOLS"
 
 
@@ -150,7 +150,7 @@ def test_workflows_exempt_from_budget():
     """Les workflow tools ne consomment PAS de budget — vérifié via is_budgeted."""
     from jdm_agent.tools.budget import is_budgeted
     for name in ("enrichment_workflow", "audit_workflow",
-                 "gap_detection_workflow", "signalement_workflow",
+                 "gap_detection_workflow", "error_detection_workflow",
                  "stats_workflow"):
         assert is_budgeted(name) is False, \
             f"{name} doit être exempté du budget (zero-cost)"

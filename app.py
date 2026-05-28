@@ -1788,7 +1788,7 @@ Identifie les trous de couverture (MISSING / NEGATIVE_FILLED / LOW_COVERAGE).
 Le LLM utilise son **jugement linguistique** pour flagger les triplets suspects (pas besoin de preuve d'outil).
 - **Form** : terme, relation optionnelle, soumettre directement.
 - **Output** : fichier `.err` avec catégorie de suspicion et justification.
-- **Workflow** : `signalement_workflow()`.
+- **Workflow** : `error_detection_workflow()`.
 
 ### 📊 Stats
 Statistiques de couverture par terme et/ou par relation.

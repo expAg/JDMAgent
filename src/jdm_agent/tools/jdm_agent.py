@@ -113,7 +113,7 @@ RÈGLES :
     * enrichir / proposer / soumettre des triplets → `enrichment_workflow()`
     * auditer / vérifier la répartition des sens → `audit_workflow()`
     * détecter les trous / la couverture            → `gap_detection_workflow()`
-    * détection d'erreurs / reporter des suspects     → `signalement_workflow()`
+    * détection d'erreurs / reporter des suspects     → `error_detection_workflow()`
     * stats / compter / distribution                 → `stats_workflow()`
     * annoter / catégoriser sémantiquement (constitutif/contrastif/non spécifique/exception)
                                                      → `annotation_workflow()`

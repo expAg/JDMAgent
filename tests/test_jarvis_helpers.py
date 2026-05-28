@@ -353,7 +353,7 @@ def test_gap_relations_list_injected():
 def test_signalement_mentions_workflow_and_judgment():
     p = build_signalement_prompt("baleine")
     assert "baleine" in p
-    assert "signalement_workflow" in p
+    assert "error_detection_workflow" in p
     assert "JUGEMENT" in p
 
 

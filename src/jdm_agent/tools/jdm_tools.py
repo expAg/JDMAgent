@@ -1439,7 +1439,7 @@ def gap_detection_workflow() -> dict:
 
 
 @tool
-def signalement_workflow() -> dict:
+def error_detection_workflow() -> dict:
     """Renvoie le flux canonique pour TOUTE demande de SIGNALEMENT d'erreur.
 
     ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on
@@ -2369,7 +2369,7 @@ ALL_TOOLS: list[StructuredTool] = [
     enrichment_workflow,
     audit_workflow,
     gap_detection_workflow,
-    signalement_workflow,
+    error_detection_workflow,
     stats_workflow,
     annotation_workflow,
     list_existing_for_enrichment,

@@ -1029,7 +1029,7 @@ def build_signalement_prompt(
     else:
         parts.append("Écris le fichier .err sans upload.")
     parts.append(
-        "Tu SUIVRAS `signalement_workflow()` en TOUT PREMIER. Obligatoire."
+        "Tu SUIVRAS `error_detection_workflow()` en TOUT PREMIER. Obligatoire."
     )
     return "\n".join(parts)
 
