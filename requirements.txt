@@ -24,7 +24,16 @@ langchain-anthropic>=0.2
 langchain-openai>=0.2
 langchain-google-genai>=2.0
 
-# UI — Gradio 5.x (résout: pas de pydub/audioop, pas de HfFolder removed,
-# pas du bug jinja2 dict cache, et meilleurs defaults pour HF Spaces)
+# UI Gradio (LEGACY — sera retire en fin de migration FastAPI).
+# Garde tant que app.py n'est pas supprime, pour ne pas casser le
+# deploiement Gradio actuel en parallele.
 gradio>=5,<6
 pandas>=2.0
+
+# Migration FastAPI (Phase fastapi-migration) — frontend statique HTML
+# servi par uvicorn, endpoints REST + SSE pour stream agent/jarvis.
+# Voir design_handoff_jdm_fastapi/README.md.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sse-starlette>=2.1
+python-multipart>=0.0.9

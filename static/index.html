@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>jdmAgent — refonte web</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+
+<!-- Type -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Lilita+One&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet" />
+
+<style>
+  :root {
+    /* Shared tokens overridden per theme on <body data-theme="..."> */
+    --bg: #efe9dc;
+    --bg-elev: #f5f0e3;
+    --bg-card: #fbf6ea;
+    --ink: #1f1d18;
+    --ink-2: #4a463c;
+    --ink-3: #847d6e;
+    --line: #d9d2bf;
+    --line-soft: #e5dfce;
+    --accent: #c0411a;
+    --accent-soft: #e9d3c5;
+    --jdm-magenta: #c83a73;
+    --jdm-green:   #4ea63c;
+    --jdm-yellow:  #d4a90a;
+    --jdm-cyan:    #1f97b1;
+    --jdm-orange:  #d96810;
+    --jdm-violet:  #7a4fbe;
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-serif: 'Newsreader', Georgia, serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --font-display: 'Newsreader', Georgia, serif;
+    --radius: 6px;
+    --radius-lg: 10px;
+    --shadow-sm: 0 1px 0 rgba(0,0,0,0.04);
+    --shadow:    0 1px 2px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+    --density:   1;   /* multiplier for paddings */
+  }
+
+  /* ── Theme: PAPER (safe — warm minimal, claude.ai-like) ── */
+  body[data-theme="paper"] {
+    --bg: #efe9dc;
+    --bg-elev: #f5f0e3;
+    --bg-card: #fbf6ea;
+    --ink: #1f1d18;
+    --ink-2: #4a463c;
+    --ink-3: #847d6e;
+    --line: #d9d2bf;
+    --line-soft: #e5dfce;
+    --accent: #c0411a;        /* claude-ish terracotta */
+    --accent-soft: #e9d3c5;
+    --font-display: 'Newsreader', Georgia, serif;
+    --density: 1;
+  }
+
+  /* ── Theme: LAB (medium — refined dark, library at midnight) ── */
+  body[data-theme="lab"] {
+    --bg: #181b22;           /* deep ink */
+    --bg-elev: #1f232c;
+    --bg-card: #262b36;
+    --ink: #ebe9e4;          /* warm cream */
+    --ink-2: #a09c92;
+    --ink-3: #6b6760;
+    --line: #353a47;
+    --line-soft: #2a2f3a;
+    --accent: #7eb5c5;       /* muted, refined cyan — echoes JDM cyan */
+    --accent-soft: #1f3a44;
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-display: 'Newsreader', Georgia, serif;
+    --density: 0.95;
+    --radius: 5px;
+    --radius-lg: 8px;
+    --shadow-sm: 0 1px 0 rgba(0,0,0,0.4);
+    --shadow:    0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.25);
+  }
+  body[data-theme="lab"] .kbd {
+    background: #14171d;
+    border-color: var(--line);
+  }
+  /* Subtle glow on focus + interactive elements in lab */
+  body[data-theme="lab"] .om-select__trigger:hover,
+  body[data-theme="lab"] input:focus {
+    border-color: var(--ink-3);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection { background: var(--accent); color: var(--bg); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 10px;
+    border: 2px solid var(--bg);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+  /* Lab-specific: subtle grid */
+  body[data-theme="lab"] .lab-grid {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(235,233,228,0.04) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+
+  /* Custom select fix — the heart of the dropdown bug fix */
+  .om-select {
+    position: relative;
+    user-select: none;
+  }
+  .om-select__trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .om-select__trigger:hover { border-color: var(--ink-3); }
+  .om-select__trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .om-select__chevron { margin-left: auto; opacity: 0.5; }
+  .om-select__menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    z-index: 100;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 4px;
+  }
+  .om-select__option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* The fix: full-width clickable area, generous padding */
+    padding: 9px 10px;
+    cursor: pointer;
+    border-radius: calc(var(--radius) - 1px);
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.35;
+    /* No pointer-events hijack on children */
+  }
+  .om-select__option * { pointer-events: none; }
+  .om-select__option:hover { background: var(--line-soft); }
+  .om-select__option[aria-selected="true"] {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+  .om-select__option .check {
+    margin-left: auto;
+    opacity: 0;
+  }
+  .om-select__option[aria-selected="true"] .check { opacity: 1; }
+
+  /* Tabs / chips */
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Code-y monospace strings */
+  .mono { font-family: var(--font-mono); }
+  .kbd {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 6px;
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    background: var(--bg-elev);
+    color: var(--ink-2);
+  }
+
+  /* Anim */
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fade-up { animation: fade-up 0.18s ease-out; }
+
+  /* Pulsating dot (for "agent thinking") */
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 0.3; }
+    50%      { opacity: 1; }
+  }
+  .pulse-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+</style>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" fill="#efe9dc"/>
+    <circle cx="50" cy="50" r="22" fill="#c0411a"/>
+    <circle cx="50" cy="50" r="14" fill="#fbf6ea"/>
+    <text x="50" y="56" text-anchor="middle" font-family="Georgia,serif"
+          font-style="italic" font-size="18" fill="#1f1d18">j</text>
+  </svg>
+</template>
+
+<!-- React + Babel -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="webapp/image-slot.js"></script>
+
+</head>
+<body data-theme="paper">
+
+<div id="root"></div>
+
+<script type="text/babel" src="webapp/tweaks-panel.jsx"></script>
+<script type="text/babel" src="webapp/bundle.jsx"></script>
+
+</body>
+</html>

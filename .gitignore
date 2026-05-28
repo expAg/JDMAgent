@@ -25,3 +25,8 @@ COMMANDES.md
 modèle Inférences php.txt
 # État persisté du pool Gemini (clé/modèle courants + blown/invalid)
 pool_state.json
+# Handoffs design (refonte Gradio + migration FastAPI) : restent locaux
+design_handoff_jdm_redesign/
+design_handoff_jdm_fastapi/
+# IDE
+.idea/
