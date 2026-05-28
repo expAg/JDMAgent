@@ -49,76 +49,66 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
     if (!(e.to in parentOf)) parentOf[e.to] = e.from;
   }
 
-  const COLOR_BY_KIND = {
-    isa: 'jdm-magenta', hypo: 'jdm-green', syn: 'jdm-cyan',
-    anto: 'jdm-magenta', carac: 'jdm-violet', part: 'jdm-orange',
-    lieu: 'jdm-yellow', verb: 'jdm-orange', domain: 'jdm-cyan',
-    assoc: 'jdm-violet', center: 'jdm-magenta',
-  };
-
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-  // ───── Positionnement ─────
-  // Stockage : pour chaque id → { x, y, branchAngle, depth }
-  // - x, y    : position en repère cartésien (origine = centre).
-  // - branchAngle : direction radiale (degrés) utilisée pour
-  //                placer les enfants en sortant 'vers l'extérieur'.
-  const pos = { [centerId]: { x: 0, y: 0, branchAngle: 0, depth: 0 } };
-  const queue = [centerId];
+  // ───── Sélection drastique : on garde ~9 nœuds max comme la démo ─────
+  // 4 enfants directs du centre (depth 1), chacun avec 1-2 petits
+  // enfants (depth 2). Le reste est ignoré (les "feuilles" qui ne
+  // contribuent pas à la lisibilité).
+  const MAX_D1 = 4;          // limite branches principales
+  const MAX_D2_PER_D1 = 2;   // sous-branches par parent
 
-  const toRad = (a) => a * Math.PI / 180;
+  const allD1 = (childrenOf[centerId] || [])
+    .filter(id => byId[id])
+    .slice(0, MAX_D1);
 
-  // Distance branche par profondeur — DESCEND avec depth pour donner
-  // un effet "fractal" : les rameaux plus profonds sont plus courts.
-  const BRANCH_LEN = [0, 130, 95, 75, 65];
-
-  while (queue.length) {
-    const pid = queue.shift();
-    const pPos = pos[pid];
-    const children = (childrenOf[pid] || [])
-      .filter(id => byId[id] && !(id in pos));
-    if (children.length === 0) continue;
-
-    const childDepth = pPos.depth + 1;
-    const len = BRANCH_LEN[Math.min(childDepth, 4)] || 65;
-
-    children.forEach((id, i) => {
-      // Direction de branche :
-      // - depth 1 : 360° uniformes autour du centre
-      // - depth ≥ 2 : ouvert autour de la direction radiale du parent
-      //   (= sa branchAngle), span proportionnel au nombre de frères
-      let branchAngle;
-      if (layout === 'rings') {
-        branchAngle = 0;  // recalculé après
-      } else if (pPos.depth === 0) {
-        branchAngle = (i / children.length) * 360 - 90;
-      } else {
-        const span = Math.min(60, Math.max(20, children.length * 18));
-        const off = children.length === 1
-          ? 0
-          : (i / (children.length - 1)) * span - span / 2;
-        branchAngle = pPos.branchAngle + off;
-      }
-
-      // Position cartésienne = parent + vecteur radial
-      const rad = toRad(branchAngle);
-      pos[id] = {
-        x: pPos.x + len * Math.cos(rad),
-        y: pPos.y + len * Math.sin(rad),
-        branchAngle, depth: childDepth,
-      };
-      queue.push(id);
-    });
+  // Pour chaque depth-1 : on garde MAX_D2_PER_D1 enfants existants.
+  const keptD2 = [];
+  const keptByParent = {};
+  for (const d1id of allD1) {
+    const kids = (childrenOf[d1id] || [])
+      .filter(id => byId[id] && id !== centerId && !allD1.includes(id))
+      .slice(0, MAX_D2_PER_D1);
+    keptByParent[d1id] = kids;
+    keptD2.push(...kids);
   }
 
-  // Mode 'rings' : annule le placement cartésien, on rebatch par
-  // profondeur sur des cercles uniformes à distance fixe.
+  // Palette de branches : 4 couleurs distinctes pour les 4 branches
+  // principales. Chaque depth-2 hérite de la couleur de son parent.
+  // → effet "groupe de couleur" identique à la démo Projet hero.
+  const BRANCH_COLORS = [
+    'jdm-magenta', 'jdm-cyan', 'jdm-green', 'jdm-violet',
+    'jdm-orange', 'jdm-yellow',
+  ];
+
+  // ───── Layout : copie EXACTE des angles/distances de la démo ─────
+  //
+  // Démo Projet hero (4 d1 + 5 d2) :
+  //   d1 angles : -60, 30, 120, 210            (90° entre eux)
+  //   d1 dist   : 110
+  //   d2 dist   : 180
+  //   d2 offset depuis parent : ±30°
+  //
+  // On reproduit ça TEL QUEL.
+  const D1_DIST = 110;
+  const D2_DIST = 180;
+  const D2_OFFSET = 30;  // degrés entre frères dans la même branche
+
+  // Mode 'rings' : on étale tout sur cercles concentriques uniformes
+  // par profondeur (distance fixe par anneau, angles uniformes 360°).
+  const RING_DIST = [0, 130, 215, 280, 330];
+
+  const liveNodes = [];
+  const nodeAngles = { [centerId]: 0 };
+  const nodeColors = { [centerId]: 'jdm-magenta' };
+  const nodeDelays = { [centerId]: 0 };
+
   if (layout === 'rings') {
-    const RING_DIST = [0, 130, 215, 280, 330];
+    // Mode cercles : nœuds étalés à plat sur 360° par profondeur.
+    const all = [...allD1, ...keptD2];
     const byDepth = {};
-    for (const id of Object.keys(pos)) {
-      if (id === centerId) continue;
-      const d = pos[id].depth;
+    for (const id of all) {
+      const d = id in keptByParent || allD1.includes(id) ? 1 : 2;
       if (!byDepth[d]) byDepth[d] = [];
       byDepth[d].push(id);
     }
@@ -127,50 +117,74 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
       const arr = byDepth[d];
       const dist = RING_DIST[Math.min(d, 4)] || 330;
       arr.forEach((id, i) => {
-        const a = (i / arr.length) * 360 - 90 + d * 12;
-        const rad = toRad(a);
-        pos[id] = {
-          x: dist * Math.cos(rad), y: dist * Math.sin(rad),
-          branchAngle: a, depth: d,
-        };
+        const angle = (i / arr.length) * 360 - 90 + d * 12;
+        nodeAngles[id] = angle;
+        const color = d === 1
+          ? BRANCH_COLORS[i % BRANCH_COLORS.length]
+          : nodeColors[parentOf[id]] || 'jdm-violet';
+        nodeColors[id] = color;
+        const n = byId[id];
+        const delay = 0.5 + d * 0.7 + i * 0.15;
+        nodeDelays[id] = delay;
+        liveNodes.push({
+          id, label: n.label || id,
+          angle, dist, color, delay,
+          dim: d >= 2,
+        });
       });
     }
+  } else {
+    // Mode arbre : 4 branches principales à 90° + sous-branches à ±30°
+    allD1.forEach((id, i) => {
+      // Angle de la branche principale : démarre à -60° (haut-gauche)
+      // pour matcher la démo, puis tourne à 90° par branche.
+      const angle = -60 + i * (360 / Math.max(allD1.length, 4));
+      const color = BRANCH_COLORS[i % BRANCH_COLORS.length];
+      nodeAngles[id] = angle;
+      nodeColors[id] = color;
+      const n = byId[id];
+      const delay = 0.6 + i * 1.0;  // 1s entre chaque branche
+      nodeDelays[id] = delay;
+      liveNodes.push({
+        id, label: n.label || id,
+        angle, dist: D1_DIST, color, delay,
+        dim: false,
+      });
+
+      // Sous-enfants placés à ±D2_OFFSET autour de l'angle parent
+      const kids = keptByParent[id] || [];
+      kids.forEach((kid, j) => {
+        const off = kids.length === 1
+          ? 0
+          : (j / (kids.length - 1)) * (D2_OFFSET * (kids.length - 1)) - (D2_OFFSET * (kids.length - 1)) / 2;
+        const childAngle = angle + off;
+        nodeAngles[kid] = childAngle;
+        nodeColors[kid] = color;  // hérite couleur parent → effet branche
+        const cn = byId[kid];
+        const cDelay = delay + 0.4 + j * 0.25;
+        nodeDelays[kid] = cDelay;
+        liveNodes.push({
+          id: kid, label: cn.label || kid,
+          angle: childAngle, dist: D2_DIST, color, delay: cDelay,
+          dim: true,
+        });
+      });
+    });
   }
 
-  // ───── Conversion cartésien → polaire pour HeroAnimation ─────
-  // HeroAnimation place les nodes via { angle, dist } depuis le
-  // centre. On reconvertit le (x, y) calculé en polaire.
-  const liveNodes = [];
-  const nodeDelays = { [centerId]: 0 };
-  const sortedIds = Object.keys(pos)
-    .filter(id => id !== centerId && byId[id])
-    .sort((a, b) => pos[a].depth - pos[b].depth);
+  // Set des id retenus → filtre les edges en aval
+  const keptIds = new Set([centerId, ...allD1, ...keptD2]);
 
-  sortedIds.forEach((id, i) => {
-    const p = pos[id];
-    const n = byId[id];
-    const angle = Math.atan2(p.y, p.x) * 180 / Math.PI;
-    const dist = Math.sqrt(p.x * p.x + p.y * p.y);
-    const parentDelay = nodeDelays[parentOf[id] || centerId] || 0;
-    const delay = Math.max(parentDelay + 0.18, 0.4 + i * 0.07);
-    nodeDelays[id] = delay;
-    liveNodes.push({
-      id, label: n.label || id,
-      angle, dist,
-      color: COLOR_BY_KIND[n.kind] || 'jdm-violet',
-      delay,
-      // dim dès depth ≥ 2 (comme la démo Projet hero) → claire
-      // hiérarchie visuelle parent / enfant.
-      dim: p.depth >= 2,
-    });
-  });
-
-  const liveEdges = (edges || []).map(e => ({
-    from: e.from, to: e.to,
-    delay: Math.max(nodeDelays[e.from] || 0, nodeDelays[e.to] || 0) + 0.12,
-    label: e.relation || '',
-    highlight: e.highlight !== false,
-  }));
+  // Garde seulement les edges entre nœuds retenus (sinon edges
+  // fantômes qui essaient de relier des nodes non placés).
+  const liveEdges = (edges || [])
+    .filter(e => keptIds.has(e.from) && keptIds.has(e.to))
+    .map(e => ({
+      from: e.from, to: e.to,
+      delay: Math.max(nodeDelays[e.from] || 0, nodeDelays[e.to] || 0) + 0.15,
+      label: e.relation || '',
+      highlight: e.highlight !== false,
+    }));
 
   return {
     id: 'live',
