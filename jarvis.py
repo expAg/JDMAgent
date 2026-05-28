@@ -189,16 +189,23 @@ def strip_thinking_blocks(messages: list, keep_last: bool = True) -> list:
 
 def build_relance_summary(messages: list, n_done: int, target: int,
                           relance_num: int,
-                          max_relances: Optional[int] = None) -> str:
+                          max_relances: Optional[int] = None,
+                          unit: str = "triplet consolidé") -> str:
     """Construit un résumé condensé pour le HumanMessage de relance.
 
     Au lieu de ré-injecter `accumulated_messages` complet (50-200 messages,
     explosion des tokens), on liste :
-      - les triplets déjà CONSOLIDÉS (à préserver)
+      - les triplets déjà PRODUITS (à préserver)
       - les cibles déjà testées en échec (à ne pas reproposer, top 20)
       - les couples (term, relation) déjà pré-fetchés
     Le LLM reçoit cette synthèse + l'instruction « continue » et reprend
     avec un brief propre, sans bagage cognitif.
+
+    `unit` adapte le vocabulaire au flow courant (triplet consolidé /
+    annotation / verdict / suspect / …). Le repérage des triplets
+    « produits » via validate_candidate ne marche que pour le flow
+    enrich ; pour les autres flows ces listes restent vides mais les
+    messages STOP/RECOMMENCE sont corrects.
     """
     consolidated: list[str] = []
     failed: list[str] = []
@@ -225,13 +232,14 @@ def build_relance_summary(messages: list, n_done: int, target: int,
             if t and r:
                 prefetched.add(f"{t} | {r}")
 
+    missing = max(0, target - n_done)
     lines = [
-        f"⛔ STOP. Tu as consolidé **{n_done}/{target}** triplet(s) — il en manque "
-        f"{target - n_done}.",
+        f"⛔ STOP. Tu as produit **{n_done}/{target} {unit}(s)** — il en manque "
+        f"{missing}.",
     ]
     if consolidated:
         lines.append("")
-        lines.append("**Déjà consolidés (PRÉSERVE-les dans le fichier final)** :")
+        lines.append(f"**Déjà produits (PRÉSERVE-les dans le fichier final)** :")
         for c in consolidated:
             lines.append(f"  ✅ {c}")
     if failed:
@@ -251,9 +259,10 @@ def build_relance_summary(messages: list, n_done: int, target: int,
             lines.append(f"  📥 {p}")
     lines.append("")
     lines.append(
-        f"RECOMMENCE avec de NOUVEAUX candidats sur d'AUTRES relations / "
-        f"d'AUTRES cibles. Ne rends ta réponse finale QU'APRÈS avoir "
-        f"atteint le compte cible. (Relance auto {relance_num}"
+        f"RECOMMENCE avec de NOUVELLES propositions sur d'AUTRES "
+        f"relations / d'AUTRES cibles. Ne rends ta réponse finale "
+        f"QU'APRÈS avoir atteint le compte cible. (Relance auto "
+        f"{relance_num}"
         + (f"/{max_relances}" if max_relances is not None else "") + ".)"
     )
     return "\n".join(lines)
@@ -303,6 +312,7 @@ def condense_history_with_nudge(
     consolidation_target: Optional[int] = None,
     target: Optional[int] = None,
     count_fn: Optional[Any] = None,
+    unit: str = "triplet consolidé",
     attempt: int = 0,
 ) -> Optional[list]:
     """Condense `messages` en `[HumanMessage initial, HumanMessage(summary
@@ -336,7 +346,7 @@ def condense_history_with_nudge(
             n_so_far = count_consolidations()
             effective_target = consolidation_target or (n_so_far + 1)
         summary = build_relance_summary(
-            messages, n_so_far, effective_target, attempt, None,
+            messages, n_so_far, effective_target, attempt, None, unit=unit,
         )
         nudge = _random.choice(_CONDENSE_NUDGE_VARIANTS)
         return [
@@ -1398,15 +1408,23 @@ def run_jarvis_flow(
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
     def _default_file_counter() -> int:
-        """Compte les items « produits » à partir du fichier canonique
-        en cours d'écriture. Convient à tous les flows non-enrich :
-        compte les lignes pipe-separated qui ne sont ni un commentaire
-        (`#`) ni un séparateur de section (`===`, `=====SIGNALEMENT`).
-        Fallback robuste si le fichier n'existe pas encore.
+        """Compte les items « produits » à partir du fichier en cours.
+        Convient à tous les flows non-enrich : compte les lignes
+        pipe-separated qui ne sont ni commentaire (`#`) ni séparateur
+        de section (`===`, `=====SIGNALEMENT`). Fallback robuste si
+        aucun fichier n'a encore été écrit.
+
+        ⚠️ N'utilise PAS canonical_path direct : pour annot/audit/err
+        le LLM écrit dans last_file_path (ex. annotations_1.annot),
+        pas dans le canonical .enrich. _current_file_path() retourne
+        le bon chemin (canonical si présent, sinon last_file_path).
         """
+        path = _current_file_path()
+        if not path:
+            return 0
         try:
             from pathlib import Path as _P
-            content = _P(canonical_path).read_text(encoding="utf-8")
+            content = _P(path).read_text(encoding="utf-8")
         except (FileNotFoundError, OSError, UnicodeDecodeError):
             return 0
         n = 0
@@ -1769,11 +1787,12 @@ def run_jarvis_flow(
                             # agent.stream avec les messages condensés.
                             chars_before = _history_total_chars(accumulated_messages)
                             if chars_before > HISTORY_CONDENSE_THRESHOLD_CHARS:
-                                _tgt2, _ctr2, _ = _resolve_target_counter()
+                                _tgt2, _ctr2, _u2 = _resolve_target_counter()
                                 condensed = condense_history_with_nudge(
                                     accumulated_messages,
                                     consolidation_target=consolidation_target,
                                     target=_tgt2, count_fn=_ctr2,
+                                    unit=_u2 or "triplet consolidé",
                                     attempt=proactive_condense_count,
                                 )
                                 if condensed is not None:
@@ -2157,11 +2176,12 @@ def run_jarvis_flow(
                             # à la condensation proactive en cours de
                             # streaming (cf. fin du for chunk).
                             chars_before = _history_total_chars(accumulated_messages)
-                            _tgt3, _ctr3, _ = _resolve_target_counter()
+                            _tgt3, _ctr3, _u3 = _resolve_target_counter()
                             condensed = condense_history_with_nudge(
                                 accumulated_messages,
                                 consolidation_target=consolidation_target,
                                 target=_tgt3, count_fn=_ctr3,
+                                unit=_u3 or "triplet consolidé",
                                 attempt=rate_limit_attempts,
                             )
                             if condensed is not None:
@@ -2243,6 +2263,7 @@ def run_jarvis_flow(
             summary = build_relance_summary(
                 accumulated_messages, n_done, _tgt,
                 persistence_relances, max_persistence_relances,
+                unit=_unit or "triplet consolidé",
             )
             initial_human = accumulated_messages[0]  # HumanMessage(prompt)
             accumulated_messages = [
@@ -2255,7 +2276,7 @@ def run_jarvis_flow(
             )
             _add_line(
                 f"*🔁 Relance automatique {persistence_relances}{_cap_label} — "
-                f"{n_done}/{consolidation_target} consolidés, on continue.*"
+                f"{n_done}/{_tgt} {_unit}, on continue.*"
             )
             yield (
                 [{"role": "user", "content": user_display},
