@@ -335,12 +335,9 @@ function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
     onRecenter(node.label || node.id);
   }, [onRecenter]);
 
-  // Relations effectivement présentes dans les arêtes → légende dynamique
-  const presentRels = React.useMemo(() => {
-    const set = new Set();
-    for (const e of edges || []) if (e.relation) set.add(e.relation);
-    return Array.from(set).sort();
-  }, [edges]);
+  // La légende des couleurs est désormais rendue dans le header de la
+  // Card (à côté de "LIVE") — voir ViewSubgraph. On la laisse là parce
+  // qu'elle utilise data.edges qui est déjà à ce niveau.
 
   const cursor = drag.current.active ? 'grabbing' : 'grab';
 
@@ -423,34 +420,8 @@ function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
         </div>
       </div>
 
-      {/* Légende — codage couleur par type de relation présente */}
-      {presentRels.length > 0 && (
-        <div style={{
-          padding: '8px 12px',
-          borderTop: '1px solid var(--line-soft)',
-          background: 'var(--bg-elev)',
-          display: 'flex', flexWrap: 'wrap', gap: 10,
-          alignItems: 'center',
-        }}>
-          <span className="mono" style={{
-            fontSize: 9, color: 'var(--ink-3)',
-            textTransform: 'uppercase', letterSpacing: '0.1em',
-          }}>Légende</span>
-          {presentRels.map(r => (
-            <span key={r} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              fontFamily: 'var(--font-mono)', fontSize: 10,
-              color: 'var(--ink-2)',
-            }}>
-              <span style={{
-                width: 18, height: 3, borderRadius: 2,
-                background: relColor(r),
-              }}/>
-              {r}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* Légende déplacée dans le header du Card (à côté de "LIVE") —
+          libère l'espace bas du canvas pour le graphe lui-même. */}
     </div>
   );
 }
@@ -849,9 +820,11 @@ function ViewSubgraph() {
           <Card padding={0} style={{ overflow: 'hidden' }}>
             <div style={{
               display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center',
               padding: '10px 16px',
               borderBottom: '1px solid var(--line-soft)',
               background: 'var(--bg-elev)',
+              gap: 12, flexWrap: 'wrap',
             }}>
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 <span style={{ color: 'var(--ink)' }}>{term}</span>
@@ -860,6 +833,32 @@ function ViewSubgraph() {
                 {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_edges ?? data.edges.length}</span> arêtes
                 {' · '}<span className="mono" style={{ color: 'var(--accent)', textTransform: 'uppercase' }}>{data.format || format}</span>
               </div>
+              {/* Légende des couleurs de relations — affichée ici en
+                  header à côté de "LIVE" plutôt qu'en bas du canvas.
+                  Uniquement en mode LIVE (les autres formats ont leurs
+                  propres couleurs). */}
+              {format === 'live' && (data.edges || []).length > 0 && (
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', gap: 8,
+                  alignItems: 'center', maxWidth: '60%',
+                }}>
+                  {Array.from(new Set((data.edges || [])
+                      .map(e => e.relation).filter(Boolean))).sort()
+                    .map(r => (
+                      <span key={r} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        fontFamily: 'var(--font-mono)', fontSize: 10,
+                        color: 'var(--ink-2)',
+                      }}>
+                        <span style={{
+                          width: 14, height: 3, borderRadius: 2,
+                          background: relColor(r),
+                        }}/>
+                        {r}
+                      </span>
+                    ))}
+                </div>
+              )}
             </div>
             <div style={{
               // Hauteur adaptative selon le format :
