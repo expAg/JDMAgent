@@ -284,17 +284,34 @@ def api_factcheck(req: ClaimRequest) -> dict[str, Any]:
 
 
 # ────────────────────────────────────────────────────────────────────
-# Route: Disambiguate (STUB — à implémenter)
+# Route: Disambiguate
 # ────────────────────────────────────────────────────────────────────
 @app.post("/api/disambiguate")
 def api_disambiguate(req: TermRequest) -> dict[str, Any]:
     """Récupérer les sens raffinés d'un terme polysémique.
 
-    TODO: appeler `disambiguate_term(req.term)` depuis app.py, mais
-    cette fonction renvoie un DataFrame pandas — convertis-le ici en
-    `senses: list[dict]`.
+    Retourne `{senses: [{decoded, weight, id}], message}` — `senses` trié
+    par poids r_raff_sem décroissant. Liste vide si terme monosémique ou
+    inconnu (le `message` précise le cas).
     """
-    raise HTTPException(501, "Pas encore implémenté — voir README §2.3")
+    raw = (req.term or "").strip()
+    if not raw:
+        return {"senses": [], "message": "Renseigne un terme polysémique (avocat, souris, police, …)."}
+    c = get_client()
+    if not c.term_exists(raw):
+        return {"senses": [], "message": f"« {raw} » n'est pas connu de JeuxDeMots."}
+    try:
+        senses = c.refinements_decoded(raw)
+    except Exception as e:
+        return {"senses": [], "message": f"Erreur API JDM : {e}"}
+    if not senses:
+        return {"senses": [], "message": f"Aucun sens raffiné pour « {raw} » (terme probablement monosémique)."}
+    senses.sort(key=lambda s: -s.weight)
+    rows = [
+        {"decoded": s.decoded, "weight": round(s.weight, 1), "id": s.name}
+        for s in senses[:30]
+    ]
+    return {"senses": rows, "message": f"{len(rows)} sens trouvé(s)."}
 
 
 # ────────────────────────────────────────────────────────────────────
