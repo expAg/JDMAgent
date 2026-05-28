@@ -1029,6 +1029,7 @@ def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
     from jarvis import (
         build_enrich_prompt, build_audit_prompt, build_gap_prompt,
         build_signalement_prompt, build_stats_prompt,
+        build_annotation_prompt,
     )
     BUILDERS = {
         "enrich":      (build_enrich_prompt,      lambda p: f"🌱 Enrichir {_term_or_random(p)}"),
@@ -1036,6 +1037,7 @@ def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
         "gap":         (build_gap_prompt,         lambda p: f"🕳️ Détecter les trous sur {_term_or_random(p)}"),
         "signalement": (build_signalement_prompt, lambda p: f"⚠️ Signaler les triplets suspects de {_term_or_random(p)}"),
         "stats":       (build_stats_prompt,       lambda p: f"📊 Stats sur {_term_or_random(p)}"),
+        "annotation":  (build_annotation_prompt,  lambda p: f"🏷️ Annoter {_term_or_random(p)}"),
     }
     if flow_id not in BUILDERS:
         raise ValueError(

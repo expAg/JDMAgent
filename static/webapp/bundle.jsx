@@ -4998,6 +4998,14 @@ const JARVIS_FLOWS = [
     accent: 'var(--jdm-violet)',
     loopOf: 'inventaire → agrégation',
   },
+  {
+    id: 'annotation',
+    title: 'Annotation sémantique',
+    kicker: 'Flux 6',
+    desc: 'Annote les triplets existants selon la taxonomie 4 catégories (constitutif/contrastif/non spécifique/exception). L\'annotation qualifie le LIEN, pas l\'objet. Produit un fichier .annot deux sections (annotations + signalement des désaccords avec JDM existant).',
+    accent: 'var(--jdm-yellow)',
+    loopOf: 'triplet → jugement → catégorie',
+  },
 ];
 
 function ViewJarvis() {
@@ -5796,6 +5804,8 @@ function defaultParamsFor(flowId) {
       return { ...common, term: '', relation: '', upload: false };
     case 'stats':
       return { ...common, term: '', relation: '', upload: false };
+    case 'annotation':
+      return { ...common, term: '', relation: '', top_k: 8, upload: false };
   }
   return common;
 }
@@ -5877,6 +5887,38 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label="Budget d'outils">
         <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
       </Field>
+    </>);
+  }
+
+  if (flow.id === 'annotation') {
+    return wrap(<>
+      <Field label="Terme (optionnel)">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relation (optionnelle)">
+        <Select value={params.relation || ''}
+          onChange={(v) => set('relation', v)}
+          options={[{ value: '', label: '— toutes principales —' }, ...REL_OPTS_COMMON]} />
+      </Field>
+      <Field label={`Top-K par relation · ${params.top_k}`}>
+        <Slider value={params.top_k} onChange={(v) => set('top_k', v)} min={3} max={15} step={1} />
+      </Field>
+      <div style={{
+        fontSize: 11, color: 'var(--ink-3)', marginBottom: 8,
+        fontFamily: 'var(--font-mono)', lineHeight: 1.4,
+      }}>
+        taxonomie : constitutif / contrastif / non spécifique / exception ·
+        l'annotation qualifie le LIEN, pas l'objet
+      </div>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+        <input type="checkbox" checked={!!params.upload}
+          onChange={(e) => set('upload', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Soumettre à LLMDrops
+      </label>
     </>);
   }
 
