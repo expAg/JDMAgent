@@ -768,20 +768,10 @@ function ViewProjet({ goto }) {
           </div>
         </div>
 
-        {/* Stats column — chiffres animés count-up au hover */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 1,
-          background: 'var(--line)',
-          border: '1px solid var(--line)',
-          borderRadius: 'var(--radius-lg)',
-          overflow: 'hidden',
-        }}>
-          {stats.map((s) => (
-            <StatTile key={s.label} stat={s} />
-          ))}
-        </div>
+        {/* Stats column — chiffres animés count-up au hover.
+            Chaque tuile reçoit une couleur DIFFÉRENTE de la palette
+            jaune/orange/rouge/vert/bleu, randomisée à chaque mount. */}
+        <StatsGrid stats={stats} />
       </div>
 
       {/* Features — Que peux-tu faire sur cette page ? */}
@@ -918,8 +908,47 @@ function ViewProjet({ goto }) {
   );
 }
 
+// ─── StatsGrid : 4 tuiles avec une couleur d'accent distincte chacune,
+// tirée au sort dans la palette jaune/orange/rouge/vert/bleu à chaque
+// mount du composant.
+function StatsGrid({ stats }) {
+  const PALETTE = [
+    'var(--jdm-yellow)',
+    'var(--jdm-orange)',
+    'var(--jdm-magenta)',  // rouge dans nos tokens (magenta-rouge)
+    'var(--jdm-green)',
+    'var(--jdm-cyan)',     // bleu dans nos tokens
+  ];
+  // Mélange Fisher-Yates puis prend N premiers — garantit que toutes
+  // les couleurs sont distinctes (tant que N ≤ taille de palette).
+  const colors = React.useMemo(() => {
+    const a = PALETTE.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a.slice(0, stats.length);
+  }, [stats.length]);
+
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 1,
+      background: 'var(--line)',
+      border: '1px solid var(--line)',
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden',
+    }}>
+      {stats.map((s, i) => (
+        <StatTile key={s.label} stat={s} hoverColor={colors[i]} />
+      ))}
+    </div>
+  );
+}
+
 // ─── StatTile : tuile de stat avec animation count-up au hover ─────
-function StatTile({ stat }) {
+function StatTile({ stat, hoverColor }) {
   // Parse la valeur : "2M+" → {num: 2, suffix: "M+"}, "350M+" → {350, "M+"},
   // "35" → {35, ""}, "5" → {5, ""}.
   const parsed = React.useMemo(() => {
@@ -974,7 +1003,7 @@ function StatTile({ stat }) {
       <div className="display" style={{
         fontFamily: 'var(--font-display)',
         fontSize: 32, fontWeight: 600,
-        color: hovering ? 'var(--accent)' : 'var(--ink)',
+        color: hovering ? (hoverColor || 'var(--accent)') : 'var(--ink)',
         lineHeight: 1,
         letterSpacing: '-0.02em',
         transition: 'color 0.18s',
