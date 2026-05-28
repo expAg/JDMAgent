@@ -480,8 +480,11 @@ function ViewSubgraph() {
   const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'plat asiatique';
   if (typeof window !== 'undefined') window.__jdmPendingTerm = null;
   const [term, setTerm] = useState(initialTerm);
-  const [depth, setDepth] = useState(1);
-  const [topK, setTopK] = useState(3);
+  // Défauts choisis pour le mode LIVE : profondeur 2 + Niveau 1 top-K=1
+  // (= un voisin par type de relation, garde l'arbre lisible) + Niveau 2
+  // top-K=3 (un peu plus de matière à explorer en profondeur).
+  const [depth, setDepth] = useState(2);
+  const [topK, setTopK] = useState(1);
   const [topKd2, setTopKd2] = useState(3);
   const [topKd3, setTopKd3] = useState(3);
   const [topKd4, setTopKd4] = useState(3);
