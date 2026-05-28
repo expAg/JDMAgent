@@ -336,6 +336,29 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
     if (lbl) labelOf[n.id] = lbl;
   });
 
+  // Construit la liste des voisins d'un nœud pour son tooltip survol.
+  // Format multi-ligne (les <title> SVG natifs respectent \n).
+  // Affiche le sens de l'arête (→ sortante, ← entrante), le type de
+  // relation, le label du voisin, le poids et le flag négation.
+  const neighborSummary = (nodeId) => {
+    const ed = edgesByNode[nodeId] || [];
+    if (!ed.length) return '';
+    const CAP = 10;
+    const lines = ed.slice(0, CAP).map(i => {
+      const e = g.edges[i];
+      const isOut = e.from === nodeId;
+      const otherId = isOut ? e.to : e.from;
+      const otherLabel = labelOf[otherId] || otherId;
+      const arrow = isOut ? '→' : '←';
+      const wPart = e.weight !== undefined && e.weight !== null
+        ? `  w=${e.weight}` : '';
+      const negPart = e.negative ? '  [NÉGATION]' : '';
+      return `  ${arrow} [${e.label || '?'}] ${otherLabel}${wPart}${negPart}`;
+    });
+    if (ed.length > CAP) lines.push(`  … (+${ed.length - CAP} autres)`);
+    return lines.join('\n');
+  };
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`}
          preserveAspectRatio="xMidYMid meet"
@@ -453,7 +476,13 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
         })}
 
         {g.center && (
-          <CenterNode label={g.center} tick={tick} counterRotate={-rotateAll} />
+          <CenterNode label={g.center} tick={tick} counterRotate={-rotateAll}
+            tooltip={interactive ? (() => {
+              const nb = neighborSummary(g.center);
+              return nb
+                ? `${g.center}  (centre)\n\nLiens (${(edgesByNode[g.center]||[]).length}) :\n${nb}`
+                : `${g.center}  (centre)`;
+            })() : undefined} />
         )}
 
         {g.nodes.map((n, i) => {
@@ -486,7 +515,11 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
               onMouseEnter={interactive ? () => setHoverNode(n.id) : undefined}
               onMouseLeave={interactive ? () => setHoverNode(h => h === n.id ? null : h) : undefined}
               onClick={interactive && onNodeClick ? () => onNodeClick(n) : undefined}
-              tooltip={`${n.label}${n.dist != null ? `  (depth ${n.dim ? 2 : 1})` : ''}`}
+              tooltip={(() => {
+                const head = `${n.label}${n.dist != null ? `  (depth ${n.dim ? 2 : 1})` : ''}`;
+                const nb = neighborSummary(n.id);
+                return nb ? `${head}\n\nLiens (${(edgesByNode[n.id]||[]).length}) :\n${nb}` : head;
+              })()}
             />
           );
         })}
@@ -495,10 +528,11 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
   );
 }
 
-function CenterNode({ label, tick, counterRotate }) {
+function CenterNode({ label, tick, counterRotate, tooltip }) {
   const pulse = 0.5 + 0.5 * Math.sin(tick * 2);
   return (
     <g>
+      {tooltip && <title>{tooltip}</title>}
       <circle r={28} fill="var(--accent)" opacity={0.08 + pulse * 0.06}/>
       <circle r={20} fill="var(--accent)" opacity={0.18}/>
       <circle r={13} fill="var(--accent)"/>
