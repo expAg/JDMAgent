@@ -579,22 +579,96 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
 
 
 # ────────────────────────────────────────────────────────────────────
-# Route: Pool Gemini rotation
+# Pool Gemini — parsing + rotation (slim ; full blown-tracking en step 4)
 # ────────────────────────────────────────────────────────────────────
-@app.post("/api/pool/rotate")
-def api_pool_rotate() -> dict[str, Any]:
-    """Faire tourner manuellement la clé Gemini active.
+import re as _re_pool
 
-    TODO: importer _parse_google_keys, _CURRENT_GEMINI_KEY,
-    set_current_gemini_key depuis app.py.
+# Clé courante (session locale au process — pas de persistance disque ici,
+# la persistance vit dans app.py pour l'instant et sera unifiée en step 4).
+_CURRENT_POOL_KEY: Optional[str] = None
+
+
+def _parse_pool_keys() -> list[str]:
+    """Liste ordonnée des clés Google API du pool.
+
+    Priorité : GOOGLE_API_KEYS (multi) > GOOGLE_API_KEY (single).
+    Split robuste sur tout caractère non-[A-Za-z0-9_-] (gère virgules
+    fullwidth, BOM UTF-8, espaces, etc.).
     """
-    raise HTTPException(501, "Pas encore implémenté — voir README §4")
+    def _split(blob: str) -> list[str]:
+        return [c for c in _re_pool.split(r"[^A-Za-z0-9_-]+", blob) if c]
+
+    raw = os.environ.get("GOOGLE_API_KEYS", "").lstrip("﻿").strip()
+    if raw:
+        return _split(raw)
+    single = os.environ.get("GOOGLE_API_KEY", "").lstrip("﻿").strip()
+    return _split(single) if single else []
+
+
+def _mask_key(k: str) -> str:
+    if not k or len(k) < 8:
+        return "***"
+    return f"{k[:4]}…{k[-4:]}"
+
+
+def _current_pool_index(keys: list[str]) -> int:
+    """1-based index de la clé courante dans le pool, 0 si vide/inconnue."""
+    if not keys or not _CURRENT_POOL_KEY:
+        return 0
+    try:
+        return keys.index(_CURRENT_POOL_KEY) + 1
+    except ValueError:
+        return 0
 
 
 @app.get("/api/pool/status")
 def api_pool_status() -> dict[str, Any]:
-    """État du pool Gemini (clé courante, nombre total, blown today)."""
-    raise HTTPException(501, "Pas encore implémenté")
+    """État du pool Gemini : nombre de clés, clé courante (masquée),
+    index 1-based dans le pool.
+
+    Note : la sémantique « blown today » (clé épuisée pour quota PerDay
+    sur un modèle donné) reste pour l'instant gérée côté app.py — le
+    plein partage d'état pool↔FastAPI vient en step 4 quand on supprime
+    app.py.
+    """
+    keys = _parse_pool_keys()
+    return {
+        "keys_count": len(keys),
+        "current_key_masked": _mask_key(_CURRENT_POOL_KEY) if _CURRENT_POOL_KEY else None,
+        "current_index": _current_pool_index(keys),
+    }
+
+
+class RotateRequest(BaseModel):
+    skip_current: bool = True  # avance d'un cran ; False = ne fait rien si déjà bonne
+
+
+@app.post("/api/pool/rotate")
+def api_pool_rotate(req: RotateRequest = RotateRequest()) -> dict[str, Any]:
+    """Avance la clé Gemini courante au tour suivant du pool (round-robin).
+
+    Renvoie le nouveau statut.
+    """
+    global _CURRENT_POOL_KEY
+    keys = _parse_pool_keys()
+    if not keys:
+        raise HTTPException(400, "Pool Gemini vide : configure GOOGLE_API_KEYS ou GOOGLE_API_KEY.")
+    if not _CURRENT_POOL_KEY or _CURRENT_POOL_KEY not in keys:
+        new_key = keys[0]
+    elif req.skip_current:
+        idx = keys.index(_CURRENT_POOL_KEY)
+        new_key = keys[(idx + 1) % len(keys)]
+    else:
+        new_key = _CURRENT_POOL_KEY
+    _CURRENT_POOL_KEY = new_key
+    # Reflète dans l'env pour que _build_llm() (GOOGLE_API_KEY) la voie.
+    os.environ["GOOGLE_API_KEY"] = new_key
+    return {
+        "keys_count": len(keys),
+        "current_key_masked": _mask_key(_CURRENT_POOL_KEY),
+        "current_index": _current_pool_index(keys),
+        "rotated": True,
+    }
 
 
 # ────────────────────────────────────────────────────────────────────
