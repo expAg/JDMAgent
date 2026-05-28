@@ -668,21 +668,72 @@ def _is_bounded_budget(budget_label: str) -> bool:
     return s.isdigit() and int(s) > 0
 
 
-_RANDOM_TERM_INSTRUCTION = (
-    "Je n'ai pas précisé de terme — TU AS CARTE BLANCHE pour piocher "
-    "au hasard dans TOUT le lexique français. La langue est vaste : "
-    "noms abstraits, verbes, adjectifs, expressions, objets ordinaires, "
-    "concepts techniques, sentiments, états, processus, métiers, "
-    "phénomènes physiques ou sociaux… N'IMPORTE QUOI peut être "
-    "intéressant. ÉVITE les champs scolaires sur-explorés (animaux "
-    "courants, plantes, couleurs primaires) — JDM y est déjà dense "
-    "et tu ne ferais que dupliquer du connu.\n"
-    "VARIE RADICALEMENT d'un essai à l'autre et d'une session à "
-    "l'autre : registre (familier ↔ soutenu), longueur (1 mot ↔ "
-    "expression), niveau d'abstraction (concret ↔ abstrait), "
-    "fréquence (commun ↔ rare). Vérifie d'abord qu'il existe via "
-    "`lookup_term` ; si non, recommence avec un autre."
-)
+# Ancres sémantiques tirées au sort pour casser le biais d'anchor du
+# système prompt (qui cite « chat », « voiture », « fruit » → le LLM
+# revient toujours dans ces champs même à temp=1.5). Chaque ancre cible
+# un sous-espace lexical DIFFÉRENT et éloigné des exemples du prompt.
+# Une seule est tirée au sort par appel → l'argmax greedy initial
+# tombe ailleurs à chaque relance.
+_RANDOM_ANCHOR_HINTS = [
+    "(ancrage : pense d'abord à un terme administratif ou juridique)",
+    "(ancrage : pense d'abord à un verbe d'action artisanale)",
+    "(ancrage : pense d'abord à un nom abstrait du registre émotionnel)",
+    "(ancrage : pense d'abord à un terme technique d'un métier manuel)",
+    "(ancrage : pense d'abord à un phénomène météorologique ou géologique)",
+    "(ancrage : pense d'abord à un mot du registre médical ou anatomique)",
+    "(ancrage : pense d'abord à une expression idiomatique courante)",
+    "(ancrage : pense d'abord à un objet d'usage domestique ancien)",
+    "(ancrage : pense d'abord à un terme du registre musical ou théâtral)",
+    "(ancrage : pense d'abord à un concept philosophique ou moral)",
+    "(ancrage : pense d'abord à un état physiologique ou psychologique)",
+    "(ancrage : pense d'abord à un terme du registre culinaire régional)",
+    "(ancrage : pense d'abord à un mot du registre sportif ou ludique)",
+    "(ancrage : pense d'abord à un terme d'architecture ou urbanisme)",
+    "(ancrage : pense d'abord à un nom de processus industriel)",
+    "(ancrage : pense d'abord à un terme du registre religieux ou rituel)",
+    "(ancrage : pense d'abord à un mot du vocabulaire affectif)",
+    "(ancrage : pense d'abord à une action mentale ou cognitive)",
+    "(ancrage : pense d'abord à un terme du registre maritime ou agricole)",
+    "(ancrage : pense d'abord à une notion économique ou financière)",
+]
+
+
+def random_term_instruction() -> str:
+    """Renvoie l'instruction de tirage random AVEC une ancre sémantique
+    tirée au sort. Casse le biais d'anchor du LLM qui revient toujours
+    aux mêmes champs (chat, voiture, manger…) à cause des exemples
+    présents dans le système prompt. L'ancre n'impose pas une catégorie
+    — elle décale juste le point de départ du raisonnement.
+    """
+    import random as _random
+    hint = _random.choice(_RANDOM_ANCHOR_HINTS)
+    return (
+        "Je n'ai pas précisé de terme — TU AS CARTE BLANCHE pour piocher "
+        "au hasard dans TOUT le lexique français. La langue est vaste : "
+        "noms abstraits, verbes, adjectifs, expressions, objets ordinaires, "
+        "concepts techniques, sentiments, états, processus, métiers, "
+        "phénomènes physiques ou sociaux… N'IMPORTE QUOI peut être "
+        "intéressant. ÉVITE les champs scolaires sur-explorés (animaux "
+        "courants, plantes, couleurs primaires) — JDM y est déjà dense "
+        "et tu ne ferais que dupliquer du connu.\n"
+        "VARIE RADICALEMENT d'un essai à l'autre et d'une session à "
+        "l'autre : registre (familier ↔ soutenu), longueur (1 mot ↔ "
+        "expression), niveau d'abstraction (concret ↔ abstrait), "
+        f"fréquence (commun ↔ rare). {hint}\n"
+        "Ignore les exemples du système prompt — ils sont génériques. "
+        "Vérifie d'abord que ton choix existe via `lookup_term` ; si "
+        "non, recommence avec un autre."
+    )
+
+
+# Garde le nom historique comme alias dynamique (= recalcule à chaque
+# accès) pour ne pas casser les imports existants. Note : utiliser un
+# attribut module qui se ré-évalue n'existe pas en Python pur ; les
+# call-sites doivent passer à random_term_instruction(). On garde quand
+# même cette ligne pour ne pas casser un éventuel test qui importe le
+# nom — il aura juste la 1re ancre (déterministe au load) au lieu d'une
+# rotation, ce qui est l'ancien comportement (déterministe).
+_RANDOM_TERM_INSTRUCTION = random_term_instruction()
 
 
 def _iteration_block(
@@ -792,7 +843,7 @@ def build_enrich_prompt(
         parts.append(f"Je veux ENRICHIR le terme « {term} » dans JDM.")
     else:
         parts.append("Je veux ENRICHIR un terme dans JDM.")
-        parts.append(_RANDOM_TERM_INSTRUCTION)
+        parts.append(random_term_instruction())
     # Contrainte de portée selon ce que l'utilisateur a fourni :
     #   - term + rels  → tous les triplets ont CE terme et UNE de CES
     #                    relations ; seule la cible varie. (cas A)
@@ -900,7 +951,7 @@ def build_audit_prompt(
             "Je veux AUDITER un terme POLYSÉMIQUE dans JDM (chercher des "
             "contaminations du générique par des sens non-premiers)."
         )
-        parts.append(_RANDOM_TERM_INSTRUCTION + (
+        parts.append(random_term_instruction() + (
             " IMPORTANT : pour l'audit, le terme tiré doit être "
             "POLYSÉMIQUE (plusieurs sens dans disambiguate) ; sinon "
             "retire un autre mot."
@@ -947,7 +998,7 @@ def build_gap_prompt(
         parts.append(f"Je veux DÉTECTER les trous de JDM pour le terme « {term} ».")
     else:
         parts.append("Je veux DÉTECTER les trous de JDM pour un terme.")
-        parts.append(_RANDOM_TERM_INSTRUCTION)
+        parts.append(random_term_instruction())
     rels = _norm_relations(relations)
     if rels:
         parts.append(
@@ -992,7 +1043,7 @@ def build_signalement_prompt(
         )
     else:
         parts.append("Je veux SIGNALER les triplets suspects de JDM pour un terme.")
-        parts.append(_RANDOM_TERM_INSTRUCTION)
+        parts.append(random_term_instruction())
     if len(rels) == 1:
         parts.append(f"Restreins le scan à la relation `{rels[0]}` seule.")
     elif len(rels) > 1:
@@ -1077,7 +1128,7 @@ def build_stats_prompt(
             "le terme ni la relation — exécute le mode PAR_TERME sur "
             "un terme tiré au hasard."
         )
-        parts.append(_RANDOM_TERM_INSTRUCTION)
+        parts.append(random_term_instruction())
     if _is_bounded_budget(budget_label):
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum."
@@ -1158,7 +1209,7 @@ def build_annotation_prompt(
             f"sur la/les relation(s) {rel_label}. Tu choisis librement "
             "des termes à examiner."
         )
-        parts.append(_RANDOM_TERM_INSTRUCTION)
+        parts.append(random_term_instruction())
         parts.append(
             "⚠️ Limite-toi STRICTEMENT à cette/ces relation(s)."
         )
@@ -1167,7 +1218,7 @@ def build_annotation_prompt(
             "Je veux ANNOTER sémantiquement des triplets JDM mais je n'ai "
             "ni terme ni relation. Tu pioches toi-même les termes."
         )
-        parts.append(_RANDOM_TERM_INSTRUCTION)
+        parts.append(random_term_instruction())
     parts.append(
         f"Top-K par relation : {int(top_k)}. APPELLE :\n"
         f"  `get_relations_of_type(term, relation, limit={int(top_k)}, "
