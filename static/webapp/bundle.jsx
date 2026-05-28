@@ -1188,17 +1188,10 @@ function FeaturesGrid({ features, goto }) {
           zIndex: 6,
         }}>‹</button>
 
-      {/* Wrapper-clip pour la rangée — overflow hidden = AUCUN bleed
-          (scrollbar, edge card, content au-delà). Padding vertical
-          (12 haut, 28 bas) donne de l'air au hover lift (-2px) et
-          à l'ombre colorée du card (qui s'étend ~24px). */}
-      <div style={{
-        position: 'relative',
-        overflow: 'hidden',
-        borderRadius: 'var(--radius-lg)',
-        padding: '12px 0 28px',
-        margin: '-12px 0 -28px',
-      }}>
+      {/* Wrapper SANS overflow:hidden (qui clippait le hover lift).
+          Le bleed est maintenant couvert par un gradient + bloc
+          solide plus large à droite. */}
+      <div style={{ position: 'relative' }}>
         {/* Carousel — pleine largeur, padding/margin HORIZONTAL only */}
         <div
           ref={scrollRef}
@@ -1225,15 +1218,17 @@ function FeaturesGrid({ features, goto }) {
         </div>
 
         {/* Gradient fade SUR la dernière carte (style 'estompé') —
-            DANS le wrapper clip, à l'INTÉRIEUR (= au-dessus du carousel).
-            Élargi à 120px, var(--bg) opaque sur 45% droite, fade gauche. */}
+            ÉLARGI à 180px pour couvrir tout bleed visible. var(--bg)
+            opaque sur 50% droite (= 90px solide), fade sur 90px à
+            gauche. Plus de wrapper clip donc le gradient doit faire
+            tout le job de masquage tout seul. */}
         <div style={{
           position: 'absolute',
           right: 0, top: 0, bottom: 0,
-          width: 120,
+          width: 180,
           pointerEvents: 'none',
           zIndex: 3,
-          background: 'linear-gradient(to left, var(--bg) 45%, transparent 100%)',
+          background: 'linear-gradient(to left, var(--bg) 50%, transparent 100%)',
           opacity: canNext ? 1 : 0,
           transition: 'opacity 0.25s',
         }} />
