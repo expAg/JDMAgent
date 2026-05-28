@@ -30,6 +30,77 @@ const KIND_OF_REL = {
   r_domain: 'domain', r_associated: 'assoc',
 };
 
+// Convertit {nodes, edges} reçus du SSE /api/subgraph/live en scénario
+// au format HeroAnimation : groupe les nœuds par profondeur (anneaux
+// concentriques), distribue les angles, mappe le kind → couleur JDM,
+// calcule les delays cumulatifs pour l'animation par vague.
+function buildLiveScenario(rootTerm, nodes, edges) {
+  if (!nodes || nodes.length === 0) return null;
+
+  // Identifie le centre : node id == 'ROOT' (forme renvoyée par
+  // build_subgraph) ou fallback sur le 1er node.
+  const centerNode = nodes.find(n => n.id === 'ROOT') || nodes[0];
+  const center = centerNode.label || rootTerm;
+
+  // Groupe les NON-center par profondeur
+  const byDepth = {};
+  for (const n of nodes) {
+    if (n.id === centerNode.id) continue;
+    const d = Math.min(n.depth || 1, 4);
+    if (!byDepth[d]) byDepth[d] = [];
+    byDepth[d].push(n);
+  }
+
+  // Distances des anneaux et couleurs par kind (palette JDM)
+  const DIST = { 1: 110, 2: 180, 3: 240, 4: 290 };
+  const COLOR_BY_KIND = {
+    isa: 'jdm-magenta', hypo: 'jdm-green', syn: 'jdm-cyan',
+    anto: 'jdm-magenta', carac: 'jdm-violet', part: 'jdm-orange',
+    lieu: 'jdm-yellow', verb: 'jdm-orange', domain: 'jdm-cyan',
+    assoc: 'jdm-violet', center: 'jdm-magenta',
+  };
+
+  // Délais : anneau 1 démarre à 0.5s, anneau 2 à 1.5s, etc.
+  // Chaque nœud d'un anneau démarre 0.15s après le précédent.
+  const liveNodes = [];
+  const nodeDelays = { [centerNode.id]: 0 };
+  for (const dStr of Object.keys(byDepth).sort()) {
+    const d = Number(dStr);
+    const arr = byDepth[d];
+    arr.forEach((n, i) => {
+      const angle = (i / arr.length) * 360 - 90 + d * 18;
+      const dist = DIST[d] || 290;
+      const delay = 0.5 + (d - 1) * 1.0 + i * 0.18;
+      nodeDelays[n.id] = delay;
+      liveNodes.push({
+        id: n.id,
+        label: n.label || n.id,
+        angle, dist,
+        color: COLOR_BY_KIND[n.kind] || 'jdm-violet',
+        delay,
+        dim: d >= 3,
+      });
+    });
+  }
+
+  // Edges : le delay vaut max(delay_from, delay_to) + 0.15 pour que
+  // l'arête apparaisse APRÈS ses 2 extrémités.
+  const liveEdges = (edges || []).map(e => ({
+    from: e.from, to: e.to,
+    delay: Math.max(nodeDelays[e.from] || 0, nodeDelays[e.to] || 0) + 0.15,
+    label: e.relation || '',
+    highlight: e.highlight !== false,
+  }));
+
+  return {
+    id: 'live',
+    question: '',
+    streamChunks: [],
+    graph: { center, nodes: liveNodes, edges: liveEdges },
+  };
+}
+
+
 function ViewSubgraph() {
   // Si Explorer a navigué vers nous via jdm:goto, on récupère son terme.
   const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'plat asiatique';
@@ -369,7 +440,11 @@ function ViewSubgraph() {
                 // À brancher sur /api/subgraph/live (SSE) — voir brief.
                 // Pour l'instant : scénarios pré-enregistrés en démo.
                 <div style={{ padding: 12, height: '100%' }}>
-                  <HeroAnimation height={560} showChat={false} />
+                  <HeroAnimation
+                    height={560}
+                    showChat={false}
+                    liveScenario={buildLiveScenario(term, data.nodes, data.edges)}
+                  />
                 </div>
               ) : data.nodes && data.nodes.length > 0 ? (
                 <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />

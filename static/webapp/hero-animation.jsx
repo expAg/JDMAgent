@@ -9,7 +9,10 @@
 
 const { useState: useStateHero, useEffect: useEffectHero, useRef: useRefHero } = React;
 
-function HeroAnimation({ height = 380, showChat = true }) {
+function HeroAnimation({ height = 380, showChat = true, liveScenario = null }) {
+  // Si liveScenario est fourni : on l'utilise À LA PLACE des scénarios
+  // hardcodés (= mode "vraies données JDM" depuis /api/subgraph/live).
+  // Pas de loop, pas de chat de démo — un seul rendu animé.
   const scenarios = [
     {
       id: 'voiture',
@@ -95,7 +98,9 @@ function HeroAnimation({ height = 380, showChat = true }) {
   const [streamText, setStreamText] = useStateHero('');
   const [tick, setTick] = useStateHero(0);
 
-  const scenario = scenarios[scenarioIdx];
+  // Si liveScenario fourni → on l'utilise (mode données réelles SSE).
+  // Sinon : rotation des scénarios pré-enregistrés (mode démo Projet).
+  const scenario = liveScenario || scenarios[scenarioIdx];
 
   // Wait for the graph to finish drawing before swapping scenarios.
   const graphEndTime = (() => {
@@ -110,6 +115,21 @@ function HeroAnimation({ height = 380, showChat = true }) {
     let cancelled = false;
     const run = async () => {
       setUserText(''); setStreamText(''); setPhase('typing'); setTick(0);
+
+      // Mode liveScenario : on saute le typing et le streaming de chat,
+      // on démarre directement l'animation du graphe.
+      if (liveScenario) {
+        setPhase('streaming');
+        const startTick = Date.now();
+        const tickInterval = setInterval(() => {
+          if (!cancelled) setTick((Date.now() - startTick) / 1000);
+        }, 80);
+        // Anim termine quand le dernier edge est dessiné. Puis on garde
+        // le graphe visible (pas de loop : pas de scenarioIdx incrémenté).
+        await sleepHero((graphEndTime + 1) * 1000);
+        clearInterval(tickInterval);
+        return;
+      }
 
       const q = scenario.question;
       for (let i = 0; i <= q.length; i++) {
@@ -155,7 +175,7 @@ function HeroAnimation({ height = 380, showChat = true }) {
     };
     run();
     return () => { cancelled = true; };
-  }, [scenarioIdx]);
+  }, [scenarioIdx, liveScenario]);
 
   return (
     <div style={{
