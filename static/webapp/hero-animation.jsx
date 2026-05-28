@@ -271,24 +271,27 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
     }
   });
 
-  // ── AUTOFIT — rescale toutes les positions pour que TOUT le graphe
-  //    (bulles + labels) rentre dans le viewBox, sans clipping.
+  // ── AUTOFIT — rescale toutes les positions pour exploiter au mieux
+  //    le viewBox :
+  //      - réduit (≤ 1) si du contenu dépasserait les marges sûres
+  //      - agrandit (≤ 1.6) si le contenu est petit et qu'il reste
+  //        de la place → les nœuds deviennent lisibles
   //    Marges :
-  //      horizontal = bubble radius (≈14) + demi-largeur label (≈70)
-  //      vertical   = bubble radius (≈14) + hauteur label sous bulle (≈30)
-  //    On calcule un facteur d'échelle ≤ 1 ; jamais d'agrandissement.
-  //    Activé uniquement en mode interactif (LIVE) — les scénarios
-  //    démo accueil sont calibrés à la main.
+  //      horizontal = bubble + demi-largeur label (≈84)
+  //      vertical   = bubble + hauteur label sous bulle (≈44)
+  //    Activé uniquement en mode interactif (LIVE).
   if (interactive) {
     const margX = 84, margY = 44;
     const maxX = Math.max(1, ...Object.values(positions).map(p => Math.abs(p.x)));
     const maxY = Math.max(1, ...Object.values(positions).map(p => Math.abs(p.y)));
     const safeX = Math.max(40, cx - margX);
     const safeY = Math.max(40, cy - margY);
-    const sX = maxX > safeX ? safeX / maxX : 1;
-    const sY = maxY > safeY ? safeY / maxY : 1;
-    const fitScale = Math.min(sX, sY, 1);
-    if (fitScale < 1) {
+    const sX = safeX / maxX;
+    const sY = safeY / maxY;
+    // Cap à 1.6 : sinon les petits graphes deviennent grotesques
+    // (1 nœud à 100px → x4 → 400px illisible).
+    const fitScale = Math.min(sX, sY, 1.6);
+    if (Math.abs(fitScale - 1) > 0.02) {
       for (const id of Object.keys(positions)) {
         positions[id] = {
           x: positions[id].x * fitScale,

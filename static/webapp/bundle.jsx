@@ -929,24 +929,27 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
     }
   });
 
-  // ── AUTOFIT — rescale toutes les positions pour que TOUT le graphe
-  //    (bulles + labels) rentre dans le viewBox, sans clipping.
+  // ── AUTOFIT — rescale toutes les positions pour exploiter au mieux
+  //    le viewBox :
+  //      - réduit (≤ 1) si du contenu dépasserait les marges sûres
+  //      - agrandit (≤ 1.6) si le contenu est petit et qu'il reste
+  //        de la place → les nœuds deviennent lisibles
   //    Marges :
-  //      horizontal = bubble radius (≈14) + demi-largeur label (≈70)
-  //      vertical   = bubble radius (≈14) + hauteur label sous bulle (≈30)
-  //    On calcule un facteur d'échelle ≤ 1 ; jamais d'agrandissement.
-  //    Activé uniquement en mode interactif (LIVE) — les scénarios
-  //    démo accueil sont calibrés à la main.
+  //      horizontal = bubble + demi-largeur label (≈84)
+  //      vertical   = bubble + hauteur label sous bulle (≈44)
+  //    Activé uniquement en mode interactif (LIVE).
   if (interactive) {
     const margX = 84, margY = 44;
     const maxX = Math.max(1, ...Object.values(positions).map(p => Math.abs(p.x)));
     const maxY = Math.max(1, ...Object.values(positions).map(p => Math.abs(p.y)));
     const safeX = Math.max(40, cx - margX);
     const safeY = Math.max(40, cy - margY);
-    const sX = maxX > safeX ? safeX / maxX : 1;
-    const sY = maxY > safeY ? safeY / maxY : 1;
-    const fitScale = Math.min(sX, sY, 1);
-    if (fitScale < 1) {
+    const sX = safeX / maxX;
+    const sY = safeY / maxY;
+    // Cap à 1.6 : sinon les petits graphes deviennent grotesques
+    // (1 nœud à 100px → x4 → 400px illisible).
+    const fitScale = Math.min(sX, sY, 1.6);
+    if (Math.abs(fitScale - 1) > 0.02) {
       for (const id of Object.keys(positions)) {
         positions[id] = {
           x: positions[id].x * fitScale,
@@ -3292,21 +3295,33 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
     branchColorOf[n.id] = BRANCH_COLORS[i % BRANCH_COLORS.length];
   });
 
-  // depth-2/3/4 : pour chaque nœud, prendre l'angle du parent
-  //   trouvé (ou un fallback uniforme) et y ajouter un offset.
-  //   On regroupe les enfants par parent_id pour calculer l'offset.
-  //   layout='rings' → angles uniformes (pas de cluster autour du parent).
+  // depth-2/3/4 : deux stratégies selon le volume.
+  //   - PEU de nœuds OU layout='tree' avec branches peu chargées :
+  //     CLUSTER près du parent (angle parent ± offset) — donne le
+  //     look "branches" de la démo voiture.
+  //   - BEAUCOUP de nœuds OU clusters surchargés :
+  //     UNIFORME sur l'anneau (couronne complète), couleur héritée
+  //     du parent pour rester lisible visuellement → plus de demi-
+  //     cercles entassés avec labels confondus.
+  //   layout='rings' force le mode uniforme pour tous les depths.
   for (let depth = 2; depth <= 4; depth++) {
     const arr = byDepth[depth];
     if (arr.length === 0) continue;
     const dist = RING_DIST[Math.min(depth, 4)];
 
-    if (layout === 'rings') {
-      // CERCLES : uniforme sur l'anneau, comme demandé en mode Cercles.
+    // Estime l'arc minimum nécessaire par label : à dist `dist`,
+    // un label de ≈80 px occupe (80/dist) rad. On veut ≥ 10° (~0.17 rad)
+    // d'arc par nœud pour ne pas se chevaucher.
+    const minArcDeg = 13;
+    const tooCrowded = arr.length * minArcDeg > 340;
+
+    if (layout === 'rings' || tooCrowded) {
+      // UNIFORME : tous les nœuds de ce depth sur la couronne complète.
+      // L'offset (depth-1)*15 évite que les rayons depth-1/2/3 soient
+      // exactement alignés (et donc qu'un nœud depth-2 cache son parent).
       arr.forEach((n, i) => {
         const angle = (i / arr.length) * 360 - 90 + (depth - 1) * 15;
         polar[n.id] = { angle, dist };
-        // Couleur = celle du parent si trouvé, sinon palette
         const pId = parentOf[n.id];
         branchColorOf[n.id] = (pId && branchColorOf[pId])
           || BRANCH_COLORS[i % BRANCH_COLORS.length];
@@ -3314,7 +3329,7 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
       continue;
     }
 
-    // ARBRE : grouper par parent → angle parent ± offset
+    // ARBRE peu chargé : cluster près du parent
     const byParent = {};
     const orphans = [];
     for (const n of arr) {
@@ -3329,8 +3344,11 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
     for (const pId of Object.keys(byParent)) {
       const kids = byParent[pId];
       const pAngle = polar[pId].angle;
-      // Span d'ouverture : 26° par enfant, plafonné à 70°.
-      const span = Math.min(70, Math.max(20, kids.length * 26));
+      // Span d'ouverture proportionnel + plafond cohérent avec la part
+      // angulaire que le parent "possède" (360 / nombre de depth-1).
+      const parentSlice = d1Count > 0 ? 360 / d1Count : 90;
+      const span = Math.min(parentSlice * 0.85,
+                            Math.max(20, kids.length * 26));
       kids.forEach((n, i) => {
         const off = kids.length === 1
           ? 0
@@ -3339,8 +3357,7 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
         branchColorOf[n.id] = branchColorOf[pId] || 'jdm-violet';
       });
     }
-    // Orphelins : on les répartit dans les "trous angulaires" entre
-    // les depth-1, sur l'anneau de leur profondeur.
+    // Orphelins : répartis uniformément sur la couronne.
     orphans.forEach((n, i) => {
       const angle = (i / Math.max(orphans.length, 1)) * 360 - 45;
       polar[n.id] = { angle, dist };
