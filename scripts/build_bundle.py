@@ -22,6 +22,7 @@ from pathlib import Path
 # vues), app.jsx en dernier (ReactDOM.createRoot consomme tout le reste).
 FILES = [
     "shared.jsx",
+    "hero-animation.jsx",   # ajouté du handoff designer (mode LIVE / Projet hero)
     "views-projet.jsx",
     "views-explorer.jsx",
     "views-claim.jsx",

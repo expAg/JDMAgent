@@ -1,4 +1,3 @@
-
 // === webapp/shared.jsx ===
 // Shared components — custom Select (fix dropdown hit-area bug),
 // Field wrapper, Button, Card, Pill, Sparkline, JDMLogo mark.
@@ -656,7 +655,6 @@ Object.assign(window, {
   Triplet, TopNav, ThemeSwitcher, PageShell, JDMMark, JDMWordmark,
 });
 
-
 // === webapp/hero-animation.jsx ===
 // hero-animation.jsx — animated graph + simulated chat for Projet hero.
 // Loops indefinitely with 2 alternating scenarios.
@@ -1145,7 +1143,6 @@ function renderStreamMd(s, withCaret) {
 }
 
 window.HeroAnimation = HeroAnimation;
-
 
 // === webapp/views-projet.jsx ===
 // View: Projet — landing page.
@@ -2328,7 +2325,6 @@ function GitHubMark({ size = 22 }) {
 
 window.ViewProjet = ViewProjet;
 
-
 // === webapp/views-explorer.jsx ===
 // View: Explorer — fetch relations for a term.
 // Migration FastAPI : remplace FAKE_DATA par fetch('/api/explore').
@@ -2594,7 +2590,6 @@ function exportCSV(rows, term, rel) {
 }
 
 window.ViewExplorer = ViewExplorer;
-
 
 // === webapp/views-claim.jsx ===
 // View: Claim checker — verify subject | relation | object via /api/factcheck.
@@ -2996,7 +2991,6 @@ function ClaimResult({ result, subject, relation, object }) {
 
 window.ViewClaim = ViewClaim;
 
-
 // === webapp/views-subgraph.jsx ===
 // View: Sous-graphe — extract & visualise a term's neighbourhood via /api/subgraph.
 // Deux formats : HTML interactif (iframe vis-network) par défaut, ou SVG natif.
@@ -3059,6 +3053,77 @@ function ViewSubgraph() {
     setLoading(true);
     setError('');
     setMessage('');
+
+    // Mode LIVE : consomme l'endpoint SSE /api/subgraph/live qui émet
+    // un snapshot 'graph' immédiat puis les nodes/edges progressivement.
+    // L'iframe LIVE (HeroAnimation simulation) continue de tourner en
+    // parallèle, mais on a maintenant un graphe réel JDM en data.
+    if (format === 'live') {
+      try {
+        const res = await fetch('api/subgraph/live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            term,
+            depth: Number(depth),
+            top_k: Number(topK),
+            relations: activeRels,
+            max_nodes: Number(maxNodes),
+          }),
+        });
+        if (!res.ok || !res.body) {
+          const txt = await res.text().catch(() => '');
+          throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buf = '';
+        let collectedNodes = [];
+        let collectedEdges = [];
+        // Parse SSE robust (CRLF + LF, comments, multi-line data)
+        const flush = () => {
+          const re = /\r\n\r\n|\n\n|\r\r/;
+          let m;
+          while ((m = re.exec(buf)) !== null) {
+            const raw = buf.slice(0, m.index);
+            buf = buf.slice(m.index + m[0].length);
+            let evName = 'message', evData = '';
+            for (const line of raw.replace(/\r\n/g, '\n').split('\n')) {
+              if (!line || line.startsWith(':')) continue;
+              if (line.startsWith('event:')) evName = line.slice(6).trim();
+              else if (line.startsWith('data:'))
+                evData += (evData ? '\n' : '') + line.slice(5).replace(/^ /, '');
+            }
+            if (!evData) continue;
+            let parsed;
+            try { parsed = JSON.parse(evData); } catch { parsed = { text: evData }; }
+            if (evName === 'graph') {
+              collectedNodes = parsed.nodes || [];
+              collectedEdges = parsed.edges || [];
+              setData({ nodes: collectedNodes, edges: collectedEdges,
+                        stats: { n_nodes: collectedNodes.length,
+                                 n_edges: collectedEdges.length, depth },
+                        html: '', format: 'live' });
+            } else if (evName === 'error') {
+              setError(parsed.text || 'erreur LIVE');
+            }
+          }
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          flush();
+        }
+      } catch (e) {
+        setError(String(e && e.message ? e.message : e));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Modes HTML / JSON : appel REST classique à /api/subgraph
     try {
       const res = await fetch('api/subgraph', {
         method: 'POST',
@@ -3455,7 +3520,6 @@ function GraphViz({ nodes, edges }) {
 }
 
 window.ViewSubgraph = ViewSubgraph;
-
 
 // === webapp/views-agent.jsx ===
 // View: Agent — conversational chat with the LLM + JDM tools (via SSE).
@@ -4062,7 +4126,6 @@ function PoolWidget({ model }) {
 }
 
 window.ViewAgent = ViewAgent;
-
 
 // === webapp/views-jarvis.jsx ===
 // View: Jarvis — agent-driven flows wired to /api/jarvis/{flow_id}/stream.
@@ -4999,7 +5062,6 @@ function ParamsForm({ flow, params, setParams, locked }) {
 
 window.ViewJarvis = ViewJarvis;
 
-
 // === webapp/views-productions.jsx ===
 // View: Productions — fichiers .enrich / .audit / .err / .stat /
 // visualisations produits par les flux Jarvis. Liste + download +
@@ -5427,7 +5489,6 @@ function formatAge(s) {
 }
 
 window.ViewProductions = ViewProductions;
-
 
 // === webapp/views-aide.jsx ===
 // View: Aide — refonte visuelle "plus jolie".
@@ -6284,7 +6345,6 @@ function AdminVarRow({ name, current, displayMask, editValue, onEdit }) {
 }
 
 window.ViewAide = ViewAide;
-
 
 // === webapp/app.jsx ===
 // Main app: theme switcher + router + Tweaks panel wiring.

@@ -59,6 +59,77 @@ function ViewSubgraph() {
     setLoading(true);
     setError('');
     setMessage('');
+
+    // Mode LIVE : consomme l'endpoint SSE /api/subgraph/live qui émet
+    // un snapshot 'graph' immédiat puis les nodes/edges progressivement.
+    // L'iframe LIVE (HeroAnimation simulation) continue de tourner en
+    // parallèle, mais on a maintenant un graphe réel JDM en data.
+    if (format === 'live') {
+      try {
+        const res = await fetch('api/subgraph/live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            term,
+            depth: Number(depth),
+            top_k: Number(topK),
+            relations: activeRels,
+            max_nodes: Number(maxNodes),
+          }),
+        });
+        if (!res.ok || !res.body) {
+          const txt = await res.text().catch(() => '');
+          throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buf = '';
+        let collectedNodes = [];
+        let collectedEdges = [];
+        // Parse SSE robust (CRLF + LF, comments, multi-line data)
+        const flush = () => {
+          const re = /\r\n\r\n|\n\n|\r\r/;
+          let m;
+          while ((m = re.exec(buf)) !== null) {
+            const raw = buf.slice(0, m.index);
+            buf = buf.slice(m.index + m[0].length);
+            let evName = 'message', evData = '';
+            for (const line of raw.replace(/\r\n/g, '\n').split('\n')) {
+              if (!line || line.startsWith(':')) continue;
+              if (line.startsWith('event:')) evName = line.slice(6).trim();
+              else if (line.startsWith('data:'))
+                evData += (evData ? '\n' : '') + line.slice(5).replace(/^ /, '');
+            }
+            if (!evData) continue;
+            let parsed;
+            try { parsed = JSON.parse(evData); } catch { parsed = { text: evData }; }
+            if (evName === 'graph') {
+              collectedNodes = parsed.nodes || [];
+              collectedEdges = parsed.edges || [];
+              setData({ nodes: collectedNodes, edges: collectedEdges,
+                        stats: { n_nodes: collectedNodes.length,
+                                 n_edges: collectedEdges.length, depth },
+                        html: '', format: 'live' });
+            } else if (evName === 'error') {
+              setError(parsed.text || 'erreur LIVE');
+            }
+          }
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          flush();
+        }
+      } catch (e) {
+        setError(String(e && e.message ? e.message : e));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Modes HTML / JSON : appel REST classique à /api/subgraph
     try {
       const res = await fetch('api/subgraph', {
         method: 'POST',
