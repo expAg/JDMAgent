@@ -267,12 +267,26 @@ function ViewProductions() {
                 <Button size="sm" variant="ghost" onClick={() => setPreviewName(null)}>×</Button>
               </div>
             </div>
-            <pre style={{
-              margin: 0, padding: 18, overflow: 'auto',
-              fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
-              color: 'var(--ink)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              flex: 1,
-            }}>{previewContent}</pre>
+            {/* Si c'est un .html, on le rend dans un iframe (vis-network
+                interactif, etc.) au lieu d'afficher le source brut. */}
+            {previewName && previewName.toLowerCase().endsWith('.html') ? (
+              <iframe
+                title={previewName}
+                srcDoc={previewContent}
+                sandbox="allow-scripts allow-same-origin"
+                style={{
+                  flex: 1, width: '100%', border: 0, minHeight: 500,
+                  background: 'var(--bg)',
+                }}
+              />
+            ) : (
+              <pre style={{
+                margin: 0, padding: 18, overflow: 'auto',
+                fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
+                color: 'var(--ink)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                flex: 1,
+              }}>{previewContent}</pre>
+            )}
           </div>
         </div>
       )}
@@ -472,53 +486,184 @@ function AdminPanel() {
         </div>
       )}
 
-      {/* Export secrets */}
+      {/* Export secrets + édition + cache clear */}
       {info && info.export_secrets_enabled && (
-        <>
-          <div className="mono" style={{
-            fontSize: 11, color: 'var(--ink-3)',
-            textTransform: 'uppercase', letterSpacing: '0.1em',
-            marginBottom: 8,
-          }}>Export des secrets (.env)</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8 }}>
-            <Input value={password} onChange={setPassword}
-              placeholder="Mot de passe (EXPORT_SECRETS_PASSWORD)" mono />
-            <Button size="sm" onClick={doExport} disabled={busy}>
-              {busy ? '…' : 'Exporter'}
-            </Button>
-            {exported && (
-              <Button size="sm" variant="secondary" onClick={downloadEnv}>
-                ⬇ .env
-              </Button>
-            )}
-          </div>
-          {exportError && (
-            <div style={{
-              marginTop: 8, padding: 10,
-              background: 'rgba(200,58,115,0.08)',
-              border: '1px solid var(--jdm-magenta)',
-              borderRadius: 'var(--radius)',
-              color: 'var(--jdm-magenta)', fontSize: 12,
-            }}>{exportError}</div>
-          )}
-          {exported && (
-            <div style={{
-              marginTop: 10, padding: 12,
-              background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
-              fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
-              maxHeight: 240, overflow: 'auto',
-            }}>
-              {Object.entries(exported).map(([k, v]) => (
-                <div key={k} style={{ wordBreak: 'break-all' }}>
-                  <strong style={{ color: 'var(--accent)' }}>{k}</strong>
-                  =<span style={{ color: 'var(--ink-2)' }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+        <AdminSecretsSection password={password} setPassword={setPassword}
+          doExport={doExport} busy={busy} exported={exported}
+          exportError={exportError} downloadEnv={downloadEnv} />
       )}
     </Card>
+  );
+}
+
+function AdminSecretsSection({ password, setPassword, doExport, busy,
+                               exported, exportError, downloadEnv }) {
+  const [edits, setEdits] = useState({});
+  const [editMsg, setEditMsg] = useState('');
+  const [cacheMsg, setCacheMsg] = useState('');
+
+  const setOne = (k, v) => setEdits(e => ({ ...e, [k]: v }));
+
+  const submitEdits = async () => {
+    setEditMsg('');
+    const vars = Object.fromEntries(Object.entries(edits).filter(([_, v]) => v !== undefined));
+    if (Object.keys(vars).length === 0) { setEditMsg('Rien à modifier.'); return; }
+    try {
+      const r = await fetch('api/admin/env-set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, vars }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour. .env persisté : ${d.persisted_to_dotenv}.`);
+        setEdits({});
+      } else {
+        setEditMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setEditMsg(`✗ ${e.message || e}`);
+    }
+  };
+
+  const clearCache = async () => {
+    setCacheMsg('');
+    if (!confirm('Vider tout le cache disque JDM ?')) return;
+    try {
+      const r = await fetch('api/admin/cache-clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setCacheMsg(`✓ ${d.deleted_files} fichier(s) supprimé(s) dans ${d.cache_dir}`);
+      } else {
+        setCacheMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setCacheMsg(`✗ ${e.message || e}`);
+    }
+  };
+
+  // Variables modifiables (whitelist alignée backend _EXPORTABLE_ENV_VARS)
+  const EDITABLE_VARS = [
+    'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
+    'JDM_DROPS_API_KEY', 'JDM_DROPS_URL', 'LLM_PROVIDER', 'LLM_MODEL',
+  ];
+
+  return (
+    <>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>Authentification</div>
+      <Input value={password} onChange={setPassword}
+        placeholder="Mot de passe (EXPORT_SECRETS_PASSWORD)" mono />
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4, marginBottom: 16 }}>
+        Requis pour toutes les actions ci-dessous (export, modif env, clear cache).
+      </div>
+
+      {/* Export */}
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>1 · Export des secrets (.env)</div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <Button size="sm" onClick={doExport} disabled={busy || !password}>
+          {busy ? '…' : 'Exporter'}
+        </Button>
+        {exported && (
+          <Button size="sm" variant="secondary" onClick={downloadEnv}>
+            ⬇ Télécharger .env
+          </Button>
+        )}
+      </div>
+      {exportError && (
+        <div style={{
+          marginBottom: 8, padding: 10,
+          background: 'rgba(200,58,115,0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)', fontSize: 12,
+        }}>{exportError}</div>
+      )}
+      {exported && (
+        <div style={{
+          marginBottom: 16, padding: 12,
+          background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
+          maxHeight: 200, overflow: 'auto',
+        }}>
+          {Object.entries(exported).map(([k, v]) => (
+            <div key={k} style={{ wordBreak: 'break-all' }}>
+              <strong style={{ color: 'var(--accent)' }}>{k}</strong>
+              =<span style={{ color: 'var(--ink-2)' }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Édition env */}
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>2 · Modifier les variables d'environnement</div>
+      <div style={{
+        background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+        padding: 12, marginBottom: 8,
+      }}>
+        {EDITABLE_VARS.map(k => (
+          <div key={k} style={{
+            display: 'grid', gridTemplateColumns: '160px 1fr',
+            gap: 8, alignItems: 'center', marginBottom: 6,
+          }}>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{k}</div>
+            <Input value={edits[k] || ''}
+              onChange={(v) => setOne(k, v)}
+              placeholder="nouvelle valeur (vide = laisse l'actuelle)" mono />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <Button size="sm" onClick={submitEdits} disabled={!password}>
+          ✓ Appliquer les modifications
+        </Button>
+      </div>
+      {editMsg && (
+        <div style={{
+          marginBottom: 16, padding: 10,
+          background: editMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+          border: `1px solid ${editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+          borderRadius: 'var(--radius)',
+          color: editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+          fontSize: 12,
+        }}>{editMsg}</div>
+      )}
+
+      {/* Cache clear */}
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>3 · Cache disque JDM</div>
+      <Button size="sm" variant="secondary" onClick={clearCache} disabled={!password}>
+        🗑 Vider le cache JDM
+      </Button>
+      {cacheMsg && (
+        <div style={{
+          marginTop: 8, padding: 10,
+          background: cacheMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+          border: `1px solid ${cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+          borderRadius: 'var(--radius)',
+          color: cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+          fontSize: 12,
+        }}>{cacheMsg}</div>
+      )}
+    </>
   );
 }
 

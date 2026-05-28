@@ -422,9 +422,6 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
             kwargs["min_weight"] = float(req.min_weight)
 
         if fmt == "html":
-            # Écrit dans /tmp puis on relit le HTML pour le renvoyer
-            # inline (le front l'injecte dans une iframe). Évite de
-            # devoir gérer les fichiers servis statiquement.
             import tempfile
             tmpdir = Path(tempfile.gettempdir())
             tmppath = tmpdir / f"jdm_subgraph_{abs(hash((term, req.depth)))}.html"
@@ -435,6 +432,24 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
             finally:
                 try: tmppath.unlink()
                 except Exception: pass
+            # Override CSS injecté pour fond transparent — l'iframe côté
+            # frontend hérite alors du thème parent (paper/lab) au lieu
+            # du gris fixe du template. Les nœuds + arêtes vis-network
+            # restent dessinés par-dessus.
+            transparent_css = (
+                "<style id='__jdm-skin-override'>"
+                "html,body{background:transparent!important;color:inherit!important}"
+                "header{background:rgba(128,128,128,0.08)!important;"
+                "border-bottom-color:rgba(128,128,128,0.25)!important;"
+                "color:inherit!important}"
+                "#net{background:transparent!important}"
+                ".legend{background:rgba(128,128,128,0.08)!important;"
+                "border-top-color:rgba(128,128,128,0.25)!important;"
+                "color:inherit!important}"
+                "</style>"
+            )
+            if "</head>" in html:
+                html = html.replace("</head>", transparent_css + "</head>", 1)
             return {
                 "format": "html",
                 "root": term,
@@ -1052,6 +1067,110 @@ def api_admin_export_secrets(req: ExportSecretsRequest) -> dict[str, Any]:
         if v:
             out[k] = v
     return {"vars": out, "count": len(out)}
+
+
+class EnvSetRequest(BaseModel):
+    password: str
+    vars: dict[str, str]  # {NAME: VALUE} — VALUE vide = unset
+
+
+@app.post("/api/admin/env-set")
+def api_admin_env_set(req: EnvSetRequest) -> dict[str, Any]:
+    """Modifie les env vars whitelistées (uniquement celles de
+    `_EXPORTABLE_ENV_VARS`). Persiste dans `.env` si fichier existe,
+    sinon juste in-process. Mot de passe `EXPORT_SECRETS_PASSWORD` requis.
+    """
+    expected = os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
+    if not expected:
+        raise HTTPException(503, "Admin désactivé : EXPORT_SECRETS_PASSWORD non défini.")
+    if (req.password or "").strip() != expected:
+        raise HTTPException(401, "Mot de passe invalide.")
+    if not isinstance(req.vars, dict) or not req.vars:
+        raise HTTPException(400, "vars vide ou invalide.")
+
+    # Filtre : seules les vars whitelistées peuvent être modifiées
+    allowed = set(_EXPORTABLE_ENV_VARS)
+    updates = {k: v for k, v in req.vars.items() if k in allowed}
+    rejected = sorted(set(req.vars.keys()) - allowed)
+
+    # Update in-process
+    for k, v in updates.items():
+        if v == "":
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+    # Persistance .env si présent à la racine du projet
+    env_path = _root / ".env"
+    persisted = False
+    if env_path.exists():
+        try:
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+            seen = set()
+            new_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    new_lines.append(line)
+                    continue
+                key = stripped.split("=", 1)[0].strip()
+                if key in updates:
+                    seen.add(key)
+                    val = updates[key]
+                    if val == "":
+                        new_lines.append(f"# {key}=  # unset")
+                    else:
+                        new_lines.append(f"{key}={val}")
+                else:
+                    new_lines.append(line)
+            # Append les nouvelles clés (jamais vues dans .env)
+            for k, v in updates.items():
+                if k not in seen and v != "":
+                    new_lines.append(f"{k}={v}")
+            env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            persisted = True
+        except Exception:
+            persisted = False
+
+    return {
+        "updated": sorted(updates.keys()),
+        "rejected": rejected,
+        "persisted_to_dotenv": persisted,
+    }
+
+
+class CacheClearRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/admin/cache-clear")
+def api_admin_cache_clear(req: CacheClearRequest) -> dict[str, Any]:
+    """Vide le cache disque JDM (`JDM_CACHE_DIR`). Tous les prochains
+    appels devront refrapper l'API JeuxDeMots. Mot de passe requis."""
+    expected = os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
+    if not expected:
+        raise HTTPException(503, "Admin désactivé : EXPORT_SECRETS_PASSWORD non défini.")
+    if (req.password or "").strip() != expected:
+        raise HTTPException(401, "Mot de passe invalide.")
+    cache_dir = Path(os.environ.get("JDM_CACHE_DIR", ".cache/jdm"))
+    deleted = 0
+    errors = []
+    if cache_dir.exists():
+        for p in cache_dir.rglob("*"):
+            if p.is_file():
+                try:
+                    p.unlink()
+                    deleted += 1
+                except OSError as e:
+                    errors.append(str(e))
+    # Reset le client partagé pour qu'il rebuild son diskcache
+    global _client
+    _client = None
+    return {
+        "ok": True, "deleted_files": deleted,
+        "cache_dir": str(cache_dir),
+        "errors": errors[:5],
+    }
 
 
 @app.get("/api/admin/info")

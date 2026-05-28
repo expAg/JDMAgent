@@ -171,10 +171,10 @@ function JarvisRun({ flow, onBack }) {
   const abortRef = useRef(null);
   const startTimeRef = useRef(null);
 
-  // Auto-scroll log
+  // Auto-scroll log + narration : suit le flux de génération en bas
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
+  }, [log, narrationHTML]);
 
   // Tick elapsed time
   useEffect(() => {
@@ -568,29 +568,44 @@ function JarvisRun({ flow, onBack }) {
               </div>
             </Card>
 
-            {/* Réponse finale = état du fichier .enrich/.audit/.err
-                en cours de construction (file_preview, gradually appended). */}
+            {/* Triplets consolidés = liste qui croît avec le fichier en
+                construction. Bouton "Télécharger" en haut à droite pour
+                récupérer le fichier brut. */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 padding: '10px 14px',
                 background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                gap: 8,
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
+                  flex: 1, minWidth: 0,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  Fichier en construction
+                  Triplets consolidés · <span style={{ color: 'var(--jdm-green)' }}>{metrics.accepted}</span>
                   {filePath && (
                     <span style={{ color: 'var(--ink-2)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
                       · {filePath.split(/[\\/]/).slice(-1)[0]}
                     </span>
                   )}
                 </div>
-                <div className="mono" style={{ fontSize: 10, color: 'var(--jdm-green)' }}>
-                  {metrics.accepted} consolidé{metrics.accepted > 1 ? 's' : ''}
-                </div>
+                {/* Télécharger le fichier brut — appelle l'API
+                    /api/productions/download avec le basename. */}
+                {filePath && (
+                  <Button size="sm" variant="ghost"
+                    onClick={() => {
+                      const name = filePath.split(/[\\/]/).slice(-1)[0];
+                      const url = `api/productions/download?name=${encodeURIComponent(name)}`;
+                      const a = document.createElement('a');
+                      a.href = url; a.download = name;
+                      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    }}>
+                    ⬇ Télécharger
+                  </Button>
+                )}
               </div>
               <div style={{
                 height: 420,
@@ -598,16 +613,7 @@ function JarvisRun({ flow, onBack }) {
                 padding: 0,
                 background: 'var(--bg-card)',
               }}>
-                {filePreview ? (
-                  <pre style={{
-                    margin: 0, padding: 14,
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11, lineHeight: 1.6,
-                    color: 'var(--ink)',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                  }}>{filePreview}</pre>
-                ) : accepted.length > 0 ? (
+                {accepted.length > 0 ? (
                   <div style={{ display: 'grid', gap: 4, padding: 12 }}>
                     {accepted.map((a, i) => (
                       <div key={i} className="fade-up" style={{
@@ -625,7 +631,7 @@ function JarvisRun({ flow, onBack }) {
                   </div>
                 ) : (
                   <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
-                    {state === 'idle' ? 'Aucun fichier encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
+                    {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
                   </div>
                 )}
               </div>

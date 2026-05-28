@@ -427,14 +427,18 @@ function EmptyState({ icon, title, desc, action }) {
 
 // ───────── Triplet — visually distinctive "subject | relation | object" ─────
 function Triplet({ subject, relation, object, weight, annotations }) {
+  // Triplet à poids négatif = JDM AFFIRME que c'est faux. On teinte
+  // légèrement de magenta pour le signaler visuellement (cohérent
+  // avec le header « ✗ Évidences contraires » qui est aussi en magenta).
+  const isNegative = weight != null && Number(weight) < 0;
   return (
     <div style={{
       display: 'flex',
       alignItems: 'center',
       gap: 8,
       padding: '8px 10px',
-      background: 'var(--bg-elev)',
-      border: '1px solid var(--line-soft)',
+      background: isNegative ? 'rgba(200, 58, 115, 0.08)' : 'var(--bg-elev)',
+      border: `1px solid ${isNegative ? 'rgba(200, 58, 115, 0.35)' : 'var(--line-soft)'}`,
       borderRadius: 'var(--radius)',
       fontFamily: 'var(--font-mono)',
       fontSize: 12,
@@ -442,14 +446,15 @@ function Triplet({ subject, relation, object, weight, annotations }) {
     }}>
       <span style={{ color: 'var(--ink)', fontWeight: 600 }}>{subject}</span>
       <span style={{ color: 'var(--ink-3)' }}>│</span>
-      <span style={{ color: 'var(--accent)' }}>{relation}</span>
+      <span style={{ color: isNegative ? 'var(--jdm-magenta)' : 'var(--accent)' }}>{relation}</span>
       <span style={{ color: 'var(--ink-3)' }}>│</span>
       <span style={{ color: 'var(--ink)', fontWeight: 600 }}>{object}</span>
       {weight != null && (
         <span style={{
           marginLeft: 'auto',
-          color: 'var(--ink-3)',
+          color: isNegative ? 'var(--jdm-magenta)' : 'var(--ink-3)',
           fontSize: 11,
+          fontWeight: isNegative ? 600 : 400,
         }}>w={weight}</span>
       )}
       {annotations && (
@@ -1226,7 +1231,15 @@ function ViewClaim() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const run = async () => {
+  // `run(opts)` accepte un override explicite des valeurs — utile pour
+  // les boutons d'exemples qui changent le form ET veulent vérifier
+  // dans la même intention (sinon : race entre setState async et fetch).
+  const run = async (opts) => {
+    const _subject  = opts && opts.subject  !== undefined ? opts.subject  : subject;
+    const _relation = opts && opts.relation !== undefined ? opts.relation : relation;
+    const _object   = opts && opts.object   !== undefined ? opts.object   : object_;
+    const _effort   = opts && opts.effort   !== undefined ? opts.effort   : Number(effort);
+    const _bypass   = opts && opts.bypass   !== undefined ? opts.bypass   : !!bypass;
     setLoading(true);
     setError('');
     try {
@@ -1234,11 +1247,11 @@ function ViewClaim() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject,
-          relation,
-          object: object_,
-          effort: Number(effort),
-          bypass: !!bypass,
+          subject: _subject,
+          relation: _relation,
+          object: _object,
+          effort: Number(_effort),
+          bypass: !!_bypass,
         }),
       });
       if (!res.ok) {
@@ -1246,15 +1259,11 @@ function ViewClaim() {
         throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
       }
       const data = await res.json();
-      // SNAPSHOT du triplet AU MOMENT DE LA VÉRIFICATION — sinon si
-      // l'utilisateur change un champ du formulaire après le verdict,
-      // l'affichage du résultat utiliserait la nouvelle valeur du form
-      // (faux : on verrait le verdict de A appliqué au triplet B).
       const submitted = {
-        subject, relation,
-        object: object_,
-        effort: Number(effort),
-        bypass: !!bypass,
+        subject: _subject, relation: _relation,
+        object: _object,
+        effort: Number(_effort),
+        bypass: !!_bypass,
       };
       if (data.error) {
         setResult({
@@ -1369,9 +1378,12 @@ function ViewClaim() {
           <button key={i}
             className="focus-ring"
             onClick={() => {
+              // Update du form + run avec les NOUVELLES valeurs passées
+              // explicitement (le setState est async, run() lirait sinon
+              // l'ancien state). Fix la race « clic sur exemple → vérifie
+              // le triplet précédent puis affiche le nouveau form ».
               setSubject(s); setRelation(r); setObject(o);
-              // Délai pour laisser React appliquer les setState avant fetch
-              setTimeout(run, 50);
+              run({ subject: s, relation: r, object: o });
             }}
             style={{
               padding: '4px 10px',
@@ -1839,14 +1851,10 @@ function ViewSubgraph() {
                   sandbox="allow-scripts allow-same-origin"
                   style={{
                     width: '100%', height: '100%', border: 0, display: 'block',
-                    // L'HTML interne vis-network a un fond blanc fixe ; on
-                    // ne peut pas le re-skinner sans toucher au template
-                    // côté backend. Le filter inverse couleurs en mode
-                    // lab seulement (preserve les couleurs des nœuds via
-                    // hue-rotate). Compromis temporaire en attendant un
-                    // vrai theming du template HTML.
-                    filter: document.body.dataset.theme === 'lab'
-                            ? 'invert(0.92) hue-rotate(180deg)' : 'none',
+                    // Le HTML interne a un fond transparent (override CSS
+                    // injecté côté backend), donc l'iframe montre cette
+                    // couleur — qui suit le thème via var(--bg).
+                    background: 'var(--bg)',
                   }}
                 />
               ) : data.nodes && data.nodes.length > 0 ? (
@@ -2684,10 +2692,10 @@ function JarvisRun({ flow, onBack }) {
   const abortRef = useRef(null);
   const startTimeRef = useRef(null);
 
-  // Auto-scroll log
+  // Auto-scroll log + narration : suit le flux de génération en bas
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
+  }, [log, narrationHTML]);
 
   // Tick elapsed time
   useEffect(() => {
@@ -3081,29 +3089,44 @@ function JarvisRun({ flow, onBack }) {
               </div>
             </Card>
 
-            {/* Réponse finale = état du fichier .enrich/.audit/.err
-                en cours de construction (file_preview, gradually appended). */}
+            {/* Triplets consolidés = liste qui croît avec le fichier en
+                construction. Bouton "Télécharger" en haut à droite pour
+                récupérer le fichier brut. */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 padding: '10px 14px',
                 background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                gap: 8,
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
+                  flex: 1, minWidth: 0,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  Fichier en construction
+                  Triplets consolidés · <span style={{ color: 'var(--jdm-green)' }}>{metrics.accepted}</span>
                   {filePath && (
                     <span style={{ color: 'var(--ink-2)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
                       · {filePath.split(/[\\/]/).slice(-1)[0]}
                     </span>
                   )}
                 </div>
-                <div className="mono" style={{ fontSize: 10, color: 'var(--jdm-green)' }}>
-                  {metrics.accepted} consolidé{metrics.accepted > 1 ? 's' : ''}
-                </div>
+                {/* Télécharger le fichier brut — appelle l'API
+                    /api/productions/download avec le basename. */}
+                {filePath && (
+                  <Button size="sm" variant="ghost"
+                    onClick={() => {
+                      const name = filePath.split(/[\\/]/).slice(-1)[0];
+                      const url = `api/productions/download?name=${encodeURIComponent(name)}`;
+                      const a = document.createElement('a');
+                      a.href = url; a.download = name;
+                      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    }}>
+                    ⬇ Télécharger
+                  </Button>
+                )}
               </div>
               <div style={{
                 height: 420,
@@ -3111,16 +3134,7 @@ function JarvisRun({ flow, onBack }) {
                 padding: 0,
                 background: 'var(--bg-card)',
               }}>
-                {filePreview ? (
-                  <pre style={{
-                    margin: 0, padding: 14,
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11, lineHeight: 1.6,
-                    color: 'var(--ink)',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                  }}>{filePreview}</pre>
-                ) : accepted.length > 0 ? (
+                {accepted.length > 0 ? (
                   <div style={{ display: 'grid', gap: 4, padding: 12 }}>
                     {accepted.map((a, i) => (
                       <div key={i} className="fade-up" style={{
@@ -3138,7 +3152,7 @@ function JarvisRun({ flow, onBack }) {
                   </div>
                 ) : (
                   <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
-                    {state === 'idle' ? 'Aucun fichier encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
+                    {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
                   </div>
                 )}
               </div>
@@ -3640,12 +3654,26 @@ function ViewProductions() {
                 <Button size="sm" variant="ghost" onClick={() => setPreviewName(null)}>×</Button>
               </div>
             </div>
-            <pre style={{
-              margin: 0, padding: 18, overflow: 'auto',
-              fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
-              color: 'var(--ink)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              flex: 1,
-            }}>{previewContent}</pre>
+            {/* Si c'est un .html, on le rend dans un iframe (vis-network
+                interactif, etc.) au lieu d'afficher le source brut. */}
+            {previewName && previewName.toLowerCase().endsWith('.html') ? (
+              <iframe
+                title={previewName}
+                srcDoc={previewContent}
+                sandbox="allow-scripts allow-same-origin"
+                style={{
+                  flex: 1, width: '100%', border: 0, minHeight: 500,
+                  background: 'var(--bg)',
+                }}
+              />
+            ) : (
+              <pre style={{
+                margin: 0, padding: 18, overflow: 'auto',
+                fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
+                color: 'var(--ink)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                flex: 1,
+              }}>{previewContent}</pre>
+            )}
           </div>
         </div>
       )}
@@ -3845,53 +3873,184 @@ function AdminPanel() {
         </div>
       )}
 
-      {/* Export secrets */}
+      {/* Export secrets + édition + cache clear */}
       {info && info.export_secrets_enabled && (
-        <>
-          <div className="mono" style={{
-            fontSize: 11, color: 'var(--ink-3)',
-            textTransform: 'uppercase', letterSpacing: '0.1em',
-            marginBottom: 8,
-          }}>Export des secrets (.env)</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8 }}>
-            <Input value={password} onChange={setPassword}
-              placeholder="Mot de passe (EXPORT_SECRETS_PASSWORD)" mono />
-            <Button size="sm" onClick={doExport} disabled={busy}>
-              {busy ? '…' : 'Exporter'}
-            </Button>
-            {exported && (
-              <Button size="sm" variant="secondary" onClick={downloadEnv}>
-                ⬇ .env
-              </Button>
-            )}
-          </div>
-          {exportError && (
-            <div style={{
-              marginTop: 8, padding: 10,
-              background: 'rgba(200,58,115,0.08)',
-              border: '1px solid var(--jdm-magenta)',
-              borderRadius: 'var(--radius)',
-              color: 'var(--jdm-magenta)', fontSize: 12,
-            }}>{exportError}</div>
-          )}
-          {exported && (
-            <div style={{
-              marginTop: 10, padding: 12,
-              background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
-              fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
-              maxHeight: 240, overflow: 'auto',
-            }}>
-              {Object.entries(exported).map(([k, v]) => (
-                <div key={k} style={{ wordBreak: 'break-all' }}>
-                  <strong style={{ color: 'var(--accent)' }}>{k}</strong>
-                  =<span style={{ color: 'var(--ink-2)' }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+        <AdminSecretsSection password={password} setPassword={setPassword}
+          doExport={doExport} busy={busy} exported={exported}
+          exportError={exportError} downloadEnv={downloadEnv} />
       )}
     </Card>
+  );
+}
+
+function AdminSecretsSection({ password, setPassword, doExport, busy,
+                               exported, exportError, downloadEnv }) {
+  const [edits, setEdits] = useState({});
+  const [editMsg, setEditMsg] = useState('');
+  const [cacheMsg, setCacheMsg] = useState('');
+
+  const setOne = (k, v) => setEdits(e => ({ ...e, [k]: v }));
+
+  const submitEdits = async () => {
+    setEditMsg('');
+    const vars = Object.fromEntries(Object.entries(edits).filter(([_, v]) => v !== undefined));
+    if (Object.keys(vars).length === 0) { setEditMsg('Rien à modifier.'); return; }
+    try {
+      const r = await fetch('api/admin/env-set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, vars }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour. .env persisté : ${d.persisted_to_dotenv}.`);
+        setEdits({});
+      } else {
+        setEditMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setEditMsg(`✗ ${e.message || e}`);
+    }
+  };
+
+  const clearCache = async () => {
+    setCacheMsg('');
+    if (!confirm('Vider tout le cache disque JDM ?')) return;
+    try {
+      const r = await fetch('api/admin/cache-clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setCacheMsg(`✓ ${d.deleted_files} fichier(s) supprimé(s) dans ${d.cache_dir}`);
+      } else {
+        setCacheMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setCacheMsg(`✗ ${e.message || e}`);
+    }
+  };
+
+  // Variables modifiables (whitelist alignée backend _EXPORTABLE_ENV_VARS)
+  const EDITABLE_VARS = [
+    'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
+    'JDM_DROPS_API_KEY', 'JDM_DROPS_URL', 'LLM_PROVIDER', 'LLM_MODEL',
+  ];
+
+  return (
+    <>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>Authentification</div>
+      <Input value={password} onChange={setPassword}
+        placeholder="Mot de passe (EXPORT_SECRETS_PASSWORD)" mono />
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4, marginBottom: 16 }}>
+        Requis pour toutes les actions ci-dessous (export, modif env, clear cache).
+      </div>
+
+      {/* Export */}
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>1 · Export des secrets (.env)</div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <Button size="sm" onClick={doExport} disabled={busy || !password}>
+          {busy ? '…' : 'Exporter'}
+        </Button>
+        {exported && (
+          <Button size="sm" variant="secondary" onClick={downloadEnv}>
+            ⬇ Télécharger .env
+          </Button>
+        )}
+      </div>
+      {exportError && (
+        <div style={{
+          marginBottom: 8, padding: 10,
+          background: 'rgba(200,58,115,0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)', fontSize: 12,
+        }}>{exportError}</div>
+      )}
+      {exported && (
+        <div style={{
+          marginBottom: 16, padding: 12,
+          background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
+          maxHeight: 200, overflow: 'auto',
+        }}>
+          {Object.entries(exported).map(([k, v]) => (
+            <div key={k} style={{ wordBreak: 'break-all' }}>
+              <strong style={{ color: 'var(--accent)' }}>{k}</strong>
+              =<span style={{ color: 'var(--ink-2)' }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Édition env */}
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>2 · Modifier les variables d'environnement</div>
+      <div style={{
+        background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+        padding: 12, marginBottom: 8,
+      }}>
+        {EDITABLE_VARS.map(k => (
+          <div key={k} style={{
+            display: 'grid', gridTemplateColumns: '160px 1fr',
+            gap: 8, alignItems: 'center', marginBottom: 6,
+          }}>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{k}</div>
+            <Input value={edits[k] || ''}
+              onChange={(v) => setOne(k, v)}
+              placeholder="nouvelle valeur (vide = laisse l'actuelle)" mono />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <Button size="sm" onClick={submitEdits} disabled={!password}>
+          ✓ Appliquer les modifications
+        </Button>
+      </div>
+      {editMsg && (
+        <div style={{
+          marginBottom: 16, padding: 10,
+          background: editMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+          border: `1px solid ${editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+          borderRadius: 'var(--radius)',
+          color: editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+          fontSize: 12,
+        }}>{editMsg}</div>
+      )}
+
+      {/* Cache clear */}
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>3 · Cache disque JDM</div>
+      <Button size="sm" variant="secondary" onClick={clearCache} disabled={!password}>
+        🗑 Vider le cache JDM
+      </Button>
+      {cacheMsg && (
+        <div style={{
+          marginTop: 8, padding: 10,
+          background: cacheMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+          border: `1px solid ${cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+          borderRadius: 'var(--radius)',
+          color: cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+          fontSize: 12,
+        }}>{cacheMsg}</div>
+      )}
+    </>
   );
 }
 

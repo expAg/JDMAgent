@@ -40,7 +40,15 @@ function ViewClaim() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const run = async () => {
+  // `run(opts)` accepte un override explicite des valeurs — utile pour
+  // les boutons d'exemples qui changent le form ET veulent vérifier
+  // dans la même intention (sinon : race entre setState async et fetch).
+  const run = async (opts) => {
+    const _subject  = opts && opts.subject  !== undefined ? opts.subject  : subject;
+    const _relation = opts && opts.relation !== undefined ? opts.relation : relation;
+    const _object   = opts && opts.object   !== undefined ? opts.object   : object_;
+    const _effort   = opts && opts.effort   !== undefined ? opts.effort   : Number(effort);
+    const _bypass   = opts && opts.bypass   !== undefined ? opts.bypass   : !!bypass;
     setLoading(true);
     setError('');
     try {
@@ -48,11 +56,11 @@ function ViewClaim() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject,
-          relation,
-          object: object_,
-          effort: Number(effort),
-          bypass: !!bypass,
+          subject: _subject,
+          relation: _relation,
+          object: _object,
+          effort: Number(_effort),
+          bypass: !!_bypass,
         }),
       });
       if (!res.ok) {
@@ -60,15 +68,11 @@ function ViewClaim() {
         throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
       }
       const data = await res.json();
-      // SNAPSHOT du triplet AU MOMENT DE LA VÉRIFICATION — sinon si
-      // l'utilisateur change un champ du formulaire après le verdict,
-      // l'affichage du résultat utiliserait la nouvelle valeur du form
-      // (faux : on verrait le verdict de A appliqué au triplet B).
       const submitted = {
-        subject, relation,
-        object: object_,
-        effort: Number(effort),
-        bypass: !!bypass,
+        subject: _subject, relation: _relation,
+        object: _object,
+        effort: Number(_effort),
+        bypass: !!_bypass,
       };
       if (data.error) {
         setResult({
@@ -183,9 +187,12 @@ function ViewClaim() {
           <button key={i}
             className="focus-ring"
             onClick={() => {
+              // Update du form + run avec les NOUVELLES valeurs passées
+              // explicitement (le setState est async, run() lirait sinon
+              // l'ancien state). Fix la race « clic sur exemple → vérifie
+              // le triplet précédent puis affiche le nouveau form ».
               setSubject(s); setRelation(r); setObject(o);
-              // Délai pour laisser React appliquer les setState avant fetch
-              setTimeout(run, 50);
+              run({ subject: s, relation: r, object: o });
             }}
             style={{
               padding: '4px 10px',

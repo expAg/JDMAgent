@@ -426,14 +426,18 @@ function EmptyState({ icon, title, desc, action }) {
 
 // ───────── Triplet — visually distinctive "subject | relation | object" ─────
 function Triplet({ subject, relation, object, weight, annotations }) {
+  // Triplet à poids négatif = JDM AFFIRME que c'est faux. On teinte
+  // légèrement de magenta pour le signaler visuellement (cohérent
+  // avec le header « ✗ Évidences contraires » qui est aussi en magenta).
+  const isNegative = weight != null && Number(weight) < 0;
   return (
     <div style={{
       display: 'flex',
       alignItems: 'center',
       gap: 8,
       padding: '8px 10px',
-      background: 'var(--bg-elev)',
-      border: '1px solid var(--line-soft)',
+      background: isNegative ? 'rgba(200, 58, 115, 0.08)' : 'var(--bg-elev)',
+      border: `1px solid ${isNegative ? 'rgba(200, 58, 115, 0.35)' : 'var(--line-soft)'}`,
       borderRadius: 'var(--radius)',
       fontFamily: 'var(--font-mono)',
       fontSize: 12,
@@ -441,14 +445,15 @@ function Triplet({ subject, relation, object, weight, annotations }) {
     }}>
       <span style={{ color: 'var(--ink)', fontWeight: 600 }}>{subject}</span>
       <span style={{ color: 'var(--ink-3)' }}>│</span>
-      <span style={{ color: 'var(--accent)' }}>{relation}</span>
+      <span style={{ color: isNegative ? 'var(--jdm-magenta)' : 'var(--accent)' }}>{relation}</span>
       <span style={{ color: 'var(--ink-3)' }}>│</span>
       <span style={{ color: 'var(--ink)', fontWeight: 600 }}>{object}</span>
       {weight != null && (
         <span style={{
           marginLeft: 'auto',
-          color: 'var(--ink-3)',
+          color: isNegative ? 'var(--jdm-magenta)' : 'var(--ink-3)',
           fontSize: 11,
+          fontWeight: isNegative ? 600 : 400,
         }}>w={weight}</span>
       )}
       {annotations && (

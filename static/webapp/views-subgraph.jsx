@@ -260,14 +260,10 @@ function ViewSubgraph() {
                   sandbox="allow-scripts allow-same-origin"
                   style={{
                     width: '100%', height: '100%', border: 0, display: 'block',
-                    // L'HTML interne vis-network a un fond blanc fixe ; on
-                    // ne peut pas le re-skinner sans toucher au template
-                    // côté backend. Le filter inverse couleurs en mode
-                    // lab seulement (preserve les couleurs des nœuds via
-                    // hue-rotate). Compromis temporaire en attendant un
-                    // vrai theming du template HTML.
-                    filter: document.body.dataset.theme === 'lab'
-                            ? 'invert(0.92) hue-rotate(180deg)' : 'none',
+                    // Le HTML interne a un fond transparent (override CSS
+                    // injecté côté backend), donc l'iframe montre cette
+                    // couleur — qui suit le thème via var(--bg).
+                    background: 'var(--bg)',
                   }}
                 />
               ) : data.nodes && data.nodes.length > 0 ? (
