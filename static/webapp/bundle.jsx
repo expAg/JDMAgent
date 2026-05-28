@@ -743,7 +743,7 @@ function ViewProjet({ goto }) {
             Agent <em style={{
               fontFamily: 'var(--font-display)',
               fontStyle: 'italic', color: 'var(--accent)',
-            }}>Jarvis</em> :<br/>plateforme web.
+            }}>Jarvis</em> :<br/>Plateforme web.
           </h1>
           <p style={{
             marginTop: 22,
@@ -763,8 +763,8 @@ function ViewProjet({ goto }) {
           <div style={{ display: 'flex', gap: 10, marginTop: 28, flexWrap: 'wrap' }}>
             <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
             <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
-            <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
             <Button variant="secondary" onClick={() => goto('subgraph')}>Visualiser</Button>
+            <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
           </div>
         </div>
 
