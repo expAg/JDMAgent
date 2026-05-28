@@ -1763,6 +1763,13 @@ Statistiques de couverture par terme et/ou par relation.
 - **Output** : tableau (n_total, n_pos, n_neg, max_w, min_w, mean_w par relation) + 3-5 observations clés.
 - **Workflow** : `stats_workflow()`.
 
+### 🏷️ Annotation sémantique
+Qualifier des **liens** JDM selon la taxonomie 4 catégories : `constitutif` / `contrastif` / `non spécifique` / `exception`.
+L'annotation porte sur le LIEN, PAS sur l'objet. Pas de consolidation par inférence — jugement linguistique de locuteur pur.
+- **Form** : terme (optionnel), relation(s) (optionnel), top-K, soumettre directement.
+- **Output** : fichier `.annot` à deux sections — annotations + signalement des désaccords avec JDM existant.
+- **Workflow** : `annotation_workflow()`.
+
 ## 3. Obtenir les clés API
 
 | Clé | Où ? | Coût | Quand l'utiliser |
@@ -4140,7 +4147,190 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                         outputs=[jst_term, jst_relation, jarvis_tabs],
                     )
 
-                # ---- Sous-onglet 6 : 📁 Productions ----
+                # ---- Sous-onglet 6 : 🏷️ Annotation sémantique ----
+                # Annoter des triplets existants selon la taxonomie 4 catégories
+                # (constitutif/contrastif/non spécifique/exception). Pas de
+                # consolidation par inférence — c'est un jugement de locuteur.
+                with gr.Tab("🏷️ Annotation", id="jarvis-annot"):
+                    gr.Markdown(
+                        "Annotation sémantique des triplets JDM selon la "
+                        "**taxonomie 4 catégories** :\n"
+                        "* **constitutif** — trait définitionnel essentiel\n"
+                        "* **contrastif** — différenciation clé / pairs proches\n"
+                        "* **non spécifique** — vrai mais trop générique\n"
+                        "* **exception** — valide en cadre restreint / contredit\n\n"
+                        "L'annotation qualifie le **LIEN**, pas l'objet. "
+                        "Pas de consolidation par inférence : c'est un jugement "
+                        "linguistique de locuteur. Sortie : fichier `.annot` "
+                        "à deux sections (annotations + signalement des désaccords "
+                        "avec JDM existant)."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            jan_term = gr.Textbox(
+                                label="Terme (optionnel)",
+                                placeholder="ex: avocat (juriste)",
+                            )
+                            jan_relation = gr.Dropdown(
+                                choices=JARVIS_RELATIONS,
+                                value=[],
+                                label="Relation(s) (optionnel — multi)",
+                                allow_custom_value=True,
+                                multiselect=True,
+                                info=(
+                                    "Vide → annote les 7 relations principales "
+                                    "(r_isa, r_has_part, r_carac, r_telic_role, "
+                                    "r_lieu, r_anto, r_syn)."
+                                ),
+                            )
+                            jan_topk = gr.Slider(
+                                minimum=3, maximum=15, value=8, step=1,
+                                label="Top-K par relation",
+                                info="Nombre de triplets annotés par relation.",
+                            )
+                            gr.Markdown(
+                                "<small><em>Si les deux champs sont vides, "
+                                "le LLM tire 2-3 termes français au hasard.</em></small>"
+                            )
+                            jan_upload = gr.Checkbox(
+                                value=False,
+                                label="Soumettre directement à JDM (LLMDrops)",
+                                info="Nécessite une clé API LLMDrops dans le bandeau ou en env.",
+                            )
+                            jan_launch = gr.Button(
+                                "🏷️ Lancer l'annotation",
+                                variant="primary",
+                            )
+                            from jarvis import has_drops_key as _hk_an
+                            jan_submit = gr.Button(
+                                "📤 Soumettre à JDM (post-hoc)",
+                                variant="stop",
+                                visible=False,
+                                interactive=_hk_an(),
+                            )
+                        with gr.Column(scale=2):
+                            jan_chat = gr.Chatbot(
+                                type="messages",
+                                elem_id="jarvis-annot-chat",
+                                show_label=False,
+                                resizable=True,
+                                height=520,
+                            )
+                            jan_file = gr.File(
+                                label="📄 Fichier .annot produit",
+                                interactive=False,
+                                visible=False,
+                            )
+                            jan_preview = gr.Code(
+                                label="Aperçu du fichier",
+                                language=None,
+                                lines=12,
+                                interactive=False,
+                                visible=False,
+                            )
+                            jan_resume_state = gr.State(value=None)
+                            jan_continue_btn = gr.Button(
+                                "▶️ Continuer avec gemini-3.1-flash-lite",
+                                visible=False, variant="primary",
+                            )
+
+                    def _run_annotation(term, relations, top_k, upload,
+                                        drops_key, model, budget_label,
+                                        use_thinking, auto_switch, resume_state):
+                        from jarvis import build_annotation_prompt, run_jarvis_flow
+                        from jdm_agent.tools.jdm_agent import build_jdm_agent
+                        prompt = build_annotation_prompt(
+                            term=term, relation=relations,
+                            top_k=int(top_k),
+                            budget_label=str(budget_label),
+                            upload=bool(upload),
+                        )
+                        t = (term or "").strip()
+                        rels = relations if isinstance(relations, list) else (
+                            [relations] if relations else []
+                        )
+                        if t and rels:
+                            headline = (
+                                f"🏷️ Annotation de « {t} » sur {len(rels)} relation(s)"
+                            )
+                        elif t:
+                            headline = f"🏷️ Annotation de « {t} »"
+                        elif rels:
+                            headline = f"🏷️ Annotation sur {len(rels)} relation(s) (termes au hasard)"
+                        else:
+                            headline = "🏷️ Annotation (termes tirés au hasard)"
+                        abort_yielded = False
+                        for chunk in run_jarvis_flow(
+                            prompt=prompt, headline=headline,
+                            model=model, api_key="",
+                            budget_label=str(budget_label),
+                            drops_key=drops_key,
+                            build_llm_fn=_build_llm,
+                            build_agent_fn=build_jdm_agent,
+                            get_client_fn=get_client,
+                            use_thinking=bool(use_thinking),
+                            auto_switch_on_perday=bool(auto_switch),
+                            resume_state=resume_state,
+                        ):
+                            if len(chunk) == 5:
+                                messages, fpath, fprev, state, _ = chunk
+                                abort_yielded = True
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    state, gr.update(visible=True),
+                                )
+                            else:
+                                messages, fpath, fprev = chunk
+                                yield (
+                                    messages,
+                                    gr.update(value=fpath, visible=bool(fpath)),
+                                    gr.update(value=fprev, visible=bool(fprev)),
+                                    gr.skip(), gr.skip(),
+                                )
+                        if not abort_yielded:
+                            yield (gr.skip(), gr.skip(), gr.skip(),
+                                   None, gr.update(visible=False))
+
+                    _jan_inputs = [jan_term, jan_relation, jan_topk, jan_upload,
+                                   jarvis_drops_key, jarvis_model, jarvis_budget,
+                                   jarvis_thinking, jarvis_auto_switch_cb,
+                                   jan_resume_state]
+                    _jan_outputs = [jan_chat, jan_file, jan_preview,
+                                    jan_resume_state, jan_continue_btn]
+                    jan_launch.click(_run_annotation, inputs=_jan_inputs, outputs=_jan_outputs)
+                    jan_continue_btn.click(_run_annotation, inputs=_jan_inputs, outputs=_jan_outputs)
+                    jan_chat.change(
+                        refresh_dropdowns_silent,
+                        inputs=None,
+                        outputs=[model_in, jarvis_model],
+                        show_progress="hidden",
+                    )
+
+                    def _show_annot_submit(file_path, drops_key):
+                        if not file_path:
+                            return gr.update(visible=False)
+                        from jarvis import has_drops_key as _hk
+                        return gr.update(visible=True, interactive=_hk(drops_key))
+
+                    jan_file.change(
+                        _show_annot_submit,
+                        inputs=[jan_file, jarvis_drops_key],
+                        outputs=[jan_submit],
+                    )
+
+                    def _submit_annot(file_path, drops_key, model, chat):
+                        from jarvis import submit_existing_file
+                        return submit_existing_file(file_path, drops_key, model, chat)
+
+                    jan_submit.click(
+                        _submit_annot,
+                        inputs=[jan_file, jarvis_drops_key, jarvis_model, jan_chat],
+                        outputs=[jan_chat],
+                    )
+
+                # ---- Sous-onglet 7 : 📁 Productions ----
                 # Centralise TOUS les fichiers produits par l'agent (sous-graphes
                 # HTML, .enrich, .audit, .err, .stat). Arborescence à gauche,
                 # viewer adaptatif à droite (iframe pour HTML, code pour text,

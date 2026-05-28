@@ -1050,6 +1050,101 @@ def build_stats_prompt(
     return "\n".join(parts)
 
 
+def build_annotation_prompt(
+    term: str = "",
+    relation=None,
+    top_k: int = 8,
+    budget_label: str = "50",
+    upload: bool = False,
+) -> str:
+    """Pré-prompt du flow Annotation sémantique.
+
+    Le LLM annote les triplets existants selon la taxonomie 4 catégories
+    (constitutif/contrastif/non spécifique/exception). L'annotation
+    qualifie le LIEN, pas l'objet. Pas de consolidation par inférence.
+    """
+    term = (term or "").strip()
+    rels = _norm_relations(relation)
+    rel_label = (
+        f"`{rels[0]}`" if len(rels) == 1
+        else (", ".join(f"`{r}`" for r in rels) if rels else "")
+    )
+    parts: list[str] = []
+    if term and rels:
+        parts.append(
+            f"Je veux ANNOTER sémantiquement les triplets JDM du terme "
+            f"« {term} » RESTREINTS à la/aux relation(s) {rel_label}."
+        )
+        parts.append(
+            "⚠️ Limite-toi STRICTEMENT à cette/ces relation(s) — n'en "
+            "examine aucune autre."
+        )
+    elif term:
+        parts.append(
+            f"Je veux ANNOTER sémantiquement les triplets JDM du terme "
+            f"« {term} » sur les relations principales (r_isa, r_has_part, "
+            "r_carac, r_telic_role, r_lieu, r_anto, r_syn)."
+        )
+    elif rels:
+        parts.append(
+            f"Je veux ANNOTER sémantiquement des triplets JDM portant sur "
+            f"la/les relation(s) {rel_label} — choisis toi-même 2-3 termes "
+            "français variés (animal, objet, action) pour l'illustration."
+        )
+        parts.append(
+            "⚠️ Limite-toi STRICTEMENT à cette/ces relation(s)."
+        )
+    else:
+        parts.append(
+            "Je veux ANNOTER sémantiquement des triplets JDM mais je n'ai "
+            "ni terme ni relation précisé — choisis 2-3 termes français "
+            "variés au hasard (animal, objet, action) et annote leurs "
+            "triplets principaux."
+        )
+        parts.append(_RANDOM_TERM_INSTRUCTION)
+    parts.append(
+        f"Top-K par relation : {int(top_k)}. Au-delà = bruit, on annote "
+        "les plus saillants."
+    )
+    if _is_bounded_budget(budget_label):
+        parts.append(
+            f"Budget : {budget_label} appels d'outils maximum."
+        )
+    parts.append(
+        "TAXONOMIE STRICTE (4 catégories) :\n"
+        "  - `constitutif` : trait définitionnel essentiel\n"
+        "  - `contrastif` : différenciation clé / pairs proches\n"
+        "  - `non spécifique` : vrai mais trop générique\n"
+        "  - `exception` : valide en cadre restreint / contredit\n"
+        "Si aucune ne convient → vide (pas d'annotation forcée)."
+    )
+    parts.append(
+        "⚠️ L'annotation qualifie le LIEN, PAS l'objet. Respecte le "
+        "SENS RAFFINÉ (désambiguïse d'abord si polysémique)."
+    )
+    parts.append(
+        "Section SIGNALEMENT du `.annot` : pour CHAQUE triplet, vérifie "
+        "via `get_triplet_annotations` si JDM a déjà une annotation parmi "
+        "la taxonomie. Si tu es en DÉSACCORD → écris le triplet en "
+        "SECTION SIGNALEMENT (format JDM:<existant>|LLM:<tien> < argument "
+        "contre >) au lieu de la section principale."
+    )
+    if upload:
+        parts.append(
+            "Soumets directement le fichier `.annot` à JDM (LLMDrops) à "
+            "la fin (`write_submission_file(..., upload=True)`)."
+        )
+    else:
+        parts.append(
+            "Écris le fichier `.annot` à la fin "
+            "(`write_submission_file(..., upload=False)`)."
+        )
+    parts.append(
+        "Tu SUIVRAS `annotation_workflow()` en TOUT PREMIER. Obligatoire."
+    )
+    return "\n".join(parts)
+
+
 # ---------- Exécution de flow agent (avec budget) ----------
 
 # Mapping label dropdown → limite numérique. `"illimité"` → None.
