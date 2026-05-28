@@ -644,7 +644,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   // titres / listes / **gras** / `code` se rendent
                   // correctement (cf. chatbot et enrich qui font pareil).
                   <div className="jdm-prose"
-                       dangerouslySetInnerHTML={{ __html: renderMarkdownLite(narrationHTML) }} />
+                       dangerouslySetInnerHTML={{ __html: renderMarkdownJarvis(narrationHTML) }} />
                 ) : (
                   // Fallback : entrées tag/temps des events headline/file/etc.
                   log.map((l, i) => (
@@ -881,7 +881,7 @@ function ItemCard({ item, accent }) {
 // Contenu produit par notre propre LLM = confiance, on n'escape pas.
 // marked.js (chargé dans index.html) fait tout le boulot ; fallback
 // léger si non disponible.
-function renderMarkdownLite(s) {
+function renderMarkdownJarvis(s) {
   s = s || '';
   if (typeof window !== 'undefined' && window.marked) {
     try {
