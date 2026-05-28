@@ -115,6 +115,8 @@ RÈGLES :
     * détecter les trous / la couverture            → `gap_detection_workflow()`
     * signaler / reporter des erreurs                → `signalement_workflow()`
     * stats / compter / distribution                 → `stats_workflow()`
+    * annoter / catégoriser sémantiquement (constitutif/contrastif/non spécifique/exception)
+                                                     → `annotation_workflow()`
 
 14. DÉTECTION DE TROUS SANS TERME : si on te demande de détecter les trous
     pour une relation seule sans préciser de terme (ex. « détecte les
