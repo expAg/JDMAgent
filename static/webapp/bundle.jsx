@@ -1,4 +1,3 @@
-
 // === webapp/shared.jsx ===
 // Shared components — custom Select (fix dropdown hit-area bug),
 // Field wrapper, Button, Card, Pill, Sparkline, JDMLogo mark.
@@ -635,7 +634,6 @@ Object.assign(window, {
   Triplet, TopNav, ThemeSwitcher, PageShell, JDMMark, JDMWordmark,
 });
 
-
 // === webapp/views-projet.jsx ===
 // View: Projet — landing / about page describing JDMAgent.
 
@@ -872,9 +870,9 @@ function ViewProjet({ goto }) {
 
 window.ViewProjet = ViewProjet;
 
-
 // === webapp/views-explorer.jsx ===
 // View: Explorer — fetch relations for a term.
+// Migration FastAPI : remplace FAKE_DATA par fetch('/api/explore').
 
 const EXPLORE_RELATIONS = [
   { value: 'r_syn', label: 'Synonymes', sub: 'r_syn' },
@@ -895,62 +893,55 @@ const EXPLORE_RELATIONS = [
   { value: 'r_manner', label: 'Manière (verbe / processus)', sub: 'r_manner' },
 ];
 
-// Fake dataset for the demo — different by (term, relation).
-const FAKE_DATA = {
-  'chat | r_has_part': [
-    { t: 'patte', w: 142, a: 'constitutif (w=12)' },
-    { t: 'queue', w: 138 },
-    { t: 'oreille', w: 121, a: 'constitutif (w=10)' },
-    { t: 'griffe', w: 110 },
-    { t: 'moustache', w: 104 },
-    { t: 'œil', w: 98 },
-    { t: 'fourrure', w: 85 },
-    { t: 'pelage', w: 72 },
-    { t: 'crocs', w: 51 },
-  ],
-  'chat | r_isa': [
-    { t: 'félin', w: 215, a: 'constitutif (w=18)' },
-    { t: 'mammifère', w: 198 },
-    { t: 'animal de compagnie', w: 142 },
-    { t: 'carnivore', w: 121 },
-    { t: 'animal domestique', w: 118 },
-    { t: 'animal', w: 102 },
-    { t: 'vertébré', w: 56 },
-  ],
-  'chat | r_syn': [
-    { t: 'matou', w: 89 },
-    { t: 'minet', w: 72 },
-    { t: 'félin', w: 58 },
-    { t: 'greffier', w: 14, a: 'familier (w=8)' },
-    { t: 'mistigri', w: 11, a: 'familier (w=6)' },
-  ],
-  'avocat | r_isa': [
-    { t: 'fruit', w: 121, a: 'sens : fruit' },
-    { t: 'juriste', w: 118, a: 'sens : profession' },
-    { t: 'légume', w: 32 },
-    { t: 'défenseur', w: 28 },
-  ],
-};
-
 function ViewExplorer() {
   const [term, setTerm] = useState('chat');
   const [rel, setRel] = useState('r_has_part');
   const [minWeight, setMinWeight] = useState(25);
   const [limit, setLimit] = useState(50);
   const [annotations, setAnnotations] = useState(true);
-  const [loaded, setLoaded] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
+  // rows = liste de {source, relation, target, weight, annotations, target_id}
+  // (forme directement renvoyee par /api/explore — pas de remapping cote front)
+  const [rows, setRows] = useState([]);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
 
-  const key = `${term} | ${rel}`;
-  const data = FAKE_DATA[key] || FAKE_DATA['chat | r_has_part'];
-  const rows = data
-    .filter(r => r.w >= minWeight)
-    .slice(0, limit);
-
-  const onRun = () => {
+  const onRun = async () => {
     setLoading(true);
-    setTimeout(() => { setLoading(false); setLoaded(true); }, 380);
+    setError('');
+    setMessage('');
+    try {
+      const res = await fetch('api/explore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          term,
+          relation: rel,
+          min_weight: Number(minWeight),
+          limit: Number(limit),
+          with_annotations: !!annotations,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      setRows(Array.isArray(data.rows) ? data.rows : []);
+      setMessage(data.message || '');
+      setLoaded(true);
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+      setRows([]);
+      setLoaded(true);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // Auto-run au premier render pour montrer un resultat (chat r_has_part)
+  React.useEffect(() => { onRun(); }, []);
 
   return (
     <PageShell>
@@ -960,7 +951,7 @@ function ViewExplorer() {
         desc="Récupère les relations d'un terme dans JeuxDeMots. Instantané, déterministe, mis en cache."
       />
 
-      {/* Controls + sense-disambiguation hint */}
+      {/* Controls */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
@@ -974,7 +965,7 @@ function ViewExplorer() {
         <Field label="Type de relation">
           <Select value={rel} options={EXPLORE_RELATIONS} onChange={setRel} />
         </Field>
-        <Button onClick={onRun} size="lg">
+        <Button onClick={onRun} size="lg" disabled={loading}>
           {loading ? 'Chargement…' : 'Interroger'}
         </Button>
       </div>
@@ -1008,8 +999,23 @@ function ViewExplorer() {
         </label>
       </div>
 
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          padding: 16,
+          marginBottom: 16,
+          background: 'rgba(200, 58, 115, 0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)',
+          fontSize: 13,
+        }}>
+          ⚠️ {error}
+        </div>
+      )}
+
       {/* Results */}
-      {loaded && (
+      {loaded && !error && (
         <div>
           <div style={{
             display: 'flex',
@@ -1023,36 +1029,42 @@ function ViewExplorer() {
               <span style={{ color: 'var(--ink)' }}>{term}</span> | <span style={{ color: 'var(--accent)' }}>{rel}</span> | ?
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <Button size="sm" variant="secondary">Exporter CSV</Button>
-              <Button size="sm" variant="ghost">Voir le graphe →</Button>
+              <Button size="sm" variant="secondary"
+                onClick={() => exportCSV(rows, term, rel)}>Exporter CSV</Button>
+              <Button size="sm" variant="ghost"
+                onClick={() => window.dispatchEvent(new CustomEvent('jdm:goto', { detail: { view: 'subgraph', term } }))}>
+                Voir le graphe →
+              </Button>
             </div>
           </div>
 
           {/* Distribution sparkline */}
-          <Card padding={16} style={{ marginBottom: 16 }}>
-            <div style={{
-              display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-              marginBottom: 10,
-            }}>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                Distribution des poids
+          {rows.length > 0 && (
+            <Card padding={16} style={{ marginBottom: 16 }}>
+              <div style={{
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                marginBottom: 10,
+              }}>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Distribution des poids
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  max {Math.max(...rows.map(r => r.weight))} · min {Math.min(...rows.map(r => r.weight))}
+                </div>
               </div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                max {Math.max(...rows.map(r => r.w))} · min {Math.min(...rows.map(r => r.w))}
-              </div>
-            </div>
-            <Bars rows={rows} />
-          </Card>
+              <Bars rows={rows} />
+            </Card>
+          )}
 
           {/* Triplets list */}
           <div style={{ display: 'grid', gap: 6 }}>
             {rows.map((r, i) => (
               <Triplet key={i}
-                subject={term}
-                relation={rel}
-                object={r.t}
-                weight={r.w}
-                annotations={annotations ? r.a : undefined}
+                subject={r.source || term}
+                relation={r.relation || rel}
+                object={r.target}
+                weight={r.weight}
+                annotations={annotations && r.annotations ? r.annotations : undefined}
               />
             ))}
           </div>
@@ -1060,7 +1072,7 @@ function ViewExplorer() {
           {rows.length === 0 && (
             <EmptyState
               title="Aucun triplet"
-              desc={`Aucun « ${term} | ${rel} | ? » avec w ≥ ${minWeight}. Essaie un seuil plus bas.`}
+              desc={message || `Aucun « ${term} | ${rel} | ? » avec w ≥ ${minWeight}. Essaie un seuil plus bas.`}
             />
           )}
         </div>
@@ -1070,7 +1082,7 @@ function ViewExplorer() {
 }
 
 function Bars({ rows }) {
-  const max = Math.max(...rows.map(r => r.w), 1);
+  const max = Math.max(...rows.map(r => r.weight), 1);
   return (
     <div style={{
       display: 'flex',
@@ -1079,13 +1091,13 @@ function Bars({ rows }) {
       height: 64,
     }}>
       {rows.map((r, i) => (
-        <div key={i} title={`${r.t} · w=${r.w}`}
+        <div key={i} title={`${r.target} · w=${r.weight}`}
           style={{
             flex: 1,
-            height: `${(r.w / max) * 100}%`,
+            height: `${(r.weight / max) * 100}%`,
             minHeight: 2,
             background: 'var(--accent)',
-            opacity: 0.3 + 0.7 * (r.w / max),
+            opacity: 0.3 + 0.7 * (r.weight / max),
             borderRadius: '2px 2px 0 0',
           }} />
       ))}
@@ -1093,11 +1105,33 @@ function Bars({ rows }) {
   );
 }
 
+// Helper : export CSV simple (téléchargement client-side)
+function exportCSV(rows, term, rel) {
+  if (!rows || rows.length === 0) return;
+  const header = ['source', 'relation', 'target', 'weight', 'annotations', 'target_id'];
+  const escape = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [header.join(',')];
+  for (const r of rows) {
+    lines.push(header.map(k => escape(r[k])).join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `jdm_${term}_${rel}.csv`.replace(/[^a-z0-9_\-.]/gi, '_');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 window.ViewExplorer = ViewExplorer;
 
-
 // === webapp/views-claim.jsx ===
-// View: Claim checker — verify subject | relation | object.
+// View: Claim checker — verify subject | relation | object via /api/factcheck.
 
 const CLAIM_RELATIONS_OPTS = [
   { value: 'r_isa', label: 'r_isa — est un' },
@@ -1121,45 +1155,11 @@ const EFFORT_OPTS = [
   { value: 2, label: '2 — + inférence complète', sub: 'tous les schémas (lent)' },
 ];
 
-const SCENARIOS = {
-  'tomate|r_isa|fruit': {
-    status: 'supported',
-    confidence: 0.94,
-    explanation: 'Triplet trouvé directement dans JDM avec poids 256.',
-    origin: 'contenance',
-    proof: [
-      { s: 'tomate', r: 'r_isa', t: 'fruit', w: 256 },
-    ],
-  },
-  'tomate|r_isa|légume': {
-    status: 'contradicted',
-    confidence: 0.82,
-    explanation: 'JDM contient tomate r_isa fruit (w=256). Aucune trace de tomate r_isa légume.',
-    origin: 'contenance',
-    counter: [
-      { s: 'tomate', r: 'r_isa', t: 'fruit', w: 256 },
-    ],
-  },
-  'chat|r_isa|animal': {
-    status: 'supported',
-    confidence: 0.97,
-    explanation: 'Verdict obtenu par inférence (isa-transitivité).',
-    origin: 'inférence',
-    proof: [
-      { s: 'chat', r: 'r_isa', t: 'mammifère', w: 198 },
-      { s: 'mammifère', r: 'r_isa', t: 'vertébré', w: 220 },
-      { s: 'vertébré', r: 'r_isa', t: 'animal', w: 305 },
-    ],
-  },
-  'chat|r_agent|aboyer': {
-    status: 'contradicted',
-    confidence: 0.78,
-    explanation: 'Le verbe aboyer a chien comme agent typique. Aucun lien chat-aboyer trouvé.',
-    origin: 'contenance',
-    counter: [
-      { s: 'aboyer', r: 'r_agent', t: 'chien', w: 312 },
-    ],
-  },
+// Mapping backend origin → libellé FR pour l'UI.
+const ORIGIN_LABEL = {
+  inference: 'inférence',
+  containment: 'contenance',
+  none: '—',
 };
 
 function ViewClaim() {
@@ -1168,28 +1168,65 @@ function ViewClaim() {
   const [object_, setObject] = useState('animal');
   const [effort, setEffort] = useState(1);
   const [bypass, setBypass] = useState(false);
-  const [result, setResult] = useState(SCENARIOS['chat|r_isa|animal']);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const run = () => {
+  const run = async () => {
     setLoading(true);
-    setTimeout(() => {
-      const key = `${subject}|${relation}|${object_}`;
-      setResult(SCENARIOS[key] || {
-        status: 'unknown',
-        confidence: 0.0,
-        explanation: 'Aucun triplet direct, aucune chaîne d\'inférence trouvée.',
-        origin: '—',
+    setError('');
+    try {
+      const res = await fetch('api/factcheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject,
+          relation,
+          object: object_,
+          effort: Number(effort),
+          bypass: !!bypass,
+        }),
       });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      if (data.error) {
+        // Cas terme inconnu : on affiche le banner UNKNOWN avec le message
+        setResult({
+          status: 'unknown',
+          confidence: 0,
+          explanation: data.error,
+          origin: ORIGIN_LABEL[data.origin] || '—',
+        });
+      } else {
+        setResult({
+          status: data.status,
+          confidence: data.confidence,
+          explanation: data.explanation,
+          origin: ORIGIN_LABEL[data.origin] || '—',
+          inference_schema: data.inference_schema,
+          proof: data.proof,
+          counter: data.counter,
+        });
+      }
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+      setResult(null);
+    } finally {
       setLoading(false);
-    }, 460);
+    }
   };
 
+  // Auto-run au mount pour montrer un exemple
+  React.useEffect(() => { run(); }, []);
+
   const examples = [
-    ['chat', 'r_isa', 'animal', '✅'],
-    ['tomate', 'r_isa', 'fruit', '✅'],
-    ['tomate', 'r_isa', 'légume', '❌'],
-    ['chat', 'r_agent', 'aboyer', '❌'],
+    ['chat', 'r_isa', 'animal'],
+    ['tomate', 'r_isa', 'fruit'],
+    ['tomate', 'r_isa', 'légume'],
+    ['chat', 'r_agent', 'aboyer'],
   ];
 
   return (
@@ -1235,7 +1272,7 @@ function ViewClaim() {
           marginTop: 18,
         }}>
           <Field label="Effort de vérification">
-            <Select value={effort} options={EFFORT_OPTS} onChange={setEffort} />
+            <Select value={effort} options={EFFORT_OPTS} onChange={(v) => setEffort(Number(v))} />
           </Field>
           <label style={{
             display: 'flex', alignItems: 'center', gap: 8,
@@ -1247,7 +1284,7 @@ function ViewClaim() {
               style={{ accentColor: 'var(--accent)' }} />
             Bypass contenance
           </label>
-          <Button onClick={run} size="lg">
+          <Button onClick={run} size="lg" disabled={loading}>
             {loading ? 'Vérification…' : 'Vérifier'}
           </Button>
         </div>
@@ -1263,15 +1300,13 @@ function ViewClaim() {
           textTransform: 'uppercase', letterSpacing: '0.1em',
           alignSelf: 'center', marginRight: 6,
         }}>Exemples :</span>
-        {examples.map(([s, r, o, icon], i) => (
+        {examples.map(([s, r, o], i) => (
           <button key={i}
             className="focus-ring"
             onClick={() => {
               setSubject(s); setRelation(r); setObject(o);
-              setTimeout(() => {
-                const k = `${s}|${r}|${o}`;
-                setResult(SCENARIOS[k] || result);
-              }, 100);
+              // Délai pour laisser React appliquer les setState avant fetch
+              setTimeout(run, 50);
             }}
             style={{
               padding: '4px 10px',
@@ -1283,10 +1318,25 @@ function ViewClaim() {
               fontSize: 11,
               cursor: 'pointer',
             }}>
-            {icon} {s} | {r} | {o}
+            {s} | {r} | {o}
           </button>
         ))}
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          padding: 16,
+          marginBottom: 16,
+          background: 'rgba(200, 58, 115, 0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)',
+          fontSize: 13,
+        }}>
+          ⚠️ {error}
+        </div>
+      )}
 
       {/* Result */}
       {result && <ClaimResult result={result} subject={subject} relation={relation} object={object_} />}
@@ -1310,7 +1360,9 @@ function ClaimResult({ result, subject, relation, object }) {
     supported:    { icon: '✓', label: 'SUPPORTED',    color: 'var(--jdm-green)' },
     contradicted: { icon: '✗', label: 'CONTRADICTED', color: 'var(--jdm-magenta)' },
     unknown:      { icon: '?', label: 'UNKNOWN',      color: 'var(--ink-3)' },
-  }[result.status];
+  }[result.status] || { icon: '?', label: result.status, color: 'var(--ink-3)' };
+
+  const confidence = typeof result.confidence === 'number' ? result.confidence : 0;
 
   return (
     <div className="fade-up">
@@ -1361,6 +1413,14 @@ function ClaimResult({ result, subject, relation, object }) {
             }}>{object}</span>
           </div>
           <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{result.explanation}</div>
+          {result.inference_schema && (
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--ink-3)',
+              marginTop: 8,
+            }}>
+              schéma : <span style={{ color: 'var(--accent)' }}>{result.inference_schema}</span>
+            </div>
+          )}
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div className="mono" style={{
@@ -1373,7 +1433,7 @@ function ClaimResult({ result, subject, relation, object }) {
             color: 'var(--ink)',
             lineHeight: 1,
             marginTop: 6,
-          }}>{result.confidence.toFixed(2)}</div>
+          }}>{confidence.toFixed(2)}</div>
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
             {result.origin === 'inférence' ? '🧠 via inférence' :
              result.origin === 'contenance' ? '📦 via contenance' : ''}
@@ -1382,7 +1442,7 @@ function ClaimResult({ result, subject, relation, object }) {
       </div>
 
       {/* Proof chain */}
-      {result.proof && (
+      {result.proof && result.proof.length > 0 && (
         <Card>
           <div className="mono" style={{
             fontSize: 11, color: 'var(--ink-3)',
@@ -1397,7 +1457,7 @@ function ClaimResult({ result, subject, relation, object }) {
         </Card>
       )}
 
-      {result.counter && (
+      {result.counter && result.counter.length > 0 && (
         <Card>
           <div className="mono" style={{
             fontSize: 11, color: 'var(--jdm-magenta)',
@@ -1417,25 +1477,93 @@ function ClaimResult({ result, subject, relation, object }) {
 
 window.ViewClaim = ViewClaim;
 
-
 // === webapp/views-subgraph.jsx ===
-// View: Sous-graphe — extract & visualise a term's neighbourhood.
+// View: Sous-graphe — extract & visualise a term's neighbourhood via /api/subgraph.
 
 const SUBGRAPH_RELATIONS = [
   'r_syn', 'r_isa', 'r_hypo', 'r_has_part', 'r_carac',
   'r_has_color', 'r_lieu', 'r_agent', 'r_patient', 'r_instr',
 ];
 
+// Couleur par "kind" de relation — calque du PALETTE backend.
+const KIND_COLOR = {
+  center: '#1a1a1a',
+  isa:    '#1565c0',
+  hypo:   '#2e7d32',
+  syn:    '#558b2f',
+  anto:   '#c62828',
+  carac:  '#6a1b9a',
+  part:   '#a04500',
+  lieu:   '#00838f',
+  verb:   '#ef6c00',
+  domain: '#455a64',
+  assoc:  '#757575',
+};
+
+const KIND_OF_REL = {
+  r_isa: 'isa', r_hypo: 'hypo', r_syn: 'syn', r_anto: 'anto',
+  r_carac: 'carac', r_has_part: 'part', r_lieu: 'lieu',
+  'r_patient-1': 'verb', 'r_agent-1': 'verb',
+  r_domain: 'domain', r_associated: 'assoc',
+};
+
 function ViewSubgraph() {
-  const [term, setTerm] = useState('chat');
+  // Si Explorer a navigué vers nous via jdm:goto, on récupère son terme.
+  const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'chat';
+  if (typeof window !== 'undefined') window.__jdmPendingTerm = null;
+  const [term, setTerm] = useState(initialTerm);
   const [depth, setDepth] = useState(2);
   const [activeRels, setActiveRels] = useState(['r_isa', 'r_has_part', 'r_carac', 'r_syn']);
   const [minWeight, setMinWeight] = useState(30);
   const [maxNodes, setMaxNodes] = useState(40);
+  const [data, setData] = useState({ nodes: [], edges: [], stats: {} });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
 
   const toggleRel = (r) => {
     setActiveRels((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
   };
+
+  const onBuild = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const res = await fetch('api/subgraph', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          term,
+          depth: Number(depth),
+          relations: activeRels,
+          min_weight: Number(minWeight),
+          max_nodes: Number(maxNodes),
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const d = await res.json();
+      setData({
+        nodes: d.nodes || [],
+        edges: d.edges || [],
+        stats: d.stats || {},
+      });
+      if (d.message) setMessage(d.message);
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+      setData({ nodes: [], edges: [], stats: {} });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-run au mount pour montrer un sous-graphe
+  React.useEffect(() => { onBuild(); }, []);
+
+  const stats = data.stats || {};
 
   return (
     <PageShell>
@@ -1494,7 +1622,9 @@ function ViewSubgraph() {
               <Slider value={maxNodes} onChange={setMaxNodes} min={10} max={200} step={5} />
             </Field>
             <div style={{ marginTop: 16 }}>
-              <Button full>Construire le graphe</Button>
+              <Button full onClick={onBuild} disabled={loading}>
+                {loading ? 'Construction…' : 'Construire le graphe'}
+              </Button>
             </div>
           </Card>
 
@@ -1531,6 +1661,29 @@ function ViewSubgraph() {
 
         {/* Right: viz */}
         <div>
+          {error && (
+            <div style={{
+              padding: 16, marginBottom: 12,
+              background: 'rgba(200, 58, 115, 0.08)',
+              border: '1px solid var(--jdm-magenta)',
+              borderRadius: 'var(--radius)',
+              color: 'var(--jdm-magenta)',
+              fontSize: 13,
+            }}>
+              ⚠️ {error}
+            </div>
+          )}
+          {message && !error && (
+            <div style={{
+              padding: 12, marginBottom: 12,
+              background: 'var(--bg-elev)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--radius)',
+              color: 'var(--ink-2)',
+              fontSize: 13,
+            }}>{message}</div>
+          )}
+
           <Card padding={0} style={{ overflow: 'hidden' }}>
             <div style={{
               display: 'flex',
@@ -1540,16 +1693,17 @@ function ViewSubgraph() {
               background: 'var(--bg-elev)',
             }}>
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                <span style={{ color: 'var(--ink)' }}>{term}</span> · profondeur {depth} · 38 nœuds · 62 arêtes
+                <span style={{ color: 'var(--ink)' }}>{term}</span>
+                {' · '}profondeur {depth}
+                {' · '}<span style={{ color: 'var(--ink)' }}>{data.nodes.length}</span> nœuds
+                {' · '}<span style={{ color: 'var(--ink)' }}>{data.edges.length}</span> arêtes
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <Button size="sm" variant="ghost">SVG</Button>
-                <Button size="sm" variant="ghost">PNG</Button>
-                <Button size="sm" variant="ghost">DOT</Button>
+                <Button size="sm" variant="ghost" onClick={() => exportSVG(term)}>SVG</Button>
               </div>
             </div>
             <div style={{ height: 540, background: 'var(--bg-elev)', position: 'relative' }} className="lab-grid">
-              <GraphViz term={term} relations={activeRels} />
+              <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
             </div>
             <div style={{
               padding: '10px 16px',
@@ -1559,8 +1713,9 @@ function ViewSubgraph() {
               fontSize: 11,
               color: 'var(--ink-3)',
               fontFamily: 'var(--font-mono)',
+              flexWrap: 'wrap',
             }}>
-              {activeRels.map((r, i) => (
+              {activeRels.map((r) => (
                 <span key={r} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   <span style={{
                     width: 10, height: 2,
@@ -1581,10 +1736,10 @@ function ViewSubgraph() {
             marginTop: 16,
           }}>
             {[
-              ['Nœuds', '38'],
-              ['Arêtes', '62'],
-              ['Densité', '0.087'],
-              ['Diamètre', '3'],
+              ['Nœuds', String(stats.n_nodes ?? data.nodes.length)],
+              ['Arêtes', String(stats.n_edges ?? data.edges.length)],
+              ['Négations', String(stats.n_negative ?? data.edges.filter(e => e.negative).length)],
+              ['Profondeur', String(stats.depth ?? depth)],
             ].map(([k, v]) => (
               <Card key={k} padding={14}>
                 <div className="mono" style={{
@@ -1604,76 +1759,134 @@ function ViewSubgraph() {
   );
 }
 
-function GraphViz({ term, relations }) {
-  // Deterministic fake graph layout — places nodes in concentric rings.
-  const ring1 = ['félin', 'mammifère', 'animal de compagnie', 'patte', 'queue', 'oreille', 'griffe', 'matou', 'minet', 'poil'];
-  const ring2 = ['vertébré', 'animal', 'chien', 'chaton', 'animal domestique', 'pelage', 'moustache'];
+// Layout : nœuds disposés en anneaux concentriques par profondeur.
+// `nodes` = [{id, label, kind, depth}], `edges` = [{from, to, relation, weight, negative, depth}]
+function GraphViz({ nodes, edges, relations }) {
+  if (!nodes || nodes.length === 0) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        height: '100%', color: 'var(--ink-3)', fontSize: 13,
+      }}>
+        Aucun nœud à afficher.
+      </div>
+    );
+  }
 
   const W = 800, H = 540, cx = W / 2, cy = H / 2;
-  const nodes = [{ id: term, x: cx, y: cy, r: 22, ring: 0 }];
-  ring1.forEach((t, i) => {
-    const a = (i / ring1.length) * Math.PI * 2 - Math.PI / 2;
-    nodes.push({ id: t, x: cx + Math.cos(a) * 140, y: cy + Math.sin(a) * 140, r: 14, ring: 1 });
-  });
-  ring2.forEach((t, i) => {
-    const a = (i / ring2.length) * Math.PI * 2 - Math.PI / 2 + 0.15;
-    nodes.push({ id: t, x: cx + Math.cos(a) * 230, y: cy + Math.sin(a) * 230, r: 10, ring: 2 });
-  });
+  const RING_RADII = [0, 140, 230, 305, 360];  // profondeurs 0..4
 
-  // Edges: every ring1 node connects to centre, some to ring2
-  const edges = [];
-  ring1.forEach((t, i) => {
-    const relIdx = i % relations.length;
-    const r = relations[relIdx] || 'r_isa';
-    const colorIdx = SUBGRAPH_RELATIONS.indexOf(r) % JDM_COLORS.length;
-    edges.push({ from: term, to: t, c: JDM_COLORS[colorIdx] });
-    if (i % 3 === 0 && ring2[i / 3]) {
-      edges.push({ from: t, to: ring2[Math.floor(i / 3)], c: JDM_COLORS[(colorIdx + 1) % JDM_COLORS.length] });
+  // Group nodes by depth
+  const byDepth = {};
+  for (const n of nodes) {
+    const d = Math.min(n.depth ?? 1, 4);
+    if (!byDepth[d]) byDepth[d] = [];
+    byDepth[d].push(n);
+  }
+
+  // Place root at center, others on rings
+  const positioned = [];
+  for (const dStr of Object.keys(byDepth).sort()) {
+    const d = Number(dStr);
+    const arr = byDepth[d];
+    const r = RING_RADII[d] ?? 360;
+    if (d === 0 || arr.length === 1) {
+      positioned.push({ ...arr[0], x: cx, y: cy, r: 22, depth: d });
+    } else {
+      arr.forEach((n, i) => {
+        const a = (i / arr.length) * Math.PI * 2 - Math.PI / 2 + d * 0.15;
+        const nodeRadius = d === 1 ? 14 : (d === 2 ? 11 : 9);
+        positioned.push({
+          ...n,
+          x: cx + Math.cos(a) * r,
+          y: cy + Math.sin(a) * r,
+          r: nodeRadius,
+          depth: d,
+        });
+      });
     }
-  });
+  }
 
-  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const byId = Object.fromEntries(positioned.map(n => [n.id, n]));
+
+  // Truncate label for display
+  const truncLabel = (s, max) => {
+    if (!s) return '';
+    return s.length > max ? s.slice(0, max - 1) + '…' : s;
+  };
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" style={{ display: 'block' }}>
+      {/* Edges (drawn first so nodes overlap) */}
       {edges.map((e, i) => {
         const a = byId[e.from], b = byId[e.to];
         if (!a || !b) return null;
+        let color;
+        if (e.negative) {
+          color = '#c62828';
+        } else {
+          const kind = KIND_OF_REL[e.relation] || 'assoc';
+          color = KIND_COLOR[kind] || KIND_COLOR.assoc;
+        }
+        const opacity = e.depth >= 2 ? 0.35 : 0.6;
+        const strokeDasharray = e.depth >= 2 ? '4 3' : undefined;
         return (
           <line key={i}
             x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-            stroke={e.c}
-            strokeOpacity="0.55"
-            strokeWidth="1.4"
+            stroke={color}
+            strokeOpacity={opacity}
+            strokeWidth={e.depth >= 2 ? 1.0 : 1.4}
+            strokeDasharray={strokeDasharray}
           />
         );
       })}
-      {nodes.map((n, i) => (
-        <g key={i}>
-          <circle cx={n.x} cy={n.y} r={n.r}
-            fill={n.ring === 0 ? 'var(--accent)' : 'var(--bg-card)'}
-            stroke={n.ring === 0 ? 'var(--accent)' : 'var(--ink-2)'}
-            strokeWidth={n.ring === 0 ? 0 : 1.2}
-          />
-          <text x={n.x} y={n.y + n.r + 14}
-            textAnchor="middle"
-            fontFamily="var(--font-mono)"
-            fontSize={n.ring === 0 ? 13 : 11}
-            fontWeight={n.ring === 0 ? 700 : 400}
-            fill="var(--ink)">
-            {n.id}
-          </text>
-        </g>
-      ))}
+      {/* Nodes */}
+      {positioned.map((n, i) => {
+        const isCenter = n.depth === 0;
+        const kindColor = KIND_COLOR[n.kind] || KIND_COLOR.assoc;
+        return (
+          <g key={i}>
+            <circle cx={n.x} cy={n.y} r={n.r}
+              fill={isCenter ? 'var(--accent)' : 'var(--bg-card)'}
+              stroke={isCenter ? 'var(--accent)' : kindColor}
+              strokeWidth={isCenter ? 0 : 1.2}
+            />
+            <text x={n.x} y={n.y + n.r + 14}
+              textAnchor="middle"
+              fontFamily="var(--font-mono)"
+              fontSize={isCenter ? 13 : (n.depth === 1 ? 11 : 10)}
+              fontWeight={isCenter ? 700 : 400}
+              fill="var(--ink)">
+              {truncLabel(n.label, isCenter ? 28 : 18)}
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
 
+// Helper : export SVG du graphe affiché (client-side)
+function exportSVG(term) {
+  const svg = document.querySelector('.lab-grid svg');
+  if (!svg) return;
+  const ser = new XMLSerializer();
+  const src = ser.serializeToString(svg);
+  const blob = new Blob([src], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `jdm_subgraph_${term}.svg`.replace(/[^a-z0-9_\-.]/gi, '_');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 window.ViewSubgraph = ViewSubgraph;
 
-
 // === webapp/views-agent.jsx ===
-// View: Agent — conversational chat with the LLM + JDM tools.
+// View: Agent — conversational chat with the LLM + JDM tools (via SSE).
 
 const AGENT_MODELS = [
   { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', sub: 'pool gratuit · 500 req/jour' },
@@ -1685,47 +1898,82 @@ const AGENT_MODELS = [
   { value: 'gpt-4o',                label: 'GPT-4o',                sub: 'BYOK OpenAI' },
 ];
 
-const SEED_CONVO = [
-  {
-    role: 'user',
-    content: 'Que mange typiquement un chat ?',
-  },
-  {
-    role: 'assistant',
-    thinking: 'L\'utilisateur cherche les patients typiques du verbe « manger » avec « chat » comme agent. Je vais interroger r_patient sur manger, puis croiser avec r_agent(chat).',
-    tools: [
-      { name: 'relations_from', args: { term: 'manger', rel: 'r_patient', limit: 30 }, dur: 142, count: 30 },
-      { name: 'relations_to',   args: { term: 'manger', rel: 'r_agent',   limit: 30 }, dur: 98,  count: 28 },
-    ],
-    content: 'Selon JeuxDeMots, un chat mange typiquement des **croquettes** (w=312), de la **viande** (w=287), du **poisson** (w=234), des **souris** (w=198), du **lait** (w=156). Le lait est culturellement associé mais souvent mal toléré par les chats adultes. Veux-tu que j\'élargisse aux verbes apparentés (chasser, attraper) ?',
-  },
-];
-
 function ViewAgent() {
   const [model, setModel] = useState('gemini-3.1-flash-lite');
   const [thinking, setThinking] = useState(true);
   const [apiKey, setApiKey] = useState('');
-  const [convo, setConvo] = useState(SEED_CONVO);
+  const [convo, setConvo] = useState([]);
   const [input, setInput] = useState('');
+  const [streaming, setStreaming] = useState(false);
 
   const needsBYOK = model.startsWith('claude-') || model.startsWith('gpt-');
 
-  const send = () => {
-    if (!input.trim()) return;
-    setConvo([...convo, { role: 'user', content: input }]);
+  // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
+  // dernier message assistant (créé vide juste avant le fetch).
+  const send = async () => {
+    if (!input.trim() || streaming) return;
+    const userMsg = { role: 'user', content: input };
+    // Snapshot l'historique AVANT d'ajouter le message courant
+    // (le backend l'attend séparément via `message`).
+    const historySnapshot = convo.map(m => ({
+      role: m.role,
+      content: m.role === 'assistant' ? (m.content || '') : m.content,
+    }));
+    const assistantStub = { role: 'assistant', thoughts: [], tools: [], content: '', error: '' };
+    setConvo([...convo, userMsg, assistantStub]);
+    const msg = input;
     setInput('');
-    // Faked assistant reply.
-    setTimeout(() => {
-      setConvo(c => [...c, {
-        role: 'assistant',
-        thinking: 'Je décompose la requête en interrogations JDM atomiques.',
-        tools: [
-          { name: 'term_exists', args: { term: input.split(' ')[0] || 'chat' }, dur: 32, count: 1 },
-          { name: 'relations_from', args: { term: input.split(' ')[0] || 'chat', rel: 'r_carac' }, dur: 124, count: 12 },
-        ],
-        content: 'Réponse simulée — connecte ta clé pour interroger le vrai modèle.',
-      }]);
-    }, 600);
+    setStreaming(true);
+
+    // Helper : update le dernier message (assistant) en place.
+    const patchLast = (mutator) => {
+      setConvo(prev => {
+        const next = prev.slice();
+        const last = { ...next[next.length - 1] };
+        mutator(last);
+        next[next.length - 1] = last;
+        return next;
+      });
+    };
+
+    try {
+      const res = await fetch('api/agent/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: msg,
+          history: historySnapshot,
+          api_key: apiKey,
+          model,
+          use_thinking: thinking,
+        }),
+      });
+      if (!res.ok || !res.body) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE parse : events séparés par "\n\n", chaque event = lignes "event:" + "data:"
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const rawEv = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const ev = parseSSEEvent(rawEv);
+          if (!ev) continue;
+          handleEvent(ev, patchLast);
+        }
+      }
+    } catch (e) {
+      patchLast(last => { last.error = String(e && e.message ? e.message : e); });
+    } finally {
+      setStreaming(false);
+    }
   };
 
   return (
@@ -1733,7 +1981,7 @@ function ViewAgent() {
       <SectionTitle
         kicker="Module · agent LLM"
         title="Agent"
-        desc="Chat conversationnel. Le modèle a accès à 34 outils JDM via LangChain."
+        desc="Chat conversationnel. Le modèle a accès aux outils JDM via LangChain."
       />
 
       <div style={{
@@ -1761,7 +2009,22 @@ function ViewAgent() {
               maxHeight: 600,
               overflowY: 'auto',
             }}>
+              {convo.length === 0 && (
+                <div style={{
+                  color: 'var(--ink-3)', fontSize: 13,
+                  textAlign: 'center', padding: '60px 0',
+                }}>
+                  Pose une question sur la langue française — l'agent ira interroger JDM.
+                </div>
+              )}
               {convo.map((m, i) => <Message key={i} m={m} />)}
+              {streaming && (
+                <div style={{
+                  fontSize: 11, color: 'var(--ink-3)',
+                  fontFamily: 'var(--font-mono)',
+                  fontStyle: 'italic',
+                }}>⏳ génération en cours…</div>
+              )}
             </div>
 
             {/* Composer */}
@@ -1801,7 +2064,9 @@ function ViewAgent() {
                     outline: 'none',
                   }}
                 />
-                <Button onClick={send} size="lg">Envoyer</Button>
+                <Button onClick={send} size="lg" disabled={streaming || !input.trim()}>
+                  {streaming ? '…' : 'Envoyer'}
+                </Button>
               </div>
               <div style={{
                 marginTop: 8,
@@ -1855,47 +2120,84 @@ function ViewAgent() {
               fontSize: 11, color: 'var(--ink-3)',
               textTransform: 'uppercase', letterSpacing: '0.1em',
               marginBottom: 10,
-            }}>Outils disponibles · 34</div>
+            }}>Outils JDM</div>
             <div style={{
               fontSize: 12, color: 'var(--ink-2)',
-              display: 'grid', gap: 4,
+              lineHeight: 1.5,
             }}>
-              {['relations_from', 'relations_to', 'term_exists', 'refinements_decoded',
-                'verify_claim', 'build_subgraph', 'common_ancestors', 'analogies',
-                'shortest_path', 'gloss_term'].map(t => (
-                <div key={t} className="mono" style={{
-                  fontSize: 11,
-                  padding: '3px 6px',
-                  background: 'var(--bg-elev)',
-                  borderRadius: 3,
-                  color: 'var(--ink)',
-                }}>{t}</div>
-              ))}
-              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
-                + 24 autres…
-              </div>
+              L'agent dispose d'une trentaine d'outils LangChain
+              wrappant le client JDM : exploration, vérification,
+              désambiguïsation, inférence, sous-graphe.
             </div>
-          </Card>
-
-          <Card padding={16}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 10,
-            }}>Pool Gemini</div>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
-              Clé courante : <span className="mono" style={{ color: 'var(--ink)' }}>3/4</span><br/>
-              Reset quotidien : <span className="mono">00:00 PT</span>
-            </div>
-            <Button variant="secondary" size="sm" full>
-              ↻ Rotation manuelle
-            </Button>
           </Card>
         </div>
       </div>
     </PageShell>
   );
 }
+
+// ─── SSE helpers ────────────────────────────────────────────────
+
+function parseSSEEvent(raw) {
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  let parsed;
+  try { parsed = JSON.parse(data); }
+  catch { parsed = { text: data }; }
+  return { event, data: parsed };
+}
+
+function handleEvent(ev, patchLast) {
+  const d = ev.data || {};
+  switch (ev.event) {
+    case 'thought':
+      patchLast(last => { last.thoughts = [...(last.thoughts || []), d.text || '']; });
+      break;
+    case 'spoken':
+      patchLast(last => {
+        const sep = last.content ? '\n\n' : '';
+        last.content = (last.content || '') + sep + (d.text || '');
+      });
+      break;
+    case 'tool_call':
+      patchLast(last => {
+        last.tools = [...(last.tools || []), {
+          name: d.name, args: d.args || {}, narration: d.narration || '',
+          result: null,
+        }];
+      });
+      break;
+    case 'tool_result':
+      patchLast(last => {
+        const tools = (last.tools || []).slice();
+        // Trouve le dernier tool_call du même nom sans résultat
+        for (let i = tools.length - 1; i >= 0; i--) {
+          if (tools[i].name === d.name && !tools[i].result) {
+            tools[i] = { ...tools[i], result: { preview: d.preview, narration: d.narration } };
+            break;
+          }
+        }
+        last.tools = tools;
+      });
+      break;
+    case 'final':
+      patchLast(last => { last.content = d.text || last.content || ''; });
+      break;
+    case 'error':
+      patchLast(last => { last.error = d.text || 'Erreur inconnue.'; });
+      break;
+    default:
+      // unknown event type — ignore
+      break;
+  }
+}
+
+// ─── Rendu d'un message ────────────────────────────────────────
 
 function Message({ m }) {
   if (m.role === 'user') {
@@ -1925,7 +2227,7 @@ function Message({ m }) {
         <JDMMark size={18} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {m.thinking && (
+        {m.thoughts && m.thoughts.length > 0 && (
           <details style={{ marginBottom: 10 }}>
             <summary style={{
               cursor: 'pointer',
@@ -1934,7 +2236,7 @@ function Message({ m }) {
               fontFamily: 'var(--font-mono)',
               textTransform: 'uppercase',
               letterSpacing: '0.1em',
-            }}>🧠 Raisonnement</summary>
+            }}>🧠 Raisonnement ({m.thoughts.length})</summary>
             <div style={{
               marginTop: 8,
               padding: 10,
@@ -1944,7 +2246,8 @@ function Message({ m }) {
               color: 'var(--ink-2)',
               fontStyle: 'italic',
               lineHeight: 1.5,
-            }}>{m.thinking}</div>
+              whiteSpace: 'pre-wrap',
+            }}>{m.thoughts.join('\n\n')}</div>
           </details>
         )}
         {m.tools && m.tools.map((t, i) => (
@@ -1957,22 +2260,44 @@ function Message({ m }) {
             marginBottom: 6,
             fontFamily: 'var(--font-mono)',
             fontSize: 11,
+            flexWrap: 'wrap',
           }}>
-            <span style={{ color: 'var(--jdm-green)' }}>●</span>
+            <span style={{ color: t.result ? 'var(--jdm-green)' : 'var(--ink-3)' }}>●</span>
             <span style={{ color: 'var(--accent)' }}>{t.name}</span>
             <span style={{ color: 'var(--ink-3)' }}>(</span>
-            <span style={{ color: 'var(--ink)' }}>{Object.entries(t.args).map(([k, v]) => `${k}="${v}"`).join(', ')}</span>
-            <span style={{ color: 'var(--ink-3)' }}>)</span>
-            <span style={{ marginLeft: 'auto', color: 'var(--ink-3)' }}>
-              {t.count} résultats · {t.dur}ms
+            <span style={{ color: 'var(--ink)' }}>
+              {Object.entries(t.args || {}).map(([k, v]) =>
+                `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`
+              ).join(', ')}
             </span>
+            <span style={{ color: 'var(--ink-3)' }}>)</span>
+            {t.result && t.result.preview && (
+              <span style={{ marginLeft: 'auto', color: 'var(--ink-3)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                → {t.result.preview}
+              </span>
+            )}
           </div>
         ))}
-        <div style={{
-          fontSize: 14,
-          color: 'var(--ink)',
-          lineHeight: 1.6,
-        }} dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
+        {m.content && (
+          <div style={{
+            fontSize: 14,
+            color: 'var(--ink)',
+            lineHeight: 1.6,
+          }} dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
+        )}
+        {m.error && (
+          <div style={{
+            padding: 10,
+            marginTop: 8,
+            background: 'rgba(200, 58, 115, 0.08)',
+            border: '1px solid var(--jdm-magenta)',
+            borderRadius: 'var(--radius)',
+            color: 'var(--jdm-magenta)',
+            fontSize: 12,
+          }}>
+            ⚠️ {m.error}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1980,7 +2305,10 @@ function Message({ m }) {
 
 function renderMarkdownLite(s) {
   // tiny markdown subset: **bold**, *italic*, `code`, line breaks
-  return s
+  return (s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')
@@ -1989,54 +2317,53 @@ function renderMarkdownLite(s) {
 
 window.ViewAgent = ViewAgent;
 
-
 // === webapp/views-jarvis.jsx ===
-// View: Jarvis — autonomous looping pipelines.
+// View: Jarvis — agent-driven flows wired to /api/jarvis/{flow_id}/stream.
 //
-// Each flow runs as a background loop: the agent iterates, calls tools,
-// validates candidates, accumulates results. The user configures params
-// once, hits "Lancer", and watches the pipeline run. No manual stepping.
+// Conserve la structure visuelle du designer (cards de flow, page Run
+// avec params + metrics + log + résultats) mais branche maintenant les
+// 5 vrais flows backend : enrich / audit / gap / signalement / stats.
 
 const JARVIS_FLOWS = [
   {
     id: 'enrich',
     title: 'Enrichissement',
     kicker: 'Flux 1',
-    desc: 'Boucle de génération-validation : propose des triplets candidats, les valide via un panel de vérifications JDM, garde ceux qui passent.',
+    desc: 'Propose de nouveaux triplets pour un terme, les valide via JDM (factcheck + inférence), garde ceux qui passent, écrit un fichier .enrich prêt pour LLMDrops.',
     accent: 'var(--jdm-magenta)',
-    loopOf: 'génération → validation → mémoire',
+    loopOf: 'proposition → validation → consolidation',
   },
   {
     id: 'audit',
-    title: 'Audit de cohérence',
+    title: 'Audit sémantique',
     kicker: 'Flux 2',
-    desc: 'Parcourt le voisinage d\'un terme, détecte contradictions et triplets suspects par cross-checking entre relations.',
+    desc: 'Pour un terme polysémique, vérifie sens par sens quelles relations sont légitimes, contrastives, à corriger. Produit un fichier .audit.',
     accent: 'var(--jdm-cyan)',
-    loopOf: 'parcours → cross-check → flag',
+    loopOf: 'sens → triplet → verdict',
   },
   {
-    id: 'expand',
-    title: 'Expansion sémantique',
+    id: 'gap',
+    title: 'Détection de trous',
     kicker: 'Flux 3',
-    desc: 'Étend une requête initiale par strates : synonymes, hyponymes, termes culturellement liés, jusqu\'à saturation.',
+    desc: 'Identifie les relations manquantes ou faiblement couvertes pour un terme — pour relancer l\'enrichissement de façon ciblée.',
     accent: 'var(--jdm-green)',
-    loopOf: 'strate N → strate N+1',
+    loopOf: 'parcours → diagnostic → trous',
   },
   {
-    id: 'factcheck',
-    title: 'Fact-checking textuel',
+    id: 'signalement',
+    title: 'Signalement',
     kicker: 'Flux 4',
-    desc: 'Lit un paragraphe, en extrait les affirmations atomiques, vérifie chacune dans JDM, rend une synthèse.',
+    desc: 'Scanne un terme à la recherche de triplets suspects (incohérences, polarité douteuse, annotations oubliées). Produit un fichier .err.',
     accent: 'var(--jdm-orange)',
-    loopOf: 'extraction → vérification → synthèse',
+    loopOf: 'inventaire → flag → catégorisation',
   },
   {
-    id: 'synth',
-    title: 'Synthèse de concept',
+    id: 'stats',
+    title: 'Stats',
     kicker: 'Flux 5',
-    desc: 'Collecte les relations isa/parties/but/agents d\'un concept, assemble une définition lexicale riche.',
+    desc: 'Compte les relations, leur poids, leur distribution par terme et par relation. Renvoie un récapitulatif structuré.',
     accent: 'var(--jdm-violet)',
-    loopOf: 'collecte → assemblage',
+    loopOf: 'inventaire → agrégation',
   },
 ];
 
@@ -2049,9 +2376,9 @@ function ViewJarvis() {
   return (
     <PageShell>
       <SectionTitle
-        kicker="Pipelines autonomes"
+        kicker="Pipelines guidés"
         title="Jarvis"
-        desc="Cinq boucles d'agent qui itèrent sans intervention. Tu paramètres, tu lances, tu regardes. Pause / stop à tout moment."
+        desc="Cinq flux d'agent guidés par formulaire. Tu paramètres, tu lances, l'agent suit le workflow canonique du flux. Stoppable à tout moment."
       />
 
       <div style={{
@@ -2120,7 +2447,7 @@ function ViewJarvis() {
               color: 'var(--ink-3)',
             }}>
               <LoopGlyph color={f.accent} />
-              boucle : {f.loopOf}
+              {f.loopOf}
             </div>
           </div>
         ))}
@@ -2139,46 +2466,134 @@ function LoopGlyph({ color }) {
   );
 }
 
-// ───── Run view — the auto-loop interface ─────
+// ───── Run view — Sse-driven ─────
 function JarvisRun({ flow, onBack }) {
-  // Per-flow params
   const [params, setParams] = useState(defaultParamsFor(flow.id));
-  // Pipeline state
-  const [state, setState] = useState('idle'); // idle | running | paused | done
+  const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
   const [metrics, setMetrics] = useState({
-    iterations: 0,
-    toolsCalled: 0,
-    candidates: 0,
-    accepted: 0,
-    rejected: 0,
-    elapsed: 0,
+    toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0,
   });
   const [accepted, setAccepted] = useState([]);
+  const [finalText, setFinalText] = useState('');
+  const [headline, setHeadline] = useState('');
   const logRef = useRef(null);
-  const tickRef = useRef(null);
-
-  // Tick the loop
-  useEffect(() => {
-    if (state !== 'running') {
-      clearInterval(tickRef.current);
-      return;
-    }
-    tickRef.current = setInterval(() => {
-      step(flow.id, params, setLog, setMetrics, setAccepted, setState);
-    }, 650);
-    return () => clearInterval(tickRef.current);
-  }, [state, flow.id, params]);
+  const abortRef = useRef(null);
+  const startTimeRef = useRef(null);
 
   // Auto-scroll log
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
+  // Tick elapsed time
+  useEffect(() => {
+    if (state !== 'running') return;
+    const id = setInterval(() => {
+      setMetrics(m => ({ ...m, elapsed: Date.now() - (startTimeRef.current || Date.now()) }));
+    }, 250);
+    return () => clearInterval(id);
+  }, [state]);
+
   const reset = () => {
-    setLog([]); setAccepted([]);
-    setMetrics({ iterations: 0, toolsCalled: 0, candidates: 0, accepted: 0, rejected: 0, elapsed: 0 });
+    setLog([]); setAccepted([]); setFinalText(''); setHeadline('');
+    setMetrics({ toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0 });
     setState('idle');
+  };
+
+  const launch = async () => {
+    reset();
+    setState('running');
+    startTimeRef.current = Date.now();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    const flowParams = { ...params };
+    const ts = () => new Date().toTimeString().slice(0, 8);
+
+    try {
+      const res = await fetch(`api/jarvis/${flow.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_id: flow.id, params: flowParams }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const rawEv = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const ev = parseSSEEventJarvis(rawEv);
+          if (!ev) continue;
+          const d = ev.data || {};
+          switch (ev.event) {
+            case 'headline':
+              setHeadline(d.text || '');
+              setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
+              break;
+            case 'thought':
+              setMetrics(m => ({ ...m, thoughts: m.thoughts + 1 }));
+              setLog(l => [...l, { t: ts(), tag: '[think]', kind: 'thought', msg: (d.text || '').slice(0, 200) }]);
+              break;
+            case 'spoken':
+              setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
+              break;
+            case 'tool_call':
+              setMetrics(m => ({ ...m, toolsCalled: m.toolsCalled + 1 }));
+              setLog(l => [...l, {
+                t: ts(), tag: '[tool]', kind: 'tool',
+                msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
+              }]);
+              break;
+            case 'tool_result':
+              if (d.narration) {
+                setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'accept', msg: d.narration }]);
+              } else if (d.preview) {
+                setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
+              }
+              // Détection write_submission_file : on accumule en "acceptés"
+              if (d.name === 'write_submission_file' && d.preview) {
+                setAccepted(a => [...a, { label: d.preview.slice(0, 80), score: 'soumis' }]);
+                setMetrics(m => ({ ...m, accepted: m.accepted + 1 }));
+              }
+              break;
+            case 'final':
+              setFinalText(d.text || '');
+              setLog(l => [...l, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]);
+              setState('done');
+              break;
+            case 'error':
+              setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }]);
+              setState('error');
+              break;
+            default: break;
+          }
+        }
+      }
+      if (state === 'running') setState('done');
+    } catch (e) {
+      if (ctrl.signal.aborted) {
+        setLog(l => [...l, { t: ts(), tag: '[stop]', kind: 'iter', msg: 'Annulé par l\'utilisateur.' }]);
+        setState('done');
+      } else {
+        setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }]);
+        setState('error');
+      }
+    }
+  };
+
+  const stop = () => {
+    if (abortRef.current) abortRef.current.abort();
   };
 
   return (
@@ -2214,7 +2629,7 @@ function JarvisRun({ flow, onBack }) {
               textTransform: 'uppercase', letterSpacing: '0.1em',
               marginBottom: 12,
             }}>Paramètres</div>
-            <ParamsForm flow={flow} params={params} setParams={setParams} locked={state === 'running' || state === 'paused'} />
+            <ParamsForm flow={flow} params={params} setParams={setParams} locked={state === 'running'} />
           </Card>
 
           <Card padding={16}>
@@ -2224,18 +2639,16 @@ function JarvisRun({ flow, onBack }) {
               marginBottom: 12,
             }}>Contrôles</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {state === 'idle' && <Button full onClick={() => setState('running')}>▶ Lancer la boucle</Button>}
-              {state === 'running' && <>
-                <Button variant="secondary" onClick={() => setState('paused')}>⏸ Pause</Button>
-                <Button variant="secondary" onClick={() => setState('done')}>⏹ Stop</Button>
-              </>}
-              {state === 'paused' && <>
-                <Button onClick={() => setState('running')}>▶ Reprendre</Button>
-                <Button variant="secondary" onClick={() => setState('done')}>⏹ Stop</Button>
-              </>}
-              {state === 'done' && <Button full variant="secondary" onClick={reset}>↻ Relancer</Button>}
+              {(state === 'idle' || state === 'done' || state === 'error') && (
+                <Button full onClick={launch}>
+                  {state === 'idle' ? '▶ Lancer' : '↻ Relancer'}
+                </Button>
+              )}
+              {state === 'running' && (
+                <Button variant="secondary" full onClick={stop}>⏹ Stop</Button>
+              )}
             </div>
-            {(state === 'running' || state === 'paused') && (
+            {state === 'running' && (
               <div style={{
                 marginTop: 10,
                 padding: '6px 10px',
@@ -2245,7 +2658,7 @@ function JarvisRun({ flow, onBack }) {
                 color: 'var(--ink-3)',
                 fontFamily: 'var(--font-mono)',
               }}>
-                Boucle auto · pas de validation manuelle
+                Streaming SSE · arrêt manuel possible
               </div>
             )}
           </Card>
@@ -2255,17 +2668,49 @@ function JarvisRun({ flow, onBack }) {
               fontSize: 11, color: 'var(--ink-3)',
               textTransform: 'uppercase', letterSpacing: '0.1em',
               marginBottom: 12,
-            }}>Critères d'arrêt</div>
-            <StopCriteria flow={flow.id} params={params} setParams={setParams} locked={state === 'running'} />
+            }}>Modèle</div>
+            <Field label="Choix">
+              <Select value={params.model || 'gemini-3.1-flash-lite'}
+                onChange={(v) => setParams(p => ({ ...p, model: v }))}
+                options={[
+                  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+                  { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
+                  { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
+                  { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
+                ]} />
+            </Field>
+            {(params.model || '').match(/^(claude|gpt)-/) && (
+              <Field label="Clé API">
+                <Input value={params.api_key || ''}
+                  onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
+                  placeholder={(params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…'}
+                  mono />
+              </Field>
+            )}
           </Card>
         </div>
 
         {/* Right: live monitor */}
         <div>
+          {/* Headline (résumé) */}
+          {headline && (
+            <div style={{
+              padding: '8px 14px',
+              marginBottom: 12,
+              background: 'var(--bg-elev)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--radius)',
+              fontSize: 13,
+              color: 'var(--ink-2)',
+            }}>
+              {headline}
+            </div>
+          )}
+
           {/* Metrics grid */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
+            gridTemplateColumns: 'repeat(4, 1fr)',
             gap: 1,
             background: 'var(--line)',
             border: '1px solid var(--line)',
@@ -2273,11 +2718,9 @@ function JarvisRun({ flow, onBack }) {
             overflow: 'hidden',
             marginBottom: 14,
           }}>
-            <Metric label="Itération" value={metrics.iterations} max={params.maxIter ?? 100} accent={flow.accent} />
-            <Metric label="Outils" value={metrics.toolsCalled} sub="appels" />
-            <Metric label="Candidats" value={metrics.candidates} sub="générés" />
-            <Metric label="Acceptés" value={metrics.accepted} sub="validés" color="var(--jdm-green)" />
-            <Metric label="Rejetés" value={metrics.rejected} sub="filtrés" color="var(--jdm-magenta)" />
+            <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
+            <Metric label="Pensées" value={metrics.thoughts} sub="thoughts" />
+            <Metric label="Soumis" value={metrics.accepted} sub="fichiers" color="var(--jdm-green)" />
             <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
           </div>
 
@@ -2318,17 +2761,22 @@ function JarvisRun({ flow, onBack }) {
                       color: l.kind === 'tool' ? 'var(--accent)' :
                              l.kind === 'accept' ? 'var(--jdm-green)' :
                              l.kind === 'reject' ? 'var(--jdm-magenta)' :
+                             l.kind === 'thought' ? 'var(--ink-3)' :
                              l.kind === 'iter' ? flow.accent :
                              'var(--ink-3)',
-                      minWidth: 56,
+                      minWidth: 64,
                     }}>{l.tag}</span>
-                    <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                    <span style={{
+                      color: l.kind === 'thought' ? 'var(--ink-3)' : 'var(--ink)',
+                      fontStyle: l.kind === 'thought' ? 'italic' : 'normal',
+                      wordBreak: 'break-word',
+                    }}>{l.msg}</span>
                   </div>
                 ))}
               </div>
             </Card>
 
-            {/* Accepted candidates accumulator */}
+            {/* Accepted / final answer */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 padding: '10px 14px',
@@ -2338,49 +2786,46 @@ function JarvisRun({ flow, onBack }) {
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>Résultats validés · {accepted.length}</div>
+                }}>
+                  {finalText ? 'Réponse finale' : `Fichiers soumis · ${accepted.length}`}
+                </div>
               </div>
               <div style={{
                 height: 420,
                 overflowY: 'auto',
                 padding: 12,
                 background: 'var(--bg-card)',
+                fontSize: 13,
+                lineHeight: 1.55,
+                color: 'var(--ink)',
+                whiteSpace: 'pre-wrap',
               }}>
-                {accepted.length === 0 ? (
-                  <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
-                    Aucun résultat encore.
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    {accepted.map((a, i) => (
-                      <div key={i} className="fade-up" style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev)',
-                        border: '1px solid var(--line-soft)',
-                        borderRadius: 'var(--radius)',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: 11,
-                      }}>
-                        <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>✓</span>
-                        <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
-                        <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{a.score}</span>
-                      </div>
-                    ))}
-                  </div>
+                {finalText ? finalText : (
+                  accepted.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
+                      Aucun fichier encore.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {accepted.map((a, i) => (
+                        <div key={i} className="fade-up" style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '6px 8px',
+                          background: 'var(--bg-elev)',
+                          border: '1px solid var(--line-soft)',
+                          borderRadius: 'var(--radius)',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 11,
+                        }}>
+                          <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>✓</span>
+                          <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
+                          <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{a.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
                 )}
               </div>
-              {accepted.length > 0 && state === 'done' && (
-                <div style={{
-                  padding: 10,
-                  borderTop: '1px solid var(--line-soft)',
-                  background: 'var(--bg-elev)',
-                  display: 'flex', gap: 6,
-                }}>
-                  <Button size="sm" variant="secondary">Exporter CSV</Button>
-                  <Button size="sm" variant="ghost">JSON</Button>
-                </div>
-              )}
             </Card>
           </div>
         </div>
@@ -2389,13 +2834,36 @@ function JarvisRun({ flow, onBack }) {
   );
 }
 
+// ───── Helpers ─────
+
+function parseSSEEventJarvis(raw) {
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  let parsed;
+  try { parsed = JSON.parse(data); } catch { parsed = { text: data }; }
+  return { event, data: parsed };
+}
+
+function shortArgs(args) {
+  if (!args) return '';
+  return Object.entries(args)
+    .slice(0, 3)
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v.slice(0, 20)}"` : JSON.stringify(v).slice(0, 25)}`)
+    .join(', ');
+}
+
 // ───── Status badge ─────
 function StatusBadge({ state, accent }) {
   const styles = {
-    idle:    { label: 'En attente', color: 'var(--ink-3)', dot: false },
-    running: { label: 'En cours',   color: accent,         dot: true  },
-    paused:  { label: 'En pause',   color: 'var(--jdm-orange)', dot: false },
-    done:    { label: 'Terminé',    color: 'var(--jdm-green)',  dot: false },
+    idle:    { label: 'En attente', color: 'var(--ink-3)',       dot: false },
+    running: { label: 'En cours',   color: accent,               dot: true  },
+    done:    { label: 'Terminé',    color: 'var(--jdm-green)',   dot: false },
+    error:   { label: 'Erreur',     color: 'var(--jdm-magenta)', dot: false },
   }[state];
   return (
     <div style={{
@@ -2446,229 +2914,124 @@ function Metric({ label, value, sub, max, accent, color, mono }) {
   );
 }
 
-// ───── Per-flow params ─────
+// ───── Per-flow form ─────
+
+const REL_OPTS_COMMON = [
+  { value: 'r_isa', label: 'r_isa — est un' },
+  { value: 'r_hypo', label: 'r_hypo — exemple de' },
+  { value: 'r_carac', label: 'r_carac — caractéristique' },
+  { value: 'r_has_part', label: 'r_has_part — parties' },
+  { value: 'r_has_color', label: 'r_has_color — couleur' },
+  { value: 'r_agent', label: 'r_agent — agent typique' },
+  { value: 'r_patient', label: 'r_patient — patient typique' },
+  { value: 'r_lieu', label: 'r_lieu — lieu typique' },
+  { value: 'r_telic_role', label: 'r_telic_role — à quoi sert' },
+];
+
+const BUDGET_OPTS = [
+  { value: '10', label: '10' },
+  { value: '25', label: '25' },
+  { value: '50', label: '50' },
+  { value: '100', label: '100' },
+  { value: 'illimité', label: 'illimité' },
+];
+
 function defaultParamsFor(flowId) {
+  const common = { model: 'gemini-3.1-flash-lite', api_key: '', use_thinking: true };
   switch (flowId) {
-    case 'enrich': return { term: 'chat', relation: 'r_carac', maxIter: 30, minConf: 0.5 };
-    case 'audit':  return { term: 'chat', depth: 2, maxIter: 50 };
-    case 'expand': return { term: 'félin', depth: 3, maxIter: 25 };
-    case 'factcheck': return { text: 'Le chat est un mammifère. Il mange des croquettes et chasse des souris. Sa moustache lui sert à mesurer les ouvertures.', maxIter: 6 };
-    case 'synth': return { concept: 'chat', maxIter: 8 };
+    case 'enrich':      return { ...common, term: 'chat', relation: 'r_carac', target_count: 10, vary_relations: false, iterate: false, budget_label: '25', upload: false };
+    case 'audit':       return { ...common, term: 'avocat', relation: '', budget_label: '50', upload: false };
+    case 'gap':         return { ...common, term: 'chat', budget_label: '25' };
+    case 'signalement': return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
+    case 'stats':       return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
   }
+  return common;
 }
 
 function ParamsForm({ flow, params, setParams, locked }) {
   const set = (k, v) => setParams(p => ({ ...p, [k]: v }));
-  if (flow.id === 'enrich') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme à enrichir">
-          <Input value={params.term} onChange={(v) => set('term', v)} mono />
-        </Field>
-        <Field label="Type de relation">
-          <Select value={params.relation} onChange={(v) => set('relation', v)} options={[
-            { value: 'r_carac', label: 'r_carac — caractéristiques' },
-            { value: 'r_isa', label: 'r_isa — hyperonymes' },
-            { value: 'r_has_part', label: 'r_has_part — parties' },
-            { value: 'r_agent', label: 'r_agent — agents typiques' },
-            { value: 'r_lieu', label: 'r_lieu — lieux typiques' },
-          ]} />
-        </Field>
-        <Field label={`Confiance minimum · ${params.minConf}`}>
-          <Slider value={params.minConf * 100} onChange={(v) => set('minConf', v / 100)} min={0} max={100} step={5} suffix="%" />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'audit') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme racine"><Input value={params.term} onChange={(v) => set('term', v)} mono /></Field>
-        <Field label={`Profondeur · ${params.depth}`}>
-          <Slider value={params.depth} onChange={(v) => set('depth', v)} min={1} max={4} step={1} />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'expand') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme initial"><Input value={params.term} onChange={(v) => set('term', v)} mono /></Field>
-        <Field label={`Strates · ${params.depth}`}>
-          <Slider value={params.depth} onChange={(v) => set('depth', v)} min={1} max={5} step={1} />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'factcheck') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Texte à vérifier">
-          <textarea
-            value={params.text}
-            onChange={(e) => set('text', e.target.value)}
-            rows={6}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              background: 'var(--bg-card)',
-              border: '1px solid var(--line)',
-              borderRadius: 'var(--radius)',
-              color: 'var(--ink)',
-              fontFamily: 'inherit',
-              fontSize: 13,
-              outline: 'none',
-              resize: 'vertical',
-            }}
-          />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'synth') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Concept à définir"><Input value={params.concept} onChange={(v) => set('concept', v)} mono /></Field>
-      </div>
-    );
-  }
-}
-
-function StopCriteria({ flow, params, setParams, locked }) {
-  return (
+  const wrap = (children) => (
     <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-      <Field label={`Itérations max · ${params.maxIter}`}>
-        <Slider value={params.maxIter} onChange={(v) => setParams(p => ({ ...p, maxIter: v }))} min={5} max={100} step={1} />
-      </Field>
-      <div style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        lineHeight: 1.5, marginTop: 4,
-      }}>
-        La boucle s'arrête aussi si plus aucun candidat n'est généré pendant 5 itérations consécutives.
-      </div>
+      {children}
     </div>
   );
-}
 
-// ───── Simulated step — fake but realistic ─────
-const FLOW_FAKES = {
-  enrich: {
-    tools: ['relations_from', 'relations_to', 'analogies', 'common_ancestors', 'validate_candidate'],
-    candidatesPool: [
-      { label: 'chat | r_carac | curieux',    s: 0.92, ok: true },
-      { label: 'chat | r_carac | indépendant', s: 0.89, ok: true },
-      { label: 'chat | r_carac | propre',      s: 0.81, ok: true },
-      { label: 'chat | r_carac | nocturne',    s: 0.77, ok: true },
-      { label: 'chat | r_carac | silencieux',  s: 0.71, ok: true },
-      { label: 'chat | r_carac | hautain',     s: 0.54, ok: true },
-      { label: 'chat | r_carac | aboyeur',     s: 0.12, ok: false, reason: 'contradicted by r_agent(aboyer, chien)' },
-      { label: 'chat | r_carac | aquatique',   s: 0.18, ok: false, reason: 'no support in r_lieu' },
-      { label: 'chat | r_carac | énorme',      s: 0.22, ok: false, reason: 'contradicted by r_size' },
-      { label: 'chat | r_carac | gracieux',    s: 0.86, ok: true },
-      { label: 'chat | r_carac | affectueux',  s: 0.79, ok: true },
-      { label: 'chat | r_carac | chasseur',    s: 0.88, ok: true },
-    ],
-  },
-  audit: {
-    tools: ['relations_from', 'cross_check', 'detect_contradiction', 'flag_suspect'],
-    candidatesPool: [
-      { label: 'chat | r_isa | chien',         s: 0.04, ok: false, reason: 'contradicted by r_isa(chat, félin)' },
-      { label: 'chat | r_has_part | aile',     s: 0.02, ok: false, reason: 'no support in JDM' },
-      { label: 'chat | r_has_color | bleu',    s: 0.31, ok: false, reason: 'suspicious — low weight (w=3)' },
-      { label: 'chat | r_isa | félin',         s: 0.97, ok: true },
-      { label: 'chat | r_has_part | patte',    s: 0.95, ok: true },
-    ],
-  },
-  expand: {
-    tools: ['refinements_decoded', 'relations_from', 'common_ancestors'],
-    candidatesPool: [
-      { label: 'félin → chat',                 s: 0.95, ok: true },
-      { label: 'félin → lion',                 s: 0.91, ok: true },
-      { label: 'félin → tigre',                s: 0.88, ok: true },
-      { label: 'félin → léopard',              s: 0.82, ok: true },
-      { label: 'félin → panthère',             s: 0.79, ok: true },
-      { label: 'félin → guépard',              s: 0.76, ok: true },
-      { label: 'félin → lynx',                 s: 0.71, ok: true },
-      { label: 'félin → puma',                 s: 0.65, ok: true },
-      { label: 'félin → ocelot',               s: 0.42, ok: true },
-      { label: 'félin → serval',               s: 0.31, ok: true },
-    ],
-  },
-  factcheck: {
-    tools: ['extract_claims', 'verify_claim'],
-    candidatesPool: [
-      { label: '✓ chat | r_isa | mammifère',          s: 0.97, ok: true },
-      { label: '✓ chat | r_patient | manger croquette', s: 0.91, ok: true },
-      { label: '✓ chat | r_agent | chasser souris',    s: 0.88, ok: true },
-      { label: '✓ moustache | r_telic_role | mesurer', s: 0.74, ok: true },
-    ],
-  },
-  synth: {
-    tools: ['relations_from', 'refinements_decoded', 'common_ancestors'],
-    candidatesPool: [
-      { label: 'isa: mammifère, félin, animal',        s: 0.95, ok: true },
-      { label: 'parties: patte, queue, oreille',       s: 0.92, ok: true },
-      { label: 'agents typiques: ronronner, miauler',  s: 0.87, ok: true },
-      { label: 'but: chasser, garder compagnie',       s: 0.81, ok: true },
-      { label: 'caractéristiques: agile, curieux',     s: 0.85, ok: true },
-    ],
-  },
-};
+  if (flow.id === 'enrich') {
+    return wrap(<>
+      <Field label="Terme à enrichir">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relation cible (optionnelle)">
+        <Select value={params.relation || ''}
+          onChange={(v) => set('relation', v)}
+          options={[{ value: '', label: '— libre —' }, ...REL_OPTS_COMMON]} />
+      </Field>
+      <Field label={`Nombre cible · ${params.target_count}`}>
+        <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
+      </Field>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginBottom: 8 }}>
+        <input type="checkbox" checked={!!params.vary_relations}
+          onChange={(e) => set('vary_relations', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Varier les relations
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginBottom: 8 }}>
+        <input type="checkbox" checked={!!params.iterate}
+          onChange={(e) => set('iterate', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Itérer jusqu'à la cible
+      </label>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+        <input type="checkbox" checked={!!params.upload}
+          onChange={(e) => set('upload', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Soumettre à LLMDrops
+      </label>
+    </>);
+  }
 
-function step(flowId, params, setLog, setMetrics, setAccepted, setState) {
-  const fake = FLOW_FAKES[flowId];
-  if (!fake) return;
-  const t = new Date();
-  const tStr = t.toTimeString().slice(0, 8);
-  const minConf = params.minConf ?? 0.5;
+  if (flow.id === 'audit' || flow.id === 'signalement' || flow.id === 'stats') {
+    return wrap(<>
+      <Field label="Terme">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relation (optionnelle)">
+        <Select value={params.relation || ''}
+          onChange={(v) => set('relation', v)}
+          options={[{ value: '', label: '— toutes —' }, ...REL_OPTS_COMMON]} />
+      </Field>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      {flow.id !== 'stats' && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!params.upload}
+            onChange={(e) => set('upload', e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }} />
+          Soumettre à LLMDrops
+        </label>
+      )}
+    </>);
+  }
 
-  setMetrics(m => {
-    const newIter = m.iterations + 1;
-    // Stop conditions
-    if (newIter > (params.maxIter ?? 30) || newIter > fake.candidatesPool.length + 2) {
-      setLog(l => [...l, { t: tStr, tag: '[stop]', kind: 'iter', msg: 'Critère d\'arrêt atteint — fin de boucle' }]);
-      setTimeout(() => setState('done'), 100);
-      return m;
-    }
+  if (flow.id === 'gap') {
+    return wrap(<>
+      <Field label="Terme">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+    </>);
+  }
 
-    const newLogs = [];
-    const idx = (newIter - 1) % fake.candidatesPool.length;
-    const cand = fake.candidatesPool[idx];
-
-    newLogs.push({ t: tStr, tag: `[iter ${newIter}]`, kind: 'iter', msg: 'Génération de candidats…' });
-
-    // Pick 1-2 tool calls
-    const nTools = 2 + (newIter % 2);
-    for (let i = 0; i < nTools; i++) {
-      const tool = fake.tools[(newIter + i) % fake.tools.length];
-      newLogs.push({ t: tStr, tag: '[tool]', kind: 'tool', msg: `${tool}(…) → ${20 + (newIter * 7) % 80}ms` });
-    }
-
-    // Decision
-    const passesConf = cand.s >= minConf;
-    if (cand.ok && passesConf) {
-      newLogs.push({ t: tStr, tag: '[accept]', kind: 'accept', msg: `${cand.label} · score=${cand.s.toFixed(2)}` });
-      setAccepted(a => [...a, { label: cand.label, score: cand.s.toFixed(2) }]);
-    } else {
-      const reason = cand.reason || `score ${cand.s.toFixed(2)} < ${minConf.toFixed(2)}`;
-      newLogs.push({ t: tStr, tag: '[reject]', kind: 'reject', msg: `${cand.label} · ${reason}` });
-    }
-
-    setLog(l => [...l, ...newLogs]);
-
-    return {
-      iterations: newIter,
-      toolsCalled: m.toolsCalled + nTools,
-      candidates: m.candidates + 1,
-      accepted: m.accepted + (cand.ok && passesConf ? 1 : 0),
-      rejected: m.rejected + (cand.ok && passesConf ? 0 : 1),
-      elapsed: m.elapsed + 650,
-    };
-  });
+  return null;
 }
 
 window.ViewJarvis = ViewJarvis;
-
 
 // === webapp/views-aide.jsx ===
 // View: Aide — relation glossary + shortcuts + about.
@@ -2904,7 +3267,6 @@ function ViewAide() {
 
 window.ViewAide = ViewAide;
 
-
 // === webapp/app.jsx ===
 // Main app: theme switcher + router + Tweaks panel wiring.
 
@@ -2936,6 +3298,20 @@ function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [view]);
+
+  // Routing inter-vues : permet à n'importe quel composant de naviguer
+  // via window.dispatchEvent(new CustomEvent('jdm:goto', { detail: { view, term, ... } })).
+  // Le `term` est posé sur window.__jdmPendingTerm pour que la vue cible
+  // puisse le lire au premier render (pas de prop drilling).
+  useEffect(() => {
+    const handler = (e) => {
+      const d = e.detail || {};
+      if (d.term) window.__jdmPendingTerm = d.term;
+      if (d.view && VIEWS[d.view]) setView(d.view);
+    };
+    window.addEventListener('jdm:goto', handler);
+    return () => window.removeEventListener('jdm:goto', handler);
+  }, []);
 
   const VIEWS = {
     projet:   <ViewProjet goto={setView} />,

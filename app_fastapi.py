@@ -35,6 +35,17 @@ except ImportError:
 
 os.environ.setdefault("JDM_CACHE_DIR", "/tmp/jdm_cache")
 
+# Reverse-proxy : si on est servi sous /Jarvis/ (Apache LIRMM, etc.),
+# l'env var APP_SUBPATH = "/Jarvis" injecte un <base href> dans index.html
+# pour que toutes les URLs relatives (fetch + assets) se résolvent
+# correctement côté navigateur. Vide ou "/" = mode racine (HF Spaces, local).
+_RAW_SUBPATH = os.environ.get("APP_SUBPATH", "").strip()
+# Normalise : "" / "/" → "" ; "Jarvis" → "/Jarvis" ; "/Jarvis/" → "/Jarvis"
+if _RAW_SUBPATH and _RAW_SUBPATH != "/":
+    APP_SUBPATH = "/" + _RAW_SUBPATH.strip("/")
+else:
+    APP_SUBPATH = ""
+
 # ────────────────────────────────────────────────────────────────────
 # FastAPI
 # ────────────────────────────────────────────────────────────────────
@@ -157,7 +168,7 @@ class JarvisRequest(BaseModel):
 # ────────────────────────────────────────────────────────────────────
 # App
 # ────────────────────────────────────────────────────────────────────
-app = FastAPI(title="JDMAgent API", version="1.0.0")
+app = FastAPI(title="JDMAgent API", version="1.0.0", root_path=APP_SUBPATH)
 
 # CORS — utile en dev (front sur un autre port). Retire en prod si même origin.
 app.add_middleware(
@@ -714,21 +725,57 @@ def api_pool_rotate(req: RotateRequest = RotateRequest()) -> dict[str, Any]:
     }
 
 
-# ────────────────────────────────────────────────────────────────────
-# Static files — IMPORTANT : déclarer EN DERNIER (catch-all)
-# ────────────────────────────────────────────────────────────────────
-STATIC_DIR = _root / "static"
-
-if STATIC_DIR.exists():
-    # Sert tout le contenu de static/ sous /
-    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
-else:
-    @app.get("/")
-    def root():
-        return JSONResponse({"error": "static/ folder missing"}, status_code=500)
-
-
 # Health check pour HF Spaces
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ────────────────────────────────────────────────────────────────────
+# Static files — IMPORTANT : déclarer EN DERNIER (catch-all)
+# ────────────────────────────────────────────────────────────────────
+STATIC_DIR = _root / "static"
+INDEX_HTML_PATH = STATIC_DIR / "index.html"
+
+# Cache le template index.html avec un placeholder à substituer pour
+# le <base href>. Lecture au boot puis substitution à chaque GET /.
+_INDEX_TEMPLATE: Optional[str] = None
+
+
+def _serve_index_html() -> str:
+    """Renvoie index.html avec <base href> injecté selon APP_SUBPATH.
+
+    On insère le tag juste après <head>. Si APP_SUBPATH est vide, on met
+    quand même `<base href="/">` pour être explicite — ça ne change rien
+    au comportement mais clarifie ce qui se passe côté navigateur.
+    """
+    global _INDEX_TEMPLATE
+    if _INDEX_TEMPLATE is None:
+        _INDEX_TEMPLATE = INDEX_HTML_PATH.read_text(encoding="utf-8")
+    base = (APP_SUBPATH + "/") if APP_SUBPATH else "/"
+    base_tag = f'<base href="{base}">'
+    # Insertion juste après <head> (1ère occurrence). Idempotent : si un
+    # <base> existe déjà, on le remplace.
+    import re
+    html = _INDEX_TEMPLATE
+    if re.search(r"<base\b", html):
+        html = re.sub(r"<base[^>]*>", base_tag, html, count=1)
+    else:
+        html = re.sub(r"(<head[^>]*>)", r"\1\n" + base_tag, html, count=1)
+    return html
+
+
+if STATIC_DIR.exists():
+    @app.get("/", include_in_schema=False)
+    def index():
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(_serve_index_html())
+
+    # Sert tout le RESTE de static/ (webapp/*.jsx, etc.) sous /.
+    # html=False désactive le catch-all index automatique : seul notre
+    # route GET / sert index.html (avec <base href> injecté).
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=False), name="static")
+else:
+    @app.get("/")
+    def root_missing():
+        return JSONResponse({"error": "static/ folder missing"}, status_code=500)

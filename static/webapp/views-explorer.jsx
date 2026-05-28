@@ -39,7 +39,7 @@ function ViewExplorer() {
     setError('');
     setMessage('');
     try {
-      const res = await fetch('/api/explore', {
+      const res = await fetch('api/explore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

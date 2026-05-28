@@ -192,7 +192,7 @@ function JarvisRun({ flow, onBack }) {
     const ts = () => new Date().toTimeString().slice(0, 8);
 
     try {
-      const res = await fetch(`/api/jarvis/${flow.id}/stream`, {
+      const res = await fetch(`api/jarvis/${flow.id}/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ flow_id: flow.id, params: flowParams }),

@@ -49,7 +49,7 @@ function ViewAgent() {
     };
 
     try {
-      const res = await fetch('/api/agent/stream', {
+      const res = await fetch('api/agent/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
