@@ -982,11 +982,17 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
   });
 
   // Index id → label décodé pour les tooltips d'arêtes — les ids
-  // bruts JDM (N23, N1234…) ne sont pas lisibles. Le centre est
-  // déjà stocké par son label (cf. buildLiveScenario.remap).
-  const labelOf = {};
+  // bruts JDM (N23, N1234…, ROOT) ne sont pas lisibles.
+  // Source la PLUS COMPLÈTE : _labelByRawId fourni par buildLiveScenario
+  // qui couvre TOUS les nœuds reçus du backend (y compris ROOT et ceux
+  // qui auraient pu être filtrés du rendu). On complète avec g.nodes
+  // et g.center pour les scénarios démo.
+  const labelOf = Object.assign({}, g._labelByRawId || {});
   if (g.center) labelOf[g.center] = g.center;
-  g.nodes.forEach(n => { labelOf[n.id] = n.label || n.id; });
+  g.nodes.forEach(n => {
+    const lbl = (n.label || '').toString().trim();
+    if (lbl) labelOf[n.id] = lbl;
+  });
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`}
@@ -3453,11 +3459,24 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
       highlight: e.highlight !== false,
     }));
 
+  // Map ID brut JDM (incluant ROOT et tous les N1, N2…) → label décodé.
+  // Sert aux tooltips d'arête (GraphCanvas le consulte en priorité)
+  // pour qu'aucune ID brute ne fuite dans l'UI.
+  const labelByRawId = {};
+  for (const n of nodes) {
+    const lbl = (n.label || '').toString().trim();
+    labelByRawId[n.id] = lbl || n.id;
+  }
+  labelByRawId[centerId] = center;
+
   return {
     id: 'live',
     question: '',
     streamChunks: [],
-    graph: { center, nodes: liveNodes, edges: liveEdges },
+    graph: {
+      center, nodes: liveNodes, edges: liveEdges,
+      _labelByRawId: labelByRawId, _centerId: centerId,
+    },
   };
 }
 

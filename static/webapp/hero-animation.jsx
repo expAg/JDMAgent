@@ -324,11 +324,17 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
   });
 
   // Index id → label décodé pour les tooltips d'arêtes — les ids
-  // bruts JDM (N23, N1234…) ne sont pas lisibles. Le centre est
-  // déjà stocké par son label (cf. buildLiveScenario.remap).
-  const labelOf = {};
+  // bruts JDM (N23, N1234…, ROOT) ne sont pas lisibles.
+  // Source la PLUS COMPLÈTE : _labelByRawId fourni par buildLiveScenario
+  // qui couvre TOUS les nœuds reçus du backend (y compris ROOT et ceux
+  // qui auraient pu être filtrés du rendu). On complète avec g.nodes
+  // et g.center pour les scénarios démo.
+  const labelOf = Object.assign({}, g._labelByRawId || {});
   if (g.center) labelOf[g.center] = g.center;
-  g.nodes.forEach(n => { labelOf[n.id] = n.label || n.id; });
+  g.nodes.forEach(n => {
+    const lbl = (n.label || '').toString().trim();
+    if (lbl) labelOf[n.id] = lbl;
+  });
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`}

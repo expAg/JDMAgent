@@ -270,11 +270,24 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
       highlight: e.highlight !== false,
     }));
 
+  // Map ID brut JDM (incluant ROOT et tous les N1, N2…) → label décodé.
+  // Sert aux tooltips d'arête (GraphCanvas le consulte en priorité)
+  // pour qu'aucune ID brute ne fuite dans l'UI.
+  const labelByRawId = {};
+  for (const n of nodes) {
+    const lbl = (n.label || '').toString().trim();
+    labelByRawId[n.id] = lbl || n.id;
+  }
+  labelByRawId[centerId] = center;
+
   return {
     id: 'live',
     question: '',
     streamChunks: [],
-    graph: { center, nodes: liveNodes, edges: liveEdges },
+    graph: {
+      center, nodes: liveNodes, edges: liveEdges,
+      _labelByRawId: labelByRawId, _centerId: centerId,
+    },
   };
 }
 
