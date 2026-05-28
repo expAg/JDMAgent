@@ -78,7 +78,7 @@ def submit_to_jdm(
     # pour que le mainteneur JDM voie immédiatement le type du drop.
     # Fallback .enrich si le fichier n'a pas d'extension reconnue.
     src_ext = p.suffix.lower()
-    if src_ext not in (".enrich", ".audit", ".err", ".stat"):
+    if src_ext not in (".enrich", ".audit", ".err", ".stat", ".annot"):
         src_ext = ".enrich"
     uploaded_name = compute_submission_filename(resolved_model, extension=src_ext)
 

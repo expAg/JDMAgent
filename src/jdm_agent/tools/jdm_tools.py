@@ -1659,6 +1659,160 @@ def stats_workflow() -> dict:
 
 
 @tool
+def annotation_workflow() -> dict:
+    """Renvoie le flux canonique pour toute demande d'ANNOTATION SÉMANTIQUE
+    de triplets JDM selon la taxonomie 4-catégories (constitutif / contrastif
+    / non spécifique / exception).
+
+    ⚡ POINT D'ENTRÉE OBLIGATOIRE — appelle ce tool en TOUT PREMIER dès qu'on
+    te demande d'ANNOTER / QUALIFIER / CATÉGORISER des triplets dans JDM
+    selon cette taxonomie. Zéro coût.
+
+    L'annotation est un JUGEMENT LINGUISTIQUE de locuteur sur le LIEN
+    (sujet|relation|objet), PAS sur l'objet. Aucune consolidation par
+    inférence n'est nécessaire — on qualifie un triplet existant.
+    """
+    return {
+        "title": "Flux d'annotation sémantique JDM",
+        "intent": (
+            "Pour un terme (+ relation optionnelle), récupérer les triplets "
+            "existants dans JDM puis attribuer à chacun une annotation "
+            "sémantique parmi `constitutif`, `contrastif`, `non spécifique`, "
+            "`exception` (ou rien si aucune ne convient). L'annotation "
+            "qualifie le LIEN, pas l'objet. Soumission au format .annot."
+        ),
+        "taxonomy": {
+            "constitutif": (
+                "Le trait est une DÉFINITION ESSENTIELLE, sans laquelle "
+                "l'entité perd son essence. Ex: 'avocat(juriste) r_isa "
+                "juriste' = constitutif."
+            ),
+            "contrastif": (
+                "Le trait est une DIFFÉRENCIATION CLÉ qui distingue "
+                "l'entité de ses pairs proches dans la même catégorie. "
+                "Ex: 'autruche r_carac ne_vole_pas' parmi les oiseaux."
+            ),
+            "non spécifique": (
+                "La propriété est vraie mais TROP TRIVIALE ou GÉNÉRIQUE "
+                "pour être informative. Ex: 'avocat r_isa humain' = vrai "
+                "mais ne distingue pas du tout l'avocat."
+            ),
+            "exception": (
+                "Le lien est valide mais ne s'applique que DANS UN CADRE "
+                "RESTREINT ou est contredit par un sous-type majeur. "
+                "Ex: 'baleine r_isa poisson' (faux en bio, vrai en folk)."
+            ),
+        },
+        "steps": [
+            {
+                "order": 1,
+                "name": "Identifier la cible",
+                "description": (
+                    "Si un TERME et/ou une RELATION sont fournis → utilise-"
+                    "les directement. Si AUCUN n'est fourni → tire 2-3 "
+                    "termes français variés au hasard (animal, objet, "
+                    "action, sentiment) ; n'invente pas un thème, varie. "
+                    "Si le TERME est polysémique → désambiguïse en "
+                    "appelant `disambiguate(term)` puis travaille SUR LE "
+                    "SENS RAFFINÉ (`term>91594`) PAS sur le générique. "
+                    "L'annotation dépend du sens — c'est crucial."
+                ),
+                "tool": "disambiguate (si polysémique)",
+            },
+            {
+                "order": 2,
+                "name": "Récupérer les triplets à annoter",
+                "description": (
+                    "Pour chaque relation cible (ou liste par défaut : "
+                    "r_isa, r_has_part, r_carac, r_telic_role, r_lieu, "
+                    "r_anto, r_syn), appelle `get_relations_of_type(term, "
+                    "relation, limit=8)` — top-8 par poids suffit pour "
+                    "annoter, plus = bruit."
+                ),
+                "tool": "get_relations_of_type",
+            },
+            {
+                "order": 3,
+                "name": "Récupérer les annotations JDM existantes (signalement)",
+                "description": (
+                    "Pour CHAQUE triplet récupéré, appelle "
+                    "`get_triplet_annotations(subject, relation, target)` "
+                    "pour voir si JDM a déjà une annotation parmi notre "
+                    "taxonomie (constitutif/contrastif/non spécifique/"
+                    "exception). Note cette annotation pour la phase de "
+                    "comparaison. NE PAS skipper les triplets déjà annotés — "
+                    "on les compare."
+                ),
+                "tool": "get_triplet_annotations",
+            },
+            {
+                "order": 4,
+                "name": "Annoter selon ton jugement linguistique",
+                "description": (
+                    "Pour chaque triplet, choisis UNE catégorie de la "
+                    "taxonomie OU laisse vide si aucune ne convient. "
+                    "Justifie en 1 phrase courte (< 25 mots). Règles : "
+                    "(a) profondeur sémantique, pas vérité factuelle ; "
+                    "(b) l'annotation qualifie le LIEN avec la cible, pas "
+                    "l'objet ; (c) traite les raffinements comme unités "
+                    "distinctes : 'avocat(juriste) r_isa juriste' ≠ "
+                    "'avocat(fruit) r_isa juriste'."
+                ),
+                "tool": "(jugement — pas d'appel)",
+            },
+            {
+                "order": 5,
+                "name": "Écrire le fichier .annot (deux sections)",
+                "description": (
+                    "Appelle `write_submission_file(triplets=[...], "
+                    "path='<term>_annotation.annot', upload=...)` en mode "
+                    "LIGNES `{\"line\": \"...\"}` avec DEUX sections :\n\n"
+                    "  [\n"
+                    "    {\"line\": \"sujet|relation|objet|annotation < justification >\"},\n"
+                    "    ...,\n"
+                    "    {\"line\": \"\"},\n"
+                    "    {\"line\": \"=====SIGNALEMENT=====\"},\n"
+                    "    {\"line\": \"# Triplets dont mon annotation diffère de JDM existant\"},\n"
+                    "    {\"line\": \"sujet|relation|objet|JDM:<annot_jdm>|LLM:<annot_llm> < argument contre >\"},\n"
+                    "    ...,\n"
+                    "  ]\n\n"
+                    "Section principale : triplets que TU annotes (catégorie "
+                    "non vide) ET qui ne sont PAS en désaccord avec JDM.\n"
+                    "Section SIGNALEMENT : triplets où ton annotation diffère "
+                    "de celle déjà présente dans JDM (champ JDM: + champ LLM: "
+                    "+ argument contre court).\n"
+                    "Skip silencieusement les triplets non annotables (sans "
+                    "ligne) — pas de bruit dans la sortie.\n\n"
+                    "SOUMISSION optionnelle : `upload=True` si demandé "
+                    "(avec `model_name` + `api_key` si nécessaire). "
+                    "L'extension .annot est dérivée du path."
+                ),
+                "tool": "write_submission_file",
+            },
+        ],
+        "rules": [
+            "L'annotation qualifie le LIEN, pas l'objet (cf. exemple avocat).",
+            "Respecte le SENS RAFFINÉ — un triplet sur 'avocat(juriste)' "
+            "est sémantiquement différent du même triplet sur 'avocat(fruit)'.",
+            "Si AUCUNE catégorie ne convient → laisse vide, ne force pas.",
+            "Justification courte (< 25 mots) — pas une dissertation.",
+            "Section SIGNALEMENT ≠ section principale. Un triplet en "
+            "désaccord avec JDM va EN SIGNALEMENT, pas en principal.",
+            "Pas de consolidation par inférence — l'annotation est un "
+            "jugement de locuteur, pas un fait à vérifier.",
+            "Tirage random uniquement si term ET relation sont absents — "
+            "sinon respecte ce que l'utilisateur a demandé.",
+        ],
+        "if_no_term": (
+            "Tu choisis toi-même 2-3 termes français variés (catégories "
+            "lexicales différentes : un animal, un objet, une action, un "
+            "sentiment) et tu travailles dessus. Pas plus de 3 termes "
+            "pour rester dans un budget raisonnable."
+        ),
+    }
+
+
+@tool
 def write_submission_file(
     triplets: list[dict],
     path: str = "soumission_jdm.txt",
@@ -1717,7 +1871,7 @@ def write_submission_file(
     SOUMISSION AUTOMATIQUE au LLMDrops (opt-in) :
       - `upload=True` : POST le fichier après écriture. Le nom uploadé
         est `{HHhMM}_{DD-MM-YY}_automatic_submission_from_{model}.{ext}`
-        où `.ext` est dérivée du `path` (.enrich / .audit / .err / .stat).
+        où `.ext` est dérivée du `path` (.enrich / .audit / .err / .stat / .annot).
       - `model_name` : nom EXACT du LLM. ⚠️ Ne DEVINE PAS ; si pas sûr,
         laisse vide.
       - `api_key`    : clé API LLMDrops. Vide → env `JDM_DROPS_API_KEY`.
@@ -2169,6 +2323,7 @@ ALL_TOOLS: list[StructuredTool] = [
     gap_detection_workflow,
     signalement_workflow,
     stats_workflow,
+    annotation_workflow,
     list_existing_for_enrichment,
     detect_gaps,
     validate_candidate,

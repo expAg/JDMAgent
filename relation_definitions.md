@@ -1092,3 +1092,32 @@ Schemas d'inference (du moins cher au plus cher) :
 Le moteur est BORNE par un budget d'appels HTTP (silence propre si epuise).
 Les candidats d'enrichissement CONSOLIDES par inference sont exportes dans un
 fichier de soumission au format A|R|B|annotation.
+
+
+## 22. Flow d'annotation semantique (taxonomie 4-categories)
+
+Le flow Annotation de Jarvis attribue a chaque triplet existant JDM une
+annotation parmi une taxonomie STRICTE de 4 categories :
+
+* constitutif    -- trait definitionnel essentiel (avocat(juriste) r_isa juriste)
+* contrastif     -- differenciation cle par rapport aux pairs proches
+* non specifique -- vrai mais trop generique (avocat r_isa humain)
+* exception      -- valide en cadre restreint / contredit (baleine r_isa poisson)
+
+Aucune des 4 ne convient => pas d'annotation forcee (champ vide).
+
+REGLES :
+* L'annotation qualifie le LIEN, pas l'objet.
+* Sens raffine respecte (avocat(juriste) different de avocat(fruit)).
+* Jugement linguistique de locuteur -- pas de consolidation par inference.
+
+Format de sortie : fichier .annot, deux sections :
+
+  Section principale (sujet|relation|objet|annotation < justification >)
+  =====SIGNALEMENT=====
+  Section signalement (sujet|relation|objet|JDM:<existant>|LLM:<propose> < argument contre >)
+
+La section SIGNALEMENT contient les triplets ou le LLM est en DESACCORD
+avec une annotation deja presente dans JDM (recuperee via
+get_triplet_annotations puis r_annotation type 998). C'est un signal
+exploitable par un mainteneur JDM, pas une assertion automatique.
