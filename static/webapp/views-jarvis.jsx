@@ -220,7 +220,21 @@ function JarvisRun({ flow, onBack }) {
             setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
             break;
           case 'tool_call':
-            setMetrics(m => ({ ...m, toolsCalled: m.toolsCalled + 1 }));
+            setMetrics(m => {
+              const next = { ...m, toolsCalled: m.toolsCalled + 1 };
+              // « Consolidés » = nombre de triplets passés à consolidate_candidate
+              // (l'étape qui valide par inférence) — c'est le compteur que
+              // l'utilisateur attend pour un enrichissement.
+              if (d.name === 'consolidate_candidate') next.accepted = m.accepted + 1;
+              return next;
+            });
+            // Trace les triplets consolidés dans la liste de droite avec
+            // les arguments du tool_call (term/relation/target visibles).
+            if (d.name === 'consolidate_candidate' && d.args) {
+              const a = d.args || {};
+              const triplet = `${a.term || a.subject || '?'} | ${a.relation || '?'} | ${a.target || a.object || '?'}`;
+              setAccepted(prev => [...prev, { label: triplet, score: '⏳' }]);
+            }
             setLog(l => [...l, {
               t: ts(), tag: '[tool]', kind: 'tool',
               msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
@@ -232,9 +246,18 @@ function JarvisRun({ flow, onBack }) {
             } else if (d.preview) {
               setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
             }
-            if (d.name === 'write_submission_file' && d.preview) {
-              setAccepted(a => [...a, { label: d.preview.slice(0, 80), score: 'soumis' }]);
-              setMetrics(m => ({ ...m, accepted: m.accepted + 1 }));
+            // Mise à jour du dernier triplet consolidé : ✓ ou ✗ selon le
+            // résultat (narration ou preview contiennent typiquement
+            // « consolidé » / « rejeté »).
+            if (d.name === 'consolidate_candidate') {
+              const text = (d.narration || d.preview || '').toLowerCase();
+              const ok = text.includes('consolid') && !text.includes('rejet');
+              setAccepted(prev => {
+                if (prev.length === 0) return prev;
+                const next = prev.slice();
+                next[next.length - 1] = { ...next[next.length - 1], score: ok ? '✓' : '✗' };
+                return next;
+              });
             }
             break;
           case 'final':
@@ -377,6 +400,30 @@ function JarvisRun({ flow, onBack }) {
                   mono />
               </Field>
             )}
+            <Field label="Budget d'outils">
+              <Select value={params.budget_label || 'illimité'}
+                onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
+                options={BUDGET_OPTS} />
+            </Field>
+          </Card>
+
+          <Card padding={16}>
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--ink-3)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+              marginBottom: 12,
+            }}>LLMDrops</div>
+            <Field label="Clé API" hint="Override l'env JDM_DROPS_API_KEY. Vide = utilise la clé serveur.">
+              <Input value={params.drops_key || ''}
+                onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
+                placeholder="optionnel…" mono />
+            </Field>
+            <div style={{
+              fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5,
+            }}>
+              Sans clé, la case « Soumettre » écrit juste le fichier local
+              sans pousser à JDM.
+            </div>
           </Card>
         </div>
 
@@ -410,7 +457,7 @@ function JarvisRun({ flow, onBack }) {
           }}>
             <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
             <Metric label="Pensées" value={metrics.thoughts} sub="thoughts" />
-            <Metric label="Soumis" value={metrics.accepted} sub="fichiers" color="var(--jdm-green)" />
+            <Metric label="Consolidés" value={metrics.accepted} sub="triplets" color="var(--jdm-green)" />
             <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
           </div>
 
@@ -477,7 +524,7 @@ function JarvisRun({ flow, onBack }) {
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
                 }}>
-                  {finalText ? 'Réponse finale' : `Fichiers soumis · ${accepted.length}`}
+                  {finalText ? 'Réponse finale' : `Triplets consolidés · ${accepted.length}`}
                 </div>
               </div>
               <div style={{
@@ -632,13 +679,27 @@ const BUDGET_OPTS = [
 ];
 
 function defaultParamsFor(flowId) {
-  const common = { model: 'gemini-3.1-flash-lite', api_key: '', use_thinking: true };
+  // Defaults alignés sur la branche deploy-self / app.py :
+  // term vide partout (= tirage au hasard côté backend), budget illimité,
+  // thinking=false (Jarvis = robustesse > raisonnement), upload=false.
+  const common = {
+    model: 'gemini-3.1-flash-lite',
+    api_key: '', drops_key: '',
+    use_thinking: false,
+    budget_label: 'illimité',
+  };
   switch (flowId) {
-    case 'enrich':      return { ...common, term: 'chat', relation: 'r_carac', target_count: 10, vary_relations: false, iterate: false, budget_label: '25', upload: false };
-    case 'audit':       return { ...common, term: 'avocat', relation: '', budget_label: '50', upload: false };
-    case 'gap':         return { ...common, term: 'chat', budget_label: '25' };
-    case 'signalement': return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
-    case 'stats':       return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
+    case 'enrich':
+      return { ...common, term: '', relation: '',
+               target_count: 3, vary_relations: true, iterate: true, upload: false };
+    case 'audit':
+      return { ...common, term: '', relation: '', upload: false };
+    case 'gap':
+      return { ...common, term: '' };
+    case 'signalement':
+      return { ...common, term: '', relation: '', upload: false };
+    case 'stats':
+      return { ...common, term: '', relation: '', upload: false };
   }
   return common;
 }

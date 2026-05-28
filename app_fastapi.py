@@ -107,6 +107,18 @@ EXPLORE_RELATIONS = {
 
 EFFORT_CHOICES = {0, 1, 2}
 
+# Liste des relations principales exposées aux formulaires Jarvis.
+# (DEFAULT_RELATIONS + quelques relations utiles supplémentaires.)
+JARVIS_RELATIONS: list[str] = list(DEFAULT_RELATIONS) + [
+    r for r in (
+        "r_syn", "r_anto", "r_agent-1", "r_patient-1", "r_instr-1",
+        "r_telic_role", "r_lieu", "r_has_color", "r_has_part",
+        "r_make", "r_processus>agent", "r_processus>patient",
+        "r_has_conseq", "r_has_causatif", "r_domain", "r_associated",
+    )
+    if r not in DEFAULT_RELATIONS
+]
+
 
 # ────────────────────────────────────────────────────────────────────
 # Helpers — copie depuis app.py si tu en as besoin
@@ -146,10 +158,23 @@ class TermRequest(BaseModel):
 
 class SubgraphRequest(BaseModel):
     term: str
-    depth: int = 2
+    depth: int = 1
+    # Top-K et relations par profondeur (défauts JDM). Les listes vides
+    # font tomber sur les défauts côté build_subgraph (DEFAULT_RELATIONS,
+    # DEFAULT_DEPTH2_RELATIONS, ...).
+    top_k: int = 3
+    top_k_d2: int = 3
+    top_k_d3: int = 3
+    top_k_d4: int = 3
     relations: list[str] = []
-    min_weight: float = 25
+    relations_d2: list[str] = []
+    relations_d3: list[str] = []
+    relations_d4: list[str] = []
+    min_weight: float = 0
     max_nodes: int = 40
+    # "html" = HTML interactif vis-network (rendu en iframe côté front)
+    # "json" = nodes/edges JSON pour rendu SVG natif
+    format: str = "html"
 
 
 class AgentRequest(BaseModel):
@@ -330,90 +355,120 @@ def api_disambiguate(req: TermRequest) -> dict[str, Any]:
 # ────────────────────────────────────────────────────────────────────
 @app.post("/api/subgraph")
 def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
-    """Construire le sous-graphe d'un terme et renvoyer nodes/edges JSON.
+    """Construire le sous-graphe d'un terme.
 
-    On délègue à `build_subgraph(output="json")` puis on aplatit en une
-    structure légère facile à layouter côté frontend :
-        {root, nodes: [{id, label, kind, depth}],
-               edges: [{from, to, relation, weight, negative, depth}],
-               stats: {...}, message?}
+    Deux formats :
+      - `format="html"` : HTML autonome vis-network (interactif), à
+        afficher dans une iframe côté front. Retour :
+          {format: "html", root, html: "<!doctype html>...", stats}
+      - `format="json"` : nodes + edges aplatis pour rendu SVG natif.
+          {format: "json", root, nodes, edges, stats}
     """
     c = get_client()
     term, err = _resolve_and_check(c, req.term)
     if err:
-        return {"root": req.term, "nodes": [], "edges": [],
-                "stats": {"n_nodes": 0, "n_edges": 0}, "message": err}
-
-    rels = list(req.relations) if req.relations else None
-    try:
-        res = build_subgraph(
-            term,
-            client=c,
-            depth=max(1, min(int(req.depth), 4)),
-            top_k_per_relation=8,  # backend décide, frontend coupe à max_nodes
-            min_weight=float(req.min_weight) if req.min_weight else None,
-            relations=rels,
-            output="json",
-        )
-    except Exception as e:
-        return {"root": term, "nodes": [], "edges": [],
+        return {"format": req.format, "root": req.term, "message": err,
                 "stats": {"n_nodes": 0, "n_edges": 0},
-                "message": f"Erreur API JDM : {e}"}
+                "nodes": [], "edges": [], "html": ""}
 
-    # Aplatir nodes vis-network → forme frontend simple.
+    # Conversion listes vides → None pour que build_subgraph utilise
+    # ses DEFAULT_RELATIONS / DEFAULT_DEPTH2_RELATIONS / etc.
+    def _nz(lst: list[str]) -> Optional[list[str]]:
+        return list(lst) if lst else None
+
+    fmt = req.format.lower() if req.format else "html"
+    if fmt not in {"html", "json"}:
+        raise HTTPException(400, f"format doit être 'html' ou 'json' (reçu : {req.format!r})")
+
+    try:
+        kwargs: dict[str, Any] = {
+            "client": c,
+            "depth": max(1, min(int(req.depth), 4)),
+            "top_k_per_relation": int(req.top_k),
+            "top_k_depth2": int(req.top_k_d2),
+            "top_k_depth3": int(req.top_k_d3),
+            "top_k_depth4": int(req.top_k_d4),
+            "relations": _nz(req.relations),
+            "depth2_relations": _nz(req.relations_d2),
+            "depth3_relations": _nz(req.relations_d3),
+            "depth4_relations": _nz(req.relations_d4),
+            "output": fmt,
+        }
+        # min_weight=0 → on passe None à build_subgraph pour qu'il
+        # délègue à JDM (sinon on coupe trop fort sur des graphes courts).
+        if req.min_weight and req.min_weight > 0:
+            kwargs["min_weight"] = float(req.min_weight)
+
+        if fmt == "html":
+            # Écrit dans /tmp puis on relit le HTML pour le renvoyer
+            # inline (le front l'injecte dans une iframe). Évite de
+            # devoir gérer les fichiers servis statiquement.
+            import tempfile
+            tmpdir = Path(tempfile.gettempdir())
+            tmppath = tmpdir / f"jdm_subgraph_{abs(hash((term, req.depth)))}.html"
+            kwargs["output_path"] = str(tmppath)
+            res = build_subgraph(term, **kwargs)
+            try:
+                html = tmppath.read_text(encoding="utf-8")
+            finally:
+                try: tmppath.unlink()
+                except Exception: pass
+            return {
+                "format": "html",
+                "root": term,
+                "html": html,
+                "stats": res.get("stats", {}),
+            }
+
+        # format == "json"
+        res = build_subgraph(term, **kwargs)
+    except Exception as e:
+        return {"format": fmt, "root": term, "message": f"Erreur API JDM : {e}",
+                "stats": {"n_nodes": 0, "n_edges": 0},
+                "nodes": [], "edges": [], "html": ""}
+
     raw_nodes = res.get("nodes", [])
     raw_edges = res.get("edges", [])
-
     nodes_out = [
-        {
-            "id": n["id"],
-            "label": n.get("label", n["id"]),
-            "kind": n.get("_kind", "assoc"),
-            "depth": n.get("_depth", 0),
-        }
+        {"id": n["id"], "label": n.get("label", n["id"]),
+         "kind": n.get("_kind", "assoc"), "depth": n.get("_depth", 0)}
         for n in raw_nodes
     ]
     edges_out = [
-        {
-            "from": e["from"],
-            "to": e["to"],
-            "relation": e.get("_relation", ""),
-            "weight": e.get("_weight", 0),
-            "negative": bool(e.get("_negative", False)),
-            "depth": e.get("_depth", 1),
-        }
+        {"from": e["from"], "to": e["to"],
+         "relation": e.get("_relation", ""),
+         "weight": e.get("_weight", 0),
+         "negative": bool(e.get("_negative", False)),
+         "depth": e.get("_depth", 1)}
         for e in raw_edges
     ]
 
-    # Optionnel : tronquer à max_nodes en préservant la connectivité.
-    # Stratégie : BFS depuis ROOT en respectant l'ordre par poids d'arête
-    # descendant. Garde tous les nœuds atteignables jusqu'à saturation.
+    # Tronque à max_nodes en BFS depuis ROOT (préserve la connectivité).
     if req.max_nodes and len(nodes_out) > req.max_nodes:
-        # Index edges sortantes par source, triées par poids desc.
         out_edges: dict[str, list[dict]] = {}
         for e in edges_out:
             out_edges.setdefault(e["from"], []).append(e)
         for src in out_edges:
             out_edges[src].sort(key=lambda e: -abs(e["weight"]))
-        # BFS depuis ROOT, en saturant par couches.
         keep: set[str] = {"ROOT"}
         frontier = ["ROOT"]
         while frontier and len(keep) < req.max_nodes:
-            next_frontier = []
+            nxt = []
             for src in frontier:
                 for e in out_edges.get(src, []):
                     if e["to"] not in keep:
                         keep.add(e["to"])
-                        next_frontier.append(e["to"])
+                        nxt.append(e["to"])
                         if len(keep) >= req.max_nodes:
                             break
                 if len(keep) >= req.max_nodes:
                     break
-            frontier = next_frontier
+            frontier = nxt
         nodes_out = [n for n in nodes_out if n["id"] in keep]
         edges_out = [e for e in edges_out if e["from"] in keep and e["to"] in keep]
 
     return {
+        "format": "json",
         "root": term,
         "nodes": nodes_out,
         "edges": edges_out,
@@ -553,6 +608,14 @@ async def api_agent_stream(req: AgentRequest):
 # `params` est le dict envoyé par l'UI ; on en extrait ce que le
 # builder accepte. On filtre via inspect.signature pour rester
 # tolérant aux paramètres inconnus.
+def _term_or_random(p: dict) -> str:
+    """Renvoie le terme du form, ou un libellé 'aléatoire' si vide.
+    Évite l'affichage moche de « » dans les headlines.
+    """
+    t = (p.get("term") or "").strip()
+    return t if t else "un terme tiré au hasard"
+
+
 def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
     """Construit (prompt, headline) pour un flow donné. Lève ValueError
     si le flow est inconnu."""
@@ -562,11 +625,11 @@ def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
         build_signalement_prompt, build_stats_prompt,
     )
     BUILDERS = {
-        "enrich":      (build_enrich_prompt,      lambda p: f"🌱 Enrichir « {p.get('term', '?')} »"),
-        "audit":       (build_audit_prompt,       lambda p: f"🔍 Auditer « {p.get('term', '?')} »"),
-        "gap":         (build_gap_prompt,         lambda p: f"🕳️ Trous sur « {p.get('term', '?')} »"),
-        "signalement": (build_signalement_prompt, lambda p: f"⚠️ Signaler sur « {p.get('term', '?')} »"),
-        "stats":       (build_stats_prompt,       lambda p: f"📊 Stats sur « {p.get('term', '?')} »"),
+        "enrich":      (build_enrich_prompt,      lambda p: f"🌱 Enrichir {_term_or_random(p)}"),
+        "audit":       (build_audit_prompt,       lambda p: f"🔍 Auditer {_term_or_random(p)}"),
+        "gap":         (build_gap_prompt,         lambda p: f"🕳️ Détecter les trous sur {_term_or_random(p)}"),
+        "signalement": (build_signalement_prompt, lambda p: f"⚠️ Signaler les triplets suspects de {_term_or_random(p)}"),
+        "stats":       (build_stats_prompt,       lambda p: f"📊 Stats sur {_term_or_random(p)}"),
     }
     if flow_id not in BUILDERS:
         raise ValueError(
@@ -616,6 +679,15 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
             yield {"event": "error", "data": json.dumps({"text": str(e)})}
         return EventSourceResponse(err_gen())
 
+    # Override env LLMDrops si une clé est passée dans le bandeau Jarvis.
+    # On restaure l'env à la sortie pour ne pas polluer les autres flows
+    # qui partagent ce process.
+    drops_key_override = (p.get("drops_key") or "").strip()
+    saved_drops_key: Optional[str] = None
+    if drops_key_override:
+        saved_drops_key = os.environ.get("JDM_DROPS_API_KEY")
+        os.environ["JDM_DROPS_API_KEY"] = drops_key_override
+
     async def gen():
         # Headline immédiate
         yield {
@@ -638,6 +710,13 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
             yield {"event": "error", "data": json.dumps({
                 "text": f"{type(e).__name__}: {e}"
             }, ensure_ascii=False)}
+        finally:
+            # Restauration de l'env Drops (silencieuse).
+            if drops_key_override:
+                if saved_drops_key is None:
+                    os.environ.pop("JDM_DROPS_API_KEY", None)
+                else:
+                    os.environ["JDM_DROPS_API_KEY"] = saved_drops_key
 
     return EventSourceResponse(gen())
 

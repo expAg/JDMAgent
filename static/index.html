@@ -215,6 +215,67 @@
     background: var(--accent);
     animation: pulse-dot 1.2s ease-in-out infinite;
   }
+
+  /* ── Markdown prose (Projet / Aide) ── */
+  .jdm-prose { max-width: 880px; line-height: 1.7; }
+  .jdm-prose h1 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 34px; letter-spacing: -0.02em;
+    margin: 0 0 24px; color: var(--ink);
+  }
+  .jdm-prose h2 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 24px; letter-spacing: -0.015em;
+    margin: 36px 0 14px; color: var(--ink);
+    padding-bottom: 6px; border-bottom: 1px solid var(--line-soft);
+  }
+  .jdm-prose h3 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 18px; margin: 28px 0 10px; color: var(--ink);
+  }
+  .jdm-prose p { margin: 0 0 14px; color: var(--ink-2); }
+  .jdm-prose strong { color: var(--ink); }
+  .jdm-prose a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+  .jdm-prose a:hover { border-bottom-color: var(--accent); }
+  .jdm-prose ul, .jdm-prose ol { padding-left: 22px; margin: 0 0 14px; }
+  .jdm-prose li { margin-bottom: 4px; color: var(--ink-2); }
+  .jdm-prose li > strong { color: var(--ink); }
+  .jdm-prose code {
+    font-family: var(--font-mono); font-size: 0.88em;
+    background: var(--bg-elev); padding: 2px 6px;
+    border-radius: 3px; color: var(--ink);
+  }
+  .jdm-prose pre {
+    background: var(--bg-elev); border: 1px solid var(--line-soft);
+    border-radius: var(--radius); padding: 14px 16px;
+    overflow-x: auto; margin: 0 0 18px;
+  }
+  .jdm-prose pre code {
+    background: transparent; padding: 0; font-size: 12px;
+    color: var(--ink); line-height: 1.55;
+  }
+  .jdm-prose table {
+    border-collapse: collapse; width: 100%; margin: 14px 0 18px;
+    font-size: 13px;
+  }
+  .jdm-prose th, .jdm-prose td {
+    border: 1px solid var(--line); padding: 8px 12px; text-align: left;
+    vertical-align: top;
+  }
+  .jdm-prose th {
+    background: var(--bg-elev); font-weight: 600; color: var(--ink);
+    font-family: var(--font-mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .jdm-prose td { color: var(--ink-2); }
+  .jdm-prose td > strong { color: var(--ink); }
+  .jdm-prose blockquote {
+    border-left: 3px solid var(--accent); padding: 6px 14px;
+    background: var(--bg-elev); margin: 14px 0;
+    color: var(--ink-2); font-style: italic;
+  }
+  .jdm-prose hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
+  .jdm-prose small { font-size: 11px; opacity: 0.85; }
 </style>
 
 <template id="__bundler_thumbnail">
@@ -231,6 +292,8 @@
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<!-- Markdown rendering for Projet / Aide tabs -->
+<script src="https://unpkg.com/marked@14.1.3/marked.min.js"></script>
 <script src="webapp/image-slot.js"></script>
 
 </head>

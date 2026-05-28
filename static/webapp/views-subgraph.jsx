@@ -1,25 +1,28 @@
 // View: Sous-graphe — extract & visualise a term's neighbourhood via /api/subgraph.
+// Deux formats : HTML interactif (iframe vis-network) par défaut, ou SVG natif.
 
-const SUBGRAPH_RELATIONS = [
-  'r_syn', 'r_isa', 'r_hypo', 'r_has_part', 'r_carac',
-  'r_has_color', 'r_lieu', 'r_agent', 'r_patient', 'r_instr',
+const SUBGRAPH_DEFAULT_RELATIONS = [
+  'r_isa', 'r_hypo', 'r_syn', 'r_anto',
+  'r_carac', 'r_has_part', 'r_lieu', 'r_domain',
+];
+const SUBGRAPH_DEFAULT_D2 = ['r_isa', 'r_carac', 'r_has_part', 'r_lieu'];
+const SUBGRAPH_DEFAULT_D3 = ['r_isa', 'r_has_part', 'r_carac'];
+const SUBGRAPH_DEFAULT_D4 = ['r_isa', 'r_carac'];
+
+const SUBGRAPH_ALL_RELATIONS = [
+  ...SUBGRAPH_DEFAULT_RELATIONS,
+  'r_has_color', 'r_agent', 'r_patient', 'r_instr',
+  'r_telic_role', 'r_has_causatif', 'r_has_conseq',
+  'r_patient-1', 'r_agent-1', 'r_associated',
 ];
 
-// Couleur par "kind" de relation — calque du PALETTE backend.
+// Mapping kind → couleur (utilisé par le rendu SVG).
 const KIND_COLOR = {
   center: '#1a1a1a',
-  isa:    '#1565c0',
-  hypo:   '#2e7d32',
-  syn:    '#558b2f',
-  anto:   '#c62828',
-  carac:  '#6a1b9a',
-  part:   '#a04500',
-  lieu:   '#00838f',
-  verb:   '#ef6c00',
-  domain: '#455a64',
-  assoc:  '#757575',
+  isa:    '#1565c0', hypo:   '#2e7d32', syn:    '#558b2f', anto:   '#c62828',
+  carac:  '#6a1b9a', part:   '#a04500', lieu:   '#00838f',
+  verb:   '#ef6c00', domain: '#455a64', assoc:  '#757575',
 };
-
 const KIND_OF_REL = {
   r_isa: 'isa', r_hypo: 'hypo', r_syn: 'syn', r_anto: 'anto',
   r_carac: 'carac', r_has_part: 'part', r_lieu: 'lieu',
@@ -29,21 +32,28 @@ const KIND_OF_REL = {
 
 function ViewSubgraph() {
   // Si Explorer a navigué vers nous via jdm:goto, on récupère son terme.
-  const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'chat';
+  const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'plat asiatique';
   if (typeof window !== 'undefined') window.__jdmPendingTerm = null;
   const [term, setTerm] = useState(initialTerm);
-  const [depth, setDepth] = useState(2);
-  const [activeRels, setActiveRels] = useState(['r_isa', 'r_has_part', 'r_carac', 'r_syn']);
-  const [minWeight, setMinWeight] = useState(30);
+  const [depth, setDepth] = useState(1);
+  const [topK, setTopK] = useState(3);
+  const [topKd2, setTopKd2] = useState(3);
+  const [topKd3, setTopKd3] = useState(3);
+  const [topKd4, setTopKd4] = useState(3);
+  const [activeRels, setActiveRels] = useState(SUBGRAPH_DEFAULT_RELATIONS);
+  const [activeRelsD2, setActiveRelsD2] = useState(SUBGRAPH_DEFAULT_D2);
+  const [activeRelsD3, setActiveRelsD3] = useState(SUBGRAPH_DEFAULT_D3);
+  const [activeRelsD4, setActiveRelsD4] = useState(SUBGRAPH_DEFAULT_D4);
+  const [minWeight, setMinWeight] = useState(0);
   const [maxNodes, setMaxNodes] = useState(40);
-  const [data, setData] = useState({ nodes: [], edges: [], stats: {} });
+  const [format, setFormat] = useState('html');  // 'html' par défaut (vis-network)
+  const [data, setData] = useState({ nodes: [], edges: [], stats: {}, html: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  const toggleRel = (r) => {
-    setActiveRels((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
-  };
+  const toggleIn = (set, setSet) => (r) =>
+    setSet((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
 
   const onBuild = async () => {
     setLoading(true);
@@ -56,9 +66,17 @@ function ViewSubgraph() {
         body: JSON.stringify({
           term,
           depth: Number(depth),
+          top_k: Number(topK),
+          top_k_d2: Number(topKd2),
+          top_k_d3: Number(topKd3),
+          top_k_d4: Number(topKd4),
           relations: activeRels,
+          relations_d2: activeRelsD2,
+          relations_d3: activeRelsD3,
+          relations_d4: activeRelsD4,
           min_weight: Number(minWeight),
           max_nodes: Number(maxNodes),
+          format,
         }),
       });
       if (!res.ok) {
@@ -70,17 +88,19 @@ function ViewSubgraph() {
         nodes: d.nodes || [],
         edges: d.edges || [],
         stats: d.stats || {},
+        html: d.html || '',
+        format: d.format,
       });
       if (d.message) setMessage(d.message);
     } catch (e) {
       setError(String(e && e.message ? e.message : e));
-      setData({ nodes: [], edges: [], stats: {} });
+      setData({ nodes: [], edges: [], stats: {}, html: '' });
     } finally {
       setLoading(false);
     }
   };
 
-  // Auto-run au mount pour montrer un sous-graphe
+  // Auto-run au mount
   React.useEffect(() => { onBuild(); }, []);
 
   const stats = data.stats || {};
@@ -90,34 +110,27 @@ function ViewSubgraph() {
       <SectionTitle
         kicker="Module · visualisation"
         title="Sous-graphe"
-        desc="Extrait et visualise le voisinage d'un terme à profondeur N, filtré par type de relation."
+        desc="Extrait et visualise le voisinage d'un terme à profondeur N, filtré par type de relation. Deux formats : HTML interactif (vis-network) ou SVG natif."
       />
 
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '280px 1fr',
+        gridTemplateColumns: '300px 1fr',
         gap: 20,
         alignItems: 'start',
       }}>
         {/* Left: controls */}
         <div style={{
-          position: 'sticky',
-          top: 80,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
+          position: 'sticky', top: 80,
+          display: 'flex', flexDirection: 'column', gap: 14,
         }}>
           <Card padding={16}>
-            <Field label="Terme">
+            <Field label="Terme racine">
               <Input value={term} onChange={setTerm} mono />
             </Field>
             <Field label={`Profondeur · ${depth}`}>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: 4,
-              }}>
-                {[2, 3, 4].map(d => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
+                {[1, 2, 3, 4].map(d => (
                   <button key={d}
                     onClick={() => setDepth(d)}
                     className="focus-ring"
@@ -128,55 +141,74 @@ function ViewSubgraph() {
                       color: depth === d ? 'var(--bg)' : 'var(--ink)',
                       borderRadius: 'var(--radius)',
                       fontFamily: 'var(--font-mono)',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
+                      fontSize: 13, fontWeight: 600, cursor: 'pointer',
                     }}>{d}</button>
                 ))}
               </div>
             </Field>
-            <Field label="Poids minimum">
+            <Field label="Format de rendu">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                {['html', 'svg'].map(f => (
+                  <button key={f}
+                    onClick={() => setFormat(f === 'svg' ? 'json' : 'html')}
+                    className="focus-ring"
+                    style={{
+                      padding: '8px',
+                      background: (f === 'svg' ? format === 'json' : format === 'html')
+                                  ? 'var(--accent)' : 'var(--bg-elev)',
+                      border: '1px solid var(--line)',
+                      color: (f === 'svg' ? format === 'json' : format === 'html')
+                             ? 'var(--bg)' : 'var(--ink)',
+                      borderRadius: 'var(--radius)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      textTransform: 'uppercase',
+                    }}>{f}</button>
+                ))}
+              </div>
+            </Field>
+            <Field label={`Poids minimum · ${minWeight}`}>
               <Slider value={minWeight} onChange={setMinWeight} min={0} max={300} step={5} />
             </Field>
-            <Field label="Nœuds max">
-              <Slider value={maxNodes} onChange={setMaxNodes} min={10} max={200} step={5} />
-            </Field>
-            <div style={{ marginTop: 16 }}>
+            {format === 'json' && (
+              <Field label={`Nœuds max (SVG) · ${maxNodes}`}>
+                <Slider value={maxNodes} onChange={setMaxNodes} min={10} max={200} step={5} />
+              </Field>
+            )}
+            <div style={{ marginTop: 12 }}>
               <Button full onClick={onBuild} disabled={loading}>
                 {loading ? 'Construction…' : 'Construire le graphe'}
               </Button>
             </div>
           </Card>
 
-          {/* Relation filter */}
-          <Card padding={16}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 10,
-            }}>Relations actives · {activeRels.length}/{SUBGRAPH_RELATIONS.length}</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {SUBGRAPH_RELATIONS.map(r => {
-                const active = activeRels.includes(r);
-                const colorIdx = SUBGRAPH_RELATIONS.indexOf(r) % JDM_COLORS.length;
-                const c = JDM_COLORS[colorIdx];
-                return (
-                  <button key={r}
-                    onClick={() => toggleRel(r)}
-                    style={{
-                      padding: '4px 9px',
-                      background: active ? c : 'transparent',
-                      border: `1px solid ${active ? c : 'var(--line)'}`,
-                      borderRadius: 999,
-                      color: active ? '#fff' : 'var(--ink-2)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 11,
-                      cursor: 'pointer',
-                    }}>{r}</button>
-                );
-              })}
-            </div>
-          </Card>
+          {/* Niveau 1 */}
+          <RelationFilterCard
+            label={`Niveau 1 — voisins (top-K ${topK})`}
+            topK={topK} setTopK={setTopK}
+            active={activeRels} setActive={setActiveRels}
+          />
+          {depth >= 2 && (
+            <RelationFilterCard
+              label={`Niveau 2 (top-K ${topKd2})`}
+              topK={topKd2} setTopK={setTopKd2}
+              active={activeRelsD2} setActive={setActiveRelsD2}
+            />
+          )}
+          {depth >= 3 && (
+            <RelationFilterCard
+              label={`Niveau 3 (top-K ${topKd3})`}
+              topK={topKd3} setTopK={setTopKd3}
+              active={activeRelsD3} setActive={setActiveRelsD3}
+            />
+          )}
+          {depth >= 4 && (
+            <RelationFilterCard
+              label={`Niveau 4 (top-K ${topKd4})`}
+              topK={topKd4} setTopK={setTopKd4}
+              active={activeRelsD4} setActive={setActiveRelsD4}
+            />
+          )}
         </div>
 
         {/* Right: viz */}
@@ -187,11 +219,8 @@ function ViewSubgraph() {
               background: 'rgba(200, 58, 115, 0.08)',
               border: '1px solid var(--jdm-magenta)',
               borderRadius: 'var(--radius)',
-              color: 'var(--jdm-magenta)',
-              fontSize: 13,
-            }}>
-              ⚠️ {error}
-            </div>
+              color: 'var(--jdm-magenta)', fontSize: 13,
+            }}>⚠️ {error}</div>
           )}
           {message && !error && (
             <div style={{
@@ -199,15 +228,13 @@ function ViewSubgraph() {
               background: 'var(--bg-elev)',
               border: '1px solid var(--line-soft)',
               borderRadius: 'var(--radius)',
-              color: 'var(--ink-2)',
-              fontSize: 13,
+              color: 'var(--ink-2)', fontSize: 13,
             }}>{message}</div>
           )}
 
           <Card padding={0} style={{ overflow: 'hidden' }}>
             <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
+              display: 'flex', justifyContent: 'space-between',
               padding: '10px 16px',
               borderBottom: '1px solid var(--line-soft)',
               background: 'var(--bg-elev)',
@@ -215,45 +242,36 @@ function ViewSubgraph() {
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 <span style={{ color: 'var(--ink)' }}>{term}</span>
                 {' · '}profondeur {depth}
-                {' · '}<span style={{ color: 'var(--ink)' }}>{data.nodes.length}</span> nœuds
-                {' · '}<span style={{ color: 'var(--ink)' }}>{data.edges.length}</span> arêtes
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <Button size="sm" variant="ghost" onClick={() => exportSVG(term)}>SVG</Button>
+                {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_nodes ?? data.nodes.length}</span> nœuds
+                {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_edges ?? data.edges.length}</span> arêtes
+                {' · '}<span className="mono" style={{ color: 'var(--accent)', textTransform: 'uppercase' }}>{data.format || format}</span>
               </div>
             </div>
-            <div style={{ height: 540, background: 'var(--bg-elev)', position: 'relative' }} className="lab-grid">
-              <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
-            </div>
-            <div style={{
-              padding: '10px 16px',
-              borderTop: '1px solid var(--line-soft)',
-              display: 'flex',
-              gap: 16,
-              fontSize: 11,
-              color: 'var(--ink-3)',
-              fontFamily: 'var(--font-mono)',
-              flexWrap: 'wrap',
-            }}>
-              {activeRels.map((r) => (
-                <span key={r} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{
-                    width: 10, height: 2,
-                    background: JDM_COLORS[SUBGRAPH_RELATIONS.indexOf(r) % JDM_COLORS.length],
-                    display: 'inline-block',
-                  }} />
-                  {r}
-                </span>
-              ))}
+            <div style={{ height: 640, background: '#ffffff', position: 'relative' }}>
+              {data.format === 'html' && data.html ? (
+                <iframe
+                  title="JDM subgraph"
+                  srcDoc={data.html}
+                  sandbox="allow-scripts allow-same-origin"
+                  style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+                />
+              ) : data.nodes && data.nodes.length > 0 ? (
+                <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
+              ) : (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  height: '100%', color: 'var(--ink-3)', fontSize: 13,
+                }}>
+                  {loading ? 'Construction…' : 'Aucun nœud à afficher.'}
+                </div>
+              )}
             </div>
           </Card>
 
           {/* Stats below */}
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 12,
-            marginTop: 16,
+            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 12, marginTop: 16,
           }}>
             {[
               ['Nœuds', String(stats.n_nodes ?? data.nodes.length)],
@@ -279,96 +297,101 @@ function ViewSubgraph() {
   );
 }
 
-// Layout : nœuds disposés en anneaux concentriques par profondeur.
-// `nodes` = [{id, label, kind, depth}], `edges` = [{from, to, relation, weight, negative, depth}]
-function GraphViz({ nodes, edges, relations }) {
-  if (!nodes || nodes.length === 0) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100%', color: 'var(--ink-3)', fontSize: 13,
-      }}>
-        Aucun nœud à afficher.
+function RelationFilterCard({ label, topK, setTopK, active, setActive }) {
+  const toggle = (r) =>
+    setActive((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
+  return (
+    <Card padding={16}>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 10,
+      }}>{label}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px', gap: 8, marginBottom: 10 }}>
+        <Slider value={topK} onChange={setTopK} min={1} max={15} step={1} />
       </div>
-    );
-  }
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {SUBGRAPH_ALL_RELATIONS.map(r => {
+          const on = active.includes(r);
+          const kind = KIND_OF_REL[r] || 'assoc';
+          const c = KIND_COLOR[kind];
+          return (
+            <button key={r}
+              onClick={() => toggle(r)}
+              style={{
+                padding: '3px 8px',
+                background: on ? c : 'transparent',
+                border: `1px solid ${on ? c : 'var(--line)'}`,
+                borderRadius: 999,
+                color: on ? '#fff' : 'var(--ink-2)',
+                fontFamily: 'var(--font-mono)', fontSize: 10,
+                cursor: 'pointer',
+              }}>{r}</button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 
-  const W = 800, H = 540, cx = W / 2, cy = H / 2;
-  const RING_RADII = [0, 140, 230, 305, 360];  // profondeurs 0..4
+// Layout SVG : anneaux concentriques par profondeur.
+function GraphViz({ nodes, edges }) {
+  const W = 800, H = 640, cx = W / 2, cy = H / 2;
+  const RING_RADII = [0, 160, 250, 320, 380];
 
-  // Group nodes by depth
   const byDepth = {};
   for (const n of nodes) {
     const d = Math.min(n.depth ?? 1, 4);
     if (!byDepth[d]) byDepth[d] = [];
     byDepth[d].push(n);
   }
-
-  // Place root at center, others on rings
   const positioned = [];
   for (const dStr of Object.keys(byDepth).sort()) {
     const d = Number(dStr);
     const arr = byDepth[d];
-    const r = RING_RADII[d] ?? 360;
+    const r = RING_RADII[d] ?? 380;
     if (d === 0 || arr.length === 1) {
       positioned.push({ ...arr[0], x: cx, y: cy, r: 22, depth: d });
     } else {
       arr.forEach((n, i) => {
         const a = (i / arr.length) * Math.PI * 2 - Math.PI / 2 + d * 0.15;
-        const nodeRadius = d === 1 ? 14 : (d === 2 ? 11 : 9);
+        const nr = d === 1 ? 14 : (d === 2 ? 11 : 9);
         positioned.push({
           ...n,
           x: cx + Math.cos(a) * r,
           y: cy + Math.sin(a) * r,
-          r: nodeRadius,
-          depth: d,
+          r: nr, depth: d,
         });
       });
     }
   }
-
   const byId = Object.fromEntries(positioned.map(n => [n.id, n]));
-
-  // Truncate label for display
-  const truncLabel = (s, max) => {
-    if (!s) return '';
-    return s.length > max ? s.slice(0, max - 1) + '…' : s;
-  };
+  const trunc = (s, max) => (s && s.length > max) ? s.slice(0, max - 1) + '…' : (s || '');
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" style={{ display: 'block' }}>
-      {/* Edges (drawn first so nodes overlap) */}
       {edges.map((e, i) => {
         const a = byId[e.from], b = byId[e.to];
         if (!a || !b) return null;
-        let color;
-        if (e.negative) {
-          color = '#c62828';
-        } else {
-          const kind = KIND_OF_REL[e.relation] || 'assoc';
-          color = KIND_COLOR[kind] || KIND_COLOR.assoc;
-        }
-        const opacity = e.depth >= 2 ? 0.35 : 0.6;
-        const strokeDasharray = e.depth >= 2 ? '4 3' : undefined;
+        const color = e.negative ? '#c62828'
+          : (KIND_COLOR[KIND_OF_REL[e.relation] || 'assoc'] || KIND_COLOR.assoc);
         return (
-          <line key={i}
-            x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
             stroke={color}
-            strokeOpacity={opacity}
+            strokeOpacity={e.depth >= 2 ? 0.35 : 0.6}
             strokeWidth={e.depth >= 2 ? 1.0 : 1.4}
-            strokeDasharray={strokeDasharray}
+            strokeDasharray={e.depth >= 2 ? '4 3' : undefined}
           />
         );
       })}
-      {/* Nodes */}
       {positioned.map((n, i) => {
         const isCenter = n.depth === 0;
         const kindColor = KIND_COLOR[n.kind] || KIND_COLOR.assoc;
         return (
           <g key={i}>
             <circle cx={n.x} cy={n.y} r={n.r}
-              fill={isCenter ? 'var(--accent)' : 'var(--bg-card)'}
-              stroke={isCenter ? 'var(--accent)' : kindColor}
+              fill={isCenter ? '#c0411a' : '#fbf6ea'}
+              stroke={isCenter ? '#c0411a' : kindColor}
               strokeWidth={isCenter ? 0 : 1.2}
             />
             <text x={n.x} y={n.y + n.r + 14}
@@ -376,31 +399,14 @@ function GraphViz({ nodes, edges, relations }) {
               fontFamily="var(--font-mono)"
               fontSize={isCenter ? 13 : (n.depth === 1 ? 11 : 10)}
               fontWeight={isCenter ? 700 : 400}
-              fill="var(--ink)">
-              {truncLabel(n.label, isCenter ? 28 : 18)}
+              fill="#1f1d18">
+              {trunc(n.label, isCenter ? 28 : 18)}
             </text>
           </g>
         );
       })}
     </svg>
   );
-}
-
-// Helper : export SVG du graphe affiché (client-side)
-function exportSVG(term) {
-  const svg = document.querySelector('.lab-grid svg');
-  if (!svg) return;
-  const ser = new XMLSerializer();
-  const src = ser.serializeToString(svg);
-  const blob = new Blob([src], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `jdm_subgraph_${term}.svg`.replace(/[^a-z0-9_\-.]/gi, '_');
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 window.ViewSubgraph = ViewSubgraph;

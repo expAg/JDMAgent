@@ -435,11 +435,21 @@ function Message({ m }) {
 }
 
 function renderMarkdownLite(s) {
-  // tiny markdown subset: **bold**, *italic*, `code`, line breaks
-  return (s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  // L'agent produit volontairement des balises HTML pour styliser ses
+  // mots (ex: <strong>chat</strong>, <code>r_isa</code>, <em>...</em>).
+  // On NE LES ESCAPE PAS — c'est du contenu de confiance produit par
+  // notre propre LLM. On préfère utiliser marked.js si dispo (rendu
+  // markdown plein + GFM tables) — sinon fallback sur le subset léger.
+  s = s || '';
+  if (typeof window !== 'undefined' && window.marked) {
+    try {
+      window.marked.setOptions({ gfm: true, breaks: true });
+      return window.marked.parse(s);
+    } catch {
+      // fallback ci-dessous
+    }
+  }
+  return s
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')

@@ -1,230 +1,159 @@
-// View: Aide — relation glossary + shortcuts + about.
+// View: Aide — installation, usage, MCP, soumission format.
+// Mêmes textes que la branche deploy-self / app.py:AIDE_MD.
 
-const RELATIONS_GLOSSARY = [
-  { id: 'r_syn', label: 'Synonymes', kind: 'lexical', ex: 'chat ≈ matou' },
-  { id: 'r_anto', label: 'Antonymes', kind: 'lexical', ex: 'grand ↔ petit' },
-  { id: 'r_isa', label: 'Hyperonymes — "est un"', kind: 'taxonomique', ex: 'chat r_isa félin' },
-  { id: 'r_hypo', label: 'Hyponymes — "exemples de"', kind: 'taxonomique', ex: 'félin r_hypo chat' },
-  { id: 'r_has_part', label: 'Parties / composants', kind: 'méronymique', ex: 'chat r_has_part patte' },
-  { id: 'r_carac', label: 'Caractéristiques', kind: 'attributive', ex: 'chat r_carac agile' },
-  { id: 'r_has_color', label: 'Couleurs', kind: 'attributive', ex: 'ciel r_has_color bleu' },
-  { id: 'r_lieu', label: 'Lieux typiques', kind: 'spatiale', ex: 'lion r_lieu savane' },
-  { id: 'r_agent', label: 'Agents typiques', kind: 'actantielle', ex: 'aboyer r_agent chien' },
-  { id: 'r_patient', label: 'Patients typiques', kind: 'actantielle', ex: 'manger r_patient pomme' },
-  { id: 'r_instr', label: 'Instruments', kind: 'actantielle', ex: 'écrire r_instr stylo' },
-  { id: 'r_telic_role', label: 'Rôle télique — à quoi sert', kind: 'fonctionnelle', ex: 'couteau r_telic_role couper' },
-  { id: 'r_has_causatif', label: 'Causes', kind: 'causale', ex: 'rire r_has_causatif joie' },
-  { id: 'r_has_conseq', label: 'Conséquences', kind: 'causale', ex: 'pluie r_has_conseq mouille' },
-  { id: 'r_but', label: 'But', kind: 'finaliste', ex: 'manger r_but vivre' },
-  { id: 'r_manner', label: 'Manière', kind: 'modale', ex: 'courir r_manner vite' },
-];
+const AIDE_MD = `# 🛠️ Aide & Installation
 
-const SHORTCUTS = [
-  { keys: ['G', 'E'], desc: 'Aller à Explorer' },
-  { keys: ['G', 'C'], desc: 'Aller à Claim checker' },
-  { keys: ['G', 'A'], desc: 'Aller à Agent' },
-  { keys: ['G', 'J'], desc: 'Aller à Jarvis' },
-  { keys: ['/'], desc: 'Focus sur le champ de recherche' },
-  { keys: ['⌘', 'K'], desc: 'Palette de commandes (à venir)' },
-  { keys: ['?'], desc: 'Cette page' },
-];
+## 1. Naviguer dans la démo
+
+| Onglet | Ce qu'il fait | Clé API ? |
+|---|---|---|
+| 📋 **Projet** | Présentation, liens code source | Aucune |
+| 🔎 **Explorer JDM** | Table de triplets pour un terme/relation, déterministe | Aucune |
+| ⚖️ **Claim checker** | SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet, déterministe | Aucune |
+| 🕸️ **Sous-graphe** | Visualisation vis-network interactive du voisinage | Aucune |
+| 🤖 **Agent** | Chat libre avec un agent LLM qui utilise les 34 outils JDM | Gemini hébergé gratuit, ou BYOK Claude / GPT |
+| 🦾 **Jarvis** | Flows guidés par formulaires (5 sous-onglets) | Gemini hébergé gratuit ; clé LLMDrops si tu veux pousser vers JDM |
+| 🛠️ **Aide** | Ce document | — |
+
+## 2. Jarvis en détail — 5 flows guidés
+
+Tous les sous-onglets Jarvis partagent un **bandeau** en haut :
+- **Clé API LLMDrops** (optionnel) : override l'env \`JDM_DROPS_API_KEY\` pour les uploads.
+- **Modèle LLM** : Gemini 3.1 Flash Lite par défaut (500 requêtes/jour gratuites). BYOK Claude / GPT possibles si tu colles ta clé.
+- **Budget d'appels d'outils** : 10 / 25 / 50 / 100 / illimité. Au-delà, le LLM reçoit un sentinel et arrête proprement en consolidant ce qu'il a.
+
+### 🌱 Enrichissement
+Propose et consolide de nouveaux triplets pour un terme.
+- **Form** : terme, relation cible (optionnelle), nombre cible de triplets, varier les relations, itérer jusqu'au but, soumettre directement.
+- **Output** : chatbot avec le raisonnement + le fichier \`.enrich\` écrit.
+- **Workflow** : \`enrichment_workflow()\` (pré-fetch → désambiguïsation → proposition → validation+consolidation par inférence → écriture).
+
+### 🔍 Audit
+Audit sémantique de la répartition des sens d'un terme polysémique.
+- **Form** : terme, relation cible optionnelle, soumettre directement.
+- **Output** : verdict par triplet du terme générique (LEGITIME / DEVRAIT_ETRE_CONTRASTIF / NON_CONTRASTIF / NEGATIVE) + section META narrative.
+- **Workflow** : \`audit_workflow()\`.
+
+### 🕳️ Détection de trous
+Identifie les trous de couverture (MISSING / NEGATIVE_FILLED / LOW_COVERAGE).
+- **Form** : terme, relations à examiner (vide = défauts), seuil LOW_COVERAGE.
+- **Output gauche** : tableau des gaps trouvés (déterministe, instantané) + dropdown pour router un gap → boutons **→ Enrichir** / **→ Auditer** / **→ Stats** qui pré-remplissent les autres sous-onglets et basculent l'onglet.
+- **Output droite** : synthèse narrative de l'agent.
+- **Workflow** : \`gap_detection_workflow()\`.
+
+### ⚠️ Signalement
+Le LLM utilise son **jugement linguistique** pour flagger les triplets suspects (pas besoin de preuve d'outil).
+- **Form** : terme, relation optionnelle, soumettre directement.
+- **Output** : fichier \`.err\` avec catégorie de suspicion et justification.
+- **Workflow** : \`signalement_workflow()\`.
+
+### 📊 Stats
+Statistiques de couverture par terme et/ou par relation.
+- **Form** : terme (mode PAR_TERME), relation (mode PAR_RELATION) — au moins un des deux.
+- **Output** : tableau (n_total, n_pos, n_neg, max_w, min_w, mean_w par relation) + 3-5 observations clés.
+- **Workflow** : \`stats_workflow()\`.
+
+## 3. Obtenir les clés API
+
+| Clé | Où ? | Coût | Quand l'utiliser |
+|---|---|---|---|
+| **Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Gratuit (500 req/jour pour 3.1 Flash Lite) | Pré-configurée côté HF Space, rien à faire pour toi |
+| **LLMDrops JDM** | jeuxdemots.org (contacter M. Lafourcade) | Gratuit sur demande | Soumettre \`.enrich\` / \`.audit\` / \`.err\` directement à JDM |
+| **Anthropic (Claude)** | [console.anthropic.com](https://console.anthropic.com) | Payant ($) | BYOK Claude dans Agent / Jarvis |
+| **OpenAI (GPT)** | [platform.openai.com](https://platform.openai.com/api-keys) | Payant ($) | BYOK GPT dans Agent / Jarvis |
+
+⚠️ **Sécurité** : les clés que tu colles dans l'UI ne sont **jamais persistées** côté serveur — elles vivent uniquement le temps de ton onglet navigateur.
+
+## 4. Installation locale (déployer la même app ailleurs)
+
+\`\`\`bash
+# 1. Cloner le repo
+git clone https://github.com/expAg/JDMAgent.git
+cd JDMAgent
+
+# 2. Créer un environnement Python isolé (venv)
+python3 -m venv .venv
+
+# 3. Activer le venv
+source .venv/bin/activate          # Linux / macOS
+# .venv\\Scripts\\activate           # Windows
+
+# 4. Installer les dépendances
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. Configurer les clés API
+cp .env.example .env
+# édite .env : GOOGLE_API_KEYS (CSV) / ANTHROPIC_API_KEY / OPENAI_API_KEY /
+# JDM_DROPS_API_KEY / APP_SUBPATH (si reverse-proxy)
+
+# 6. Lancer l'app — écoute sur http://0.0.0.0:7860
+uvicorn app_fastapi:app --host 0.0.0.0 --port 7860
+\`\`\`
+
+Ensuite, dans ton navigateur → <http://localhost:7860>.
+
+**Sous reverse-proxy** : si Apache/Nginx route un sous-chemin (ex. \`/Jarvis/\`),
+mets \`APP_SUBPATH=/Jarvis\` dans \`.env\` — le frontend injecte automatiquement
+\`<base href>\` et les fetch API se résolvent correctement.
+
+**Sur Debian 12 / Ubuntu 24.04 (PEP 668)** : pip refuse d'installer hors venv —
+le venv ci-dessus est donc **obligatoire**.
+
+## 5. Serveur MCP — utiliser les outils JDM dans Claude Code / Cursor
+
+\`\`\`bash
+claude mcp add jdm "python -m jdm_agent.mcp.server"
+claude mcp list
+\`\`\`
+
+Ensuite, depuis Claude Code : « Donne-moi les synonymes de voiture dans JDM » → l'agent appelle automatiquement les outils MCP exposés.
+
+## 6. Format des fichiers de soumission
+
+Tous les fichiers produits par Jarvis suivent un **format pipe** :
+
+\`\`\`
+# .enrich (proposition de triplets)
+term | relation | target | annotation < explication chaîne d'inférence >
+
+# .audit (deux sections séparées par === META ===)
+=== PROPOSITIONS ===
+term | relation | target | annotation | verdict | justification
+...
+=== META ===
+<compte rendu narratif sur la confusion / propagation des sens>
+
+# .err (suspects flaggés par le LLM)
+term | relation | target | catégorie_suspect | justification
+\`\`\`
+
+Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
+- coche **Soumettre directement** dans le formulaire (la clé \`JDM_DROPS_API_KEY\` doit être configurée) ;
+- ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.
+
+## 7. Liens utiles
+
+- **Code source** : <https://github.com/expAg/JDMAgent>
+- **API JeuxDeMots** : <https://jdm-api.demo.lirmm.fr>
+- **JeuxDeMots (site)** : <https://www.jeuxdemots.org>
+- **USAGE.md détaillé** : <https://github.com/expAg/JDMAgent/blob/main/USAGE.md>
+- **DEVELOPMENT.md** : <https://github.com/expAg/JDMAgent/blob/main/DEVELOPMENT.md>
+`;
 
 function ViewAide() {
+  const html = React.useMemo(() => {
+    if (typeof window !== 'undefined' && window.marked) {
+      window.marked.setOptions({ gfm: true, breaks: false });
+      return window.marked.parse(AIDE_MD);
+    }
+    return '<pre>' + AIDE_MD + '</pre>';
+  }, []);
+
   return (
     <PageShell>
-      <SectionTitle
-        kicker="Documentation"
-        title="Aide"
-        desc="Glossaire des relations JeuxDeMots, raccourcis clavier, ressources."
-      />
-
-      {/* Relations glossary */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)',
-        fontSize: 22, fontWeight: 600,
-        margin: '0 0 14px',
-      }}>Relations JDM principales</h2>
-
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-        gap: 1,
-        background: 'var(--line)',
-        border: '1px solid var(--line)',
-        borderRadius: 'var(--radius-lg)',
-        overflow: 'hidden',
-        marginBottom: 40,
-      }}>
-        {RELATIONS_GLOSSARY.map((r, i) => (
-          <div key={r.id} style={{
-            background: 'var(--bg-card)',
-            padding: 16,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-              <code className="mono" style={{
-                background: 'var(--bg-elev)',
-                padding: '2px 8px',
-                borderRadius: 3,
-                fontSize: 12,
-                color: 'var(--accent)',
-                fontWeight: 600,
-              }}>{r.id}</code>
-              <span style={{
-                fontSize: 10,
-                color: 'var(--ink-3)',
-                fontFamily: 'var(--font-mono)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-              }}>{r.kind}</span>
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--ink)', marginBottom: 6, fontWeight: 500 }}>{r.label}</div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{r.ex}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Shortcuts */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: 24,
-      }}>
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>Raccourcis clavier</h2>
-          <Card padding={0}>
-            {SHORTCUTS.map((s, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '12px 16px',
-                borderBottom: i < SHORTCUTS.length - 1 ? '1px solid var(--line-soft)' : 'none',
-              }}>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {s.keys.map((k, j) => (
-                    <span key={j} className="kbd">{k}</span>
-                  ))}
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--ink-2)', marginLeft: 12 }}>{s.desc}</div>
-              </div>
-            ))}
-          </Card>
-        </div>
-
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>Ressources</h2>
-          <Card>
-            <div style={{ display: 'grid', gap: 10 }}>
-              {[
-                ['JeuxDeMots.org', 'Le site source du projet', 'https://jeuxdemots.org'],
-                ['Article fondateur', 'Lafourcade, M. (2007).', '#'],
-                ['Documentation API', 'Endpoints, types de relations', '#'],
-                ['Code source', 'github.com/expAg/JDMAgent', 'https://github.com/expAg/JDMAgent'],
-                ['Hugging Face Space', 'Démo hébergée', '#'],
-              ].map(([title, desc, href], i) => (
-                <a key={i} href={href} style={{
-                  display: 'block',
-                  padding: '12px 14px',
-                  background: 'var(--bg-elev)',
-                  borderRadius: 'var(--radius)',
-                  textDecoration: 'none',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--line-soft)',
-                  transition: 'border-color 0.12s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
-                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--line-soft)'}>
-                  <div style={{ fontWeight: 500, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
-                    {title}
-                    <span style={{ color: 'var(--ink-3)' }}>↗</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{desc}</div>
-                </a>
-              ))}
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      <div style={{
-        marginTop: 48,
-        padding: 32,
-        background: 'var(--bg-elev)',
-        border: '1px solid var(--line-soft)',
-        borderRadius: 'var(--radius-lg)',
-      }}>
-        {/* Institutional logos */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 48,
-          marginBottom: 28,
-          flexWrap: 'wrap',
-        }}>
-          <image-slot
-            id="logo-lirmm"
-            shape="rect"
-            placeholder="Dépose le logo LIRMM ici"
-            style={{
-              width: 200, height: 80,
-              background: 'transparent',
-            }}
-          />
-          <div style={{
-            width: 1, height: 60,
-            background: 'var(--line)',
-          }} />
-          <image-slot
-            id="logo-um"
-            shape="rect"
-            placeholder="Dépose le logo Université de Montpellier ici"
-            style={{
-              width: 200, height: 80,
-              background: 'transparent',
-            }}
-          />
-          <div style={{
-            width: 1, height: 60,
-            background: 'var(--line)',
-          }} />
-          <image-slot
-            id="logo-cnrs"
-            shape="rect"
-            placeholder="Dépose le logo CNRS ici"
-            style={{
-              width: 120, height: 80,
-              background: 'transparent',
-            }}
-          />
-        </div>
-
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 12,
-          paddingTop: 24,
-          borderTop: '1px solid var(--line-soft)',
-        }}>
-          <JDMMark size={28} />
-          <div>
-            <div className="display" style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 16, fontWeight: 600,
-            }}>jdmAgent</div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              phase-13-jarvis · build {new Date().toISOString().slice(0, 10)}
-            </div>
-          </div>
-        </div>
-      </div>
+      <div className="jdm-prose"
+        dangerouslySetInnerHTML={{ __html: html }} />
     </PageShell>
   );
 }

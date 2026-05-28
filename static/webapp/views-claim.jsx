@@ -30,10 +30,11 @@ const ORIGIN_LABEL = {
 };
 
 function ViewClaim() {
-  const [subject, setSubject] = useState('chat');
+  // Defaults alignés sur la branche deploy-self : baleine | r_isa | poisson / effort 0.
+  const [subject, setSubject] = useState('baleine');
   const [relation, setRelation] = useState('r_isa');
-  const [object_, setObject] = useState('animal');
-  const [effort, setEffort] = useState(1);
+  const [object_, setObject] = useState('poisson');
+  const [effort, setEffort] = useState(0);
   const [bypass, setBypass] = useState(false);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);

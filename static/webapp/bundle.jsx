@@ -635,235 +635,73 @@ Object.assign(window, {
 });
 
 // === webapp/views-projet.jsx ===
-// View: Projet — landing / about page describing JDMAgent.
+// View: Projet — landing page with the canonical project description.
+// Le contenu vit ici en tant que template string Markdown (mêmes textes
+// que la branche deploy-self / app.py:PROJET_MD). Rendu via marked.js.
+
+const PROJET_MD = `# Jarvis-web : Accès web à l'agent JeuxDeMots
+
+**Objectif** : agentification de [JeuxDeMots](https://www.jeuxdemots.org)
+(LIRMM/CNRS, ~2 M nœuds, 180+ relations typées) pour les LLM modernes via
+**LangChain** et le **Model Context Protocol**.
+
+## Que peux-tu faire sur cette page ?
+
+- **🔎 Explorer JDM** — choisis un terme et une relation, vois les triplets
+  triés par poids consensuel. Annotations sémantiques (constitutif,
+  contrastif, exception, …) optionnelles. Désambiguïsation des termes
+  polysémiques (avocat, souris, police…).
+- **⚖️ Claim checker** — vérifie une affirmation factuelle contre JDM de
+  façon **déterministe** (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN
+  avec citations des triplets utilisés.
+- **🕸️ Sous-graphe** — visualisation interactive (vis-network) du
+  voisinage sémantique d'un terme jusqu'à profondeur 4, sélection de
+  relations indépendante par niveau, négations en rouge.
+- **🤖 Agent** — conversation avec un agent (Gemini hébergé gratuit, ou
+  BYOK Claude/GPT) qui n'utilise QUE les outils JDM et cite ses sources.
+- **🦾 Jarvis** — flux guidés par formulaires (zéro prompt à taper) :
+  - <small>🌱</small> *Enrichissement* — propose et consolide de nouveaux triplets (\`.enrich\`)
+  - <small>🔍</small> *Audit* — détecte les contaminations par les sens non-premiers (\`.audit\`)
+  - <small>🕳️</small> *Détection de trous* — flagge MISSING / NEGATIVE / LOW_COVERAGE
+  - <small>⚠️</small> *Signalement* — flagge les triplets suspects au LLM (\`.err\`)
+  - <small>📊</small> *Statistiques* — couverture par relation et par termes rencontrés (\`.stat\`)
+
+## Le projet en bref
+
+- Couche client typée (\`JDMClient\`) sur l'[API JeuxDeMots](https://jdm-api.demo.lirmm.fr)
+  + cache disque + retry exponentiel.
+- ~35 outils MCP exposés à n'importe quel client (Claude Code/Desktop,
+  Cursor, etc.) via [FastMCP](https://github.com/jlowin/fastmcp).
+- Pipeline fact-check déterministe + détection de gaps + **moteur
+  d'inférence symbolique borné** pour la consolidation des candidats avant
+  soumission au canal contributif LLMDrops de JDM.
+- Visualisation sous-graphe HTML autonome (vis-network) avec sélection de
+  relations par niveau, palette par famille de relation et opacité
+  progressive.
+
+**Données** : JeuxDeMots — Mathieu Lafourcade, équipe TEXTE, LIRMM/CNRS.
+
+**Liens** :
+[Code source & README](https://github.com/expAg/JDMAgent) ·
+[USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md) ·
+[Notebook Colab](https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb)
+`;
 
 function ViewProjet({ goto }) {
-  const stats = [
-    { label: 'Termes JDM', value: '5.4M', sub: 'JeuxDeMots' },
-    { label: 'Relations', value: '350M+', sub: '152 types' },
-    { label: 'Outils agent', value: '34', sub: 'LangChain · MCP' },
-    { label: 'Flux Jarvis', value: '5', sub: 'guidés' },
-  ];
-
-  const features = [
-    {
-      id: 'explorer',
-      title: 'Explorer',
-      kind: 'instant',
-      desc: 'Naviguer les relations d\'un terme : synonymes, hyperonymes, parties, agents, lieux… Sans LLM, en moins d\'une seconde.',
-      example: 'chat | r_has_part | ?',
-    },
-    {
-      id: 'claim',
-      title: 'Claim checker',
-      kind: 'déterministe',
-      desc: 'Vérifier une affirmation sous la forme sujet | relation | objet. Verdict avec chaîne de preuve.',
-      example: 'tomate | r_isa | légume → ❌',
-    },
-    {
-      id: 'subgraph',
-      title: 'Sous-graphe',
-      kind: 'visuel',
-      desc: 'Extraire et visualiser le voisinage d\'un terme à profondeur 2/3/4, filtré par type de relation.',
-      example: 'profondeur 2 · 12 relations',
-    },
-    {
-      id: 'agent',
-      title: 'Agent',
-      kind: 'LLM · BYOK',
-      desc: 'Chat conversationnel donnant accès aux 34 outils JDM via un LLM. Idéal pour les requêtes en langue naturelle.',
-      example: '« Que mange un chat ? »',
-    },
-    {
-      id: 'jarvis',
-      title: 'Jarvis',
-      kind: '5 flux',
-      desc: 'Workflows guidés pour les tâches récurrentes : enrichissement, audit de cohérence, expansion sémantique, fact-checking textuel, synthèse.',
-      example: 'enrichissement → 17 propositions',
-    },
-  ];
+  // marked.js est chargé en CDN dans index.html. On le configure une
+  // seule fois (parse GFM tables + auto links).
+  const html = React.useMemo(() => {
+    if (typeof window !== 'undefined' && window.marked) {
+      window.marked.setOptions({ gfm: true, breaks: false });
+      return window.marked.parse(PROJET_MD);
+    }
+    return '<pre>' + PROJET_MD + '</pre>';
+  }, []);
 
   return (
     <PageShell>
-      {/* Hero */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
-        gap: 48,
-        marginBottom: 56,
-        alignItems: 'center',
-      }}>
-        <div>
-          <div className="mono" style={{
-            fontSize: 11, color: 'var(--ink-3)',
-            textTransform: 'uppercase', letterSpacing: '0.18em',
-            marginBottom: 16,
-          }}>
-            LIRMM · CNRS · Université de Montpellier
-          </div>
-          <h1 className="display" style={{
-            fontFamily: 'var(--font-display)',
-            margin: 0,
-            fontSize: 'clamp(36px, 5vw, 60px)',
-            fontWeight: 500,
-            letterSpacing: '-0.02em',
-            lineHeight: 1.05,
-            color: 'var(--ink)',
-          }}>
-            Une couche d&apos;agent <em style={{
-              fontFamily: 'var(--font-display)',
-              fontStyle: 'italic', color: 'var(--accent)',
-            }}>au-dessus</em> du graphe lexico-sémantique JeuxDeMots.
-          </h1>
-          <p style={{
-            marginTop: 22,
-            fontSize: 17,
-            lineHeight: 1.55,
-            color: 'var(--ink-2)',
-            maxWidth: '52ch',
-          }}>
-            <strong style={{ color: 'var(--ink)' }}>jdmAgent</strong> donne accès
-            programmatique aux 350 millions de relations lexicales de JDM,
-            via 34 outils LangChain et 5 workflows guidés. Conçu pour les
-            chercheurs en TAL et linguistique computationnelle.
-          </p>
-          <div style={{ display: 'flex', gap: 10, marginTop: 28 }}>
-            <Button onClick={() => goto('explorer')}>Commencer à explorer →</Button>
-            <Button variant="secondary" onClick={() => goto('jarvis')}>Workflows Jarvis</Button>
-            <Button variant="ghost" onClick={() => goto('aide')}>Documentation</Button>
-          </div>
-        </div>
-
-        {/* Stats column */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 1,
-          background: 'var(--line)',
-          border: '1px solid var(--line)',
-          borderRadius: 'var(--radius-lg)',
-          overflow: 'hidden',
-        }}>
-          {stats.map((s) => (
-            <div key={s.label} style={{
-              background: 'var(--bg-card)',
-              padding: '20px 22px',
-            }}>
-              <div className="mono" style={{
-                fontSize: 11,
-                color: 'var(--ink-3)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.1em',
-                marginBottom: 8,
-              }}>{s.label}</div>
-              <div className="display" style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 32,
-                fontWeight: 600,
-                color: 'var(--ink)',
-                lineHeight: 1,
-                letterSpacing: '-0.02em',
-              }}>{s.value}</div>
-              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>{s.sub}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Features */}
-      <SectionTitle
-        kicker="Sept fonctionnalités · une API"
-        title="Tout JeuxDeMots, depuis un seul endroit"
-        desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu."
-      />
-
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-        gap: 12,
-      }}>
-        {features.map(f => (
-          <div key={f.id}
-            onClick={() => goto(f.id)}
-            className="focus-ring"
-            tabIndex={0}
-            onKeyDown={(e) => { if (e.key === 'Enter') goto(f.id); }}
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--line)',
-              borderRadius: 'var(--radius-lg)',
-              padding: 22,
-              cursor: 'pointer',
-              transition: 'transform 0.12s, border-color 0.12s',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'var(--ink-3)';
-              e.currentTarget.style.transform = 'translateY(-1px)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--line)';
-              e.currentTarget.style.transform = '';
-            }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div className="display" style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 22,
-                fontWeight: 600,
-                letterSpacing: '-0.01em',
-              }}>{f.title}</div>
-              <Pill>{f.kind}</Pill>
-            </div>
-            <p style={{
-              margin: 0,
-              fontSize: 13,
-              color: 'var(--ink-2)',
-              lineHeight: 1.55,
-              flex: 1,
-            }}>{f.desc}</p>
-            <div className="mono" style={{
-              fontSize: 11,
-              color: 'var(--ink-3)',
-              paddingTop: 10,
-              borderTop: '1px dashed var(--line-soft)',
-            }}>{f.example}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Footer note */}
-      <div style={{
-        marginTop: 56,
-        padding: 24,
-        background: 'var(--bg-elev)',
-        border: '1px solid var(--line-soft)',
-        borderRadius: 'var(--radius-lg)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 24,
-        flexWrap: 'wrap',
-      }}>
-        <div style={{ flex: 1, minWidth: 240 }}>
-          <div style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 18, fontWeight: 600, marginBottom: 4,
-          }}>Auto-hébergé, gratuit pour les visiteurs.</div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-            Cet espace utilise un pool de clés Gemini partagé. Pour des
-            usages intensifs, fournis ta clé Anthropic ou OpenAI dans
-            l&apos;onglet Agent (BYOK).
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Pill color="var(--jdm-green)" tone="outline">
-            <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
-            Pool gemini · clé 3/4
-          </Pill>
-          <Pill>500 req/jour</Pill>
-        </div>
-      </div>
+      <div className="jdm-prose"
+        dangerouslySetInnerHTML={{ __html: html }} />
     </PageShell>
   );
 }
@@ -894,10 +732,11 @@ const EXPLORE_RELATIONS = [
 ];
 
 function ViewExplorer() {
+  // Defaults alignés sur la branche deploy-self : chat / r_isa / 25 / 20 / true.
   const [term, setTerm] = useState('chat');
-  const [rel, setRel] = useState('r_has_part');
+  const [rel, setRel] = useState('r_isa');
   const [minWeight, setMinWeight] = useState(25);
-  const [limit, setLimit] = useState(50);
+  const [limit, setLimit] = useState(20);
   const [annotations, setAnnotations] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1163,10 +1002,11 @@ const ORIGIN_LABEL = {
 };
 
 function ViewClaim() {
-  const [subject, setSubject] = useState('chat');
+  // Defaults alignés sur la branche deploy-self : baleine | r_isa | poisson / effort 0.
+  const [subject, setSubject] = useState('baleine');
   const [relation, setRelation] = useState('r_isa');
-  const [object_, setObject] = useState('animal');
-  const [effort, setEffort] = useState(1);
+  const [object_, setObject] = useState('poisson');
+  const [effort, setEffort] = useState(0);
   const [bypass, setBypass] = useState(false);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1479,27 +1319,30 @@ window.ViewClaim = ViewClaim;
 
 // === webapp/views-subgraph.jsx ===
 // View: Sous-graphe — extract & visualise a term's neighbourhood via /api/subgraph.
+// Deux formats : HTML interactif (iframe vis-network) par défaut, ou SVG natif.
 
-const SUBGRAPH_RELATIONS = [
-  'r_syn', 'r_isa', 'r_hypo', 'r_has_part', 'r_carac',
-  'r_has_color', 'r_lieu', 'r_agent', 'r_patient', 'r_instr',
+const SUBGRAPH_DEFAULT_RELATIONS = [
+  'r_isa', 'r_hypo', 'r_syn', 'r_anto',
+  'r_carac', 'r_has_part', 'r_lieu', 'r_domain',
+];
+const SUBGRAPH_DEFAULT_D2 = ['r_isa', 'r_carac', 'r_has_part', 'r_lieu'];
+const SUBGRAPH_DEFAULT_D3 = ['r_isa', 'r_has_part', 'r_carac'];
+const SUBGRAPH_DEFAULT_D4 = ['r_isa', 'r_carac'];
+
+const SUBGRAPH_ALL_RELATIONS = [
+  ...SUBGRAPH_DEFAULT_RELATIONS,
+  'r_has_color', 'r_agent', 'r_patient', 'r_instr',
+  'r_telic_role', 'r_has_causatif', 'r_has_conseq',
+  'r_patient-1', 'r_agent-1', 'r_associated',
 ];
 
-// Couleur par "kind" de relation — calque du PALETTE backend.
+// Mapping kind → couleur (utilisé par le rendu SVG).
 const KIND_COLOR = {
   center: '#1a1a1a',
-  isa:    '#1565c0',
-  hypo:   '#2e7d32',
-  syn:    '#558b2f',
-  anto:   '#c62828',
-  carac:  '#6a1b9a',
-  part:   '#a04500',
-  lieu:   '#00838f',
-  verb:   '#ef6c00',
-  domain: '#455a64',
-  assoc:  '#757575',
+  isa:    '#1565c0', hypo:   '#2e7d32', syn:    '#558b2f', anto:   '#c62828',
+  carac:  '#6a1b9a', part:   '#a04500', lieu:   '#00838f',
+  verb:   '#ef6c00', domain: '#455a64', assoc:  '#757575',
 };
-
 const KIND_OF_REL = {
   r_isa: 'isa', r_hypo: 'hypo', r_syn: 'syn', r_anto: 'anto',
   r_carac: 'carac', r_has_part: 'part', r_lieu: 'lieu',
@@ -1509,21 +1352,28 @@ const KIND_OF_REL = {
 
 function ViewSubgraph() {
   // Si Explorer a navigué vers nous via jdm:goto, on récupère son terme.
-  const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'chat';
+  const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'plat asiatique';
   if (typeof window !== 'undefined') window.__jdmPendingTerm = null;
   const [term, setTerm] = useState(initialTerm);
-  const [depth, setDepth] = useState(2);
-  const [activeRels, setActiveRels] = useState(['r_isa', 'r_has_part', 'r_carac', 'r_syn']);
-  const [minWeight, setMinWeight] = useState(30);
+  const [depth, setDepth] = useState(1);
+  const [topK, setTopK] = useState(3);
+  const [topKd2, setTopKd2] = useState(3);
+  const [topKd3, setTopKd3] = useState(3);
+  const [topKd4, setTopKd4] = useState(3);
+  const [activeRels, setActiveRels] = useState(SUBGRAPH_DEFAULT_RELATIONS);
+  const [activeRelsD2, setActiveRelsD2] = useState(SUBGRAPH_DEFAULT_D2);
+  const [activeRelsD3, setActiveRelsD3] = useState(SUBGRAPH_DEFAULT_D3);
+  const [activeRelsD4, setActiveRelsD4] = useState(SUBGRAPH_DEFAULT_D4);
+  const [minWeight, setMinWeight] = useState(0);
   const [maxNodes, setMaxNodes] = useState(40);
-  const [data, setData] = useState({ nodes: [], edges: [], stats: {} });
+  const [format, setFormat] = useState('html');  // 'html' par défaut (vis-network)
+  const [data, setData] = useState({ nodes: [], edges: [], stats: {}, html: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  const toggleRel = (r) => {
-    setActiveRels((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
-  };
+  const toggleIn = (set, setSet) => (r) =>
+    setSet((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
 
   const onBuild = async () => {
     setLoading(true);
@@ -1536,9 +1386,17 @@ function ViewSubgraph() {
         body: JSON.stringify({
           term,
           depth: Number(depth),
+          top_k: Number(topK),
+          top_k_d2: Number(topKd2),
+          top_k_d3: Number(topKd3),
+          top_k_d4: Number(topKd4),
           relations: activeRels,
+          relations_d2: activeRelsD2,
+          relations_d3: activeRelsD3,
+          relations_d4: activeRelsD4,
           min_weight: Number(minWeight),
           max_nodes: Number(maxNodes),
+          format,
         }),
       });
       if (!res.ok) {
@@ -1550,17 +1408,19 @@ function ViewSubgraph() {
         nodes: d.nodes || [],
         edges: d.edges || [],
         stats: d.stats || {},
+        html: d.html || '',
+        format: d.format,
       });
       if (d.message) setMessage(d.message);
     } catch (e) {
       setError(String(e && e.message ? e.message : e));
-      setData({ nodes: [], edges: [], stats: {} });
+      setData({ nodes: [], edges: [], stats: {}, html: '' });
     } finally {
       setLoading(false);
     }
   };
 
-  // Auto-run au mount pour montrer un sous-graphe
+  // Auto-run au mount
   React.useEffect(() => { onBuild(); }, []);
 
   const stats = data.stats || {};
@@ -1570,34 +1430,27 @@ function ViewSubgraph() {
       <SectionTitle
         kicker="Module · visualisation"
         title="Sous-graphe"
-        desc="Extrait et visualise le voisinage d'un terme à profondeur N, filtré par type de relation."
+        desc="Extrait et visualise le voisinage d'un terme à profondeur N, filtré par type de relation. Deux formats : HTML interactif (vis-network) ou SVG natif."
       />
 
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '280px 1fr',
+        gridTemplateColumns: '300px 1fr',
         gap: 20,
         alignItems: 'start',
       }}>
         {/* Left: controls */}
         <div style={{
-          position: 'sticky',
-          top: 80,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
+          position: 'sticky', top: 80,
+          display: 'flex', flexDirection: 'column', gap: 14,
         }}>
           <Card padding={16}>
-            <Field label="Terme">
+            <Field label="Terme racine">
               <Input value={term} onChange={setTerm} mono />
             </Field>
             <Field label={`Profondeur · ${depth}`}>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: 4,
-              }}>
-                {[2, 3, 4].map(d => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
+                {[1, 2, 3, 4].map(d => (
                   <button key={d}
                     onClick={() => setDepth(d)}
                     className="focus-ring"
@@ -1608,55 +1461,74 @@ function ViewSubgraph() {
                       color: depth === d ? 'var(--bg)' : 'var(--ink)',
                       borderRadius: 'var(--radius)',
                       fontFamily: 'var(--font-mono)',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
+                      fontSize: 13, fontWeight: 600, cursor: 'pointer',
                     }}>{d}</button>
                 ))}
               </div>
             </Field>
-            <Field label="Poids minimum">
+            <Field label="Format de rendu">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                {['html', 'svg'].map(f => (
+                  <button key={f}
+                    onClick={() => setFormat(f === 'svg' ? 'json' : 'html')}
+                    className="focus-ring"
+                    style={{
+                      padding: '8px',
+                      background: (f === 'svg' ? format === 'json' : format === 'html')
+                                  ? 'var(--accent)' : 'var(--bg-elev)',
+                      border: '1px solid var(--line)',
+                      color: (f === 'svg' ? format === 'json' : format === 'html')
+                             ? 'var(--bg)' : 'var(--ink)',
+                      borderRadius: 'var(--radius)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      textTransform: 'uppercase',
+                    }}>{f}</button>
+                ))}
+              </div>
+            </Field>
+            <Field label={`Poids minimum · ${minWeight}`}>
               <Slider value={minWeight} onChange={setMinWeight} min={0} max={300} step={5} />
             </Field>
-            <Field label="Nœuds max">
-              <Slider value={maxNodes} onChange={setMaxNodes} min={10} max={200} step={5} />
-            </Field>
-            <div style={{ marginTop: 16 }}>
+            {format === 'json' && (
+              <Field label={`Nœuds max (SVG) · ${maxNodes}`}>
+                <Slider value={maxNodes} onChange={setMaxNodes} min={10} max={200} step={5} />
+              </Field>
+            )}
+            <div style={{ marginTop: 12 }}>
               <Button full onClick={onBuild} disabled={loading}>
                 {loading ? 'Construction…' : 'Construire le graphe'}
               </Button>
             </div>
           </Card>
 
-          {/* Relation filter */}
-          <Card padding={16}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 10,
-            }}>Relations actives · {activeRels.length}/{SUBGRAPH_RELATIONS.length}</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {SUBGRAPH_RELATIONS.map(r => {
-                const active = activeRels.includes(r);
-                const colorIdx = SUBGRAPH_RELATIONS.indexOf(r) % JDM_COLORS.length;
-                const c = JDM_COLORS[colorIdx];
-                return (
-                  <button key={r}
-                    onClick={() => toggleRel(r)}
-                    style={{
-                      padding: '4px 9px',
-                      background: active ? c : 'transparent',
-                      border: `1px solid ${active ? c : 'var(--line)'}`,
-                      borderRadius: 999,
-                      color: active ? '#fff' : 'var(--ink-2)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 11,
-                      cursor: 'pointer',
-                    }}>{r}</button>
-                );
-              })}
-            </div>
-          </Card>
+          {/* Niveau 1 */}
+          <RelationFilterCard
+            label={`Niveau 1 — voisins (top-K ${topK})`}
+            topK={topK} setTopK={setTopK}
+            active={activeRels} setActive={setActiveRels}
+          />
+          {depth >= 2 && (
+            <RelationFilterCard
+              label={`Niveau 2 (top-K ${topKd2})`}
+              topK={topKd2} setTopK={setTopKd2}
+              active={activeRelsD2} setActive={setActiveRelsD2}
+            />
+          )}
+          {depth >= 3 && (
+            <RelationFilterCard
+              label={`Niveau 3 (top-K ${topKd3})`}
+              topK={topKd3} setTopK={setTopKd3}
+              active={activeRelsD3} setActive={setActiveRelsD3}
+            />
+          )}
+          {depth >= 4 && (
+            <RelationFilterCard
+              label={`Niveau 4 (top-K ${topKd4})`}
+              topK={topKd4} setTopK={setTopKd4}
+              active={activeRelsD4} setActive={setActiveRelsD4}
+            />
+          )}
         </div>
 
         {/* Right: viz */}
@@ -1667,11 +1539,8 @@ function ViewSubgraph() {
               background: 'rgba(200, 58, 115, 0.08)',
               border: '1px solid var(--jdm-magenta)',
               borderRadius: 'var(--radius)',
-              color: 'var(--jdm-magenta)',
-              fontSize: 13,
-            }}>
-              ⚠️ {error}
-            </div>
+              color: 'var(--jdm-magenta)', fontSize: 13,
+            }}>⚠️ {error}</div>
           )}
           {message && !error && (
             <div style={{
@@ -1679,15 +1548,13 @@ function ViewSubgraph() {
               background: 'var(--bg-elev)',
               border: '1px solid var(--line-soft)',
               borderRadius: 'var(--radius)',
-              color: 'var(--ink-2)',
-              fontSize: 13,
+              color: 'var(--ink-2)', fontSize: 13,
             }}>{message}</div>
           )}
 
           <Card padding={0} style={{ overflow: 'hidden' }}>
             <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
+              display: 'flex', justifyContent: 'space-between',
               padding: '10px 16px',
               borderBottom: '1px solid var(--line-soft)',
               background: 'var(--bg-elev)',
@@ -1695,45 +1562,36 @@ function ViewSubgraph() {
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 <span style={{ color: 'var(--ink)' }}>{term}</span>
                 {' · '}profondeur {depth}
-                {' · '}<span style={{ color: 'var(--ink)' }}>{data.nodes.length}</span> nœuds
-                {' · '}<span style={{ color: 'var(--ink)' }}>{data.edges.length}</span> arêtes
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <Button size="sm" variant="ghost" onClick={() => exportSVG(term)}>SVG</Button>
+                {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_nodes ?? data.nodes.length}</span> nœuds
+                {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_edges ?? data.edges.length}</span> arêtes
+                {' · '}<span className="mono" style={{ color: 'var(--accent)', textTransform: 'uppercase' }}>{data.format || format}</span>
               </div>
             </div>
-            <div style={{ height: 540, background: 'var(--bg-elev)', position: 'relative' }} className="lab-grid">
-              <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
-            </div>
-            <div style={{
-              padding: '10px 16px',
-              borderTop: '1px solid var(--line-soft)',
-              display: 'flex',
-              gap: 16,
-              fontSize: 11,
-              color: 'var(--ink-3)',
-              fontFamily: 'var(--font-mono)',
-              flexWrap: 'wrap',
-            }}>
-              {activeRels.map((r) => (
-                <span key={r} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{
-                    width: 10, height: 2,
-                    background: JDM_COLORS[SUBGRAPH_RELATIONS.indexOf(r) % JDM_COLORS.length],
-                    display: 'inline-block',
-                  }} />
-                  {r}
-                </span>
-              ))}
+            <div style={{ height: 640, background: '#ffffff', position: 'relative' }}>
+              {data.format === 'html' && data.html ? (
+                <iframe
+                  title="JDM subgraph"
+                  srcDoc={data.html}
+                  sandbox="allow-scripts allow-same-origin"
+                  style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+                />
+              ) : data.nodes && data.nodes.length > 0 ? (
+                <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
+              ) : (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  height: '100%', color: 'var(--ink-3)', fontSize: 13,
+                }}>
+                  {loading ? 'Construction…' : 'Aucun nœud à afficher.'}
+                </div>
+              )}
             </div>
           </Card>
 
           {/* Stats below */}
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 12,
-            marginTop: 16,
+            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 12, marginTop: 16,
           }}>
             {[
               ['Nœuds', String(stats.n_nodes ?? data.nodes.length)],
@@ -1759,96 +1617,101 @@ function ViewSubgraph() {
   );
 }
 
-// Layout : nœuds disposés en anneaux concentriques par profondeur.
-// `nodes` = [{id, label, kind, depth}], `edges` = [{from, to, relation, weight, negative, depth}]
-function GraphViz({ nodes, edges, relations }) {
-  if (!nodes || nodes.length === 0) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100%', color: 'var(--ink-3)', fontSize: 13,
-      }}>
-        Aucun nœud à afficher.
+function RelationFilterCard({ label, topK, setTopK, active, setActive }) {
+  const toggle = (r) =>
+    setActive((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
+  return (
+    <Card padding={16}>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 10,
+      }}>{label}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px', gap: 8, marginBottom: 10 }}>
+        <Slider value={topK} onChange={setTopK} min={1} max={15} step={1} />
       </div>
-    );
-  }
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {SUBGRAPH_ALL_RELATIONS.map(r => {
+          const on = active.includes(r);
+          const kind = KIND_OF_REL[r] || 'assoc';
+          const c = KIND_COLOR[kind];
+          return (
+            <button key={r}
+              onClick={() => toggle(r)}
+              style={{
+                padding: '3px 8px',
+                background: on ? c : 'transparent',
+                border: `1px solid ${on ? c : 'var(--line)'}`,
+                borderRadius: 999,
+                color: on ? '#fff' : 'var(--ink-2)',
+                fontFamily: 'var(--font-mono)', fontSize: 10,
+                cursor: 'pointer',
+              }}>{r}</button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 
-  const W = 800, H = 540, cx = W / 2, cy = H / 2;
-  const RING_RADII = [0, 140, 230, 305, 360];  // profondeurs 0..4
+// Layout SVG : anneaux concentriques par profondeur.
+function GraphViz({ nodes, edges }) {
+  const W = 800, H = 640, cx = W / 2, cy = H / 2;
+  const RING_RADII = [0, 160, 250, 320, 380];
 
-  // Group nodes by depth
   const byDepth = {};
   for (const n of nodes) {
     const d = Math.min(n.depth ?? 1, 4);
     if (!byDepth[d]) byDepth[d] = [];
     byDepth[d].push(n);
   }
-
-  // Place root at center, others on rings
   const positioned = [];
   for (const dStr of Object.keys(byDepth).sort()) {
     const d = Number(dStr);
     const arr = byDepth[d];
-    const r = RING_RADII[d] ?? 360;
+    const r = RING_RADII[d] ?? 380;
     if (d === 0 || arr.length === 1) {
       positioned.push({ ...arr[0], x: cx, y: cy, r: 22, depth: d });
     } else {
       arr.forEach((n, i) => {
         const a = (i / arr.length) * Math.PI * 2 - Math.PI / 2 + d * 0.15;
-        const nodeRadius = d === 1 ? 14 : (d === 2 ? 11 : 9);
+        const nr = d === 1 ? 14 : (d === 2 ? 11 : 9);
         positioned.push({
           ...n,
           x: cx + Math.cos(a) * r,
           y: cy + Math.sin(a) * r,
-          r: nodeRadius,
-          depth: d,
+          r: nr, depth: d,
         });
       });
     }
   }
-
   const byId = Object.fromEntries(positioned.map(n => [n.id, n]));
-
-  // Truncate label for display
-  const truncLabel = (s, max) => {
-    if (!s) return '';
-    return s.length > max ? s.slice(0, max - 1) + '…' : s;
-  };
+  const trunc = (s, max) => (s && s.length > max) ? s.slice(0, max - 1) + '…' : (s || '');
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" style={{ display: 'block' }}>
-      {/* Edges (drawn first so nodes overlap) */}
       {edges.map((e, i) => {
         const a = byId[e.from], b = byId[e.to];
         if (!a || !b) return null;
-        let color;
-        if (e.negative) {
-          color = '#c62828';
-        } else {
-          const kind = KIND_OF_REL[e.relation] || 'assoc';
-          color = KIND_COLOR[kind] || KIND_COLOR.assoc;
-        }
-        const opacity = e.depth >= 2 ? 0.35 : 0.6;
-        const strokeDasharray = e.depth >= 2 ? '4 3' : undefined;
+        const color = e.negative ? '#c62828'
+          : (KIND_COLOR[KIND_OF_REL[e.relation] || 'assoc'] || KIND_COLOR.assoc);
         return (
-          <line key={i}
-            x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
             stroke={color}
-            strokeOpacity={opacity}
+            strokeOpacity={e.depth >= 2 ? 0.35 : 0.6}
             strokeWidth={e.depth >= 2 ? 1.0 : 1.4}
-            strokeDasharray={strokeDasharray}
+            strokeDasharray={e.depth >= 2 ? '4 3' : undefined}
           />
         );
       })}
-      {/* Nodes */}
       {positioned.map((n, i) => {
         const isCenter = n.depth === 0;
         const kindColor = KIND_COLOR[n.kind] || KIND_COLOR.assoc;
         return (
           <g key={i}>
             <circle cx={n.x} cy={n.y} r={n.r}
-              fill={isCenter ? 'var(--accent)' : 'var(--bg-card)'}
-              stroke={isCenter ? 'var(--accent)' : kindColor}
+              fill={isCenter ? '#c0411a' : '#fbf6ea'}
+              stroke={isCenter ? '#c0411a' : kindColor}
               strokeWidth={isCenter ? 0 : 1.2}
             />
             <text x={n.x} y={n.y + n.r + 14}
@@ -1856,31 +1719,14 @@ function GraphViz({ nodes, edges, relations }) {
               fontFamily="var(--font-mono)"
               fontSize={isCenter ? 13 : (n.depth === 1 ? 11 : 10)}
               fontWeight={isCenter ? 700 : 400}
-              fill="var(--ink)">
-              {truncLabel(n.label, isCenter ? 28 : 18)}
+              fill="#1f1d18">
+              {trunc(n.label, isCenter ? 28 : 18)}
             </text>
           </g>
         );
       })}
     </svg>
   );
-}
-
-// Helper : export SVG du graphe affiché (client-side)
-function exportSVG(term) {
-  const svg = document.querySelector('.lab-grid svg');
-  if (!svg) return;
-  const ser = new XMLSerializer();
-  const src = ser.serializeToString(svg);
-  const blob = new Blob([src], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `jdm_subgraph_${term}.svg`.replace(/[^a-z0-9_\-.]/gi, '_');
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 window.ViewSubgraph = ViewSubgraph;
@@ -2323,11 +2169,21 @@ function Message({ m }) {
 }
 
 function renderMarkdownLite(s) {
-  // tiny markdown subset: **bold**, *italic*, `code`, line breaks
-  return (s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  // L'agent produit volontairement des balises HTML pour styliser ses
+  // mots (ex: <strong>chat</strong>, <code>r_isa</code>, <em>...</em>).
+  // On NE LES ESCAPE PAS — c'est du contenu de confiance produit par
+  // notre propre LLM. On préfère utiliser marked.js si dispo (rendu
+  // markdown plein + GFM tables) — sinon fallback sur le subset léger.
+  s = s || '';
+  if (typeof window !== 'undefined' && window.marked) {
+    try {
+      window.marked.setOptions({ gfm: true, breaks: true });
+      return window.marked.parse(s);
+    } catch {
+      // fallback ci-dessous
+    }
+  }
+  return s
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')
@@ -2559,7 +2415,21 @@ function JarvisRun({ flow, onBack }) {
             setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
             break;
           case 'tool_call':
-            setMetrics(m => ({ ...m, toolsCalled: m.toolsCalled + 1 }));
+            setMetrics(m => {
+              const next = { ...m, toolsCalled: m.toolsCalled + 1 };
+              // « Consolidés » = nombre de triplets passés à consolidate_candidate
+              // (l'étape qui valide par inférence) — c'est le compteur que
+              // l'utilisateur attend pour un enrichissement.
+              if (d.name === 'consolidate_candidate') next.accepted = m.accepted + 1;
+              return next;
+            });
+            // Trace les triplets consolidés dans la liste de droite avec
+            // les arguments du tool_call (term/relation/target visibles).
+            if (d.name === 'consolidate_candidate' && d.args) {
+              const a = d.args || {};
+              const triplet = `${a.term || a.subject || '?'} | ${a.relation || '?'} | ${a.target || a.object || '?'}`;
+              setAccepted(prev => [...prev, { label: triplet, score: '⏳' }]);
+            }
             setLog(l => [...l, {
               t: ts(), tag: '[tool]', kind: 'tool',
               msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
@@ -2571,9 +2441,18 @@ function JarvisRun({ flow, onBack }) {
             } else if (d.preview) {
               setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
             }
-            if (d.name === 'write_submission_file' && d.preview) {
-              setAccepted(a => [...a, { label: d.preview.slice(0, 80), score: 'soumis' }]);
-              setMetrics(m => ({ ...m, accepted: m.accepted + 1 }));
+            // Mise à jour du dernier triplet consolidé : ✓ ou ✗ selon le
+            // résultat (narration ou preview contiennent typiquement
+            // « consolidé » / « rejeté »).
+            if (d.name === 'consolidate_candidate') {
+              const text = (d.narration || d.preview || '').toLowerCase();
+              const ok = text.includes('consolid') && !text.includes('rejet');
+              setAccepted(prev => {
+                if (prev.length === 0) return prev;
+                const next = prev.slice();
+                next[next.length - 1] = { ...next[next.length - 1], score: ok ? '✓' : '✗' };
+                return next;
+              });
             }
             break;
           case 'final':
@@ -2716,6 +2595,30 @@ function JarvisRun({ flow, onBack }) {
                   mono />
               </Field>
             )}
+            <Field label="Budget d'outils">
+              <Select value={params.budget_label || 'illimité'}
+                onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
+                options={BUDGET_OPTS} />
+            </Field>
+          </Card>
+
+          <Card padding={16}>
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--ink-3)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+              marginBottom: 12,
+            }}>LLMDrops</div>
+            <Field label="Clé API" hint="Override l'env JDM_DROPS_API_KEY. Vide = utilise la clé serveur.">
+              <Input value={params.drops_key || ''}
+                onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
+                placeholder="optionnel…" mono />
+            </Field>
+            <div style={{
+              fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5,
+            }}>
+              Sans clé, la case « Soumettre » écrit juste le fichier local
+              sans pousser à JDM.
+            </div>
           </Card>
         </div>
 
@@ -2749,7 +2652,7 @@ function JarvisRun({ flow, onBack }) {
           }}>
             <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
             <Metric label="Pensées" value={metrics.thoughts} sub="thoughts" />
-            <Metric label="Soumis" value={metrics.accepted} sub="fichiers" color="var(--jdm-green)" />
+            <Metric label="Consolidés" value={metrics.accepted} sub="triplets" color="var(--jdm-green)" />
             <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
           </div>
 
@@ -2816,7 +2719,7 @@ function JarvisRun({ flow, onBack }) {
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
                 }}>
-                  {finalText ? 'Réponse finale' : `Fichiers soumis · ${accepted.length}`}
+                  {finalText ? 'Réponse finale' : `Triplets consolidés · ${accepted.length}`}
                 </div>
               </div>
               <div style={{
@@ -2971,13 +2874,27 @@ const BUDGET_OPTS = [
 ];
 
 function defaultParamsFor(flowId) {
-  const common = { model: 'gemini-3.1-flash-lite', api_key: '', use_thinking: true };
+  // Defaults alignés sur la branche deploy-self / app.py :
+  // term vide partout (= tirage au hasard côté backend), budget illimité,
+  // thinking=false (Jarvis = robustesse > raisonnement), upload=false.
+  const common = {
+    model: 'gemini-3.1-flash-lite',
+    api_key: '', drops_key: '',
+    use_thinking: false,
+    budget_label: 'illimité',
+  };
   switch (flowId) {
-    case 'enrich':      return { ...common, term: 'chat', relation: 'r_carac', target_count: 10, vary_relations: false, iterate: false, budget_label: '25', upload: false };
-    case 'audit':       return { ...common, term: 'avocat', relation: '', budget_label: '50', upload: false };
-    case 'gap':         return { ...common, term: 'chat', budget_label: '25' };
-    case 'signalement': return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
-    case 'stats':       return { ...common, term: 'chat', relation: '', budget_label: '50', upload: false };
+    case 'enrich':
+      return { ...common, term: '', relation: '',
+               target_count: 3, vary_relations: true, iterate: true, upload: false };
+    case 'audit':
+      return { ...common, term: '', relation: '', upload: false };
+    case 'gap':
+      return { ...common, term: '' };
+    case 'signalement':
+      return { ...common, term: '', relation: '', upload: false };
+    case 'stats':
+      return { ...common, term: '', relation: '', upload: false };
   }
   return common;
 }
@@ -3068,233 +2985,162 @@ function ParamsForm({ flow, params, setParams, locked }) {
 window.ViewJarvis = ViewJarvis;
 
 // === webapp/views-aide.jsx ===
-// View: Aide — relation glossary + shortcuts + about.
+// View: Aide — installation, usage, MCP, soumission format.
+// Mêmes textes que la branche deploy-self / app.py:AIDE_MD.
 
-const RELATIONS_GLOSSARY = [
-  { id: 'r_syn', label: 'Synonymes', kind: 'lexical', ex: 'chat ≈ matou' },
-  { id: 'r_anto', label: 'Antonymes', kind: 'lexical', ex: 'grand ↔ petit' },
-  { id: 'r_isa', label: 'Hyperonymes — "est un"', kind: 'taxonomique', ex: 'chat r_isa félin' },
-  { id: 'r_hypo', label: 'Hyponymes — "exemples de"', kind: 'taxonomique', ex: 'félin r_hypo chat' },
-  { id: 'r_has_part', label: 'Parties / composants', kind: 'méronymique', ex: 'chat r_has_part patte' },
-  { id: 'r_carac', label: 'Caractéristiques', kind: 'attributive', ex: 'chat r_carac agile' },
-  { id: 'r_has_color', label: 'Couleurs', kind: 'attributive', ex: 'ciel r_has_color bleu' },
-  { id: 'r_lieu', label: 'Lieux typiques', kind: 'spatiale', ex: 'lion r_lieu savane' },
-  { id: 'r_agent', label: 'Agents typiques', kind: 'actantielle', ex: 'aboyer r_agent chien' },
-  { id: 'r_patient', label: 'Patients typiques', kind: 'actantielle', ex: 'manger r_patient pomme' },
-  { id: 'r_instr', label: 'Instruments', kind: 'actantielle', ex: 'écrire r_instr stylo' },
-  { id: 'r_telic_role', label: 'Rôle télique — à quoi sert', kind: 'fonctionnelle', ex: 'couteau r_telic_role couper' },
-  { id: 'r_has_causatif', label: 'Causes', kind: 'causale', ex: 'rire r_has_causatif joie' },
-  { id: 'r_has_conseq', label: 'Conséquences', kind: 'causale', ex: 'pluie r_has_conseq mouille' },
-  { id: 'r_but', label: 'But', kind: 'finaliste', ex: 'manger r_but vivre' },
-  { id: 'r_manner', label: 'Manière', kind: 'modale', ex: 'courir r_manner vite' },
-];
+const AIDE_MD = `# 🛠️ Aide & Installation
 
-const SHORTCUTS = [
-  { keys: ['G', 'E'], desc: 'Aller à Explorer' },
-  { keys: ['G', 'C'], desc: 'Aller à Claim checker' },
-  { keys: ['G', 'A'], desc: 'Aller à Agent' },
-  { keys: ['G', 'J'], desc: 'Aller à Jarvis' },
-  { keys: ['/'], desc: 'Focus sur le champ de recherche' },
-  { keys: ['⌘', 'K'], desc: 'Palette de commandes (à venir)' },
-  { keys: ['?'], desc: 'Cette page' },
-];
+## 1. Naviguer dans la démo
+
+| Onglet | Ce qu'il fait | Clé API ? |
+|---|---|---|
+| 📋 **Projet** | Présentation, liens code source | Aucune |
+| 🔎 **Explorer JDM** | Table de triplets pour un terme/relation, déterministe | Aucune |
+| ⚖️ **Claim checker** | SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet, déterministe | Aucune |
+| 🕸️ **Sous-graphe** | Visualisation vis-network interactive du voisinage | Aucune |
+| 🤖 **Agent** | Chat libre avec un agent LLM qui utilise les 34 outils JDM | Gemini hébergé gratuit, ou BYOK Claude / GPT |
+| 🦾 **Jarvis** | Flows guidés par formulaires (5 sous-onglets) | Gemini hébergé gratuit ; clé LLMDrops si tu veux pousser vers JDM |
+| 🛠️ **Aide** | Ce document | — |
+
+## 2. Jarvis en détail — 5 flows guidés
+
+Tous les sous-onglets Jarvis partagent un **bandeau** en haut :
+- **Clé API LLMDrops** (optionnel) : override l'env \`JDM_DROPS_API_KEY\` pour les uploads.
+- **Modèle LLM** : Gemini 3.1 Flash Lite par défaut (500 requêtes/jour gratuites). BYOK Claude / GPT possibles si tu colles ta clé.
+- **Budget d'appels d'outils** : 10 / 25 / 50 / 100 / illimité. Au-delà, le LLM reçoit un sentinel et arrête proprement en consolidant ce qu'il a.
+
+### 🌱 Enrichissement
+Propose et consolide de nouveaux triplets pour un terme.
+- **Form** : terme, relation cible (optionnelle), nombre cible de triplets, varier les relations, itérer jusqu'au but, soumettre directement.
+- **Output** : chatbot avec le raisonnement + le fichier \`.enrich\` écrit.
+- **Workflow** : \`enrichment_workflow()\` (pré-fetch → désambiguïsation → proposition → validation+consolidation par inférence → écriture).
+
+### 🔍 Audit
+Audit sémantique de la répartition des sens d'un terme polysémique.
+- **Form** : terme, relation cible optionnelle, soumettre directement.
+- **Output** : verdict par triplet du terme générique (LEGITIME / DEVRAIT_ETRE_CONTRASTIF / NON_CONTRASTIF / NEGATIVE) + section META narrative.
+- **Workflow** : \`audit_workflow()\`.
+
+### 🕳️ Détection de trous
+Identifie les trous de couverture (MISSING / NEGATIVE_FILLED / LOW_COVERAGE).
+- **Form** : terme, relations à examiner (vide = défauts), seuil LOW_COVERAGE.
+- **Output gauche** : tableau des gaps trouvés (déterministe, instantané) + dropdown pour router un gap → boutons **→ Enrichir** / **→ Auditer** / **→ Stats** qui pré-remplissent les autres sous-onglets et basculent l'onglet.
+- **Output droite** : synthèse narrative de l'agent.
+- **Workflow** : \`gap_detection_workflow()\`.
+
+### ⚠️ Signalement
+Le LLM utilise son **jugement linguistique** pour flagger les triplets suspects (pas besoin de preuve d'outil).
+- **Form** : terme, relation optionnelle, soumettre directement.
+- **Output** : fichier \`.err\` avec catégorie de suspicion et justification.
+- **Workflow** : \`signalement_workflow()\`.
+
+### 📊 Stats
+Statistiques de couverture par terme et/ou par relation.
+- **Form** : terme (mode PAR_TERME), relation (mode PAR_RELATION) — au moins un des deux.
+- **Output** : tableau (n_total, n_pos, n_neg, max_w, min_w, mean_w par relation) + 3-5 observations clés.
+- **Workflow** : \`stats_workflow()\`.
+
+## 3. Obtenir les clés API
+
+| Clé | Où ? | Coût | Quand l'utiliser |
+|---|---|---|---|
+| **Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Gratuit (500 req/jour pour 3.1 Flash Lite) | Pré-configurée côté HF Space, rien à faire pour toi |
+| **LLMDrops JDM** | jeuxdemots.org (contacter M. Lafourcade) | Gratuit sur demande | Soumettre \`.enrich\` / \`.audit\` / \`.err\` directement à JDM |
+| **Anthropic (Claude)** | [console.anthropic.com](https://console.anthropic.com) | Payant ($) | BYOK Claude dans Agent / Jarvis |
+| **OpenAI (GPT)** | [platform.openai.com](https://platform.openai.com/api-keys) | Payant ($) | BYOK GPT dans Agent / Jarvis |
+
+⚠️ **Sécurité** : les clés que tu colles dans l'UI ne sont **jamais persistées** côté serveur — elles vivent uniquement le temps de ton onglet navigateur.
+
+## 4. Installation locale (déployer la même app ailleurs)
+
+\`\`\`bash
+# 1. Cloner le repo
+git clone https://github.com/expAg/JDMAgent.git
+cd JDMAgent
+
+# 2. Créer un environnement Python isolé (venv)
+python3 -m venv .venv
+
+# 3. Activer le venv
+source .venv/bin/activate          # Linux / macOS
+# .venv\\Scripts\\activate           # Windows
+
+# 4. Installer les dépendances
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. Configurer les clés API
+cp .env.example .env
+# édite .env : GOOGLE_API_KEYS (CSV) / ANTHROPIC_API_KEY / OPENAI_API_KEY /
+# JDM_DROPS_API_KEY / APP_SUBPATH (si reverse-proxy)
+
+# 6. Lancer l'app — écoute sur http://0.0.0.0:7860
+uvicorn app_fastapi:app --host 0.0.0.0 --port 7860
+\`\`\`
+
+Ensuite, dans ton navigateur → <http://localhost:7860>.
+
+**Sous reverse-proxy** : si Apache/Nginx route un sous-chemin (ex. \`/Jarvis/\`),
+mets \`APP_SUBPATH=/Jarvis\` dans \`.env\` — le frontend injecte automatiquement
+\`<base href>\` et les fetch API se résolvent correctement.
+
+**Sur Debian 12 / Ubuntu 24.04 (PEP 668)** : pip refuse d'installer hors venv —
+le venv ci-dessus est donc **obligatoire**.
+
+## 5. Serveur MCP — utiliser les outils JDM dans Claude Code / Cursor
+
+\`\`\`bash
+claude mcp add jdm "python -m jdm_agent.mcp.server"
+claude mcp list
+\`\`\`
+
+Ensuite, depuis Claude Code : « Donne-moi les synonymes de voiture dans JDM » → l'agent appelle automatiquement les outils MCP exposés.
+
+## 6. Format des fichiers de soumission
+
+Tous les fichiers produits par Jarvis suivent un **format pipe** :
+
+\`\`\`
+# .enrich (proposition de triplets)
+term | relation | target | annotation < explication chaîne d'inférence >
+
+# .audit (deux sections séparées par === META ===)
+=== PROPOSITIONS ===
+term | relation | target | annotation | verdict | justification
+...
+=== META ===
+<compte rendu narratif sur la confusion / propagation des sens>
+
+# .err (suspects flaggés par le LLM)
+term | relation | target | catégorie_suspect | justification
+\`\`\`
+
+Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
+- coche **Soumettre directement** dans le formulaire (la clé \`JDM_DROPS_API_KEY\` doit être configurée) ;
+- ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.
+
+## 7. Liens utiles
+
+- **Code source** : <https://github.com/expAg/JDMAgent>
+- **API JeuxDeMots** : <https://jdm-api.demo.lirmm.fr>
+- **JeuxDeMots (site)** : <https://www.jeuxdemots.org>
+- **USAGE.md détaillé** : <https://github.com/expAg/JDMAgent/blob/main/USAGE.md>
+- **DEVELOPMENT.md** : <https://github.com/expAg/JDMAgent/blob/main/DEVELOPMENT.md>
+`;
 
 function ViewAide() {
+  const html = React.useMemo(() => {
+    if (typeof window !== 'undefined' && window.marked) {
+      window.marked.setOptions({ gfm: true, breaks: false });
+      return window.marked.parse(AIDE_MD);
+    }
+    return '<pre>' + AIDE_MD + '</pre>';
+  }, []);
+
   return (
     <PageShell>
-      <SectionTitle
-        kicker="Documentation"
-        title="Aide"
-        desc="Glossaire des relations JeuxDeMots, raccourcis clavier, ressources."
-      />
-
-      {/* Relations glossary */}
-      <h2 className="display" style={{
-        fontFamily: 'var(--font-display)',
-        fontSize: 22, fontWeight: 600,
-        margin: '0 0 14px',
-      }}>Relations JDM principales</h2>
-
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-        gap: 1,
-        background: 'var(--line)',
-        border: '1px solid var(--line)',
-        borderRadius: 'var(--radius-lg)',
-        overflow: 'hidden',
-        marginBottom: 40,
-      }}>
-        {RELATIONS_GLOSSARY.map((r, i) => (
-          <div key={r.id} style={{
-            background: 'var(--bg-card)',
-            padding: 16,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-              <code className="mono" style={{
-                background: 'var(--bg-elev)',
-                padding: '2px 8px',
-                borderRadius: 3,
-                fontSize: 12,
-                color: 'var(--accent)',
-                fontWeight: 600,
-              }}>{r.id}</code>
-              <span style={{
-                fontSize: 10,
-                color: 'var(--ink-3)',
-                fontFamily: 'var(--font-mono)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-              }}>{r.kind}</span>
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--ink)', marginBottom: 6, fontWeight: 500 }}>{r.label}</div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{r.ex}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Shortcuts */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: 24,
-      }}>
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>Raccourcis clavier</h2>
-          <Card padding={0}>
-            {SHORTCUTS.map((s, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '12px 16px',
-                borderBottom: i < SHORTCUTS.length - 1 ? '1px solid var(--line-soft)' : 'none',
-              }}>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {s.keys.map((k, j) => (
-                    <span key={j} className="kbd">{k}</span>
-                  ))}
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--ink-2)', marginLeft: 12 }}>{s.desc}</div>
-              </div>
-            ))}
-          </Card>
-        </div>
-
-        <div>
-          <h2 className="display" style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 22, fontWeight: 600,
-            margin: '0 0 14px',
-          }}>Ressources</h2>
-          <Card>
-            <div style={{ display: 'grid', gap: 10 }}>
-              {[
-                ['JeuxDeMots.org', 'Le site source du projet', 'https://jeuxdemots.org'],
-                ['Article fondateur', 'Lafourcade, M. (2007).', '#'],
-                ['Documentation API', 'Endpoints, types de relations', '#'],
-                ['Code source', 'github.com/expAg/JDMAgent', 'https://github.com/expAg/JDMAgent'],
-                ['Hugging Face Space', 'Démo hébergée', '#'],
-              ].map(([title, desc, href], i) => (
-                <a key={i} href={href} style={{
-                  display: 'block',
-                  padding: '12px 14px',
-                  background: 'var(--bg-elev)',
-                  borderRadius: 'var(--radius)',
-                  textDecoration: 'none',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--line-soft)',
-                  transition: 'border-color 0.12s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
-                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--line-soft)'}>
-                  <div style={{ fontWeight: 500, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
-                    {title}
-                    <span style={{ color: 'var(--ink-3)' }}>↗</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{desc}</div>
-                </a>
-              ))}
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      <div style={{
-        marginTop: 48,
-        padding: 32,
-        background: 'var(--bg-elev)',
-        border: '1px solid var(--line-soft)',
-        borderRadius: 'var(--radius-lg)',
-      }}>
-        {/* Institutional logos */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 48,
-          marginBottom: 28,
-          flexWrap: 'wrap',
-        }}>
-          <image-slot
-            id="logo-lirmm"
-            shape="rect"
-            placeholder="Dépose le logo LIRMM ici"
-            style={{
-              width: 200, height: 80,
-              background: 'transparent',
-            }}
-          />
-          <div style={{
-            width: 1, height: 60,
-            background: 'var(--line)',
-          }} />
-          <image-slot
-            id="logo-um"
-            shape="rect"
-            placeholder="Dépose le logo Université de Montpellier ici"
-            style={{
-              width: 200, height: 80,
-              background: 'transparent',
-            }}
-          />
-          <div style={{
-            width: 1, height: 60,
-            background: 'var(--line)',
-          }} />
-          <image-slot
-            id="logo-cnrs"
-            shape="rect"
-            placeholder="Dépose le logo CNRS ici"
-            style={{
-              width: 120, height: 80,
-              background: 'transparent',
-            }}
-          />
-        </div>
-
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 12,
-          paddingTop: 24,
-          borderTop: '1px solid var(--line-soft)',
-        }}>
-          <JDMMark size={28} />
-          <div>
-            <div className="display" style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 16, fontWeight: 600,
-            }}>jdmAgent</div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              phase-13-jarvis · build {new Date().toISOString().slice(0, 10)}
-            </div>
-          </div>
-        </div>
-      </div>
+      <div className="jdm-prose"
+        dangerouslySetInnerHTML={{ __html: html }} />
     </PageShell>
   );
 }

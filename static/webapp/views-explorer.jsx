@@ -21,10 +21,11 @@ const EXPLORE_RELATIONS = [
 ];
 
 function ViewExplorer() {
+  // Defaults alignés sur la branche deploy-self : chat / r_isa / 25 / 20 / true.
   const [term, setTerm] = useState('chat');
-  const [rel, setRel] = useState('r_has_part');
+  const [rel, setRel] = useState('r_isa');
   const [minWeight, setMinWeight] = useState(25);
-  const [limit, setLimit] = useState(50);
+  const [limit, setLimit] = useState(20);
   const [annotations, setAnnotations] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
