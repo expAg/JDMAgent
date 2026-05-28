@@ -67,19 +67,29 @@ function ViewAgent() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buf = '';
+      const flushEvents = () => {
+        // Séparateur d'événement = ligne vide (= deux fins de ligne
+        // consécutives). sse-starlette utilise CRLF par défaut donc on
+        // accepte \r\n\r\n, \n\n, et \r\r pour être robuste.
+        const re = /\r\n\r\n|\n\n|\r\r/;
+        let m;
+        while ((m = re.exec(buf)) !== null) {
+          const rawEv = buf.slice(0, m.index);
+          buf = buf.slice(m.index + m[0].length);
+          const ev = parseSSEEvent(rawEv);
+          if (ev) handleEvent(ev, patchLast);
+        }
+      };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
-        // SSE parse : events séparés par "\n\n", chaque event = lignes "event:" + "data:"
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const rawEv = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          const ev = parseSSEEvent(rawEv);
-          if (!ev) continue;
-          handleEvent(ev, patchLast);
-        }
+        flushEvents();
+      }
+      // Vide final : reste éventuel (si dernier event sans sep)
+      if (buf.trim()) {
+        const ev = parseSSEEvent(buf);
+        if (ev) handleEvent(ev, patchLast);
       }
     } catch (e) {
       patchLast(last => { last.error = String(e && e.message ? e.message : e); });
@@ -251,11 +261,20 @@ function ViewAgent() {
 // ─── SSE helpers ────────────────────────────────────────────────
 
 function parseSSEEvent(raw) {
+  // Normalise CRLF → LF puis parse ligne par ligne. Ignore les
+  // commentaires (lignes commençant par `:`, utilisés pour keepalive).
+  raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   let event = 'message';
   let data = '';
   for (const line of raw.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
     if (line.startsWith('event:')) event = line.slice(6).trim();
-    else if (line.startsWith('data:')) data += line.slice(5).trim();
+    else if (line.startsWith('data:')) {
+      // SSE : `data:` peut apparaître plusieurs fois, chaque valeur est
+      // jointe par `\n`. L'espace après `:` est optionnel mais usuel.
+      const v = line.slice(5).replace(/^ /, '');
+      data += (data ? '\n' : '') + v;
+    }
   }
   if (!data) return null;
   let parsed;

@@ -1955,19 +1955,29 @@ function ViewAgent() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buf = '';
+      const flushEvents = () => {
+        // Séparateur d'événement = ligne vide (= deux fins de ligne
+        // consécutives). sse-starlette utilise CRLF par défaut donc on
+        // accepte \r\n\r\n, \n\n, et \r\r pour être robuste.
+        const re = /\r\n\r\n|\n\n|\r\r/;
+        let m;
+        while ((m = re.exec(buf)) !== null) {
+          const rawEv = buf.slice(0, m.index);
+          buf = buf.slice(m.index + m[0].length);
+          const ev = parseSSEEvent(rawEv);
+          if (ev) handleEvent(ev, patchLast);
+        }
+      };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
-        // SSE parse : events séparés par "\n\n", chaque event = lignes "event:" + "data:"
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const rawEv = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          const ev = parseSSEEvent(rawEv);
-          if (!ev) continue;
-          handleEvent(ev, patchLast);
-        }
+        flushEvents();
+      }
+      // Vide final : reste éventuel (si dernier event sans sep)
+      if (buf.trim()) {
+        const ev = parseSSEEvent(buf);
+        if (ev) handleEvent(ev, patchLast);
       }
     } catch (e) {
       patchLast(last => { last.error = String(e && e.message ? e.message : e); });
@@ -2139,11 +2149,20 @@ function ViewAgent() {
 // ─── SSE helpers ────────────────────────────────────────────────
 
 function parseSSEEvent(raw) {
+  // Normalise CRLF → LF puis parse ligne par ligne. Ignore les
+  // commentaires (lignes commençant par `:`, utilisés pour keepalive).
+  raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   let event = 'message';
   let data = '';
   for (const line of raw.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
     if (line.startsWith('event:')) event = line.slice(6).trim();
-    else if (line.startsWith('data:')) data += line.slice(5).trim();
+    else if (line.startsWith('data:')) {
+      // SSE : `data:` peut apparaître plusieurs fois, chaque valeur est
+      // jointe par `\n`. L'espace après `:` est optionnel mais usuel.
+      const v = line.slice(5).replace(/^ /, '');
+      data += (data ? '\n' : '') + v;
+    }
   }
   if (!data) return null;
   let parsed;
@@ -2525,60 +2544,70 @@ function JarvisRun({ flow, onBack }) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buf = '';
+      const dispatchEvent = (ev) => {
+        const d = ev.data || {};
+        switch (ev.event) {
+          case 'headline':
+            setHeadline(d.text || '');
+            setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
+            break;
+          case 'thought':
+            setMetrics(m => ({ ...m, thoughts: m.thoughts + 1 }));
+            setLog(l => [...l, { t: ts(), tag: '[think]', kind: 'thought', msg: (d.text || '').slice(0, 200) }]);
+            break;
+          case 'spoken':
+            setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
+            break;
+          case 'tool_call':
+            setMetrics(m => ({ ...m, toolsCalled: m.toolsCalled + 1 }));
+            setLog(l => [...l, {
+              t: ts(), tag: '[tool]', kind: 'tool',
+              msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
+            }]);
+            break;
+          case 'tool_result':
+            if (d.narration) {
+              setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'accept', msg: d.narration }]);
+            } else if (d.preview) {
+              setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
+            }
+            if (d.name === 'write_submission_file' && d.preview) {
+              setAccepted(a => [...a, { label: d.preview.slice(0, 80), score: 'soumis' }]);
+              setMetrics(m => ({ ...m, accepted: m.accepted + 1 }));
+            }
+            break;
+          case 'final':
+            setFinalText(d.text || '');
+            setLog(l => [...l, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]);
+            setState('done');
+            break;
+          case 'error':
+            setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }]);
+            setState('error');
+            break;
+          default: break;
+        }
+      };
+      const flushEvents = () => {
+        // Robuste : accepte CRLF (sse-starlette défaut) ET LF.
+        const re = /\r\n\r\n|\n\n|\r\r/;
+        let m;
+        while ((m = re.exec(buf)) !== null) {
+          const rawEv = buf.slice(0, m.index);
+          buf = buf.slice(m.index + m[0].length);
+          const ev = parseSSEEventJarvis(rawEv);
+          if (ev) dispatchEvent(ev);
+        }
+      };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const rawEv = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          const ev = parseSSEEventJarvis(rawEv);
-          if (!ev) continue;
-          const d = ev.data || {};
-          switch (ev.event) {
-            case 'headline':
-              setHeadline(d.text || '');
-              setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
-              break;
-            case 'thought':
-              setMetrics(m => ({ ...m, thoughts: m.thoughts + 1 }));
-              setLog(l => [...l, { t: ts(), tag: '[think]', kind: 'thought', msg: (d.text || '').slice(0, 200) }]);
-              break;
-            case 'spoken':
-              setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
-              break;
-            case 'tool_call':
-              setMetrics(m => ({ ...m, toolsCalled: m.toolsCalled + 1 }));
-              setLog(l => [...l, {
-                t: ts(), tag: '[tool]', kind: 'tool',
-                msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
-              }]);
-              break;
-            case 'tool_result':
-              if (d.narration) {
-                setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'accept', msg: d.narration }]);
-              } else if (d.preview) {
-                setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
-              }
-              // Détection write_submission_file : on accumule en "acceptés"
-              if (d.name === 'write_submission_file' && d.preview) {
-                setAccepted(a => [...a, { label: d.preview.slice(0, 80), score: 'soumis' }]);
-                setMetrics(m => ({ ...m, accepted: m.accepted + 1 }));
-              }
-              break;
-            case 'final':
-              setFinalText(d.text || '');
-              setLog(l => [...l, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]);
-              setState('done');
-              break;
-            case 'error':
-              setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }]);
-              setState('error');
-              break;
-            default: break;
-          }
-        }
+        flushEvents();
+      }
+      if (buf.trim()) {
+        const ev = parseSSEEventJarvis(buf);
+        if (ev) dispatchEvent(ev);
       }
       if (state === 'running') setState('done');
     } catch (e) {
@@ -2837,11 +2866,16 @@ function JarvisRun({ flow, onBack }) {
 // ───── Helpers ─────
 
 function parseSSEEventJarvis(raw) {
+  raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   let event = 'message';
   let data = '';
   for (const line of raw.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
     if (line.startsWith('event:')) event = line.slice(6).trim();
-    else if (line.startsWith('data:')) data += line.slice(5).trim();
+    else if (line.startsWith('data:')) {
+      const v = line.slice(5).replace(/^ /, '');
+      data += (data ? '\n' : '') + v;
+    }
   }
   if (!data) return null;
   let parsed;
