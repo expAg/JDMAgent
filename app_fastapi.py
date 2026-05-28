@@ -315,16 +315,85 @@ def api_disambiguate(req: TermRequest) -> dict[str, Any]:
 
 
 # ────────────────────────────────────────────────────────────────────
-# Route: Subgraph (STUB)
+# Route: Subgraph
 # ────────────────────────────────────────────────────────────────────
 @app.post("/api/subgraph")
 def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
-    """Construire le sous-graphe d'un terme.
+    """Construire le sous-graphe d'un terme et renvoyer nodes/edges JSON.
 
-    TODO: utiliser build_subgraph(client, term, depth, relation_ids, ...)
-    et sérialiser nodes + edges. Voir README §2.4.
+    On délègue à `build_subgraph(output="json")` puis on aplatit en une
+    structure légère facile à layouter côté frontend :
+        {root, nodes: [{id, label, kind, depth}],
+               edges: [{from, to, relation, weight, negative, depth}],
+               stats: {...}, message?}
     """
-    raise HTTPException(501, "Pas encore implémenté — voir README §2.4")
+    c = get_client()
+    term, err = _resolve_and_check(c, req.term)
+    if err:
+        return {"root": req.term, "nodes": [], "edges": [],
+                "stats": {"n_nodes": 0, "n_edges": 0}, "message": err}
+
+    rels = list(req.relations) if req.relations else None
+    try:
+        res = build_subgraph(
+            term,
+            client=c,
+            depth=max(1, min(int(req.depth), 4)),
+            top_k_per_relation=8,  # backend décide, frontend coupe à max_nodes
+            min_weight=float(req.min_weight) if req.min_weight else None,
+            relations=rels,
+            output="json",
+        )
+    except Exception as e:
+        return {"root": term, "nodes": [], "edges": [],
+                "stats": {"n_nodes": 0, "n_edges": 0},
+                "message": f"Erreur API JDM : {e}"}
+
+    # Aplatir nodes vis-network → forme frontend simple.
+    raw_nodes = res.get("nodes", [])
+    raw_edges = res.get("edges", [])
+
+    nodes_out = [
+        {
+            "id": n["id"],
+            "label": n.get("label", n["id"]),
+            "kind": n.get("_kind", "assoc"),
+            "depth": n.get("_depth", 0),
+        }
+        for n in raw_nodes
+    ]
+    edges_out = [
+        {
+            "from": e["from"],
+            "to": e["to"],
+            "relation": e.get("_relation", ""),
+            "weight": e.get("_weight", 0),
+            "negative": bool(e.get("_negative", False)),
+            "depth": e.get("_depth", 1),
+        }
+        for e in raw_edges
+    ]
+
+    # Optionnel : tronquer à max_nodes en gardant centre + plus forts poids.
+    if req.max_nodes and len(nodes_out) > req.max_nodes:
+        # Garde le centre puis prend les `max_nodes - 1` nœuds dont l'arête
+        # entrante a le poids le plus fort.
+        weight_per_node: dict[str, float] = {}
+        for e in edges_out:
+            w = abs(e["weight"])
+            if e["to"] != "ROOT":
+                weight_per_node[e["to"]] = max(weight_per_node.get(e["to"], 0), w)
+        ordered = sorted(weight_per_node.items(), key=lambda kv: -kv[1])
+        keep = {"ROOT"} | {nid for nid, _ in ordered[: req.max_nodes - 1]}
+        nodes_out = [n for n in nodes_out if n["id"] in keep]
+        edges_out = [e for e in edges_out if e["from"] in keep and e["to"] in keep]
+
+    return {
+        "root": term,
+        "nodes": nodes_out,
+        "edges": edges_out,
+        "stats": res.get("stats", {"n_nodes": len(nodes_out), "n_edges": len(edges_out)}),
+    }
 
 
 # ────────────────────────────────────────────────────────────────────

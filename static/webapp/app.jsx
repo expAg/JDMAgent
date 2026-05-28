@@ -29,6 +29,20 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [view]);
 
+  // Routing inter-vues : permet à n'importe quel composant de naviguer
+  // via window.dispatchEvent(new CustomEvent('jdm:goto', { detail: { view, term, ... } })).
+  // Le `term` est posé sur window.__jdmPendingTerm pour que la vue cible
+  // puisse le lire au premier render (pas de prop drilling).
+  useEffect(() => {
+    const handler = (e) => {
+      const d = e.detail || {};
+      if (d.term) window.__jdmPendingTerm = d.term;
+      if (d.view && VIEWS[d.view]) setView(d.view);
+    };
+    window.addEventListener('jdm:goto', handler);
+    return () => window.removeEventListener('jdm:goto', handler);
+  }, []);
+
   const VIEWS = {
     projet:   <ViewProjet goto={setView} />,
     explorer: <ViewExplorer />,
