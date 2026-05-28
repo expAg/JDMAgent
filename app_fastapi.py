@@ -397,26 +397,88 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
 
 
 # ────────────────────────────────────────────────────────────────────
-# Route: Agent stream (STUB — le plus complexe)
+# LLM factory (slim port from app.py — pool/rate-limit comes in step 3)
+# ────────────────────────────────────────────────────────────────────
+def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
+    """Instancie un ChatModel selon le préfixe du modèle.
+
+    Version minimale pour la migration FastAPI :
+      - claude-* → Anthropic BYOK (api_key requis)
+      - gpt-*    → OpenAI BYOK (api_key requis)
+      - gemini-* → utilise GOOGLE_API_KEY de l'environnement (pool en step 3)
+
+    Lève ValueError avec message explicite si la clé manque.
+    """
+    from jdm_agent.tools.llm_factory import get_llm
+
+    if model.startswith("claude-"):
+        if not api_key.strip():
+            raise ValueError(
+                "Pour utiliser un modèle Claude, fournis une clé Anthropic (sk-ant-…)."
+            )
+        os.environ["ANTHROPIC_API_KEY"] = api_key.strip()
+        kwargs: dict = {}
+        if use_thinking:
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+            kwargs["temperature"] = 1.0
+        return get_llm(provider="anthropic", model=model, **kwargs)
+
+    if model.startswith("gpt-"):
+        if not api_key.strip():
+            raise ValueError(
+                "Pour utiliser un modèle GPT, fournis une clé OpenAI (sk-…)."
+            )
+        os.environ["OPENAI_API_KEY"] = api_key.strip()
+        return get_llm(provider="openai", model=model)
+
+    if model.startswith("gemini-"):
+        # GOOGLE_API_KEY lue depuis l'env (pool / rotation = step 3).
+        if not os.environ.get("GOOGLE_API_KEY"):
+            raise ValueError(
+                "Aucune clé Google disponible côté serveur (GOOGLE_API_KEY)."
+            )
+        return get_llm(provider="google_genai", model=model)
+
+    raise ValueError(f"Modèle non supporté : {model!r}")
+
+
+# ────────────────────────────────────────────────────────────────────
+# Route: Agent SSE stream
 # ────────────────────────────────────────────────────────────────────
 @app.post("/api/agent/stream")
 async def api_agent_stream(req: AgentRequest):
-    """Streamer la réponse de l'agent LLM + tool calls JDM.
+    """Streamer la réponse de l'agent LLM + tool calls JDM via SSE.
 
-    TODO: importer `chat_with_agent` depuis app.py (ou refactor en module),
-    et envelopper son générateur dans des SSE events. Voir README §2.5.
-
-    Pattern :
-        async def gen():
-            for text, _ in chat_with_agent(...):
-                yield {"event": "update", "data": json.dumps({"text": text})}
-            yield {"event": "done", "data": "{}"}
-        return EventSourceResponse(gen())
+    Émet des events typés (cf. `jdm_agent.streaming.chat_stream`) :
+      event: thought | spoken | tool_call | tool_result | final | error
+      data:  JSON sérialisé du dict d'event.
     """
+    from jdm_agent.streaming import chat_stream
+
+    try:
+        llm = _build_llm(req.model, req.api_key, use_thinking=req.use_thinking)
+    except ValueError as e:
+        async def err_gen():
+            yield {"event": "error", "data": json.dumps({"text": str(e)})}
+        return EventSourceResponse(err_gen())
+
     async def gen():
-        yield {"event": "error", "data": json.dumps({
-            "error": "Endpoint pas encore implémenté. Voir README §2.5."
-        })}
+        try:
+            for ev in chat_stream(
+                message=req.message,
+                history=req.history,
+                llm=llm,
+                client=get_client(),
+            ):
+                yield {
+                    "event": ev.get("type", "update"),
+                    "data": json.dumps(ev, ensure_ascii=False),
+                }
+        except Exception as e:
+            yield {"event": "error", "data": json.dumps({
+                "text": f"{type(e).__name__}: {e}"
+            }, ensure_ascii=False)}
+
     return EventSourceResponse(gen())
 
 

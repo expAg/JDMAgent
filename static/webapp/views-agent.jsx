@@ -1,4 +1,4 @@
-// View: Agent — conversational chat with the LLM + JDM tools.
+// View: Agent — conversational chat with the LLM + JDM tools (via SSE).
 
 const AGENT_MODELS = [
   { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', sub: 'pool gratuit · 500 req/jour' },
@@ -10,47 +10,82 @@ const AGENT_MODELS = [
   { value: 'gpt-4o',                label: 'GPT-4o',                sub: 'BYOK OpenAI' },
 ];
 
-const SEED_CONVO = [
-  {
-    role: 'user',
-    content: 'Que mange typiquement un chat ?',
-  },
-  {
-    role: 'assistant',
-    thinking: 'L\'utilisateur cherche les patients typiques du verbe « manger » avec « chat » comme agent. Je vais interroger r_patient sur manger, puis croiser avec r_agent(chat).',
-    tools: [
-      { name: 'relations_from', args: { term: 'manger', rel: 'r_patient', limit: 30 }, dur: 142, count: 30 },
-      { name: 'relations_to',   args: { term: 'manger', rel: 'r_agent',   limit: 30 }, dur: 98,  count: 28 },
-    ],
-    content: 'Selon JeuxDeMots, un chat mange typiquement des **croquettes** (w=312), de la **viande** (w=287), du **poisson** (w=234), des **souris** (w=198), du **lait** (w=156). Le lait est culturellement associé mais souvent mal toléré par les chats adultes. Veux-tu que j\'élargisse aux verbes apparentés (chasser, attraper) ?',
-  },
-];
-
 function ViewAgent() {
   const [model, setModel] = useState('gemini-3.1-flash-lite');
   const [thinking, setThinking] = useState(true);
   const [apiKey, setApiKey] = useState('');
-  const [convo, setConvo] = useState(SEED_CONVO);
+  const [convo, setConvo] = useState([]);
   const [input, setInput] = useState('');
+  const [streaming, setStreaming] = useState(false);
 
   const needsBYOK = model.startsWith('claude-') || model.startsWith('gpt-');
 
-  const send = () => {
-    if (!input.trim()) return;
-    setConvo([...convo, { role: 'user', content: input }]);
+  // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
+  // dernier message assistant (créé vide juste avant le fetch).
+  const send = async () => {
+    if (!input.trim() || streaming) return;
+    const userMsg = { role: 'user', content: input };
+    // Snapshot l'historique AVANT d'ajouter le message courant
+    // (le backend l'attend séparément via `message`).
+    const historySnapshot = convo.map(m => ({
+      role: m.role,
+      content: m.role === 'assistant' ? (m.content || '') : m.content,
+    }));
+    const assistantStub = { role: 'assistant', thoughts: [], tools: [], content: '', error: '' };
+    setConvo([...convo, userMsg, assistantStub]);
+    const msg = input;
     setInput('');
-    // Faked assistant reply.
-    setTimeout(() => {
-      setConvo(c => [...c, {
-        role: 'assistant',
-        thinking: 'Je décompose la requête en interrogations JDM atomiques.',
-        tools: [
-          { name: 'term_exists', args: { term: input.split(' ')[0] || 'chat' }, dur: 32, count: 1 },
-          { name: 'relations_from', args: { term: input.split(' ')[0] || 'chat', rel: 'r_carac' }, dur: 124, count: 12 },
-        ],
-        content: 'Réponse simulée — connecte ta clé pour interroger le vrai modèle.',
-      }]);
-    }, 600);
+    setStreaming(true);
+
+    // Helper : update le dernier message (assistant) en place.
+    const patchLast = (mutator) => {
+      setConvo(prev => {
+        const next = prev.slice();
+        const last = { ...next[next.length - 1] };
+        mutator(last);
+        next[next.length - 1] = last;
+        return next;
+      });
+    };
+
+    try {
+      const res = await fetch('/api/agent/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: msg,
+          history: historySnapshot,
+          api_key: apiKey,
+          model,
+          use_thinking: thinking,
+        }),
+      });
+      if (!res.ok || !res.body) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE parse : events séparés par "\n\n", chaque event = lignes "event:" + "data:"
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const rawEv = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const ev = parseSSEEvent(rawEv);
+          if (!ev) continue;
+          handleEvent(ev, patchLast);
+        }
+      }
+    } catch (e) {
+      patchLast(last => { last.error = String(e && e.message ? e.message : e); });
+    } finally {
+      setStreaming(false);
+    }
   };
 
   return (
@@ -58,7 +93,7 @@ function ViewAgent() {
       <SectionTitle
         kicker="Module · agent LLM"
         title="Agent"
-        desc="Chat conversationnel. Le modèle a accès à 34 outils JDM via LangChain."
+        desc="Chat conversationnel. Le modèle a accès aux outils JDM via LangChain."
       />
 
       <div style={{
@@ -86,7 +121,22 @@ function ViewAgent() {
               maxHeight: 600,
               overflowY: 'auto',
             }}>
+              {convo.length === 0 && (
+                <div style={{
+                  color: 'var(--ink-3)', fontSize: 13,
+                  textAlign: 'center', padding: '60px 0',
+                }}>
+                  Pose une question sur la langue française — l'agent ira interroger JDM.
+                </div>
+              )}
               {convo.map((m, i) => <Message key={i} m={m} />)}
+              {streaming && (
+                <div style={{
+                  fontSize: 11, color: 'var(--ink-3)',
+                  fontFamily: 'var(--font-mono)',
+                  fontStyle: 'italic',
+                }}>⏳ génération en cours…</div>
+              )}
             </div>
 
             {/* Composer */}
@@ -126,7 +176,9 @@ function ViewAgent() {
                     outline: 'none',
                   }}
                 />
-                <Button onClick={send} size="lg">Envoyer</Button>
+                <Button onClick={send} size="lg" disabled={streaming || !input.trim()}>
+                  {streaming ? '…' : 'Envoyer'}
+                </Button>
               </div>
               <div style={{
                 marginTop: 8,
@@ -180,47 +232,84 @@ function ViewAgent() {
               fontSize: 11, color: 'var(--ink-3)',
               textTransform: 'uppercase', letterSpacing: '0.1em',
               marginBottom: 10,
-            }}>Outils disponibles · 34</div>
+            }}>Outils JDM</div>
             <div style={{
               fontSize: 12, color: 'var(--ink-2)',
-              display: 'grid', gap: 4,
+              lineHeight: 1.5,
             }}>
-              {['relations_from', 'relations_to', 'term_exists', 'refinements_decoded',
-                'verify_claim', 'build_subgraph', 'common_ancestors', 'analogies',
-                'shortest_path', 'gloss_term'].map(t => (
-                <div key={t} className="mono" style={{
-                  fontSize: 11,
-                  padding: '3px 6px',
-                  background: 'var(--bg-elev)',
-                  borderRadius: 3,
-                  color: 'var(--ink)',
-                }}>{t}</div>
-              ))}
-              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
-                + 24 autres…
-              </div>
+              L'agent dispose d'une trentaine d'outils LangChain
+              wrappant le client JDM : exploration, vérification,
+              désambiguïsation, inférence, sous-graphe.
             </div>
-          </Card>
-
-          <Card padding={16}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 10,
-            }}>Pool Gemini</div>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
-              Clé courante : <span className="mono" style={{ color: 'var(--ink)' }}>3/4</span><br/>
-              Reset quotidien : <span className="mono">00:00 PT</span>
-            </div>
-            <Button variant="secondary" size="sm" full>
-              ↻ Rotation manuelle
-            </Button>
           </Card>
         </div>
       </div>
     </PageShell>
   );
 }
+
+// ─── SSE helpers ────────────────────────────────────────────────
+
+function parseSSEEvent(raw) {
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  let parsed;
+  try { parsed = JSON.parse(data); }
+  catch { parsed = { text: data }; }
+  return { event, data: parsed };
+}
+
+function handleEvent(ev, patchLast) {
+  const d = ev.data || {};
+  switch (ev.event) {
+    case 'thought':
+      patchLast(last => { last.thoughts = [...(last.thoughts || []), d.text || '']; });
+      break;
+    case 'spoken':
+      patchLast(last => {
+        const sep = last.content ? '\n\n' : '';
+        last.content = (last.content || '') + sep + (d.text || '');
+      });
+      break;
+    case 'tool_call':
+      patchLast(last => {
+        last.tools = [...(last.tools || []), {
+          name: d.name, args: d.args || {}, narration: d.narration || '',
+          result: null,
+        }];
+      });
+      break;
+    case 'tool_result':
+      patchLast(last => {
+        const tools = (last.tools || []).slice();
+        // Trouve le dernier tool_call du même nom sans résultat
+        for (let i = tools.length - 1; i >= 0; i--) {
+          if (tools[i].name === d.name && !tools[i].result) {
+            tools[i] = { ...tools[i], result: { preview: d.preview, narration: d.narration } };
+            break;
+          }
+        }
+        last.tools = tools;
+      });
+      break;
+    case 'final':
+      patchLast(last => { last.content = d.text || last.content || ''; });
+      break;
+    case 'error':
+      patchLast(last => { last.error = d.text || 'Erreur inconnue.'; });
+      break;
+    default:
+      // unknown event type — ignore
+      break;
+  }
+}
+
+// ─── Rendu d'un message ────────────────────────────────────────
 
 function Message({ m }) {
   if (m.role === 'user') {
@@ -250,7 +339,7 @@ function Message({ m }) {
         <JDMMark size={18} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {m.thinking && (
+        {m.thoughts && m.thoughts.length > 0 && (
           <details style={{ marginBottom: 10 }}>
             <summary style={{
               cursor: 'pointer',
@@ -259,7 +348,7 @@ function Message({ m }) {
               fontFamily: 'var(--font-mono)',
               textTransform: 'uppercase',
               letterSpacing: '0.1em',
-            }}>🧠 Raisonnement</summary>
+            }}>🧠 Raisonnement ({m.thoughts.length})</summary>
             <div style={{
               marginTop: 8,
               padding: 10,
@@ -269,7 +358,8 @@ function Message({ m }) {
               color: 'var(--ink-2)',
               fontStyle: 'italic',
               lineHeight: 1.5,
-            }}>{m.thinking}</div>
+              whiteSpace: 'pre-wrap',
+            }}>{m.thoughts.join('\n\n')}</div>
           </details>
         )}
         {m.tools && m.tools.map((t, i) => (
@@ -282,22 +372,44 @@ function Message({ m }) {
             marginBottom: 6,
             fontFamily: 'var(--font-mono)',
             fontSize: 11,
+            flexWrap: 'wrap',
           }}>
-            <span style={{ color: 'var(--jdm-green)' }}>●</span>
+            <span style={{ color: t.result ? 'var(--jdm-green)' : 'var(--ink-3)' }}>●</span>
             <span style={{ color: 'var(--accent)' }}>{t.name}</span>
             <span style={{ color: 'var(--ink-3)' }}>(</span>
-            <span style={{ color: 'var(--ink)' }}>{Object.entries(t.args).map(([k, v]) => `${k}="${v}"`).join(', ')}</span>
-            <span style={{ color: 'var(--ink-3)' }}>)</span>
-            <span style={{ marginLeft: 'auto', color: 'var(--ink-3)' }}>
-              {t.count} résultats · {t.dur}ms
+            <span style={{ color: 'var(--ink)' }}>
+              {Object.entries(t.args || {}).map(([k, v]) =>
+                `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`
+              ).join(', ')}
             </span>
+            <span style={{ color: 'var(--ink-3)' }}>)</span>
+            {t.result && t.result.preview && (
+              <span style={{ marginLeft: 'auto', color: 'var(--ink-3)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                → {t.result.preview}
+              </span>
+            )}
           </div>
         ))}
-        <div style={{
-          fontSize: 14,
-          color: 'var(--ink)',
-          lineHeight: 1.6,
-        }} dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
+        {m.content && (
+          <div style={{
+            fontSize: 14,
+            color: 'var(--ink)',
+            lineHeight: 1.6,
+          }} dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
+        )}
+        {m.error && (
+          <div style={{
+            padding: 10,
+            marginTop: 8,
+            background: 'rgba(200, 58, 115, 0.08)',
+            border: '1px solid var(--jdm-magenta)',
+            borderRadius: 'var(--radius)',
+            color: 'var(--jdm-magenta)',
+            fontSize: 12,
+          }}>
+            ⚠️ {m.error}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -305,7 +417,10 @@ function Message({ m }) {
 
 function renderMarkdownLite(s) {
   // tiny markdown subset: **bold**, *italic*, `code`, line breaks
-  return s
+  return (s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')
