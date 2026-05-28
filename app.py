@@ -4186,7 +4186,17 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             jan_topk = gr.Slider(
                                 minimum=3, maximum=15, value=8, step=1,
                                 label="Top-K par relation",
-                                info="Nombre de triplets annotés par relation.",
+                                info="Nombre de triplets CANDIDATS récupérés par relation (top par poids).",
+                            )
+                            jan_target = gr.Slider(
+                                minimum=1, maximum=50, value=10, step=1,
+                                label="Cible d'annotations UTILES",
+                                info=(
+                                    "Le LLM itère (carte blanche sur le "
+                                    "lexique) jusqu'à atteindre cette cible "
+                                    "ou épuiser son budget. Sélectivité > "
+                                    "volume : annoter seulement quand utile."
+                                ),
                             )
                             gr.Markdown(
                                 "<small><em>Si les deux champs sont vides, "
@@ -4234,14 +4244,15 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                                 visible=False, variant="primary",
                             )
 
-                    def _run_annotation(term, relations, top_k, upload,
-                                        drops_key, model, budget_label,
+                    def _run_annotation(term, relations, top_k, target_count,
+                                        upload, drops_key, model, budget_label,
                                         use_thinking, auto_switch, resume_state):
                         from jarvis import build_annotation_prompt, run_jarvis_flow
                         from jdm_agent.tools.jdm_agent import build_jdm_agent
                         prompt = build_annotation_prompt(
                             term=term, relation=relations,
                             top_k=int(top_k),
+                            target_count=int(target_count),
                             budget_label=str(budget_label),
                             upload=bool(upload),
                         )
@@ -4293,10 +4304,10 @@ with gr.Blocks(theme=THEME, title="JDMAgent Demo", head=_HEAD_JS, css=_CHATBOT_C
                             yield (gr.skip(), gr.skip(), gr.skip(),
                                    None, gr.update(visible=False))
 
-                    _jan_inputs = [jan_term, jan_relation, jan_topk, jan_upload,
-                                   jarvis_drops_key, jarvis_model, jarvis_budget,
-                                   jarvis_thinking, jarvis_auto_switch_cb,
-                                   jan_resume_state]
+                    _jan_inputs = [jan_term, jan_relation, jan_topk, jan_target,
+                                   jan_upload, jarvis_drops_key, jarvis_model,
+                                   jarvis_budget, jarvis_thinking,
+                                   jarvis_auto_switch_cb, jan_resume_state]
                     _jan_outputs = [jan_chat, jan_file, jan_preview,
                                     jan_resume_state, jan_continue_btn]
                     jan_launch.click(_run_annotation, inputs=_jan_inputs, outputs=_jan_outputs)

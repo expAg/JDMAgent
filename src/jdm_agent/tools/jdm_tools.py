@@ -1708,13 +1708,26 @@ def annotation_workflow() -> dict:
                 "order": 1,
                 "name": "Identifier la cible",
                 "description": (
-                    "Si un TERME et/ou une RELATION sont fournis → utilise-"
-                    "les directement. Si AUCUN n'est fourni → tire 2-3 "
-                    "termes français variés au hasard (animal, objet, "
-                    "action, sentiment) ; n'invente pas un thème, varie. "
-                    "Si le TERME est polysémique → désambiguïse en "
-                    "appelant `disambiguate(term)` puis travaille SUR LE "
-                    "SENS RAFFINÉ (`term>91594`) PAS sur le générique. "
+                    "Si un TERME et/ou une RELATION sont fournis → "
+                    "utilise-les directement. Si AUCUN n'est fourni → "
+                    "TU AS CARTE BLANCHE pour piocher dans TOUT le "
+                    "lexique français. La langue est vaste : noms "
+                    "abstraits, verbes, adjectifs, expressions, objets "
+                    "ordinaires, concepts techniques, sentiments, "
+                    "états, processus, métiers, phénomènes physiques "
+                    "ou sociaux… ÉVITE les champs scolaires sur-"
+                    "explorés (animaux courants, plantes, couleurs "
+                    "primaires) où JDM est déjà dense. VARIE "
+                    "radicalement : registre (familier ↔ soutenu), "
+                    "longueur (1 mot ↔ expression), niveau "
+                    "d'abstraction (concret ↔ abstrait), fréquence "
+                    "(commun ↔ rare). PAS de catégorie imposée. Tire "
+                    "UN terme à la fois, vérifie qu'il existe via "
+                    "`lookup_term`, puis itère (cf. règle 'itération' "
+                    "ci-dessous).\n"
+                    "Si le terme est polysémique → désambiguïse via "
+                    "`disambiguate(term)` puis travaille SUR LE SENS "
+                    "RAFFINÉ (`term>91594`) PAS sur le générique. "
                     "L'annotation dépend du sens — c'est crucial."
                 ),
                 "tool": "disambiguate (si polysémique)",
@@ -1794,20 +1807,30 @@ def annotation_workflow() -> dict:
             "L'annotation qualifie le LIEN, pas l'objet (cf. exemple avocat).",
             "Respecte le SENS RAFFINÉ — un triplet sur 'avocat(juriste)' "
             "est sémantiquement différent du même triplet sur 'avocat(fruit)'.",
-            "Si AUCUNE catégorie ne convient → laisse vide, ne force pas.",
+            "SÉLECTIVITÉ : n'annote QUE si l'annotation est réellement "
+            "informative. Mieux vaut un .annot court mais pertinent qu'un "
+            ".annot long avec des annotations forcées par défaut. Laisser "
+            "vide est une réponse valide et fréquente.",
             "Justification courte (< 25 mots) — pas une dissertation.",
             "Section SIGNALEMENT ≠ section principale. Un triplet en "
             "désaccord avec JDM va EN SIGNALEMENT, pas en principal.",
             "Pas de consolidation par inférence — l'annotation est un "
             "jugement de locuteur, pas un fait à vérifier.",
+            "ITÉRATION : si AUCUN terme/relation n'est imposé, tire UN "
+            "terme à la fois, annote ses triplets utiles, RECOMMENCE "
+            "avec un AUTRE terme (sans répétition de domaine) tant que "
+            "la cible d'annotations utiles N'EST PAS ATTEINTE ET que "
+            "le budget d'outils LE PERMET. Ne pré-décide PAS d'un "
+            "nombre fixe de termes — laisse le résultat émerger de "
+            "ce que tu juges utile d'annoter.",
             "Tirage random uniquement si term ET relation sont absents — "
             "sinon respecte ce que l'utilisateur a demandé.",
         ],
         "if_no_term": (
-            "Tu choisis toi-même 2-3 termes français variés (catégories "
-            "lexicales différentes : un animal, un objet, une action, un "
-            "sentiment) et tu travailles dessus. Pas plus de 3 termes "
-            "pour rester dans un budget raisonnable."
+            "Carte blanche dans tout le lexique français. Tire un terme, "
+            "annote, recommence avec un autre — itère jusqu'à atteindre "
+            "ta cible d'annotations utiles ou épuiser ton budget. Pas "
+            "de quota de termes à respecter, ni de domaine imposé."
         ),
     }
 

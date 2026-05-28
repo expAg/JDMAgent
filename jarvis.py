@@ -655,13 +655,97 @@ def _is_bounded_budget(budget_label: str) -> bool:
 
 
 _RANDOM_TERM_INSTRUCTION = (
-    "Je n'ai pas précisé de terme — TIRE toi-même un mot français au "
-    "hasard et VARIÉ (varie domaine, registre, longueur, niveau "
-    "d'abstraction d'un essai à l'autre et d'une session à l'autre). "
-    "Évite les taxonomies scolaires (animaux, plantes) où JDM est "
-    "déjà dense. Vérifie d'abord qu'il existe via `lookup_term` ; "
-    "si non, recommence avec un autre — jusqu'à un terme exploitable."
+    "Je n'ai pas précisé de terme — TU AS CARTE BLANCHE pour piocher "
+    "au hasard dans TOUT le lexique français. La langue est vaste : "
+    "noms abstraits, verbes, adjectifs, expressions, objets ordinaires, "
+    "concepts techniques, sentiments, états, processus, métiers, "
+    "phénomènes physiques ou sociaux… N'IMPORTE QUOI peut être "
+    "intéressant. ÉVITE les champs scolaires sur-explorés (animaux "
+    "courants, plantes, couleurs primaires) — JDM y est déjà dense "
+    "et tu ne ferais que dupliquer du connu.\n"
+    "VARIE RADICALEMENT d'un essai à l'autre et d'une session à "
+    "l'autre : registre (familier ↔ soutenu), longueur (1 mot ↔ "
+    "expression), niveau d'abstraction (concret ↔ abstrait), "
+    "fréquence (commun ↔ rare). Vérifie d'abord qu'il existe via "
+    "`lookup_term` ; si non, recommence avec un autre."
 )
+
+
+def _iteration_block(
+    target_count: Optional[int],
+    budget_label: str,
+    *,
+    unit: str = "triplet candidat consolidé",
+    relax_on_unit_value: bool = True,
+) -> str:
+    """Bloc d'instruction réutilisable : « itère jusqu'à la cible / budget ».
+
+    Centralise la prose de persistance partagée par tous les flows
+    itératifs (enrich, audit, signalement, annotation…). Évite la
+    divergence et facilite les ajustements.
+
+    Args:
+        target_count: nombre cible à produire (None = pas de cible
+            chiffrée, juste épuiser le budget).
+        budget_label: '10', '25', …, ou 'illimité'.
+        unit: ce qu'on compte (« triplet candidat consolidé », « audit
+            verdict utile », « annotation utile », « signalement »…).
+        relax_on_unit_value: si True, mentionne « un seul X vaut
+            infiniment plus qu'un échec rapide » (utile quand l'unit
+            est coûteux à produire — ex. consolidation).
+
+    Returns:
+        Bloc de texte prêt à concaténer dans le prompt. Peut être vide
+        si ni cible, ni budget contraignant ne sont actifs.
+    """
+    bounded = _is_bounded_budget(budget_label)
+    has_target = target_count is not None and int(target_count) > 0
+
+    if not has_target and not bounded:
+        # Cas dégénéré : pas de cible et budget illimité → on demande
+        # juste de la persistance générale.
+        return (
+            f"PERSISTANCE GÉNÉRALE : produis des {unit}s autant que "
+            "possible. Tant qu'il reste des angles non explorés "
+            "(relations différentes, sens raffinés, inverses), "
+            "continue."
+        )
+
+    parts: list[str] = []
+    if has_target and bounded:
+        parts.append(
+            f"PERSISTANCE OBLIGATOIRE : itère jusqu'à produire "
+            f"{int(target_count)} {unit}s OU jusqu'à épuisement du "
+            f"budget ({budget_label} appels d'outils). Les deux sont "
+            "des conditions d'arrêt valides ; la première qui se "
+            "réalise stoppe la boucle."
+        )
+    elif has_target:
+        parts.append(
+            f"PERSISTANCE ABSOLUE — N'ABANDONNE JAMAIS avant d'avoir "
+            f"produit {int(target_count)} {unit}s. Tu es en BUDGET "
+            "ILLIMITÉ. Recevoir des dizaines d'échecs consécutifs est "
+            "NORMAL — tu dois persister, varier les relations, varier "
+            "les cibles, explorer des angles obliques."
+        )
+    else:
+        parts.append(
+            f"Itère tant que le budget ({budget_label} appels) le "
+            f"permet. Au-delà, tu recevras BUDGET_EXHAUSTED — arrête "
+            "alors immédiatement et compose ta réponse finale avec "
+            "ce qui est déjà produit."
+        )
+
+    if relax_on_unit_value:
+        parts.append(
+            f"Recevoir plusieurs « rien d'utile » de suite est NORMAL — "
+            f"les flows JDM sont stricts par construction. Dans ce cas : "
+            "essaie d'AUTRES relations, d'AUTRES cibles, ne te résigne "
+            f"pas. Un seul {unit} de qualité après 20 tentatives vaut "
+            "infiniment plus qu'une réponse rapide « rien trouvé »."
+        )
+
+    return "\n".join(parts)
 
 
 def _norm_relations(rels) -> list[str]:
@@ -747,47 +831,15 @@ def build_enrich_prompt(
         "CONSOLIDÉS (ready_for_submission=true)."
     )
     if iterate:
-        # Persistance EXPLICITE : sans ce paragraphe, les LLM abandonnent
-        # après 2-3 « non inférable » consécutifs en concluant que rien
-        # n'est consolidable. Or c'est NORMAL d'en avoir beaucoup (le
-        # moteur d'inférence est strict). La règle : tant que budget
-        # restant, GÉNÉRER d'autres candidats avec d'AUTRES relations.
-        if bounded:
-            parts.append(
-                "PERSISTANCE OBLIGATOIRE : itère jusqu'à atteindre le "
-                "nombre cible OU jusqu'à épuisement du budget. Recevoir "
-                "plusieurs « non inférable à partir de JDM » de suite "
-                "est NORMAL — le moteur d'inférence est strict et ne "
-                "consolide que ce qu'il peut prouver. Dans ce cas : "
-                "essaie d'AUTRES relations, d'AUTRES cibles, ne te "
-                "résigne pas. N'abandonne JAMAIS avant d'avoir épuisé "
-                "le budget ou atteint le nombre cible de consolidés."
-            )
-        else:
-            parts.append(
-                "PERSISTANCE ABSOLUE — N'ABANDONNE JAMAIS.\n"
-                "Tu es en BUDGET ILLIMITÉ. La valeur de ce que tu "
-                "produis est PROPORTIONNELLE au nombre de tentatives "
-                "que tu endures avant de trouver des candidats "
-                "consolidés. Recevoir 20, 50, 100 « non inférable à "
-                "partir de JDM » consécutifs est NORMAL et ATTENDU — "
-                "le moteur d'inférence est strict par construction.\n"
-                "RÈGLES :\n"
-                "1. NE JAMAIS s'arrêter après quelques échecs. Un "
-                "résultat à 0 consolidé après 20 essais n'est PAS "
-                "un échec : c'est la BASELINE attendue.\n"
-                "2. Tant que le nombre cible de consolidés n'est PAS "
-                "atteint, GÉNÈRE encore et encore des candidats — "
-                "varie systématiquement les relations, varie les "
-                "cibles, explore des angles obliques (relations "
-                "moins évidentes, sens raffinés, inverses).\n"
-                "3. Un seul triplet réellement consolidé après 50 "
-                "tentatives vaut INFINIMENT plus qu'une réponse "
-                "rapide « rien trouvé ». L'utilisateur a coché "
-                "« itérer » EXPRÈS pour que tu persistes.\n"
-                "4. NE rends ta réponse finale QUE quand tu as atteint "
-                "le nombre cible de consolidés."
-            )
+        # Persistance via le helper centralisé. Sans ce paragraphe, les
+        # LLM abandonnent après 2-3 « non inférable » consécutifs en
+        # concluant que rien n'est consolidable. Or c'est NORMAL d'en
+        # avoir beaucoup (le moteur d'inférence est strict).
+        parts.append(_iteration_block(
+            target_count=int(target_count),
+            budget_label=budget_label,
+            unit="triplet candidat consolidé",
+        ))
     if bounded:
         parts.append(
             f"Budget : {budget_label} appels d'outils maximum. Au-delà, "
@@ -1054,6 +1106,7 @@ def build_annotation_prompt(
     term: str = "",
     relation=None,
     top_k: int = 8,
+    target_count: int = 10,
     budget_label: str = "50",
     upload: bool = False,
 ) -> str:
@@ -1087,47 +1140,51 @@ def build_annotation_prompt(
         )
     elif rels:
         parts.append(
-            f"Je veux ANNOTER sémantiquement des triplets JDM portant sur "
-            f"la/les relation(s) {rel_label} — choisis toi-même 2-3 termes "
-            "français variés (animal, objet, action) pour l'illustration."
+            f"Je veux ANNOTER sémantiquement des triplets JDM portant "
+            f"sur la/les relation(s) {rel_label}. Tu choisis librement "
+            "des termes à examiner."
         )
+        parts.append(_RANDOM_TERM_INSTRUCTION)
         parts.append(
             "⚠️ Limite-toi STRICTEMENT à cette/ces relation(s)."
         )
     else:
         parts.append(
             "Je veux ANNOTER sémantiquement des triplets JDM mais je n'ai "
-            "ni terme ni relation précisé — choisis 2-3 termes français "
-            "variés au hasard (animal, objet, action) et annote leurs "
-            "triplets principaux."
+            "ni terme ni relation. Tu pioches toi-même les termes."
         )
         parts.append(_RANDOM_TERM_INSTRUCTION)
     parts.append(
-        f"Top-K par relation : {int(top_k)}. Au-delà = bruit, on annote "
-        "les plus saillants."
+        f"Top-K par relation : {int(top_k)} (triplets candidats récupérés "
+        "par appel à `get_relations_of_type`)."
     )
-    if _is_bounded_budget(budget_label):
-        parts.append(
-            f"Budget : {budget_label} appels d'outils maximum."
-        )
     parts.append(
         "TAXONOMIE STRICTE (4 catégories) :\n"
         "  - `constitutif` : trait définitionnel essentiel\n"
         "  - `contrastif` : différenciation clé / pairs proches\n"
         "  - `non spécifique` : vrai mais trop générique\n"
         "  - `exception` : valide en cadre restreint / contredit\n"
-        "Si aucune ne convient → vide (pas d'annotation forcée)."
+        "Si aucune ne convient PARFAITEMENT → vide (pas d'annotation "
+        "forcée). MIEUX VAUT N'ANNOTER QU'UN PETIT NOMBRE de triplets "
+        "réellement INFORMATIFS plutôt que d'annoter par défaut. La "
+        "valeur du `.annot` se mesure à la pertinence de ce qui est "
+        "annoté, pas au volume."
     )
     parts.append(
         "⚠️ L'annotation qualifie le LIEN, PAS l'objet. Respecte le "
         "SENS RAFFINÉ (désambiguïse d'abord si polysémique)."
     )
+    parts.append(_iteration_block(
+        target_count=int(target_count),
+        budget_label=budget_label,
+        unit="annotation utile (pertinente, non forcée)",
+    ))
     parts.append(
-        "Section SIGNALEMENT du `.annot` : pour CHAQUE triplet, vérifie "
-        "via `get_triplet_annotations` si JDM a déjà une annotation parmi "
-        "la taxonomie. Si tu es en DÉSACCORD → écris le triplet en "
-        "SECTION SIGNALEMENT (format JDM:<existant>|LLM:<tien> < argument "
-        "contre >) au lieu de la section principale."
+        "Section SIGNALEMENT du `.annot` : pour CHAQUE triplet annoté, "
+        "vérifie via `get_triplet_annotations` si JDM a déjà une "
+        "annotation parmi la taxonomie. Si tu es en DÉSACCORD → écris "
+        "le triplet en SECTION SIGNALEMENT (format JDM:<existant>|LLM:"
+        "<tien> < argument contre >) au lieu de la section principale."
     )
     if upload:
         parts.append(

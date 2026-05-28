@@ -5805,7 +5805,8 @@ function defaultParamsFor(flowId) {
     case 'stats':
       return { ...common, term: '', relation: '', upload: false };
     case 'annotation':
-      return { ...common, term: '', relation: '', top_k: 8, upload: false };
+      return { ...common, term: '', relation: '', top_k: 8,
+               target_count: 10, upload: false };
   }
   return common;
 }
@@ -5903,12 +5904,16 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label={`Top-K par relation · ${params.top_k}`}>
         <Slider value={params.top_k} onChange={(v) => set('top_k', v)} min={3} max={15} step={1} />
       </Field>
+      <Field label={`Cible d'annotations utiles · ${params.target_count}`}>
+        <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
+      </Field>
       <div style={{
         fontSize: 11, color: 'var(--ink-3)', marginBottom: 8,
         fontFamily: 'var(--font-mono)', lineHeight: 1.4,
       }}>
         taxonomie : constitutif / contrastif / non spécifique / exception ·
-        l'annotation qualifie le LIEN, pas l'objet
+        annotation qualifie le LIEN · sélectivité &gt; volume · itère
+        librement
       </div>
       <Field label="Budget d'outils">
         <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
