@@ -79,11 +79,11 @@ function ViewProjet({ goto }) {
   const briefs = [
     {
       title: 'Client typé + cache disque',
-      body: <>Couche client <code>JDMClient</code> sur l&apos;<a href="https://jdm-api.demo.lirmm.fr">API JeuxDeMots</a>, cache disque, retry exponentiel.</>,
+      body: <>Couche client <code>JDMClient</code> sur l&apos;<a href="https://jdm-api.demo.lirmm.fr" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>API JeuxDeMots</a>, cache disque, retry exponentiel.</>,
     },
     {
       title: '~35 outils MCP exposés',
-      body: <>À n&apos;importe quel client (Claude Code/Desktop, Cursor, etc.) via <a href="https://github.com/jlowin/fastmcp">FastMCP</a>.</>,
+      body: <>À n&apos;importe quel client (Claude Code/Desktop, Cursor, etc.) via <a href="https://github.com/jlowin/fastmcp" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>FastMCP</a>.</>,
     },
     {
       title: 'Pipeline fact-check + inférence',
