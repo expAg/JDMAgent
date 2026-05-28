@@ -3044,13 +3044,10 @@ const KIND_OF_REL = {
   r_domain: 'domain', r_associated: 'assoc',
 };
 
-// Convertit {nodes, edges} SSE en scénario HeroAnimation avec un
-// LAYOUT EN ARBRE RADIAL (= comme l'animation d'accueil) :
-// - depth 1 : distribué autour du centre (espacement constant)
-// - depth ≥ 2 : positionné À PROXIMITÉ de son parent direct (offset
-//   serré autour de l'angle du parent → effet branche)
-// → plus de cercle parfait : chaque branche est lisible visuellement.
-function buildLiveScenario(rootTerm, nodes, edges) {
+// Convertit {nodes, edges} SSE en scénario HeroAnimation.
+// `layout` : 'tree' = arbre radial (enfants près de leur parent) ;
+//            'rings' = cercles concentriques uniformes (anneau par depth).
+function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
   if (!nodes || nodes.length === 0) return null;
 
   const centerNode = nodes.find(n => n.id === 'ROOT') || nodes[0];
@@ -3099,12 +3096,16 @@ function buildLiveScenario(rootTerm, nodes, edges) {
 
     children.forEach((id, i) => {
       let angle;
-      if (parentPos.depth === 0) {
-        // Enfants du centre : 360° / N, légèrement décalé.
+      if (layout === 'rings') {
+        // Mode 'rings' : tous les enfants d'un même depth sont étalés
+        // UNIFORMÉMENT sur 360°, peu importe leur parent. On agrège
+        // donc à plat par depth — voir post-traitement plus bas.
+        angle = 0;  // placeholder, recalculé après
+      } else if (parentPos.depth === 0) {
+        // 'tree' : enfants du centre = 360° uniformes
         angle = (i / children.length) * 360 - 90;
       } else {
-        // Enfants d'un sous-arbre : étalés autour de l'angle parent.
-        // Span = min(70°, N * 22°) → garde les frères proches.
+        // 'tree' : enfants d'un sous-arbre = serrés autour du parent
         const span = Math.min(70, children.length * 22);
         const off = children.length === 1
           ? 0
@@ -3114,6 +3115,25 @@ function buildLiveScenario(rootTerm, nodes, edges) {
       placed[id] = { angle, dist: childDist, depth: childDepth };
       queue.push(id);
     });
+  }
+
+  // En mode 'rings' : re-répartir TOUS les enfants à plat sur 360°
+  // par depth (en ignorant la hiérarchie parent → enfant).
+  if (layout === 'rings') {
+    const byDepth = {};
+    for (const id of Object.keys(placed)) {
+      if (id === centerId) continue;
+      const d = placed[id].depth;
+      if (!byDepth[d]) byDepth[d] = [];
+      byDepth[d].push(id);
+    }
+    for (const dStr of Object.keys(byDepth)) {
+      const d = Number(dStr);
+      const arr = byDepth[d];
+      arr.forEach((id, i) => {
+        placed[id].angle = (i / arr.length) * 360 - 90 + d * 12;
+      });
+    }
   }
 
   // Construit les listes finales (nodes / edges au format HeroAnimation).
@@ -3155,6 +3175,21 @@ function buildLiveScenario(rootTerm, nodes, edges) {
 }
 
 
+// Wrapper qui MEMOIZE le scenario pour ne pas recréer un nouvel objet
+// à chaque render — sinon HeroAnimation re-trigger l'animation en
+// boucle infinie (sa useEffect dépend de liveScenario par référence).
+function LiveAnimWrapper({ term, nodes, edges, layout }) {
+  const scenario = React.useMemo(
+    () => buildLiveScenario(term, nodes, edges, layout),
+    // Dépend de la longueur + premier/dernier id pour détecter des
+    // données réellement différentes sans tomber dans le piège du
+    // "nouvelle référence à chaque tick SSE".
+    [term, layout, (nodes || []).length, (edges || []).length,
+     (nodes || [])[0]?.id, (nodes || [])[(nodes || []).length - 1]?.id]
+  );
+  return <HeroAnimation height={560} showChat={false} liveScenario={scenario} />;
+}
+
 function ViewSubgraph() {
   // Si Explorer a navigué vers nous via jdm:goto, on récupère son terme.
   const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'plat asiatique';
@@ -3172,6 +3207,8 @@ function ViewSubgraph() {
   const [minWeight, setMinWeight] = useState(0);
   const [maxNodes, setMaxNodes] = useState(40);
   const [format, setFormat] = useState('live');  // 'live' par défaut (animation graphique)
+  // Layout en mode LIVE : 'tree' (arbre radial, défaut) ou 'rings' (cercles concentriques).
+  const [liveLayout, setLiveLayout] = useState('tree');
   const [data, setData] = useState({ nodes: [], edges: [], stats: {}, html: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -3394,6 +3431,33 @@ function ViewSubgraph() {
                 <Slider value={maxNodes} onChange={setMaxNodes} min={10} max={200} step={5} />
               </Field>
             )}
+            {/* Toggle layout — visible uniquement en mode LIVE */}
+            {format === 'live' && (
+              <Field label="Layout">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                  {[
+                    { id: 'tree',  label: 'Arbre' },
+                    { id: 'rings', label: 'Cercles' },
+                  ].map(opt => {
+                    const active = liveLayout === opt.id;
+                    return (
+                      <button key={opt.id}
+                        onClick={() => setLiveLayout(opt.id)}
+                        className="focus-ring"
+                        style={{
+                          padding: '8px',
+                          background: active ? 'var(--accent)' : 'var(--bg-elev)',
+                          border: '1px solid var(--line)',
+                          color: active ? 'var(--bg)' : 'var(--ink)',
+                          borderRadius: 'var(--radius)',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        }}>{opt.label}</button>
+                    );
+                  })}
+                </div>
+              </Field>
+            )}
             <div style={{ marginTop: 12 }}>
               <Button full onClick={onBuild} disabled={loading}>
                 {loading ? 'Construction…' : 'Construire le graphe'}
@@ -3499,10 +3563,11 @@ function ViewSubgraph() {
                 // À brancher sur /api/subgraph/live (SSE) — voir brief.
                 // Pour l'instant : scénarios pré-enregistrés en démo.
                 <div style={{ padding: 12, height: '100%' }}>
-                  <HeroAnimation
-                    height={560}
-                    showChat={false}
-                    liveScenario={buildLiveScenario(term, data.nodes, data.edges)}
+                  <LiveAnimWrapper
+                    term={term}
+                    nodes={data.nodes}
+                    edges={data.edges}
+                    layout={liveLayout}
                   />
                 </div>
               ) : data.nodes && data.nodes.length > 0 ? (
