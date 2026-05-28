@@ -547,50 +547,193 @@ async def _to_async_gen(sync_gen):
 
 
 # ────────────────────────────────────────────────────────────────────
-# Route: Agent SSE stream
+# Route: Agent SSE stream — TOKEN-LEVEL via astream_events
 # ────────────────────────────────────────────────────────────────────
-# On wrappe `app.chat_with_agent` qui yield des tuples (text, gr_update).
-# `text` est le markdown LIVE cumulatif (croît à chaque étape : thoughts,
-# tool_calls, tool_results, réponse finale). On émet 1 event SSE par
-# yield, le frontend remplace le contenu de la bulle avec ce markdown.
+# Pourquoi pas `app.chat_with_agent` ici : il utilise stream_mode="updates"
+# qui ne yield qu'à la fin de chaque node. Pour une question Q&A simple
+# sans tool, ça donne UN seul yield → impression de "réflexion figée"
+# côté UI. astream_events('v2') donne :
+#   - on_chat_model_stream : chaque token du LLM (delta)
+#   - on_tool_start / on_tool_end : appels d'outils
+# → vraie streaming token par token, narration HTML identique au LLM.
 #
-# On RÉUTILISE tout : retry PerMinute, retry PerDay avec rotation pool,
-# INVALID_KEY → mark + switch, accumulation messages pour reprise, etc.
+# Trade-off : on perd ici la mécanique de retry rate-limit + rotation
+# pool de chat_with_agent. C'est acceptable pour un chat (l'utilisateur
+# peut resoumettre). Pour les flux Jarvis longs, on garde chat_with_agent
+# via run_jarvis_flow.
 @app.post("/api/agent/stream")
 async def api_agent_stream(req: AgentRequest):
-    """Stream l'agent LLM + tool calls JDM via SSE.
-
-    Events émis :
-      event: text   data: {"text": "<markdown cumulatif live>"}
-      event: done   data: {}
-      event: error  data: {"text": "<message>"}
-    """
+    """Token-level SSE stream pour le chatbot LLM."""
     async def gen():
+        from langchain_core.messages import AIMessage, HumanMessage
+        from jarvis import (
+            _content_to_text, _content_to_thoughts,
+            _narrate_tool_call, _narrate_tool_result,
+        )
+        from jdm_agent.enrich.validators import exclusion_context
+        from jdm_agent.tools.jdm_agent import build_jdm_agent
+
+        # 1) Build LLM via la version complète (routing 3.x natif vs
+        # 2.x OpenAI-compat, thinking par modèle, pool key override).
         try:
-            sync_gen = _app.chat_with_agent(
-                message=req.message,
-                history=req.history,
-                api_key=req.api_key,
-                model=req.model,
+            llm = _app._build_llm(
+                req.model, req.api_key,
                 use_thinking=req.use_thinking,
             )
-            async for chunk in _to_async_gen(sync_gen):
-                # chat_with_agent yield (text_markdown, gr_update_for_file)
-                if isinstance(chunk, tuple) and len(chunk) >= 1:
-                    text = chunk[0]
-                else:
-                    text = str(chunk)
-                yield {
-                    "event": "text",
-                    "data": json.dumps({"text": text}, ensure_ascii=False),
-                }
+        except ValueError as e:
+            yield {"event": "error", "data": json.dumps({"text": str(e)}, ensure_ascii=False)}
+            return
+
+        # 2) Build agent + historique
+        try:
+            agent = build_jdm_agent(client=get_client(), llm=llm)
+        except Exception as e:
+            yield {"event": "error", "data": json.dumps({
+                "text": f"Build agent : {type(e).__name__}: {e}"
+            }, ensure_ascii=False)}
+            return
+
+        # Conversion historique Gradio → LangChain
+        lc_messages = []
+        for h in req.history or []:
+            role = h.get("role")
+            content = (h.get("content") or "").strip()
+            if not content or content.startswith("⚠️") or content.startswith("❌"):
+                continue
+            if role == "user":
+                lc_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                # Nettoie les blocs annexes du markdown cumulatif
+                ans = content
+                for marker in ("\n\n*⏳", "\n\n<div class=\"jdm-narration\""):
+                    ans = ans.split(marker, 1)[0]
+                ans = ans.strip()
+                if ans:
+                    lc_messages.append(AIMessage(content=ans))
+        lc_messages.append(HumanMessage(content=req.message))
+
+        # 3) Accumulateurs pour le markdown cumulatif
+        # `progress` = lignes finalisées (narration tools, blocs anciens)
+        # `current_text` = texte spoken en cours de génération (token-stream)
+        # `current_thinking` = chain-of-thought en cours
+        progress: list[str] = ["*🧠 Réflexion en cours…*"]
+        current_text = ""
+        current_thinking = ""
+
+        def html_escape(s: str) -> str:
+            return (s.replace("&", "&amp;")
+                     .replace("<", "&lt;")
+                     .replace(">", "&gt;")
+                     .replace("\n", "<br>"))
+
+        def render() -> str:
+            live = list(progress)
+            if current_thinking.strip():
+                live.append(f'<div class="jdm-thinking">💭 {html_escape(current_thinking)}</div>')
+            if current_text.strip():
+                live.append(current_text)
+            return "\n\n".join(live)
+
+        def render_with_pending() -> str:
+            return render() + "\n\n*⏳ Génération en cours…*"
+
+        # 4) Premier yield immédiat — l'utilisateur voit "Réflexion en cours…"
+        yield {
+            "event": "text",
+            "data": json.dumps({"text": render_with_pending()}, ensure_ascii=False),
+        }
+
+        try:
+            with exclusion_context():
+                async for event in agent.astream_events(
+                    {"messages": lc_messages}, version="v2",
+                ):
+                    kind = event.get("event")
+
+                    if kind == "on_chat_model_stream":
+                        chunk = (event.get("data") or {}).get("chunk")
+                        if chunk is None:
+                            continue
+                        # chunk.content peut être str (OpenAI) ou list de
+                        # blocs (Anthropic/Gemini avec thoughts).
+                        delta_text = _content_to_text(chunk.content)
+                        delta_thought = _content_to_thoughts(chunk.content)
+                        if delta_thought:
+                            current_thinking += delta_thought
+                        if delta_text:
+                            current_text += delta_text
+                        if delta_text or delta_thought:
+                            yield {
+                                "event": "text",
+                                "data": json.dumps({"text": render_with_pending()}, ensure_ascii=False),
+                            }
+
+                    elif kind == "on_tool_start":
+                        name = event.get("name") or "?"
+                        data = event.get("data") or {}
+                        args = data.get("input") or {}
+                        if isinstance(args, dict) and "input" in args and isinstance(args["input"], dict):
+                            args = args["input"]
+                        narrated = _narrate_tool_call(name, args if isinstance(args, dict) else {})
+                        if not narrated:
+                            args_str = ", ".join(
+                                f"{k}={v!r}" for k, v in (args.items() if isinstance(args, dict) else [])
+                            )
+                            narrated = f"🔧 `{name}({args_str})`"
+                        # Finalize text courant avant l'outil (sera repris
+                        # après si le LLM continue à parler post-tool).
+                        if current_text.strip():
+                            progress.append(current_text)
+                        if current_thinking.strip():
+                            progress.append(f'<div class="jdm-thinking">💭 {html_escape(current_thinking)}</div>')
+                        current_text = ""
+                        current_thinking = ""
+                        progress.append(f'<div class="jdm-narration">{narrated}</div>')
+                        yield {
+                            "event": "text",
+                            "data": json.dumps({"text": render_with_pending()}, ensure_ascii=False),
+                        }
+
+                    elif kind == "on_tool_end":
+                        name = event.get("name") or "?"
+                        data = event.get("data") or {}
+                        out = data.get("output", "")
+                        # out peut être ToolMessage, str, ou autre
+                        if hasattr(out, "content"):
+                            content = _content_to_text(out.content)
+                        else:
+                            content = str(out)
+                        narrated_done = _narrate_tool_result(name, content)
+                        if narrated_done:
+                            progress.append(f'<div class="jdm-narration">{narrated_done}</div>')
+                        else:
+                            preview = content[:140].replace("\n", " ")
+                            if len(content) > 140:
+                                preview += "…"
+                            progress.append(
+                                f'<div class="jdm-narration">✓ <em>{name}</em> renvoie {len(content)} chars · '
+                                f'<code>{html_escape(preview)}</code></div>'
+                            )
+                        yield {
+                            "event": "text",
+                            "data": json.dumps({"text": render_with_pending()}, ensure_ascii=False),
+                        }
+
+            # Final : strip le "Génération en cours…"
+            yield {
+                "event": "text",
+                "data": json.dumps({"text": render()}, ensure_ascii=False),
+            }
             yield {"event": "done", "data": "{}"}
+
         except Exception as e:
             yield {"event": "error", "data": json.dumps({
                 "text": f"{type(e).__name__}: {e}"
             }, ensure_ascii=False)}
 
-    return EventSourceResponse(gen())
+    # ping=15 envoie un `:ping` toutes les 15s — force Apache/Nginx à
+    # flusher les chunks au lieu de les buffer en attente d'un timeout.
+    return EventSourceResponse(gen(), ping=15)
 
 
 # ────────────────────────────────────────────────────────────────────
