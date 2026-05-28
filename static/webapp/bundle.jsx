@@ -644,6 +644,31 @@ Object.assign(window, {
 // View: Projet — landing page using the designer layout (hero / stats /
 // feature cards / footer) populated avec notre texte canonique PROJET_MD.
 
+// Palette commune (stats + feature cards) — accents JDM.
+const ACCENT_PALETTE = [
+  'var(--jdm-yellow)',
+  'var(--jdm-orange)',
+  'var(--jdm-magenta)',
+  'var(--jdm-green)',
+  'var(--jdm-cyan)',
+];
+
+// Mélange Fisher-Yates puis renvoie N premières — garantit que toutes
+// les couleurs sont distinctes (tant que N ≤ taille de palette).
+function useShuffledAccents(n) {
+  return React.useMemo(() => {
+    const a = ACCENT_PALETTE.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    // Si on a besoin de plus que la palette, on cycle.
+    const out = [];
+    for (let k = 0; k < n; k++) out.push(a[k % a.length]);
+    return out;
+  }, [n]);
+}
+
 function ViewProjet({ goto }) {
   // Stats — chiffres tirés du README JDM (LIRMM/CNRS) et du projet.
   const stats = [
@@ -781,53 +806,7 @@ function ViewProjet({ goto }) {
         desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu sauf quand c'est explicitement utile."
       />
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-        gap: 12,
-      }}>
-        {features.map(f => (
-          <div key={f.id}
-            onClick={() => goto(f.id)}
-            className="focus-ring"
-            tabIndex={0}
-            onKeyDown={(e) => { if (e.key === 'Enter') goto(f.id); }}
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--line)',
-              borderRadius: 'var(--radius-lg)',
-              padding: 22,
-              cursor: 'pointer',
-              transition: 'transform 0.12s, border-color 0.12s',
-              display: 'flex', flexDirection: 'column', gap: 10,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'var(--ink-3)';
-              e.currentTarget.style.transform = 'translateY(-1px)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--line)';
-              e.currentTarget.style.transform = '';
-            }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div className="display" style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 22, fontWeight: 600,
-                letterSpacing: '-0.01em',
-              }}>{f.title}</div>
-              <Pill>{f.kind}</Pill>
-            </div>
-            <p style={{
-              margin: 0, fontSize: 13,
-              color: 'var(--ink-2)', lineHeight: 1.55, flex: 1,
-            }}>{f.desc}</p>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              paddingTop: 10, borderTop: '1px dashed var(--line-soft)',
-            }}>{f.example}</div>
-          </div>
-        ))}
-      </div>
+      <FeaturesGrid features={features} goto={goto} />
 
       {/* Le projet en bref — 4 sous-piliers du PROJET_MD */}
       <SectionTitle
@@ -908,28 +887,9 @@ function ViewProjet({ goto }) {
   );
 }
 
-// ─── StatsGrid : 4 tuiles avec une couleur d'accent distincte chacune,
-// tirée au sort dans la palette jaune/orange/rouge/vert/bleu à chaque
-// mount du composant.
+// ─── StatsGrid : 4 tuiles avec couleur de hover distincte par tuile
 function StatsGrid({ stats }) {
-  const PALETTE = [
-    'var(--jdm-yellow)',
-    'var(--jdm-orange)',
-    'var(--jdm-magenta)',  // rouge dans nos tokens (magenta-rouge)
-    'var(--jdm-green)',
-    'var(--jdm-cyan)',     // bleu dans nos tokens
-  ];
-  // Mélange Fisher-Yates puis prend N premiers — garantit que toutes
-  // les couleurs sont distinctes (tant que N ≤ taille de palette).
-  const colors = React.useMemo(() => {
-    const a = PALETTE.slice();
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a.slice(0, stats.length);
-  }, [stats.length]);
-
+  const colors = useShuffledAccents(stats.length);
   return (
     <div style={{
       display: 'grid',
@@ -943,6 +903,69 @@ function StatsGrid({ stats }) {
       {stats.map((s, i) => (
         <StatTile key={s.label} stat={s} hoverColor={colors[i]} />
       ))}
+    </div>
+  );
+}
+
+// ─── FeaturesGrid : 5 cards features avec couleur de hover distincte
+function FeaturesGrid({ features, goto }) {
+  const colors = useShuffledAccents(features.length);
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+      gap: 12,
+    }}>
+      {features.map((f, i) => (
+        <FeatureCard key={f.id} f={f} goto={goto} hoverColor={colors[i]} />
+      ))}
+    </div>
+  );
+}
+
+function FeatureCard({ f, goto, hoverColor }) {
+  const [hovering, setHovering] = useState(false);
+  return (
+    <div
+      onClick={() => goto(f.id)}
+      className="focus-ring"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter') goto(f.id); }}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      style={{
+        background: 'var(--bg-card)',
+        // Bordure + ombre colorées au hover, anim douce.
+        border: `1px solid ${hovering ? hoverColor : 'var(--line)'}`,
+        boxShadow: hovering ? `0 6px 18px -8px ${hoverColor}` : 'none',
+        borderRadius: 'var(--radius-lg)',
+        padding: 22,
+        cursor: 'pointer',
+        transform: hovering ? 'translateY(-2px)' : 'none',
+        transition: 'transform 0.18s, border-color 0.18s, box-shadow 0.18s',
+        display: 'flex', flexDirection: 'column', gap: 10,
+      }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div className="display" style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 22, fontWeight: 600,
+          letterSpacing: '-0.01em',
+          color: hovering ? hoverColor : 'var(--ink)',
+          transition: 'color 0.18s',
+        }}>{f.title}</div>
+        <Pill>{f.kind}</Pill>
+      </div>
+      <p style={{
+        margin: 0, fontSize: 13,
+        color: 'var(--ink-2)', lineHeight: 1.55, flex: 1,
+      }}>{f.desc}</p>
+      <div className="mono" style={{
+        fontSize: 11,
+        color: hovering ? hoverColor : 'var(--ink-3)',
+        paddingTop: 10,
+        borderTop: `1px dashed ${hovering ? hoverColor : 'var(--line-soft)'}`,
+        transition: 'color 0.18s, border-top-color 0.18s',
+      }}>{f.example}</div>
     </div>
   );
 }
