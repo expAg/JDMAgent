@@ -300,7 +300,9 @@ def _history_total_chars(messages: list) -> int:
 def condense_history_with_nudge(
     messages: list,
     *,
-    consolidation_target: Optional[int],
+    consolidation_target: Optional[int] = None,
+    target: Optional[int] = None,
+    count_fn: Optional[Any] = None,
     attempt: int = 0,
 ) -> Optional[list]:
     """Condense `messages` en `[HumanMessage initial, HumanMessage(summary
@@ -311,28 +313,30 @@ def condense_history_with_nudge(
 
     Le summary est 100% déterministe (parcours Python — zéro appel LLM).
     Le nudge est tiré aléatoirement parmi `_CONDENSE_NUDGE_VARIANTS` pour
-    apporter de la variété entre relances. La source de vérité du compteur
-    est `count_consolidations()` (registry cumulatif, survit aux resets).
+    apporter de la variété entre relances.
 
-    Utilisé en DEUX endroits :
-      1. Après attente PerMinute (cf. except dans run_jarvis_flow)
-      2. Proactivement en cours de streaming dès que le seuil est atteint
-         (évite que le contexte LLM n'explose même sans rate-limit)
+    Source du compteur (priorité descendante) :
+      1. (target, count_fn) si fournis → flow-aware (annot, audit, …)
+      2. consolidation_target + count_consolidations (rétro-compat enrich)
     """
     total_chars = _history_total_chars(messages)
     if total_chars <= HISTORY_CONDENSE_THRESHOLD_CHARS:
         return None
     try:
         from langchain_core.messages import HumanMessage as _HM
-        from jdm_agent.enrich import count_consolidations
         import random as _random
-        n_so_far = count_consolidations()
+        if target is not None and count_fn is not None:
+            try:
+                n_so_far = int(count_fn() or 0)
+            except Exception:
+                n_so_far = 0
+            effective_target = target
+        else:
+            from jdm_agent.enrich import count_consolidations
+            n_so_far = count_consolidations()
+            effective_target = consolidation_target or (n_so_far + 1)
         summary = build_relance_summary(
-            messages,
-            n_so_far,
-            consolidation_target or (n_so_far + 1),
-            attempt,
-            None,
+            messages, n_so_far, effective_target, attempt, None,
         )
         nudge = _random.choice(_CONDENSE_NUDGE_VARIANTS)
         return [
@@ -1347,6 +1351,9 @@ def run_jarvis_flow(
     get_client_fn,
     use_thinking: bool = True,
     consolidation_target: Optional[int] = None,
+    production_target: Optional[int] = None,
+    production_counter: Optional[Any] = None,
+    production_unit: str = "items",
     max_persistence_relances: Optional[int] = None,
     auto_switch_on_perday: bool = False,
     resume_state: Optional[dict] = None,
@@ -1390,16 +1397,52 @@ def run_jarvis_flow(
     from jdm_agent.enrich import count_consolidations
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-    def _pending_line() -> str:
-        """Ligne « génération en cours ». Le compteur cumulatif des
-        triplets consolidés est affiché UNIQUEMENT pour l'enrichissement
-        (= seul flow où consolidation_target est défini). Les autres
-        flows (audit, gap, signalement, stats) n'ont pas la sémantique
-        de « consolidation » → on n'expose pas un compteur trompeur.
+    def _default_file_counter() -> int:
+        """Compte les items « produits » à partir du fichier canonique
+        en cours d'écriture. Convient à tous les flows non-enrich :
+        compte les lignes pipe-separated qui ne sont ni un commentaire
+        (`#`) ni un séparateur de section (`===`, `=====SIGNALEMENT`).
+        Fallback robuste si le fichier n'existe pas encore.
         """
-        if consolidation_target:
-            n = count_consolidations()
-            return f"*⏳ Génération en cours… ({n}/{consolidation_target} consolidés)*"
+        try:
+            from pathlib import Path as _P
+            content = _P(canonical_path).read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError, UnicodeDecodeError):
+            return 0
+        n = 0
+        for raw in content.splitlines():
+            s = raw.strip()
+            if not s or s.startswith("#") or s.startswith("="):
+                continue
+            if "|" in s:
+                n += 1
+        return n
+
+    # Résolution du couple (target, counter) à utiliser pour les
+    # décisions de relance et l'affichage du compteur de progression.
+    # Priorité absolue à consolidation_target (= flow enrich, registry)
+    # pour préserver la compatibilité. Sinon production_target avec
+    # son propre counter (ou le compteur fichier par défaut).
+    def _resolve_target_counter():
+        if consolidation_target is not None:
+            return consolidation_target, count_consolidations, "consolidés"
+        if production_target is not None:
+            ctr = production_counter or _default_file_counter
+            return production_target, ctr, production_unit
+        return None, None, ""
+
+    def _pending_line() -> str:
+        """Ligne « génération en cours » avec compteur cumulatif (n/target)
+        spécifique au flow courant : consolidations pour enrich, items
+        produits dans le fichier canonique pour les autres flows si un
+        production_target a été configuré."""
+        tgt, ctr, unit = _resolve_target_counter()
+        if tgt and ctr:
+            try:
+                n = ctr()
+            except Exception:
+                n = 0
+            return f"*⏳ Génération en cours… ({n}/{tgt} {unit})*"
         return "*⏳ Génération en cours…*"
 
     def _current_file_path() -> Optional[str]:
@@ -1726,9 +1769,11 @@ def run_jarvis_flow(
                             # agent.stream avec les messages condensés.
                             chars_before = _history_total_chars(accumulated_messages)
                             if chars_before > HISTORY_CONDENSE_THRESHOLD_CHARS:
+                                _tgt2, _ctr2, _ = _resolve_target_counter()
                                 condensed = condense_history_with_nudge(
                                     accumulated_messages,
                                     consolidation_target=consolidation_target,
+                                    target=_tgt2, count_fn=_ctr2,
                                     attempt=proactive_condense_count,
                                 )
                                 if condensed is not None:
@@ -2112,9 +2157,11 @@ def run_jarvis_flow(
                             # à la condensation proactive en cours de
                             # streaming (cf. fin du for chunk).
                             chars_before = _history_total_chars(accumulated_messages)
+                            _tgt3, _ctr3, _ = _resolve_target_counter()
                             condensed = condense_history_with_nudge(
                                 accumulated_messages,
                                 consolidation_target=consolidation_target,
+                                target=_tgt3, count_fn=_ctr3,
                                 attempt=rate_limit_attempts,
                             )
                             if condensed is not None:
@@ -2159,26 +2206,23 @@ def run_jarvis_flow(
                         return
 
             # Sortie normale du with → check persistance.
-            # Si le LLM a finalisé prématurément (consolidés < target)
+            # Si le LLM a finalisé prématurément (produits < target)
             # et qu'on a encore des relances disponibles, on injecte un
             # nudge et on relance le with (= nouveau budget_context,
             # mais accumulated_messages conservé donc l'agent reprend
             # avec tout son contexte).
-            if consolidation_target is None:
+            #
+            # Flow-aware : utilise le compteur résolu
+            # (consolidations pour enrich, file-lines pour les autres).
+            _tgt, _ctr, _unit = _resolve_target_counter()
+            if _tgt is None or _ctr is None:
                 persistence_done = True
                 continue
-            # Source de vérité = registry GLOBAL des consolidations
-            # (cumulatif depuis l'entrée dans exclusion_context, survit
-            # aux RESET de accumulated_messages opérés par les relances
-            # persistance). count_consolidated_in_messages() était
-            # défaillant ici car il ne voyait que les ToolMessages du
-            # tour COURANT — chaque relance était comptée from scratch
-            # → boucle infinie possible si le LLM consolide < target
-            # par tour. Cf. bug observé : « il a déjà ses 15 mais il
-            # pense être à deux ».
-            from jdm_agent.enrich import count_consolidations
-            n_done = count_consolidations()
-            if n_done >= consolidation_target:
+            try:
+                n_done = _ctr()
+            except Exception:
+                n_done = 0
+            if n_done >= _tgt:
                 persistence_done = True
                 continue
             # Pas de cap dur sur les relances persistance — on continue
@@ -2197,7 +2241,7 @@ def run_jarvis_flow(
             # Le LLM reprend frais avec un état explicite plutôt que de
             # devoir digérer 50+ messages avec leurs raisonnements.
             summary = build_relance_summary(
-                accumulated_messages, n_done, consolidation_target,
+                accumulated_messages, n_done, _tgt,
                 persistence_relances, max_persistence_relances,
             )
             initial_human = accumulated_messages[0]  # HumanMessage(prompt)

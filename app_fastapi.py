@@ -1098,7 +1098,25 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                                               fromlist=["build_jdm_agent"]).build_jdm_agent,
                 get_client_fn=_app.get_client,
                 use_thinking=bool(p.get("use_thinking", False)),
-                consolidation_target=p.get("target_count"),
+                # Flow-aware target : enrich utilise le registry des
+                # consolidations (legacy), les autres flows utilisent
+                # production_target avec le compteur fichier par défaut
+                # (compte les triplets pipe-separated écrits dans le
+                # .annot / .err / .audit / etc.).
+                consolidation_target=(
+                    p.get("target_count") if flow_id == "enrich" else None
+                ),
+                production_target=(
+                    p.get("target_count") if flow_id != "enrich" else None
+                ),
+                production_unit={
+                    "enrich":      "consolidés",
+                    "annotation":  "annotations",
+                    "audit":       "verdicts",
+                    "signalement": "suspects",
+                    "gap":         "trous",
+                    "stats":       "lignes",
+                }.get(flow_id, "items"),
                 auto_switch_on_perday=bool(p.get("auto_switch", False)),
                 resume_state=p.get("resume_state"),
             )

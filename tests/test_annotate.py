@@ -337,3 +337,41 @@ def test_build_annotation_prompt_uses_iteration_block():
     # Mention de la sélectivité (mieux vaut peu et pertinent)
     assert "selectivit" in p.lower().replace("é", "e") or \
            "n'annote QUE" in p or "petit nombre" in p.lower()
+
+
+# ─────────────── production_target file-line counter (flow-aware) ───────────────
+
+def test_run_jarvis_flow_accepts_production_target(tmp_path, monkeypatch):
+    """Smoke contract : run_jarvis_flow accepte production_target/
+    production_counter/production_unit sans planter à l'import-vérif.
+    On ne lance pas l'agent — on vérifie juste la signature."""
+    import inspect
+    from jarvis import run_jarvis_flow
+    sig = inspect.signature(run_jarvis_flow)
+    assert "production_target" in sig.parameters
+    assert "production_counter" in sig.parameters
+    assert "production_unit" in sig.parameters
+
+
+def test_condense_history_with_nudge_uses_flow_counter(tmp_path):
+    """Quand target+count_fn sont fournis, condense_history_with_nudge
+    doit utiliser le compteur fourni et le nombre observé doit
+    apparaître dans le summary — pas le compteur consolidations."""
+    from jarvis import condense_history_with_nudge, HISTORY_CONDENSE_THRESHOLD_CHARS
+    from langchain_core.messages import HumanMessage
+    # Construit un historique au-dessus du seuil
+    big_content = "X" * (HISTORY_CONDENSE_THRESHOLD_CHARS + 1000)
+    messages = [HumanMessage(content=big_content)]
+    # Compteur custom qui renvoie 7
+    count_fn = lambda: 7
+    result = condense_history_with_nudge(
+        messages, target=15, count_fn=count_fn, attempt=1,
+    )
+    assert result is not None
+    # 2 messages : initial + summary+nudge
+    assert len(result) == 2
+    summary = result[1].content
+    # Le résumé doit refléter notre compteur (7) et notre target (15),
+    # pas le compteur consolidations (qui aurait été 0 ou autre).
+    assert "7" in summary
+    assert "15" in summary
