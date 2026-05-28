@@ -5163,6 +5163,14 @@ const JARVIS_FLOWS = [
   },
 ];
 
+// Flows qui produisent un fichier soumissible au LLMDrops. Stats =
+// .stat est techniquement soumissible mais l'usage le rend rare (le
+// LLM peut le faire directement via upload=True). Gap n'écrit pas
+// de fichier → pas soumissible. Tous les autres sortent un fichier
+// avec une extension reconnue par submit_to_jdm.
+const SUBMITTABLE_FLOWS = new Set(['enrich', 'audit', 'signalement',
+                                    'stats', 'annotation']);
+
 function ViewJarvis() {
   const [active, setActive] = useState(null);
   if (active) {
@@ -5293,6 +5301,11 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   // à un nouveau call pour reprendre exactement où on s'est arrêté.
   const [resumeState, setResumeState] = useState(null);
   const [poolStatus, setPoolStatus] = useState(null);
+  // État du bouton « 📤 Soumettre » post-hoc à côté de Télécharger.
+  // submitState ∈ {idle, sending, done, error}. submitMsg = retour serveur
+  // affiché en pastille discrète sous l'en-tête du panneau pour ~6s.
+  const [submitState, setSubmitState] = useState('idle');
+  const [submitMsg, setSubmitMsg] = useState('');
 
   // Pool status pour griser les Gemini blown dans le dropdown modèle.
   React.useEffect(() => {
@@ -5798,18 +5811,81 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                 {/* Télécharger le fichier brut — appelle l'API
                     /api/productions/download avec le basename. */}
                 {filePath && (
-                  <Button size="sm" variant="ghost"
-                    onClick={() => {
-                      const name = filePath.split(/[\\/]/).slice(-1)[0];
-                      const url = `api/productions/download?name=${encodeURIComponent(name)}`;
-                      const a = document.createElement('a');
-                      a.href = url; a.download = name;
-                      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                    }}>
-                    ⬇ Télécharger
-                  </Button>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {/* Bouton « 📤 Soumettre à JDM » post-hoc. Disponible
+                        uniquement pour les flows qui produisent un fichier
+                        soumissible (.enrich/.audit/.err/.stat/.annot) ET
+                        si la clé LLMDrops est saisie (sinon disabled +
+                        tooltip explicatif). Appelle /api/productions/submit
+                        avec le basename + api_key + model_name pour
+                        renommer correctement côté serveur. */}
+                    {SUBMITTABLE_FLOWS.has(flow.id) && (
+                      <Button size="sm" variant="ghost"
+                        disabled={!params.drops_key || submitState === 'sending'}
+                        title={!params.drops_key
+                          ? 'Renseigne la clé LLMDrops pour activer la soumission'
+                          : 'Soumettre ce fichier au LLMDrops JDM'}
+                        onClick={async () => {
+                          const name = filePath.split(/[\\/]/).slice(-1)[0];
+                          setSubmitState('sending');
+                          setSubmitMsg('');
+                          try {
+                            const r = await fetch('api/productions/submit', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                names: [name],
+                                archived: false,
+                                api_key: params.drops_key || '',
+                                model_name: params.model || '',
+                              }),
+                            });
+                            const data = await r.json();
+                            const res = (data.results || [])[0] || {};
+                            if (res.ok) {
+                              setSubmitState('done');
+                              setSubmitMsg(`✓ uploadé sous ${res.uploaded_as || name} (HTTP ${res.status_code || '?'})`);
+                            } else {
+                              setSubmitState('error');
+                              setSubmitMsg(`✗ ${res.error || 'échec inconnu'}`);
+                            }
+                          } catch (e) {
+                            setSubmitState('error');
+                            setSubmitMsg(`✗ ${e.message || e}`);
+                          }
+                          // Auto-clear le message après 8s pour ne pas
+                          // bloquer l'UI si l'user veut retenter.
+                          setTimeout(() => {
+                            setSubmitState('idle'); setSubmitMsg('');
+                          }, 8000);
+                        }}>
+                        {submitState === 'sending' ? '⏳ Envoi…' : '📤 Soumettre'}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost"
+                      onClick={() => {
+                        const name = filePath.split(/[\\/]/).slice(-1)[0];
+                        const url = `api/productions/download?name=${encodeURIComponent(name)}`;
+                        const a = document.createElement('a');
+                        a.href = url; a.download = name;
+                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                      }}>
+                      ⬇ Télécharger
+                    </Button>
+                  </div>
                 )}
               </div>
+              {/* Toast discret du verdict de soumission post-hoc.
+                  Vert si succès, rose si erreur. Apparaît ~8s. */}
+              {submitMsg && (
+                <div className="fade-up" style={{
+                  padding: '6px 14px',
+                  fontFamily: 'var(--font-mono)', fontSize: 11,
+                  color: submitState === 'error' ? 'var(--jdm-magenta)' : 'var(--jdm-green)',
+                  borderBottom: '1px solid var(--line-soft)',
+                  background: 'var(--bg-elev)',
+                }}>{submitMsg}</div>
+              )}
               <div style={{
                 height: 420,
                 overflowY: 'auto',
