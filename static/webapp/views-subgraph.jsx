@@ -468,7 +468,15 @@ function ViewSubgraph() {
   const toggleIn = (set, setSet) => (r) =>
     setSet((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
 
+  // Compteur de séquence : si l'user change un param pendant qu'une
+  // requête est en vol, on ne veut pas qu'une vieille réponse écrase
+  // la dernière. On garde la dernière version vue, on jette tout ce
+  // qui n'est pas elle (latest-wins).
+  const buildSeq = React.useRef(0);
+
   const onBuild = async () => {
+    const mySeq = ++buildSeq.current;
+    const isStale = () => mySeq !== buildSeq.current;
     setLoading(true);
     setError('');
     setMessage('');
@@ -527,6 +535,7 @@ function ViewSubgraph() {
             let parsed;
             try { parsed = JSON.parse(evData); } catch { parsed = { text: evData }; }
             if (evName === 'graph') {
+              if (isStale()) return;
               collectedNodes = parsed.nodes || [];
               collectedEdges = parsed.edges || [];
               setData({ nodes: collectedNodes, edges: collectedEdges,
@@ -534,6 +543,7 @@ function ViewSubgraph() {
                                  n_edges: collectedEdges.length, depth },
                         html: '', format: 'live' });
             } else if (evName === 'error') {
+              if (isStale()) return;
               setError(parsed.text || 'erreur LIVE');
             }
           }
@@ -541,13 +551,15 @@ function ViewSubgraph() {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          if (isStale()) { reader.cancel().catch(() => {}); return; }
           buf += decoder.decode(value, { stream: true });
           flush();
         }
       } catch (e) {
+        if (isStale()) return;
         setError(String(e && e.message ? e.message : e));
       } finally {
-        setLoading(false);
+        if (!isStale()) setLoading(false);
       }
       return;
     }
@@ -578,6 +590,7 @@ function ViewSubgraph() {
         throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
       }
       const d = await res.json();
+      if (isStale()) return;
       setData({
         nodes: d.nodes || [],
         edges: d.edges || [],
@@ -587,10 +600,11 @@ function ViewSubgraph() {
       });
       if (d.message) setMessage(d.message);
     } catch (e) {
+      if (isStale()) return;
       setError(String(e && e.message ? e.message : e));
       setData({ nodes: [], edges: [], stats: {}, html: '' });
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   };
 
@@ -600,14 +614,36 @@ function ViewSubgraph() {
   React.useEffect(() => { onBuild(); /* eslint-disable-next-line */ }, [runVersion]);
 
   // Recentre : utilisé par le clic sur un nœud en mode LIVE.
-  // setTerm(newTerm) → bump runVersion → useEffect → onBuild lit le
-  // term à jour. Pas de race condition : React garantit que le
-  // useEffect part avec la valeur de term post-render.
   const recenterTo = React.useCallback((newTerm) => {
     if (!newTerm || newTerm === term) return;
     setTerm(newTerm);
     setRunVersion(v => v + 1);
   }, [term]);
+
+  // ── REACTIVITÉ LIVE — tous les paramètres du side bar relancent
+  //    automatiquement la construction du graphe, avec debounce de
+  //    400 ms (sliders, multi-toggles) pour ne pas spammer l'API.
+  //    liveLayout est EXCLU des déps : il ne nécessite pas de fetch
+  //    (le LiveAnimWrapper rebuild le scenario client-side).
+  //    Le 1er render est déjà géré par le useEffect mount ci-dessus
+  //    → on saute la 1re exécution de ce useEffect via un ref. ──
+  const firstReactiveRun = React.useRef(true);
+  React.useEffect(() => {
+    if (firstReactiveRun.current) {
+      firstReactiveRun.current = false;
+      return;
+    }
+    const timer = setTimeout(() => setRunVersion(v => v + 1), 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line
+  }, [
+    term, depth, format,
+    topK, topKd2, topKd3, topKd4,
+    minWeight, maxNodes,
+    // Sérialisation des listes pour détecter les toggles de relations
+    activeRels.join(','), activeRelsD2.join(','),
+    activeRelsD3.join(','), activeRelsD4.join(','),
+  ]);
 
   const stats = data.stats || {};
 
@@ -734,9 +770,15 @@ function ViewSubgraph() {
               </Field>
             )}
             <div style={{ marginTop: 12 }}>
-              <Button full onClick={onBuild} disabled={loading}>
-                {loading ? 'Construction…' : 'Construire le graphe'}
+              <Button full onClick={() => setRunVersion(v => v + 1)} disabled={loading}>
+                {loading ? 'Construction…' : 'Reconstruire'}
               </Button>
+              <div className="mono" style={{
+                marginTop: 6, fontSize: 9, color: 'var(--ink-3)',
+                letterSpacing: '0.04em', textAlign: 'center',
+              }}>
+                tous les paramètres se rafraîchissent en direct
+              </div>
             </div>
           </Card>
 
