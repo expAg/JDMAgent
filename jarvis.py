@@ -668,72 +668,28 @@ def _is_bounded_budget(budget_label: str) -> bool:
     return s.isdigit() and int(s) > 0
 
 
-# Ancres sémantiques tirées au sort pour casser le biais d'anchor du
-# système prompt (qui cite « chat », « voiture », « fruit » → le LLM
-# revient toujours dans ces champs même à temp=1.5). Chaque ancre cible
-# un sous-espace lexical DIFFÉRENT et éloigné des exemples du prompt.
-# Une seule est tirée au sort par appel → l'argmax greedy initial
-# tombe ailleurs à chaque relance.
-_RANDOM_ANCHOR_HINTS = [
-    "(ancrage : pense d'abord à un terme administratif ou juridique)",
-    "(ancrage : pense d'abord à un verbe d'action artisanale)",
-    "(ancrage : pense d'abord à un nom abstrait du registre émotionnel)",
-    "(ancrage : pense d'abord à un terme technique d'un métier manuel)",
-    "(ancrage : pense d'abord à un phénomène météorologique ou géologique)",
-    "(ancrage : pense d'abord à un mot du registre médical ou anatomique)",
-    "(ancrage : pense d'abord à une expression idiomatique courante)",
-    "(ancrage : pense d'abord à un objet d'usage domestique ancien)",
-    "(ancrage : pense d'abord à un terme du registre musical ou théâtral)",
-    "(ancrage : pense d'abord à un concept philosophique ou moral)",
-    "(ancrage : pense d'abord à un état physiologique ou psychologique)",
-    "(ancrage : pense d'abord à un terme du registre culinaire régional)",
-    "(ancrage : pense d'abord à un mot du registre sportif ou ludique)",
-    "(ancrage : pense d'abord à un terme d'architecture ou urbanisme)",
-    "(ancrage : pense d'abord à un nom de processus industriel)",
-    "(ancrage : pense d'abord à un terme du registre religieux ou rituel)",
-    "(ancrage : pense d'abord à un mot du vocabulaire affectif)",
-    "(ancrage : pense d'abord à une action mentale ou cognitive)",
-    "(ancrage : pense d'abord à un terme du registre maritime ou agricole)",
-    "(ancrage : pense d'abord à une notion économique ou financière)",
-]
+_RANDOM_TERM_INSTRUCTION = (
+    "Je n'ai pas précisé de terme — TU AS CARTE BLANCHE pour piocher "
+    "au hasard dans TOUT le lexique français. La langue est vaste : "
+    "noms abstraits, verbes, adjectifs, expressions, objets ordinaires, "
+    "concepts techniques, sentiments, états, processus, métiers, "
+    "phénomènes physiques ou sociaux… N'IMPORTE QUOI peut être "
+    "intéressant. ÉVITE les champs scolaires sur-explorés (animaux "
+    "courants, plantes, couleurs primaires) — JDM y est déjà dense "
+    "et tu ne ferais que dupliquer du connu.\n"
+    "VARIE RADICALEMENT d'un essai à l'autre et d'une session à "
+    "l'autre : registre (familier ↔ soutenu), longueur (1 mot ↔ "
+    "expression), niveau d'abstraction (concret ↔ abstrait), "
+    "fréquence (commun ↔ rare). Vérifie d'abord qu'il existe via "
+    "`lookup_term` ; si non, recommence avec un autre."
+)
 
 
+# Compat : les anciens callers utilisent random_term_instruction()
+# (la version avec ancres a été retirée — c'était bricolé). On garde
+# une fonction qui retourne juste la constante pour ne rien casser.
 def random_term_instruction() -> str:
-    """Renvoie l'instruction de tirage random AVEC une ancre sémantique
-    tirée au sort. Casse le biais d'anchor du LLM qui revient toujours
-    aux mêmes champs (chat, voiture, manger…) à cause des exemples
-    présents dans le système prompt. L'ancre n'impose pas une catégorie
-    — elle décale juste le point de départ du raisonnement.
-    """
-    import random as _random
-    hint = _random.choice(_RANDOM_ANCHOR_HINTS)
-    return (
-        "Je n'ai pas précisé de terme — TU AS CARTE BLANCHE pour piocher "
-        "au hasard dans TOUT le lexique français. La langue est vaste : "
-        "noms abstraits, verbes, adjectifs, expressions, objets ordinaires, "
-        "concepts techniques, sentiments, états, processus, métiers, "
-        "phénomènes physiques ou sociaux… N'IMPORTE QUOI peut être "
-        "intéressant. ÉVITE les champs scolaires sur-explorés (animaux "
-        "courants, plantes, couleurs primaires) — JDM y est déjà dense "
-        "et tu ne ferais que dupliquer du connu.\n"
-        "VARIE RADICALEMENT d'un essai à l'autre et d'une session à "
-        "l'autre : registre (familier ↔ soutenu), longueur (1 mot ↔ "
-        "expression), niveau d'abstraction (concret ↔ abstrait), "
-        f"fréquence (commun ↔ rare). {hint}\n"
-        "Ignore les exemples du système prompt — ils sont génériques. "
-        "Vérifie d'abord que ton choix existe via `lookup_term` ; si "
-        "non, recommence avec un autre."
-    )
-
-
-# Garde le nom historique comme alias dynamique (= recalcule à chaque
-# accès) pour ne pas casser les imports existants. Note : utiliser un
-# attribut module qui se ré-évalue n'existe pas en Python pur ; les
-# call-sites doivent passer à random_term_instruction(). On garde quand
-# même cette ligne pour ne pas casser un éventuel test qui importe le
-# nom — il aura juste la 1re ancre (déterministe au load) au lieu d'une
-# rotation, ce qui est l'ancien comportement (déterministe).
-_RANDOM_TERM_INSTRUCTION = random_term_instruction()
+    return _RANDOM_TERM_INSTRUCTION
 
 
 def _iteration_block(

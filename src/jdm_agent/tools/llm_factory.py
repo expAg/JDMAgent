@@ -45,7 +45,12 @@ def get_llm(
     provider = provider or os.environ.get("LLM_PROVIDER", _DEFAULT_PROVIDER)
     model = model or os.environ.get("LLM_MODEL", _DEFAULT_MODEL)
     if temperature is None:
-        temperature = float(os.environ.get("LLM_TEMPERATURE", "0"))
+        # Défaut bumped : 0 = argmax greedy = mêmes mots à chaque
+        # session, observable même quand on dit explicitement « tire
+        # au hasard ». 1.0 est le minimum pour avoir de la variété.
+        # Override via env LLM_TEMPERATURE si l'appelant veut un autre
+        # compromis (ex. 0 pour reproductibilité stricte des tests).
+        temperature = float(os.environ.get("LLM_TEMPERATURE", "1.0"))
 
     return init_chat_model(
         model=model,

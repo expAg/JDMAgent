@@ -867,6 +867,11 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
             # temperature=1.0 est requis par l'API quand thinking est activé.
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
             kwargs["temperature"] = 1.0
+        else:
+            # Sans thinking, sinon le fallback factory mettait temp=0
+            # (= argmax greedy → mêmes mots à chaque session). Anthropic
+            # n'expose pas de seed → la temperature est le seul levier.
+            kwargs["temperature"] = 1.0
         return get_llm(provider="anthropic", model=model, **kwargs)
 
     if model.startswith("gpt-"):
@@ -879,6 +884,7 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
             )
         os.environ["OPENAI_API_KEY"] = api_key.strip()
         from jdm_agent.tools.llm_factory import get_llm
+        import random as _random
         kwargs: dict = {}
         if use_thinking and model in OPENAI_REASONING_MODELS:
             # GPT-5 / GPT-5 mini : reasoning_effort contrôle la profondeur
@@ -886,6 +892,13 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
             # raisonné léger, équivalent en intention au thinking_level
             # 'low' chez Gemini.
             kwargs["reasoning_effort"] = "low"
+        # Sinon le fallback factory mettait temp=0 (= argmax greedy →
+        # mêmes mots à chaque session). 1.3 = compromis variété / cohérence
+        # éprouvé sur GPT (cf. _build_openai_compat pour Gemini-compat).
+        # + seed aléatoire pour casser les sorties identiques sur prompts
+        # proches (primitive standard de l'API OpenAI).
+        kwargs.setdefault("temperature", 1.3)
+        kwargs.setdefault("seed", _random.randint(0, 2**31 - 1))
         return get_llm(provider="openai", model=model, **kwargs)
 
     # Gemini = seul provider gratuit avec un quota TPM assez large pour
@@ -970,11 +983,19 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     # GPT (autres endpoints OpenAI-compat) tolère 0..2 aussi → on
     # met 1.3 pour eux, un peu moins agressif (GPT plus instable au-dessus).
     temp = 1.5 if "gemini" in routed_model.lower() else 1.3
+    # SEED ALÉATOIRE par instance : sans seed explicite, Gemini OpenAI-compat
+    # et OpenAI tendent à retomber sur des sorties identiques pour des
+    # prompts proches (cf. pb du LLM qui re-pioche les mêmes mots même
+    # à temp=1.5). Un seed différent à chaque construction de LLM force
+    # une trajectoire de sampling différente. C'est une primitive standard
+    # de l'API, pas du bricolage.
+    import random as _random
     return ChatOpenAI(
         model=routed_model,
         base_url=base_url,
         api_key=token,
         temperature=temp,
+        seed=_random.randint(0, 2**31 - 1),
     )
 
 
@@ -1031,6 +1052,13 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
     # minimal/low/medium/high. Exception : Gemini 3.1 Pro ne supporte pas
     # "minimal" mais accepte "low". try/except gère aussi le cas où la
     # version de langchain-google-genai ne connaît pas ces kwargs.
+    # SEED ALÉATOIRE : Gemini API supporte `seed` via GenerationConfig
+    # depuis Gemini 1.5. Sans, l'inférence retombe sur le même
+    # échantillonnage pour des prompts identiques → mêmes mots tirés.
+    # Un seed différent à chaque construction de LLM force une
+    # trajectoire de sampling différente. Primitive standard, pas
+    # du bricolage prompt.
+    import random as _random
     base_kwargs = {
         "model": routed_model,
         "google_api_key": token,
@@ -1040,6 +1068,9 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
         # significativement l'espace de tirage sans casser la
         # cohérence des tool_calls.
         "temperature": 1.5,
+        # Passé au SDK Google via model_kwargs → atterrit dans le
+        # generation_config de l'API REST de Gemini.
+        "model_kwargs": {"seed": _random.randint(0, 2**31 - 1)},
     }
     if not use_thinking:
         # Pas de chain-of-thought demandé → on n'active rien. Gemini répond
