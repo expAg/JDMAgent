@@ -35,9 +35,10 @@ function ViewProjet({ goto }) {
     { label: 'Flux Jarvis',  value: '5',      sub: 'guidés'        },
   ];
 
-  // Features — Jarvis en premier (carte principale, mise en avant
-  // accent). Icônes alignées sur app.py : 🤖 pour Jarvis (robot),
-  // 💬 pour le Chatbot LLM (bulle de dialogue).
+  // Features — ordre demandé par utilisateur :
+  // 1. Jarvis (primary)  2. Chatbot LLM  3. Sous-graphe
+  // 4. Claim checker     5. Explorer
+  // Icônes alignées sur app.py : 🤖 Jarvis (robot), 💬 Chatbot (bulle).
   const features = [
     {
       id: 'jarvis',
@@ -48,18 +49,11 @@ function ViewProjet({ goto }) {
       example: 'enrichissement → 17 triplets consolidés',
     },
     {
-      id: 'explorer',
-      title: '🔎 Explorer JDM',
-      kind: 'instant',
-      desc: 'Choisis un terme et une relation, vois les triplets triés par poids consensuel. Annotations sémantiques (constitutif, contrastif, exception…) optionnelles. Désambiguïsation des termes polysémiques (avocat, souris, police…).',
-      example: 'chat | r_has_part | ?',
-    },
-    {
-      id: 'claim',
-      title: '⚖️ Claim checker',
-      kind: 'déterministe',
-      desc: 'Vérifie une affirmation factuelle contre JDM de façon déterministe (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN avec citations des triplets utilisés.',
-      example: 'baleine | r_isa | poisson → ❌',
+      id: 'agent',
+      title: '💬 Chatbot LLM',
+      kind: 'LLM · BYOK',
+      desc: 'Conversation avec un agent (Gemini hébergé gratuit, ou BYOK Claude/GPT) qui n\'utilise QUE les outils JDM et cite ses sources.',
+      example: '« Que mange typiquement un chat ? »',
     },
     {
       id: 'subgraph',
@@ -69,11 +63,18 @@ function ViewProjet({ goto }) {
       example: 'plat asiatique · depth 1 · 8 relations',
     },
     {
-      id: 'agent',
-      title: '💬 Chatbot LLM',
-      kind: 'LLM · BYOK',
-      desc: 'Conversation avec un agent (Gemini hébergé gratuit, ou BYOK Claude/GPT) qui n\'utilise QUE les outils JDM et cite ses sources.',
-      example: '« Que mange typiquement un chat ? »',
+      id: 'claim',
+      title: '⚖️ Claim checker',
+      kind: 'déterministe',
+      desc: 'Vérifie une affirmation factuelle contre JDM de façon déterministe (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN avec citations des triplets utilisés.',
+      example: 'baleine | r_isa | poisson → ❌',
+    },
+    {
+      id: 'explorer',
+      title: '🔎 Explorer JDM',
+      kind: 'instant',
+      desc: 'Choisis un terme et une relation, vois les triplets triés par poids consensuel. Annotations sémantiques (constitutif, contrastif, exception…) optionnelles. Désambiguïsation des termes polysémiques (avocat, souris, police…).',
+      example: 'chat | r_has_part | ?',
     },
   ];
 
@@ -100,15 +101,21 @@ function ViewProjet({ goto }) {
   return (
     <PageShell>
       {/* Hero — designer layout, texte canonique.
-          marginBottom élastique (clamp 48..120px selon viewport hauteur)
-          → l'espace entre hero et 'Cinq modules' s'adapte au format
-          d'écran, évite que la rangée de cards arrive coupée. */}
+          - min-height calc(100vh - navbar - peek) : occupe la viewport
+            mais laisse VOIR la lisière de la section suivante en bas →
+            l'utilisateur sait qu'il y a plus en scrollant.
+          - scroll-snap-align: start → au prochain scroll, snap propre
+            sur la section 'Cinq modules' (le snap-type vit sur <html>).
+          - Marge auto en haut pour centrer le contenu hero dans le bloc. */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
         gap: 48,
-        marginBottom: 'clamp(48px, 10vh, 120px)',
+        marginBottom: 'clamp(24px, 4vh, 60px)',
         alignItems: 'center',
+        minHeight: 'calc(100vh - 56px - clamp(80px, 12vh, 160px))',
+        scrollSnapAlign: 'start',
+        scrollMarginTop: 56,
       }}>
         <div>
           <div className="mono" style={{
@@ -161,14 +168,18 @@ function ViewProjet({ goto }) {
         <StatsGrid stats={stats} />
       </div>
 
-      {/* Features — Que peux-tu faire sur cette page ? */}
-      <SectionTitle
-        kicker="Que peux-tu faire sur cette page ?"
-        title="Cinq modules · une seule API"
-        desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu sauf quand c'est explicitement utile."
-      />
+      {/* Features — Que peux-tu faire sur cette page ?
+          Wrapper avec scroll-snap-align: start → un petit scroll
+          depuis le hero amène la section pile en haut. */}
+      <div style={{ scrollSnapAlign: 'start', scrollMarginTop: 56 }}>
+        <SectionTitle
+          kicker="Que peux-tu faire sur cette page ?"
+          title="Cinq modules · une seule API"
+          desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu sauf quand c'est explicitement utile."
+        />
 
-      <FeaturesGrid features={features} goto={goto} />
+        <FeaturesGrid features={features} goto={goto} />
+      </div>
 
       {/* Espace de respiration entre les feature cards et la section
           'Le projet en bref' (sinon le kicker SOUS LE CAPOT colle

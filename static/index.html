@@ -100,6 +100,16 @@
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
+  /* Scroll-snap proximity : la page colle aux landmarks marqués
+     scrollSnapAlign: start (Projet — hero / features / briefs / footer).
+     'proximity' = doux (snape seulement quand on est près d'un point),
+     contrairement à 'mandatory' qui force toujours. scroll-padding-top
+     compense la navbar sticky 56px. */
+  html {
+    scroll-snap-type: y proximity;
+    scroll-padding-top: 56px;
+    scroll-behavior: smooth;
+  }
   body {
     background: var(--bg);
     color: var(--ink);
