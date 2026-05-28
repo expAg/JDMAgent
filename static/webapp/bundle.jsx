@@ -3263,8 +3263,22 @@ function relColor(rel) {
 // `layout` :
 //   'tree'  → angles depth-2+ clusterisés près du parent (arbre)
 //   'rings' → angles depth-2+ uniformes sur leur anneau (cercles)
-function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
+function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree', opts = {}) {
   if (!nodes || nodes.length === 0) return null;
+
+  // showNegatives=false : on retire les arêtes de polarité négation
+  // ET les nœuds devenus orphelins (plus aucune arête restante).
+  // Filtré dès le départ pour que parentOf / branches couleur / autofit
+  // travaillent sur le sous-graphe effectivement affiché.
+  const showNegatives = opts.showNegatives !== false;
+  if (!showNegatives) {
+    const filteredEdges = (edges || []).filter(e => !e.negative);
+    const touched = new Set(['ROOT']);
+    for (const e of filteredEdges) { touched.add(e.from); touched.add(e.to); }
+    nodes = (nodes || []).filter(n => touched.has(n.id));
+    edges = filteredEdges;
+    if (nodes.length === 0) return null;
+  }
 
   // Centre = ROOT, ou le 1er nœud à défaut. center = LABEL (string)
   // car GraphCanvas indexe positions[g.center] par cette string.
@@ -3493,9 +3507,12 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
 //   - Reset view (zoom 100% + pan 0,0)
 //   - Légende dynamique par type de relation
 function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
+  // Toggle masquage des arêtes négatives (par défaut ON = visibles).
+  const [showNegatives, setShowNegatives] = useState(true);
   const scenario = React.useMemo(
-    () => buildLiveScenario(term, nodes, edges, layout),
-    [term, layout, (nodes || []).length, (edges || []).length,
+    () => buildLiveScenario(term, nodes, edges, layout, { showNegatives }),
+    [term, layout, showNegatives,
+     (nodes || []).length, (edges || []).length,
      (nodes || [])[0]?.id, (nodes || [])[(nodes || []).length - 1]?.id]
   );
 
@@ -3572,6 +3589,25 @@ function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>{b.label}</button>
         ))}
+        {/* Toggle négations : ¬ barré = masquées, ¬ plein = visibles. */}
+        <button
+          onClick={() => setShowNegatives(v => !v)}
+          className="focus-ring"
+          title={showNegatives
+            ? 'Masquer les relations négatives (affiner)'
+            : 'Afficher les relations négatives'}
+          style={{
+            width: 28, height: 28, marginTop: 4,
+            background: showNegatives ? 'var(--bg-elev)' : '#ef4444',
+            border: '1px solid var(--line)',
+            color: showNegatives ? 'var(--ink)' : '#fff',
+            borderRadius: 6,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 13, fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            textDecoration: showNegatives ? 'none' : 'line-through',
+          }}>¬</button>
         <div className="mono" style={{
           marginTop: 2,
           fontSize: 9, color: 'var(--ink-3)',
