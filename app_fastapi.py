@@ -70,6 +70,28 @@ from jdm_agent.viz import (
     build_subgraph,
 )
 
+# ⚠️ ARCHITECTURE — pourquoi on importe `app` (le module Gradio) ici
+# ─────────────────────────────────────────────────────────────────────
+# app.py contient des helpers BATTLE-TESTED qu'on NE veut PAS dupliquer :
+#   - _build_llm : routing natif vs OpenAI-compat, override pool, thinking
+#   - chat_with_agent : retry PerMinute illimité, retry PerDay avec
+#     rotation, INVALID_KEY → mark + switch, accumulation messages
+#     pour reprise, exclusion_context
+#   - pool state : _BLOWN_TODAY (par key+model+jour), _INVALID_KEYS,
+#     _CURRENT_GEMINI_KEY persisté dans pool_state.json,
+#     pick_unblown_gemini_key, mark_gemini_key_invalid,
+#     mark_gemini_key_blown, set_current_gemini_key
+# jarvis.py contient `run_jarvis_flow` avec budget tool, append cumulatif
+# vers `canonical_path`, retry rate-limit, retry-à-la-fin (truncate
+# history + liste des interdits), auto-bascule sur 3.1, etc.
+#
+# Coût de l'import : ~7s au boot (app.py construit ses Gradio Blocks au
+# module load, mais ne lance rien). Acceptable pour récupérer toute
+# cette mécanique. Une phase future extraira ces helpers dans
+# src/jdm_agent/llm_pool.py pour supprimer cette dépendance.
+import app as _app
+import jarvis as _jarvis
+
 # ────────────────────────────────────────────────────────────────────
 # Shared client (lazy, cached)
 # ────────────────────────────────────────────────────────────────────
@@ -477,122 +499,71 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
 
 
 # ────────────────────────────────────────────────────────────────────
-# LLM factory (slim port from app.py — pool/rate-limit comes in step 3)
+# Helper : wrap un générateur SYNC bloquant en async generator pour SSE
 # ────────────────────────────────────────────────────────────────────
-def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
-    """Instancie un ChatModel selon le préfixe du modèle.
+async def _to_async_gen(sync_gen):
+    """Convertit un générateur sync en async, en exécutant chaque `next()`
+    dans un thread (pour ne pas bloquer le event loop FastAPI).
 
-    Version minimale pour la migration FastAPI :
-      - claude-* → Anthropic BYOK (api_key requis)
-      - gpt-*    → OpenAI BYOK (api_key requis)
-      - gemini-* → utilise GOOGLE_API_KEY de l'environnement (pool en step 3)
-
-    Lève ValueError avec message explicite si la clé manque.
+    Utilisé pour chat_with_agent / run_jarvis_flow qui font des appels
+    HTTP/LLM bloquants à l'intérieur de leur boucle.
     """
-    from jdm_agent.tools.llm_factory import get_llm
+    import asyncio
+    loop = asyncio.get_event_loop()
+    _SENTINEL = object()
 
-    if model.startswith("claude-"):
-        if not api_key.strip():
-            raise ValueError(
-                "Pour utiliser un modèle Claude, fournis une clé Anthropic (sk-ant-…)."
-            )
-        os.environ["ANTHROPIC_API_KEY"] = api_key.strip()
-        kwargs: dict = {}
-        if use_thinking:
-            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
-            kwargs["temperature"] = 1.0
-        return get_llm(provider="anthropic", model=model, **kwargs)
-
-    if model.startswith("gpt-"):
-        if not api_key.strip():
-            raise ValueError(
-                "Pour utiliser un modèle GPT, fournis une clé OpenAI (sk-…)."
-            )
-        os.environ["OPENAI_API_KEY"] = api_key.strip()
-        return get_llm(provider="openai", model=model)
-
-    if model.startswith("gemini-"):
-        # SDK natif Google : préserve les thought_signature entre tours
-        # (cf. langchain issue #34056).
-        # Résolution de la clé :
-        #   1. _CURRENT_POOL_KEY si une rotation a déjà eu lieu cette session
-        #   2. sinon, première clé du pool (parsing robuste : split sur tout
-        #      non-[A-Za-z0-9_-], gère GOOGLE_API_KEYS pluriel + GOOGLE_API_KEY
-        #      singulier qui contient parfois un CSV par accident).
-        # NB : lire directement os.environ["GOOGLE_API_KEY"] est INCORRECT car
-        # si l'utilisateur a collé un CSV dedans, la chaîne entière partirait
-        # comme « clé » et l'API Google renverrait INVALID_ARGUMENT.
-        token = (_CURRENT_POOL_KEY or "").strip()
-        if not token:
-            pool = _parse_pool_keys()
-            token = pool[0] if pool else ""
-        if not token:
-            raise ValueError(
-                "Aucune clé Google disponible côté serveur. "
-                "Configure GOOGLE_API_KEYS (CSV) ou GOOGLE_API_KEY (singulière)."
-            )
+    def _next_or_sentinel():
         try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError:
-            raise ValueError(
-                "Le paquet `langchain-google-genai` est requis pour Gemini."
-            )
-        # Gemini 3.x : `thinking_level="low"` + `include_thoughts=True`
-        # exposent le chain-of-thought. Gemini 2.5 ne supporte pas.
-        kwargs: dict = {
-            "model": model,
-            "google_api_key": token,
-            "temperature": 1.5,  # variété forte pour l'agent
-        }
-        if use_thinking and "2.5" not in model:
-            try:
-                kwargs["thinking_level"] = "low"
-                kwargs["include_thoughts"] = True
-            except Exception:
-                pass
-        try:
-            return ChatGoogleGenerativeAI(**kwargs)
-        except TypeError:
-            # Vieille version de langchain-google-genai → fallback sans thinking
-            kwargs.pop("thinking_level", None)
-            kwargs.pop("include_thoughts", None)
-            return ChatGoogleGenerativeAI(**kwargs)
+            return next(sync_gen)
+        except StopIteration:
+            return _SENTINEL
 
-    raise ValueError(f"Modèle non supporté : {model!r}")
+    while True:
+        result = await loop.run_in_executor(None, _next_or_sentinel)
+        if result is _SENTINEL:
+            break
+        yield result
 
 
 # ────────────────────────────────────────────────────────────────────
 # Route: Agent SSE stream
 # ────────────────────────────────────────────────────────────────────
+# On wrappe `app.chat_with_agent` qui yield des tuples (text, gr_update).
+# `text` est le markdown LIVE cumulatif (croît à chaque étape : thoughts,
+# tool_calls, tool_results, réponse finale). On émet 1 event SSE par
+# yield, le frontend remplace le contenu de la bulle avec ce markdown.
+#
+# On RÉUTILISE tout : retry PerMinute, retry PerDay avec rotation pool,
+# INVALID_KEY → mark + switch, accumulation messages pour reprise, etc.
 @app.post("/api/agent/stream")
 async def api_agent_stream(req: AgentRequest):
-    """Streamer la réponse de l'agent LLM + tool calls JDM via SSE.
+    """Stream l'agent LLM + tool calls JDM via SSE.
 
-    Émet des events typés (cf. `jdm_agent.streaming.chat_stream`) :
-      event: thought | spoken | tool_call | tool_result | final | error
-      data:  JSON sérialisé du dict d'event.
+    Events émis :
+      event: text   data: {"text": "<markdown cumulatif live>"}
+      event: done   data: {}
+      event: error  data: {"text": "<message>"}
     """
-    from jdm_agent.streaming import chat_stream
-
-    try:
-        llm = _build_llm(req.model, req.api_key, use_thinking=req.use_thinking)
-    except ValueError as e:
-        async def err_gen():
-            yield {"event": "error", "data": json.dumps({"text": str(e)})}
-        return EventSourceResponse(err_gen())
-
     async def gen():
         try:
-            for ev in chat_stream(
+            sync_gen = _app.chat_with_agent(
                 message=req.message,
                 history=req.history,
-                llm=llm,
-                client=get_client(),
-            ):
+                api_key=req.api_key,
+                model=req.model,
+                use_thinking=req.use_thinking,
+            )
+            async for chunk in _to_async_gen(sync_gen):
+                # chat_with_agent yield (text_markdown, gr_update_for_file)
+                if isinstance(chunk, tuple) and len(chunk) >= 1:
+                    text = chunk[0]
+                else:
+                    text = str(chunk)
                 yield {
-                    "event": ev.get("type", "update"),
-                    "data": json.dumps(ev, ensure_ascii=False),
+                    "event": "text",
+                    "data": json.dumps({"text": text}, ensure_ascii=False),
                 }
+            yield {"event": "done", "data": "{}"}
         except Exception as e:
             yield {"event": "error", "data": json.dumps({
                 "text": f"{type(e).__name__}: {e}"
@@ -647,17 +618,17 @@ def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
 
 @app.post("/api/jarvis/{flow_id}/stream")
 async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
-    """Lancer un flux Jarvis et streamer ses events.
+    """Lance un flux Jarvis via `jarvis.run_jarvis_flow` (réutilise toute
+    la mécanique : budget tool, append cumulatif vers canonical_path,
+    retry rate-limit, retry-à-la-fin, auto-bascule, exclusion_context).
 
-    Le `flow_id` identifie le flow ; `params` contient les valeurs du
-    formulaire (term, relation, target_count, …). On compose le prompt
-    via le `build_*_prompt` correspondant puis on streame comme l'agent.
-
-    Émet un event supplémentaire `event: headline` (1er event) avec
-    le résumé court à afficher dans la bulle « user ».
+    Events SSE émis :
+      event: headline  data: {"text": "...", "flow_id": "..."}
+      event: jarvis    data: {"messages": [...], "file_path": "...",
+                              "file_preview": "...", "state": {...}|null}
+      event: done      data: {}
+      event: error     data: {"text": "..."}
     """
-    from jdm_agent.streaming import chat_stream
-
     # 1) Build prompt + headline
     try:
         prompt, headline = _jarvis_dispatch(flow_id, req.params or {})
@@ -666,152 +637,147 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
             yield {"event": "error", "data": json.dumps({"text": str(e)})}
         return EventSourceResponse(err_gen())
 
-    # 2) Build LLM (model/api_key passés dans params pour rester compat
-    # avec la signature JarvisRequest existante).
     p = req.params or {}
-    model = p.get("model", "gemini-3.1-flash-lite")
-    api_key = p.get("api_key", "")
-    use_thinking = bool(p.get("use_thinking", True))
-    try:
-        llm = _build_llm(model, api_key, use_thinking=use_thinking)
-    except ValueError as e:
-        async def err_gen():
-            yield {"event": "error", "data": json.dumps({"text": str(e)})}
-        return EventSourceResponse(err_gen())
-
-    # Override env LLMDrops si une clé est passée dans le bandeau Jarvis.
-    # On restaure l'env à la sortie pour ne pas polluer les autres flows
-    # qui partagent ce process.
-    drops_key_override = (p.get("drops_key") or "").strip()
-    saved_drops_key: Optional[str] = None
-    if drops_key_override:
-        saved_drops_key = os.environ.get("JDM_DROPS_API_KEY")
-        os.environ["JDM_DROPS_API_KEY"] = drops_key_override
 
     async def gen():
-        # Headline immédiate
+        # 0) Headline tout de suite
         yield {
             "event": "headline",
             "data": json.dumps({"text": headline, "flow_id": flow_id},
                               ensure_ascii=False),
         }
         try:
-            for ev in chat_stream(
-                message=prompt,
-                history=[],  # Jarvis flows sont one-shot, pas de continuation
-                llm=llm,
-                client=get_client(),
-            ):
+            sync_gen = _jarvis.run_jarvis_flow(
+                prompt=prompt,
+                headline=headline,
+                model=p.get("model", "gemini-3.1-flash-lite"),
+                api_key=p.get("api_key", ""),
+                budget_label=str(p.get("budget_label", "illimité")),
+                drops_key=p.get("drops_key", ""),
+                # Injection — évite l'import circulaire avec app.py
+                build_llm_fn=_app._build_llm,
+                build_agent_fn=_app.build_jdm_agent if hasattr(_app, "build_jdm_agent")
+                              else __import__("jdm_agent.tools.jdm_agent",
+                                              fromlist=["build_jdm_agent"]).build_jdm_agent,
+                get_client_fn=_app.get_client,
+                use_thinking=bool(p.get("use_thinking", False)),
+                consolidation_target=p.get("target_count"),
+                auto_switch_on_perday=bool(p.get("auto_switch", False)),
+                resume_state=p.get("resume_state"),
+            )
+            async for chunk in _to_async_gen(sync_gen):
+                # run_jarvis_flow yield :
+                #   3-tuple : (messages, fpath, fpreview)
+                #   5-tuple : (messages, fpath, fpreview, state, _continue_visible)
+                if not isinstance(chunk, tuple):
+                    continue
+                messages = chunk[0] if len(chunk) >= 1 else None
+                fpath = chunk[1] if len(chunk) >= 2 else None
+                fpreview = chunk[2] if len(chunk) >= 3 else None
+                state = chunk[3] if len(chunk) >= 4 else None
+                # Sérialise messages (peut contenir des objets Gradio
+                # gr.update — on filtre pour ne garder que les dict).
+                msgs_clean = []
+                if isinstance(messages, list):
+                    for m in messages:
+                        if isinstance(m, dict):
+                            msgs_clean.append({
+                                "role": m.get("role", ""),
+                                "content": m.get("content", ""),
+                            })
                 yield {
-                    "event": ev.get("type", "update"),
-                    "data": json.dumps(ev, ensure_ascii=False),
+                    "event": "jarvis",
+                    "data": json.dumps({
+                        "messages": msgs_clean,
+                        "file_path": str(fpath) if fpath else None,
+                        "file_preview": fpreview if isinstance(fpreview, str) else "",
+                        "state": state if isinstance(state, dict) else None,
+                    }, ensure_ascii=False, default=str),
                 }
+            yield {"event": "done", "data": "{}"}
         except Exception as e:
             yield {"event": "error", "data": json.dumps({
                 "text": f"{type(e).__name__}: {e}"
             }, ensure_ascii=False)}
-        finally:
-            # Restauration de l'env Drops (silencieuse).
-            if drops_key_override:
-                if saved_drops_key is None:
-                    os.environ.pop("JDM_DROPS_API_KEY", None)
-                else:
-                    os.environ["JDM_DROPS_API_KEY"] = saved_drops_key
 
     return EventSourceResponse(gen())
 
 
 # ────────────────────────────────────────────────────────────────────
-# Pool Gemini — parsing + rotation (slim ; full blown-tracking en step 4)
+# Pool Gemini — délègue à app.py (état partagé, persistance disque)
 # ────────────────────────────────────────────────────────────────────
-import re as _re_pool
-
-# Clé courante (session locale au process — pas de persistance disque ici,
-# la persistance vit dans app.py pour l'instant et sera unifiée en step 4).
-_CURRENT_POOL_KEY: Optional[str] = None
-
-
-def _parse_pool_keys() -> list[str]:
-    """Liste ordonnée des clés Google API du pool.
-
-    Priorité : GOOGLE_API_KEYS (multi) > GOOGLE_API_KEY (single).
-    Split robuste sur tout caractère non-[A-Za-z0-9_-] (gère virgules
-    fullwidth, BOM UTF-8, espaces, etc.).
-    """
-    def _split(blob: str) -> list[str]:
-        return [c for c in _re_pool.split(r"[^A-Za-z0-9_-]+", blob) if c]
-
-    raw = os.environ.get("GOOGLE_API_KEYS", "").lstrip("﻿").strip()
-    if raw:
-        return _split(raw)
-    single = os.environ.get("GOOGLE_API_KEY", "").lstrip("﻿").strip()
-    return _split(single) if single else []
-
-
-def _mask_key(k: str) -> str:
-    if not k or len(k) < 8:
-        return "***"
-    return f"{k[:4]}…{k[-4:]}"
-
-
-def _current_pool_index(keys: list[str]) -> int:
-    """1-based index de la clé courante dans le pool, 0 si vide/inconnue."""
-    if not keys or not _CURRENT_POOL_KEY:
-        return 0
-    try:
-        return keys.index(_CURRENT_POOL_KEY) + 1
-    except ValueError:
-        return 0
+def _today_utc() -> str:
+    # Même format que app._today_utc_str
+    import datetime as _dt
+    return _dt.datetime.utcnow().strftime("%Y-%m-%d")
 
 
 @app.get("/api/pool/status")
 def api_pool_status() -> dict[str, Any]:
-    """État du pool Gemini : nombre de clés, clé courante (masquée),
-    index 1-based dans le pool.
+    """État détaillé du pool Gemini : pour chaque clé, son status par
+    modèle aujourd'hui (blown ou non), invalidation globale, clé +
+    modèle courants.
 
-    Note : la sémantique « blown today » (clé épuisée pour quota PerDay
-    sur un modèle donné) reste pour l'instant gérée côté app.py — le
-    plein partage d'état pool↔FastAPI vient en step 4 quand on supprime
-    app.py.
+    Structure :
+        {
+          "keys": [
+             {"masked": "AIza…1234", "is_current": bool, "invalid": bool,
+              "blown_by_model": {"gemini-3.1-flash-lite": bool, ...}},
+             ...
+          ],
+          "current_model": "gemini-3.1-flash-lite" | null,
+          "current_key_masked": "AIza…1234" | null,
+          "models": ["gemini-3.1-flash-lite", ...],
+        }
     """
-    keys = _parse_pool_keys()
+    keys = _app._parse_google_keys()
+    current_key = _app._CURRENT_GEMINI_KEY
+    current_model = _app._CURRENT_MODEL
+    today = _today_utc()
+    models = list(_app.GEMINI_MODELS.keys())
+    out_keys = []
+    for k in keys:
+        out_keys.append({
+            "masked": _app._masked_key(k),
+            "is_current": (k == current_key),
+            "invalid": (k in _app._INVALID_KEYS),
+            "blown_by_model": {
+                m: bool(_app._BLOWN_TODAY.get((k, m, today), False))
+                for m in models
+            },
+        })
     return {
-        "keys_count": len(keys),
-        "current_key_masked": _mask_key(_CURRENT_POOL_KEY) if _CURRENT_POOL_KEY else None,
-        "current_index": _current_pool_index(keys),
+        "keys": out_keys,
+        "current_model": current_model,
+        "current_key_masked": _app._masked_key(current_key) if current_key else None,
+        "models": models,
     }
 
 
 class RotateRequest(BaseModel):
-    skip_current: bool = True  # avance d'un cran ; False = ne fait rien si déjà bonne
+    # Modèle pour lequel on cherche une clé non-épuisée (sinon prend
+    # le modèle courant de la session).
+    model: Optional[str] = None
+    skip_current: bool = True
 
 
 @app.post("/api/pool/rotate")
 def api_pool_rotate(req: RotateRequest = RotateRequest()) -> dict[str, Any]:
-    """Avance la clé Gemini courante au tour suivant du pool (round-robin).
-
-    Renvoie le nouveau statut.
+    """Pick la prochaine clé non-épuisée pour le modèle donné et la
+    déclare comme courante (persiste sur disque via app._save_pool_state).
     """
-    global _CURRENT_POOL_KEY
-    keys = _parse_pool_keys()
-    if not keys:
-        raise HTTPException(400, "Pool Gemini vide : configure GOOGLE_API_KEYS ou GOOGLE_API_KEY.")
-    if not _CURRENT_POOL_KEY or _CURRENT_POOL_KEY not in keys:
-        new_key = keys[0]
-    elif req.skip_current:
-        idx = keys.index(_CURRENT_POOL_KEY)
-        new_key = keys[(idx + 1) % len(keys)]
-    else:
-        new_key = _CURRENT_POOL_KEY
-    _CURRENT_POOL_KEY = new_key
-    # Reflète dans l'env pour que _build_llm() (GOOGLE_API_KEY) la voie.
-    os.environ["GOOGLE_API_KEY"] = new_key
-    return {
-        "keys_count": len(keys),
-        "current_key_masked": _mask_key(_CURRENT_POOL_KEY),
-        "current_index": _current_pool_index(keys),
-        "rotated": True,
-    }
+    model = (req.model or _app._CURRENT_MODEL or "gemini-3.1-flash-lite")
+    skip = _app._CURRENT_GEMINI_KEY if req.skip_current else None
+    new_key = _app.pick_unblown_gemini_key(model, skip=skip)
+    if not new_key:
+        # Pool entièrement épuisé pour ce modèle aujourd'hui → renvoie
+        # quand même la 1ère clé du pool (utile pour reset visuel).
+        pool = _app._parse_google_keys()
+        if not pool:
+            raise HTTPException(400, "Pool Gemini vide : configure GOOGLE_API_KEYS ou GOOGLE_API_KEY.")
+        new_key = pool[0]
+    _app.set_current_gemini_key(new_key)
+    return api_pool_status()
 
 
 # Health check pour HF Spaces

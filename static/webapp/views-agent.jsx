@@ -252,6 +252,8 @@ function ViewAgent() {
               désambiguïsation, inférence, sous-graphe.
             </div>
           </Card>
+
+          <PoolWidget model={model} />
         </div>
       </div>
     </PageShell>
@@ -286,44 +288,19 @@ function parseSSEEvent(raw) {
 function handleEvent(ev, patchLast) {
   const d = ev.data || {};
   switch (ev.event) {
-    case 'thought':
-      patchLast(last => { last.thoughts = [...(last.thoughts || []), d.text || '']; });
+    case 'text':
+      // app.chat_with_agent yield le markdown cumulatif live (thoughts,
+      // tool_calls, tool_results, réponse finale — déjà formaté en
+      // narration markdown). On remplace simplement le contenu.
+      patchLast(last => { last.content = d.text || ''; });
       break;
-    case 'spoken':
-      patchLast(last => {
-        const sep = last.content ? '\n\n' : '';
-        last.content = (last.content || '') + sep + (d.text || '');
-      });
-      break;
-    case 'tool_call':
-      patchLast(last => {
-        last.tools = [...(last.tools || []), {
-          name: d.name, args: d.args || {}, narration: d.narration || '',
-          result: null,
-        }];
-      });
-      break;
-    case 'tool_result':
-      patchLast(last => {
-        const tools = (last.tools || []).slice();
-        // Trouve le dernier tool_call du même nom sans résultat
-        for (let i = tools.length - 1; i >= 0; i--) {
-          if (tools[i].name === d.name && !tools[i].result) {
-            tools[i] = { ...tools[i], result: { preview: d.preview, narration: d.narration } };
-            break;
-          }
-        }
-        last.tools = tools;
-      });
-      break;
-    case 'final':
-      patchLast(last => { last.content = d.text || last.content || ''; });
+    case 'done':
+      // Stream terminé proprement, rien à faire (UI se ferme via finally)
       break;
     case 'error':
       patchLast(last => { last.error = d.text || 'Erreur inconnue.'; });
       break;
     default:
-      // unknown event type — ignore
       break;
   }
 }
@@ -358,63 +335,10 @@ function Message({ m }) {
         <JDMMark size={18} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {m.thoughts && m.thoughts.length > 0 && (
-          <details style={{ marginBottom: 10 }}>
-            <summary style={{
-              cursor: 'pointer',
-              fontSize: 11,
-              color: 'var(--ink-3)',
-              fontFamily: 'var(--font-mono)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-            }}>🧠 Raisonnement ({m.thoughts.length})</summary>
-            <div style={{
-              marginTop: 8,
-              padding: 10,
-              background: 'var(--bg-elev)',
-              borderLeft: '2px solid var(--line)',
-              fontSize: 12,
-              color: 'var(--ink-2)',
-              fontStyle: 'italic',
-              lineHeight: 1.5,
-              whiteSpace: 'pre-wrap',
-            }}>{m.thoughts.join('\n\n')}</div>
-          </details>
-        )}
-        {m.tools && m.tools.map((t, i) => (
-          <div key={i} style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '5px 10px',
-            background: 'var(--bg-elev)',
-            border: '1px solid var(--line-soft)',
-            borderRadius: 'var(--radius)',
-            marginBottom: 6,
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            flexWrap: 'wrap',
-          }}>
-            <span style={{ color: t.result ? 'var(--jdm-green)' : 'var(--ink-3)' }}>●</span>
-            <span style={{ color: 'var(--accent)' }}>{t.name}</span>
-            <span style={{ color: 'var(--ink-3)' }}>(</span>
-            <span style={{ color: 'var(--ink)' }}>
-              {Object.entries(t.args || {}).map(([k, v]) =>
-                `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`
-              ).join(', ')}
-            </span>
-            <span style={{ color: 'var(--ink-3)' }}>)</span>
-            {t.result && t.result.preview && (
-              <span style={{ marginLeft: 'auto', color: 'var(--ink-3)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                → {t.result.preview}
-              </span>
-            )}
-          </div>
-        ))}
         {m.content && (
-          <div style={{
-            fontSize: 14,
-            color: 'var(--ink)',
-            lineHeight: 1.6,
-          }} dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
+          <div className="jdm-agent-bubble"
+            style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}
+            dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
         )}
         {m.error && (
           <div style={{
@@ -454,6 +378,126 @@ function renderMarkdownLite(s) {
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')
     .replace(/\n/g, '<br/>');
+}
+
+// ─── Pool Gemini widget — état réel + bouton rotation ────────────
+
+function PoolWidget({ model }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const r = await fetch('api/pool/status');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setStatus(await r.json());
+      setError('');
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+    }
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const rotate = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch('api/pool/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, skip_current: true }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setStatus(await r.json());
+      setError('');
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status) {
+    return (
+      <Card padding={16}>
+        <div className="mono" style={{
+          fontSize: 11, color: 'var(--ink-3)',
+          textTransform: 'uppercase', letterSpacing: '0.1em',
+          marginBottom: 8,
+        }}>Pool Gemini</div>
+        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{error || 'Chargement…'}</div>
+      </Card>
+    );
+  }
+
+  const keys = status.keys || [];
+  const isGemini = model && model.startsWith('gemini-');
+
+  return (
+    <Card padding={16}>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 10,
+      }}>Pool Gemini · {keys.length} clé{keys.length > 1 ? 's' : ''}</div>
+
+      {keys.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          Pool vide — configure <code className="mono">GOOGLE_API_KEYS</code>.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 4, marginBottom: 10 }}>
+          {keys.map((k, i) => {
+            const blownHere = isGemini && k.blown_by_model && k.blown_by_model[model];
+            const status_icon = k.invalid ? '🚫' : blownHere ? '❌' : k.is_current ? '✅' : '○';
+            const status_color = k.invalid ? 'var(--jdm-magenta)'
+                                 : blownHere ? 'var(--jdm-orange)'
+                                 : k.is_current ? 'var(--jdm-green)'
+                                 : 'var(--ink-3)';
+            return (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '4px 8px',
+                background: k.is_current ? 'var(--bg-elev)' : 'transparent',
+                borderRadius: 3,
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+              }}>
+                <span style={{ color: status_color }}>{status_icon}</span>
+                <span style={{ color: 'var(--ink-2)' }}>{k.masked}</span>
+                {k.is_current && (
+                  <span style={{
+                    marginLeft: 'auto', fontSize: 9,
+                    color: 'var(--jdm-green)',
+                    textTransform: 'uppercase', letterSpacing: '0.08em',
+                  }}>actuelle</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {isGemini && status.current_model && (
+        <div style={{ fontSize: 10, color: 'var(--ink-3)', marginBottom: 8, fontFamily: 'var(--font-mono)' }}>
+          ❌ = épuisée pour <strong style={{ color: 'var(--ink-2)' }}>{model}</strong> aujourd'hui
+        </div>
+      )}
+
+      <Button size="sm" variant="secondary" full onClick={rotate} disabled={busy || keys.length === 0}>
+        {busy ? '↻ Rotation…' : '↻ Rotation manuelle'}
+      </Button>
+
+      {error && (
+        <div style={{
+          marginTop: 8, padding: 8,
+          background: 'rgba(200,58,115,0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)', fontSize: 11,
+        }}>{error}</div>
+      )}
+    </Card>
+  );
 }
 
 window.ViewAgent = ViewAgent;

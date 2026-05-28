@@ -205,6 +205,14 @@ function JarvisRun({ flow, onBack }) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buf = '';
+      // Le backend wrappe run_jarvis_flow qui yield (messages, fpath,
+      // fpreview, [state]). On reçoit donc des events de type "jarvis"
+      // avec le contenu narratif complet (markdown cumulatif) dans le
+      // dernier message assistant. On compte les triplets consolidés
+      // en parsant la narration côté client (le pattern « consolidé »
+      // apparaît dans la trace markdown).
+      let prevConsolidatedCount = 0;
+      let lastFilePath = null;
       const dispatchEvent = (ev) => {
         const d = ev.data || {};
         switch (ev.event) {
@@ -212,56 +220,44 @@ function JarvisRun({ flow, onBack }) {
             setHeadline(d.text || '');
             setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
             break;
-          case 'thought':
-            setMetrics(m => ({ ...m, thoughts: m.thoughts + 1 }));
-            setLog(l => [...l, { t: ts(), tag: '[think]', kind: 'thought', msg: (d.text || '').slice(0, 200) }]);
-            break;
-          case 'spoken':
-            setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
-            break;
-          case 'tool_call':
-            setMetrics(m => {
-              const next = { ...m, toolsCalled: m.toolsCalled + 1 };
-              // « Consolidés » = nombre de triplets passés à consolidate_candidate
-              // (l'étape qui valide par inférence) — c'est le compteur que
-              // l'utilisateur attend pour un enrichissement.
-              if (d.name === 'consolidate_candidate') next.accepted = m.accepted + 1;
-              return next;
-            });
-            // Trace les triplets consolidés dans la liste de droite avec
-            // les arguments du tool_call (term/relation/target visibles).
-            if (d.name === 'consolidate_candidate' && d.args) {
-              const a = d.args || {};
-              const triplet = `${a.term || a.subject || '?'} | ${a.relation || '?'} | ${a.target || a.object || '?'}`;
-              setAccepted(prev => [...prev, { label: triplet, score: '⏳' }]);
+          case 'jarvis': {
+            // d.messages = [{role, content}], d.file_path, d.file_preview
+            const msgs = d.messages || [];
+            // Affiche la dernière bulle assistant comme « réponse finale
+            // live » (run_jarvis_flow accumule tout dans la 2ème bulle).
+            const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            if (assistant && assistant.content) {
+              setFinalText(assistant.content);
+              // Compte les consolidations dans le markdown narratif :
+              // chaque triplet validé+consolidé crée une ligne avec un
+              // marqueur reconnaissable (✓ consolidé / triplet écrit).
+              const text = assistant.content;
+              const matches = text.match(/✓\s*(consolid|écrit|appended)/gi) || [];
+              if (matches.length > prevConsolidatedCount) {
+                const delta = matches.length - prevConsolidatedCount;
+                setMetrics(m => ({ ...m, accepted: m.accepted + delta }));
+                prevConsolidatedCount = matches.length;
+              }
+              // Compteur d'outils approximatif via lignes « 🔧 » ou
+              // narrations connues (`* nom_outil *` dans la trace).
+              const toolMatches = text.match(/🔧|<div class="jdm-narration">/g) || [];
+              setMetrics(m => ({ ...m, toolsCalled: toolMatches.length }));
             }
-            setLog(l => [...l, {
-              t: ts(), tag: '[tool]', kind: 'tool',
-              msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
-            }]);
-            break;
-          case 'tool_result':
-            if (d.narration) {
-              setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'accept', msg: d.narration }]);
-            } else if (d.preview) {
-              setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
-            }
-            // Mise à jour du dernier triplet consolidé : ✓ ou ✗ selon le
-            // résultat (narration ou preview contiennent typiquement
-            // « consolidé » / « rejeté »).
-            if (d.name === 'consolidate_candidate') {
-              const text = (d.narration || d.preview || '').toLowerCase();
-              const ok = text.includes('consolid') && !text.includes('rejet');
-              setAccepted(prev => {
-                if (prev.length === 0) return prev;
-                const next = prev.slice();
-                next[next.length - 1] = { ...next[next.length - 1], score: ok ? '✓' : '✗' };
-                return next;
-              });
+            // Si le fichier de sortie change, log + push dans accepted
+            if (d.file_path && d.file_path !== lastFilePath) {
+              lastFilePath = d.file_path;
+              setLog(l => [...l, {
+                t: ts(), tag: '[file]', kind: 'accept',
+                msg: `Fichier écrit : ${d.file_path}`,
+              }]);
+              setAccepted(prev => [...prev, {
+                label: d.file_path.split(/[\\/]/).slice(-1)[0],
+                score: '📄',
+              }]);
             }
             break;
-          case 'final':
-            setFinalText(d.text || '');
+          }
+          case 'done':
             setLog(l => [...l, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]);
             setState('done');
             break;

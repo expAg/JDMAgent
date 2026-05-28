@@ -635,73 +635,286 @@ Object.assign(window, {
 });
 
 // === webapp/views-projet.jsx ===
-// View: Projet — landing page with the canonical project description.
-// Le contenu vit ici en tant que template string Markdown (mêmes textes
-// que la branche deploy-self / app.py:PROJET_MD). Rendu via marked.js.
-
-const PROJET_MD = `# Jarvis-web : Accès web à l'agent JeuxDeMots
-
-**Objectif** : agentification de [JeuxDeMots](https://www.jeuxdemots.org)
-(LIRMM/CNRS, ~2 M nœuds, 180+ relations typées) pour les LLM modernes via
-**LangChain** et le **Model Context Protocol**.
-
-## Que peux-tu faire sur cette page ?
-
-- **🔎 Explorer JDM** — choisis un terme et une relation, vois les triplets
-  triés par poids consensuel. Annotations sémantiques (constitutif,
-  contrastif, exception, …) optionnelles. Désambiguïsation des termes
-  polysémiques (avocat, souris, police…).
-- **⚖️ Claim checker** — vérifie une affirmation factuelle contre JDM de
-  façon **déterministe** (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN
-  avec citations des triplets utilisés.
-- **🕸️ Sous-graphe** — visualisation interactive (vis-network) du
-  voisinage sémantique d'un terme jusqu'à profondeur 4, sélection de
-  relations indépendante par niveau, négations en rouge.
-- **🤖 Agent** — conversation avec un agent (Gemini hébergé gratuit, ou
-  BYOK Claude/GPT) qui n'utilise QUE les outils JDM et cite ses sources.
-- **🦾 Jarvis** — flux guidés par formulaires (zéro prompt à taper) :
-  - <small>🌱</small> *Enrichissement* — propose et consolide de nouveaux triplets (\`.enrich\`)
-  - <small>🔍</small> *Audit* — détecte les contaminations par les sens non-premiers (\`.audit\`)
-  - <small>🕳️</small> *Détection de trous* — flagge MISSING / NEGATIVE / LOW_COVERAGE
-  - <small>⚠️</small> *Signalement* — flagge les triplets suspects au LLM (\`.err\`)
-  - <small>📊</small> *Statistiques* — couverture par relation et par termes rencontrés (\`.stat\`)
-
-## Le projet en bref
-
-- Couche client typée (\`JDMClient\`) sur l'[API JeuxDeMots](https://jdm-api.demo.lirmm.fr)
-  + cache disque + retry exponentiel.
-- ~35 outils MCP exposés à n'importe quel client (Claude Code/Desktop,
-  Cursor, etc.) via [FastMCP](https://github.com/jlowin/fastmcp).
-- Pipeline fact-check déterministe + détection de gaps + **moteur
-  d'inférence symbolique borné** pour la consolidation des candidats avant
-  soumission au canal contributif LLMDrops de JDM.
-- Visualisation sous-graphe HTML autonome (vis-network) avec sélection de
-  relations par niveau, palette par famille de relation et opacité
-  progressive.
-
-**Données** : JeuxDeMots — Mathieu Lafourcade, équipe TEXTE, LIRMM/CNRS.
-
-**Liens** :
-[Code source & README](https://github.com/expAg/JDMAgent) ·
-[USAGE.md](https://github.com/expAg/JDMAgent/blob/main/USAGE.md) ·
-[Notebook Colab](https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb)
-`;
+// View: Projet — landing page using the designer layout (hero / stats /
+// feature cards / footer) populated avec notre texte canonique PROJET_MD.
 
 function ViewProjet({ goto }) {
-  // marked.js est chargé en CDN dans index.html. On le configure une
-  // seule fois (parse GFM tables + auto links).
-  const html = React.useMemo(() => {
-    if (typeof window !== 'undefined' && window.marked) {
-      window.marked.setOptions({ gfm: true, breaks: false });
-      return window.marked.parse(PROJET_MD);
-    }
-    return '<pre>' + PROJET_MD + '</pre>';
-  }, []);
+  // Stats — chiffres tirés du README JDM (LIRMM/CNRS) et du projet.
+  const stats = [
+    { label: 'Termes JDM',   value: '2M+',    sub: 'JeuxDeMots'    },
+    { label: 'Relations',    value: '180+',   sub: 'types typées'  },
+    { label: 'Outils MCP',   value: '35',     sub: 'LangChain · FastMCP' },
+    { label: 'Flux Jarvis',  value: '5',      sub: 'guidés'        },
+  ];
+
+  // Features — descriptions issues mot pour mot du PROJET_MD du projet
+  // (cf. branche deploy-self / app.py PROJET_MD).
+  const features = [
+    {
+      id: 'explorer',
+      title: '🔎 Explorer JDM',
+      kind: 'instant',
+      desc: 'Choisis un terme et une relation, vois les triplets triés par poids consensuel. Annotations sémantiques (constitutif, contrastif, exception…) optionnelles. Désambiguïsation des termes polysémiques (avocat, souris, police…).',
+      example: 'chat | r_has_part | ?',
+    },
+    {
+      id: 'claim',
+      title: '⚖️ Claim checker',
+      kind: 'déterministe',
+      desc: 'Vérifie une affirmation factuelle contre JDM de façon déterministe (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN avec citations des triplets utilisés.',
+      example: 'baleine | r_isa | poisson → ❌',
+    },
+    {
+      id: 'subgraph',
+      title: '🕸️ Sous-graphe',
+      kind: 'visuel',
+      desc: 'Visualisation interactive (vis-network) du voisinage sémantique d\'un terme jusqu\'à profondeur 4, sélection de relations indépendante par niveau, négations en rouge.',
+      example: 'plat asiatique · depth 1 · 8 relations',
+    },
+    {
+      id: 'agent',
+      title: '🤖 Agent',
+      kind: 'LLM · BYOK',
+      desc: 'Conversation avec un agent (Gemini hébergé gratuit, ou BYOK Claude/GPT) qui n\'utilise QUE les outils JDM et cite ses sources.',
+      example: '« Que mange typiquement un chat ? »',
+    },
+    {
+      id: 'jarvis',
+      title: '🦾 Jarvis',
+      kind: '5 flux',
+      desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
+      example: 'enrichissement → 17 triplets consolidés',
+    },
+  ];
+
+  // « Le projet en bref » — bullets du PROJET_MD canonique.
+  const briefs = [
+    {
+      title: 'Client typé + cache disque',
+      body: <>Couche client <code>JDMClient</code> sur l&apos;<a href="https://jdm-api.demo.lirmm.fr">API JeuxDeMots</a>, cache disque, retry exponentiel.</>,
+    },
+    {
+      title: '~35 outils MCP exposés',
+      body: <>À n&apos;importe quel client (Claude Code/Desktop, Cursor, etc.) via <a href="https://github.com/jlowin/fastmcp">FastMCP</a>.</>,
+    },
+    {
+      title: 'Pipeline fact-check + inférence',
+      body: <>Détermination + détection de gaps + <strong>moteur d&apos;inférence symbolique borné</strong> pour la consolidation des candidats avant soumission au canal contributif LLMDrops de JDM.</>,
+    },
+    {
+      title: 'Sous-graphe HTML autonome',
+      body: <>vis-network avec sélection de relations par niveau, palette par famille de relation, opacité progressive.</>,
+    },
+  ];
 
   return (
     <PageShell>
-      <div className="jdm-prose"
-        dangerouslySetInnerHTML={{ __html: html }} />
+      {/* Hero — designer layout, texte canonique */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
+        gap: 48,
+        marginBottom: 56,
+        alignItems: 'center',
+      }}>
+        <div>
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.18em',
+            marginBottom: 16,
+          }}>
+            LIRMM · CNRS · Université de Montpellier
+          </div>
+          <h1 className="display" style={{
+            fontFamily: 'var(--font-display)',
+            margin: 0,
+            fontSize: 'clamp(36px, 5vw, 60px)',
+            fontWeight: 500,
+            letterSpacing: '-0.02em',
+            lineHeight: 1.05,
+            color: 'var(--ink)',
+          }}>
+            Accès web à l&apos;agent <em style={{
+              fontFamily: 'var(--font-display)',
+              fontStyle: 'italic', color: 'var(--accent)',
+            }}>JeuxDeMots</em>.
+          </h1>
+          <p style={{
+            marginTop: 22,
+            fontSize: 17,
+            lineHeight: 1.55,
+            color: 'var(--ink-2)',
+            maxWidth: '52ch',
+          }}>
+            Agentification de <a href="https://www.jeuxdemots.org" style={{ color: 'var(--accent)' }}>JeuxDeMots</a> (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées) pour les <strong style={{ color: 'var(--ink)' }}>LLM modernes</strong> via <strong style={{ color: 'var(--ink)' }}>LangChain</strong> et le <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
+          </p>
+          <div style={{ display: 'flex', gap: 10, marginTop: 28 }}>
+            <Button onClick={() => goto('explorer')}>Commencer à explorer →</Button>
+            <Button variant="secondary" onClick={() => goto('jarvis')}>Flux Jarvis</Button>
+            <Button variant="ghost" onClick={() => goto('aide')}>Documentation</Button>
+          </div>
+        </div>
+
+        {/* Stats column */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 1,
+          background: 'var(--line)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius-lg)',
+          overflow: 'hidden',
+        }}>
+          {stats.map((s) => (
+            <div key={s.label} style={{
+              background: 'var(--bg-card)',
+              padding: '20px 22px',
+            }}>
+              <div className="mono" style={{
+                fontSize: 11, color: 'var(--ink-3)',
+                textTransform: 'uppercase', letterSpacing: '0.1em',
+                marginBottom: 8,
+              }}>{s.label}</div>
+              <div className="display" style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 32, fontWeight: 600,
+                color: 'var(--ink)', lineHeight: 1,
+                letterSpacing: '-0.02em',
+              }}>{s.value}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>{s.sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Features — Que peux-tu faire sur cette page ? */}
+      <SectionTitle
+        kicker="Que peux-tu faire sur cette page ?"
+        title="Cinq modules · une seule API"
+        desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu sauf quand c'est explicitement utile."
+      />
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: 12,
+      }}>
+        {features.map(f => (
+          <div key={f.id}
+            onClick={() => goto(f.id)}
+            className="focus-ring"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter') goto(f.id); }}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--line)',
+              borderRadius: 'var(--radius-lg)',
+              padding: 22,
+              cursor: 'pointer',
+              transition: 'transform 0.12s, border-color 0.12s',
+              display: 'flex', flexDirection: 'column', gap: 10,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = 'var(--ink-3)';
+              e.currentTarget.style.transform = 'translateY(-1px)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = 'var(--line)';
+              e.currentTarget.style.transform = '';
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="display" style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 22, fontWeight: 600,
+                letterSpacing: '-0.01em',
+              }}>{f.title}</div>
+              <Pill>{f.kind}</Pill>
+            </div>
+            <p style={{
+              margin: 0, fontSize: 13,
+              color: 'var(--ink-2)', lineHeight: 1.55, flex: 1,
+            }}>{f.desc}</p>
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--ink-3)',
+              paddingTop: 10, borderTop: '1px dashed var(--line-soft)',
+            }}>{f.example}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Le projet en bref — 4 sous-piliers du PROJET_MD */}
+      <SectionTitle
+        kicker="Sous le capot"
+        title="Le projet en bref"
+        desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
+      />
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        gap: 12, marginBottom: 56,
+      }}>
+        {briefs.map((b, i) => (
+          <div key={i} style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 20,
+          }}>
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--accent)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+              marginBottom: 8, fontWeight: 600,
+            }}>0{i + 1}</div>
+            <div className="display" style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 18, fontWeight: 600,
+              marginBottom: 8, color: 'var(--ink)',
+            }}>{b.title}</div>
+            <p style={{
+              margin: 0, fontSize: 13,
+              color: 'var(--ink-2)', lineHeight: 1.55,
+            }}>{b.body}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer — données + crédits + liens */}
+      <div style={{
+        padding: 24,
+        background: 'var(--bg-elev)',
+        border: '1px solid var(--line-soft)',
+        borderRadius: 'var(--radius-lg)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 24,
+        flexWrap: 'wrap',
+      }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <div style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 18, fontWeight: 600, marginBottom: 4,
+          }}>Auto-hébergé, gratuit pour les visiteurs.</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+            Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe TEXTE, LIRMM/CNRS.
+            Pool de clés Gemini partagé pour les visiteurs ; BYOK Claude/OpenAI dans l&apos;onglet Agent.
+          </div>
+          <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
+            <a href="https://github.com/expAg/JDMAgent" style={{ color: 'var(--accent)' }}>Code source</a>
+            <span style={{ color: 'var(--ink-3)' }}>·</span>
+            <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" style={{ color: 'var(--accent)' }}>USAGE.md</a>
+            <span style={{ color: 'var(--ink-3)' }}>·</span>
+            <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" style={{ color: 'var(--accent)' }}>Notebook Colab</a>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Pill color="var(--jdm-green)" tone="outline">
+            <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
+            Pool Gemini
+          </Pill>
+          <Pill>500 req/jour</Pill>
+        </div>
+      </div>
     </PageShell>
   );
 }
@@ -1986,6 +2199,8 @@ function ViewAgent() {
               désambiguïsation, inférence, sous-graphe.
             </div>
           </Card>
+
+          <PoolWidget model={model} />
         </div>
       </div>
     </PageShell>
@@ -2020,44 +2235,19 @@ function parseSSEEvent(raw) {
 function handleEvent(ev, patchLast) {
   const d = ev.data || {};
   switch (ev.event) {
-    case 'thought':
-      patchLast(last => { last.thoughts = [...(last.thoughts || []), d.text || '']; });
+    case 'text':
+      // app.chat_with_agent yield le markdown cumulatif live (thoughts,
+      // tool_calls, tool_results, réponse finale — déjà formaté en
+      // narration markdown). On remplace simplement le contenu.
+      patchLast(last => { last.content = d.text || ''; });
       break;
-    case 'spoken':
-      patchLast(last => {
-        const sep = last.content ? '\n\n' : '';
-        last.content = (last.content || '') + sep + (d.text || '');
-      });
-      break;
-    case 'tool_call':
-      patchLast(last => {
-        last.tools = [...(last.tools || []), {
-          name: d.name, args: d.args || {}, narration: d.narration || '',
-          result: null,
-        }];
-      });
-      break;
-    case 'tool_result':
-      patchLast(last => {
-        const tools = (last.tools || []).slice();
-        // Trouve le dernier tool_call du même nom sans résultat
-        for (let i = tools.length - 1; i >= 0; i--) {
-          if (tools[i].name === d.name && !tools[i].result) {
-            tools[i] = { ...tools[i], result: { preview: d.preview, narration: d.narration } };
-            break;
-          }
-        }
-        last.tools = tools;
-      });
-      break;
-    case 'final':
-      patchLast(last => { last.content = d.text || last.content || ''; });
+    case 'done':
+      // Stream terminé proprement, rien à faire (UI se ferme via finally)
       break;
     case 'error':
       patchLast(last => { last.error = d.text || 'Erreur inconnue.'; });
       break;
     default:
-      // unknown event type — ignore
       break;
   }
 }
@@ -2092,63 +2282,10 @@ function Message({ m }) {
         <JDMMark size={18} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {m.thoughts && m.thoughts.length > 0 && (
-          <details style={{ marginBottom: 10 }}>
-            <summary style={{
-              cursor: 'pointer',
-              fontSize: 11,
-              color: 'var(--ink-3)',
-              fontFamily: 'var(--font-mono)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-            }}>🧠 Raisonnement ({m.thoughts.length})</summary>
-            <div style={{
-              marginTop: 8,
-              padding: 10,
-              background: 'var(--bg-elev)',
-              borderLeft: '2px solid var(--line)',
-              fontSize: 12,
-              color: 'var(--ink-2)',
-              fontStyle: 'italic',
-              lineHeight: 1.5,
-              whiteSpace: 'pre-wrap',
-            }}>{m.thoughts.join('\n\n')}</div>
-          </details>
-        )}
-        {m.tools && m.tools.map((t, i) => (
-          <div key={i} style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '5px 10px',
-            background: 'var(--bg-elev)',
-            border: '1px solid var(--line-soft)',
-            borderRadius: 'var(--radius)',
-            marginBottom: 6,
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            flexWrap: 'wrap',
-          }}>
-            <span style={{ color: t.result ? 'var(--jdm-green)' : 'var(--ink-3)' }}>●</span>
-            <span style={{ color: 'var(--accent)' }}>{t.name}</span>
-            <span style={{ color: 'var(--ink-3)' }}>(</span>
-            <span style={{ color: 'var(--ink)' }}>
-              {Object.entries(t.args || {}).map(([k, v]) =>
-                `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`
-              ).join(', ')}
-            </span>
-            <span style={{ color: 'var(--ink-3)' }}>)</span>
-            {t.result && t.result.preview && (
-              <span style={{ marginLeft: 'auto', color: 'var(--ink-3)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                → {t.result.preview}
-              </span>
-            )}
-          </div>
-        ))}
         {m.content && (
-          <div style={{
-            fontSize: 14,
-            color: 'var(--ink)',
-            lineHeight: 1.6,
-          }} dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
+          <div className="jdm-agent-bubble"
+            style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}
+            dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
         )}
         {m.error && (
           <div style={{
@@ -2188,6 +2325,126 @@ function renderMarkdownLite(s) {
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')
     .replace(/\n/g, '<br/>');
+}
+
+// ─── Pool Gemini widget — état réel + bouton rotation ────────────
+
+function PoolWidget({ model }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const r = await fetch('api/pool/status');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setStatus(await r.json());
+      setError('');
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+    }
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const rotate = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch('api/pool/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, skip_current: true }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setStatus(await r.json());
+      setError('');
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status) {
+    return (
+      <Card padding={16}>
+        <div className="mono" style={{
+          fontSize: 11, color: 'var(--ink-3)',
+          textTransform: 'uppercase', letterSpacing: '0.1em',
+          marginBottom: 8,
+        }}>Pool Gemini</div>
+        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{error || 'Chargement…'}</div>
+      </Card>
+    );
+  }
+
+  const keys = status.keys || [];
+  const isGemini = model && model.startsWith('gemini-');
+
+  return (
+    <Card padding={16}>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 10,
+      }}>Pool Gemini · {keys.length} clé{keys.length > 1 ? 's' : ''}</div>
+
+      {keys.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          Pool vide — configure <code className="mono">GOOGLE_API_KEYS</code>.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 4, marginBottom: 10 }}>
+          {keys.map((k, i) => {
+            const blownHere = isGemini && k.blown_by_model && k.blown_by_model[model];
+            const status_icon = k.invalid ? '🚫' : blownHere ? '❌' : k.is_current ? '✅' : '○';
+            const status_color = k.invalid ? 'var(--jdm-magenta)'
+                                 : blownHere ? 'var(--jdm-orange)'
+                                 : k.is_current ? 'var(--jdm-green)'
+                                 : 'var(--ink-3)';
+            return (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '4px 8px',
+                background: k.is_current ? 'var(--bg-elev)' : 'transparent',
+                borderRadius: 3,
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+              }}>
+                <span style={{ color: status_color }}>{status_icon}</span>
+                <span style={{ color: 'var(--ink-2)' }}>{k.masked}</span>
+                {k.is_current && (
+                  <span style={{
+                    marginLeft: 'auto', fontSize: 9,
+                    color: 'var(--jdm-green)',
+                    textTransform: 'uppercase', letterSpacing: '0.08em',
+                  }}>actuelle</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {isGemini && status.current_model && (
+        <div style={{ fontSize: 10, color: 'var(--ink-3)', marginBottom: 8, fontFamily: 'var(--font-mono)' }}>
+          ❌ = épuisée pour <strong style={{ color: 'var(--ink-2)' }}>{model}</strong> aujourd'hui
+        </div>
+      )}
+
+      <Button size="sm" variant="secondary" full onClick={rotate} disabled={busy || keys.length === 0}>
+        {busy ? '↻ Rotation…' : '↻ Rotation manuelle'}
+      </Button>
+
+      {error && (
+        <div style={{
+          marginTop: 8, padding: 8,
+          background: 'rgba(200,58,115,0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)', fontSize: 11,
+        }}>{error}</div>
+      )}
+    </Card>
+  );
 }
 
 window.ViewAgent = ViewAgent;
@@ -2400,6 +2657,14 @@ function JarvisRun({ flow, onBack }) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buf = '';
+      // Le backend wrappe run_jarvis_flow qui yield (messages, fpath,
+      // fpreview, [state]). On reçoit donc des events de type "jarvis"
+      // avec le contenu narratif complet (markdown cumulatif) dans le
+      // dernier message assistant. On compte les triplets consolidés
+      // en parsant la narration côté client (le pattern « consolidé »
+      // apparaît dans la trace markdown).
+      let prevConsolidatedCount = 0;
+      let lastFilePath = null;
       const dispatchEvent = (ev) => {
         const d = ev.data || {};
         switch (ev.event) {
@@ -2407,56 +2672,44 @@ function JarvisRun({ flow, onBack }) {
             setHeadline(d.text || '');
             setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
             break;
-          case 'thought':
-            setMetrics(m => ({ ...m, thoughts: m.thoughts + 1 }));
-            setLog(l => [...l, { t: ts(), tag: '[think]', kind: 'thought', msg: (d.text || '').slice(0, 200) }]);
-            break;
-          case 'spoken':
-            setLog(l => [...l, { t: ts(), tag: '[say]', kind: 'iter', msg: (d.text || '').slice(0, 200) }]);
-            break;
-          case 'tool_call':
-            setMetrics(m => {
-              const next = { ...m, toolsCalled: m.toolsCalled + 1 };
-              // « Consolidés » = nombre de triplets passés à consolidate_candidate
-              // (l'étape qui valide par inférence) — c'est le compteur que
-              // l'utilisateur attend pour un enrichissement.
-              if (d.name === 'consolidate_candidate') next.accepted = m.accepted + 1;
-              return next;
-            });
-            // Trace les triplets consolidés dans la liste de droite avec
-            // les arguments du tool_call (term/relation/target visibles).
-            if (d.name === 'consolidate_candidate' && d.args) {
-              const a = d.args || {};
-              const triplet = `${a.term || a.subject || '?'} | ${a.relation || '?'} | ${a.target || a.object || '?'}`;
-              setAccepted(prev => [...prev, { label: triplet, score: '⏳' }]);
+          case 'jarvis': {
+            // d.messages = [{role, content}], d.file_path, d.file_preview
+            const msgs = d.messages || [];
+            // Affiche la dernière bulle assistant comme « réponse finale
+            // live » (run_jarvis_flow accumule tout dans la 2ème bulle).
+            const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            if (assistant && assistant.content) {
+              setFinalText(assistant.content);
+              // Compte les consolidations dans le markdown narratif :
+              // chaque triplet validé+consolidé crée une ligne avec un
+              // marqueur reconnaissable (✓ consolidé / triplet écrit).
+              const text = assistant.content;
+              const matches = text.match(/✓\s*(consolid|écrit|appended)/gi) || [];
+              if (matches.length > prevConsolidatedCount) {
+                const delta = matches.length - prevConsolidatedCount;
+                setMetrics(m => ({ ...m, accepted: m.accepted + delta }));
+                prevConsolidatedCount = matches.length;
+              }
+              // Compteur d'outils approximatif via lignes « 🔧 » ou
+              // narrations connues (`* nom_outil *` dans la trace).
+              const toolMatches = text.match(/🔧|<div class="jdm-narration">/g) || [];
+              setMetrics(m => ({ ...m, toolsCalled: toolMatches.length }));
             }
-            setLog(l => [...l, {
-              t: ts(), tag: '[tool]', kind: 'tool',
-              msg: d.narration || `${d.name}(${shortArgs(d.args)})`,
-            }]);
-            break;
-          case 'tool_result':
-            if (d.narration) {
-              setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'accept', msg: d.narration }]);
-            } else if (d.preview) {
-              setLog(l => [...l, { t: ts(), tag: '[result]', kind: 'iter', msg: `${d.name} → ${d.preview}` }]);
-            }
-            // Mise à jour du dernier triplet consolidé : ✓ ou ✗ selon le
-            // résultat (narration ou preview contiennent typiquement
-            // « consolidé » / « rejeté »).
-            if (d.name === 'consolidate_candidate') {
-              const text = (d.narration || d.preview || '').toLowerCase();
-              const ok = text.includes('consolid') && !text.includes('rejet');
-              setAccepted(prev => {
-                if (prev.length === 0) return prev;
-                const next = prev.slice();
-                next[next.length - 1] = { ...next[next.length - 1], score: ok ? '✓' : '✗' };
-                return next;
-              });
+            // Si le fichier de sortie change, log + push dans accepted
+            if (d.file_path && d.file_path !== lastFilePath) {
+              lastFilePath = d.file_path;
+              setLog(l => [...l, {
+                t: ts(), tag: '[file]', kind: 'accept',
+                msg: `Fichier écrit : ${d.file_path}`,
+              }]);
+              setAccepted(prev => [...prev, {
+                label: d.file_path.split(/[\\/]/).slice(-1)[0],
+                score: '📄',
+              }]);
             }
             break;
-          case 'final':
-            setFinalText(d.text || '');
+          }
+          case 'done':
             setLog(l => [...l, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]);
             setState('done');
             break;
@@ -2985,85 +3238,64 @@ function ParamsForm({ flow, params, setParams, locked }) {
 window.ViewJarvis = ViewJarvis;
 
 // === webapp/views-aide.jsx ===
-// View: Aide — installation, usage, MCP, soumission format.
-// Mêmes textes que la branche deploy-self / app.py:AIDE_MD.
+// View: Aide — installation, usage, MCP, soumission.
+// Conserve le layout designer (SectionTitle / Card / kbd / image-slot)
+// mais le remplit avec notre contenu canonique AIDE_MD réparti dans
+// des sections visuellement structurées.
 
-const AIDE_MD = `# 🛠️ Aide & Installation
+// Navigation : table des onglets — version "card" du tableau markdown.
+const TABS_TABLE = [
+  { icon: '📋', name: 'Projet',        what: 'Présentation, liens code source.',                                 key: 'Aucune' },
+  { icon: '🔎', name: 'Explorer JDM',  what: 'Table de triplets pour un terme/relation. Déterministe.',          key: 'Aucune' },
+  { icon: '⚖️', name: 'Claim checker', what: 'SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet. Déterministe.', key: 'Aucune' },
+  { icon: '🕸️', name: 'Sous-graphe',   what: 'Visualisation vis-network interactive du voisinage.',              key: 'Aucune' },
+  { icon: '🤖', name: 'Agent',         what: 'Chat libre avec un agent LLM qui utilise les outils JDM.',         key: 'Gemini (gratuit) ou BYOK Claude/GPT' },
+  { icon: '🦾', name: 'Jarvis',        what: 'Flux guidés par formulaires (5 sous-onglets).',                    key: 'Gemini gratuit · LLMDrops si soumission' },
+  { icon: '🛠️', name: 'Aide',          what: 'Ce document.',                                                      key: '—' },
+];
 
-## 1. Naviguer dans la démo
+// Les 5 flows Jarvis avec leur description.
+const JARVIS_FLOWS_HELP = [
+  { id: 'enrich',      icon: '🌱', name: 'Enrichissement', wf: 'enrichment_workflow()',
+    desc: 'Propose et consolide de nouveaux triplets pour un terme. Form : terme, relation cible (optionnelle), nombre cible, varier les relations, itérer jusqu\'au but, soumettre. Output : chatbot + fichier .enrich.' },
+  { id: 'audit',       icon: '🔍', name: 'Audit',          wf: 'audit_workflow()',
+    desc: 'Audit sémantique de la répartition des sens d\'un terme polysémique. Verdict par triplet (LEGITIME / DEVRAIT_ETRE_CONTRASTIF / NON_CONTRASTIF / NEGATIVE) + section META narrative. Fichier .audit.' },
+  { id: 'gap',         icon: '🕳️', name: 'Détection de trous', wf: 'gap_detection_workflow()',
+    desc: 'Identifie les trous de couverture (MISSING / NEGATIVE_FILLED / LOW_COVERAGE). Tableau déterministe + synthèse narrative. Routage vers Enrich / Audit / Stats.' },
+  { id: 'signalement', icon: '⚠️', name: 'Signalement',    wf: 'signalement_workflow()',
+    desc: 'Le LLM utilise son jugement linguistique pour flagger les triplets suspects (pas besoin de preuve d\'outil). Fichier .err avec catégorie de suspicion et justification.' },
+  { id: 'stats',       icon: '📊', name: 'Stats',          wf: 'stats_workflow()',
+    desc: 'Statistiques de couverture par terme et/ou par relation : n_total, n_pos, n_neg, max_w, min_w, mean_w par relation + 3-5 observations clés en prose.' },
+];
 
-| Onglet | Ce qu'il fait | Clé API ? |
-|---|---|---|
-| 📋 **Projet** | Présentation, liens code source | Aucune |
-| 🔎 **Explorer JDM** | Table de triplets pour un terme/relation, déterministe | Aucune |
-| ⚖️ **Claim checker** | SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet, déterministe | Aucune |
-| 🕸️ **Sous-graphe** | Visualisation vis-network interactive du voisinage | Aucune |
-| 🤖 **Agent** | Chat libre avec un agent LLM qui utilise les 34 outils JDM | Gemini hébergé gratuit, ou BYOK Claude / GPT |
-| 🦾 **Jarvis** | Flows guidés par formulaires (5 sous-onglets) | Gemini hébergé gratuit ; clé LLMDrops si tu veux pousser vers JDM |
-| 🛠️ **Aide** | Ce document | — |
+const API_KEYS_TABLE = [
+  { name: 'Gemini',          where: 'aistudio.google.com/apikey',     cost: 'Gratuit (500 req/jour pour 3.1 Flash Lite)', when: 'Pré-configurée côté serveur',
+    url: 'https://aistudio.google.com/apikey' },
+  { name: 'LLMDrops JDM',    where: 'jeuxdemots.org (contacter M. Lafourcade)', cost: 'Gratuit sur demande', when: 'Pousser .enrich / .audit / .err vers JDM',
+    url: 'https://www.jeuxdemots.org' },
+  { name: 'Anthropic (Claude)', where: 'console.anthropic.com',       cost: 'Payant ($)',                              when: 'BYOK Claude dans Agent / Jarvis',
+    url: 'https://console.anthropic.com' },
+  { name: 'OpenAI (GPT)',    where: 'platform.openai.com',            cost: 'Payant ($)',                              when: 'BYOK GPT dans Agent / Jarvis',
+    url: 'https://platform.openai.com/api-keys' },
+];
 
-## 2. Jarvis en détail — 5 flows guidés
+const SHORTCUTS = [
+  { keys: ['G', 'E'], desc: 'Aller à Explorer' },
+  { keys: ['G', 'C'], desc: 'Aller à Claim checker' },
+  { keys: ['G', 'A'], desc: 'Aller à Agent' },
+  { keys: ['G', 'J'], desc: 'Aller à Jarvis' },
+  { keys: ['?'],      desc: 'Cette page d\'aide' },
+];
 
-Tous les sous-onglets Jarvis partagent un **bandeau** en haut :
-- **Clé API LLMDrops** (optionnel) : override l'env \`JDM_DROPS_API_KEY\` pour les uploads.
-- **Modèle LLM** : Gemini 3.1 Flash Lite par défaut (500 requêtes/jour gratuites). BYOK Claude / GPT possibles si tu colles ta clé.
-- **Budget d'appels d'outils** : 10 / 25 / 50 / 100 / illimité. Au-delà, le LLM reçoit un sentinel et arrête proprement en consolidant ce qu'il a.
-
-### 🌱 Enrichissement
-Propose et consolide de nouveaux triplets pour un terme.
-- **Form** : terme, relation cible (optionnelle), nombre cible de triplets, varier les relations, itérer jusqu'au but, soumettre directement.
-- **Output** : chatbot avec le raisonnement + le fichier \`.enrich\` écrit.
-- **Workflow** : \`enrichment_workflow()\` (pré-fetch → désambiguïsation → proposition → validation+consolidation par inférence → écriture).
-
-### 🔍 Audit
-Audit sémantique de la répartition des sens d'un terme polysémique.
-- **Form** : terme, relation cible optionnelle, soumettre directement.
-- **Output** : verdict par triplet du terme générique (LEGITIME / DEVRAIT_ETRE_CONTRASTIF / NON_CONTRASTIF / NEGATIVE) + section META narrative.
-- **Workflow** : \`audit_workflow()\`.
-
-### 🕳️ Détection de trous
-Identifie les trous de couverture (MISSING / NEGATIVE_FILLED / LOW_COVERAGE).
-- **Form** : terme, relations à examiner (vide = défauts), seuil LOW_COVERAGE.
-- **Output gauche** : tableau des gaps trouvés (déterministe, instantané) + dropdown pour router un gap → boutons **→ Enrichir** / **→ Auditer** / **→ Stats** qui pré-remplissent les autres sous-onglets et basculent l'onglet.
-- **Output droite** : synthèse narrative de l'agent.
-- **Workflow** : \`gap_detection_workflow()\`.
-
-### ⚠️ Signalement
-Le LLM utilise son **jugement linguistique** pour flagger les triplets suspects (pas besoin de preuve d'outil).
-- **Form** : terme, relation optionnelle, soumettre directement.
-- **Output** : fichier \`.err\` avec catégorie de suspicion et justification.
-- **Workflow** : \`signalement_workflow()\`.
-
-### 📊 Stats
-Statistiques de couverture par terme et/ou par relation.
-- **Form** : terme (mode PAR_TERME), relation (mode PAR_RELATION) — au moins un des deux.
-- **Output** : tableau (n_total, n_pos, n_neg, max_w, min_w, mean_w par relation) + 3-5 observations clés.
-- **Workflow** : \`stats_workflow()\`.
-
-## 3. Obtenir les clés API
-
-| Clé | Où ? | Coût | Quand l'utiliser |
-|---|---|---|---|
-| **Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Gratuit (500 req/jour pour 3.1 Flash Lite) | Pré-configurée côté HF Space, rien à faire pour toi |
-| **LLMDrops JDM** | jeuxdemots.org (contacter M. Lafourcade) | Gratuit sur demande | Soumettre \`.enrich\` / \`.audit\` / \`.err\` directement à JDM |
-| **Anthropic (Claude)** | [console.anthropic.com](https://console.anthropic.com) | Payant ($) | BYOK Claude dans Agent / Jarvis |
-| **OpenAI (GPT)** | [platform.openai.com](https://platform.openai.com/api-keys) | Payant ($) | BYOK GPT dans Agent / Jarvis |
-
-⚠️ **Sécurité** : les clés que tu colles dans l'UI ne sont **jamais persistées** côté serveur — elles vivent uniquement le temps de ton onglet navigateur.
-
-## 4. Installation locale (déployer la même app ailleurs)
-
-\`\`\`bash
-# 1. Cloner le repo
+const INSTALL_SCRIPT = `# 1. Cloner le repo
 git clone https://github.com/expAg/JDMAgent.git
 cd JDMAgent
 
 # 2. Créer un environnement Python isolé (venv)
 python3 -m venv .venv
 
-# 3. Activer le venv
-source .venv/bin/activate          # Linux / macOS
-# .venv\\Scripts\\activate           # Windows
+# 3. Activer le venv (Linux / macOS)
+source .venv/bin/activate
 
 # 4. Installer les dépendances
 pip install --upgrade pip
@@ -3071,37 +3303,19 @@ pip install -r requirements.txt
 
 # 5. Configurer les clés API
 cp .env.example .env
-# édite .env : GOOGLE_API_KEYS (CSV) / ANTHROPIC_API_KEY / OPENAI_API_KEY /
-# JDM_DROPS_API_KEY / APP_SUBPATH (si reverse-proxy)
+# édite .env : GOOGLE_API_KEYS (CSV) / ANTHROPIC_API_KEY /
+# OPENAI_API_KEY / JDM_DROPS_API_KEY / APP_SUBPATH (reverse-proxy)
 
-# 6. Lancer l'app — écoute sur http://0.0.0.0:7860
-uvicorn app_fastapi:app --host 0.0.0.0 --port 7860
-\`\`\`
+# 6. Lancer l'app (écoute sur http://0.0.0.0:7860)
+uvicorn app_fastapi:app --host 0.0.0.0 --port 7860`;
 
-Ensuite, dans ton navigateur → <http://localhost:7860>.
-
-**Sous reverse-proxy** : si Apache/Nginx route un sous-chemin (ex. \`/Jarvis/\`),
-mets \`APP_SUBPATH=/Jarvis\` dans \`.env\` — le frontend injecte automatiquement
-\`<base href>\` et les fetch API se résolvent correctement.
-
-**Sur Debian 12 / Ubuntu 24.04 (PEP 668)** : pip refuse d'installer hors venv —
-le venv ci-dessus est donc **obligatoire**.
-
-## 5. Serveur MCP — utiliser les outils JDM dans Claude Code / Cursor
-
-\`\`\`bash
+const MCP_SCRIPT = `# Installation locale (stdio)
 claude mcp add jdm "python -m jdm_agent.mcp.server"
-claude mcp list
-\`\`\`
 
-Ensuite, depuis Claude Code : « Donne-moi les synonymes de voiture dans JDM » → l'agent appelle automatiquement les outils MCP exposés.
+# Vérification
+claude mcp list`;
 
-## 6. Format des fichiers de soumission
-
-Tous les fichiers produits par Jarvis suivent un **format pipe** :
-
-\`\`\`
-# .enrich (proposition de triplets)
+const FORMAT_TEXT = `# .enrich (proposition de triplets)
 term | relation | target | annotation < explication chaîne d'inférence >
 
 # .audit (deux sections séparées par === META ===)
@@ -3112,35 +3326,244 @@ term | relation | target | annotation | verdict | justification
 <compte rendu narratif sur la confusion / propagation des sens>
 
 # .err (suspects flaggés par le LLM)
-term | relation | target | catégorie_suspect | justification
-\`\`\`
-
-Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
-- coche **Soumettre directement** dans le formulaire (la clé \`JDM_DROPS_API_KEY\` doit être configurée) ;
-- ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.
-
-## 7. Liens utiles
-
-- **Code source** : <https://github.com/expAg/JDMAgent>
-- **API JeuxDeMots** : <https://jdm-api.demo.lirmm.fr>
-- **JeuxDeMots (site)** : <https://www.jeuxdemots.org>
-- **USAGE.md détaillé** : <https://github.com/expAg/JDMAgent/blob/main/USAGE.md>
-- **DEVELOPMENT.md** : <https://github.com/expAg/JDMAgent/blob/main/DEVELOPMENT.md>
-`;
+term | relation | target | catégorie_suspect | justification`;
 
 function ViewAide() {
-  const html = React.useMemo(() => {
-    if (typeof window !== 'undefined' && window.marked) {
-      window.marked.setOptions({ gfm: true, breaks: false });
-      return window.marked.parse(AIDE_MD);
-    }
-    return '<pre>' + AIDE_MD + '</pre>';
-  }, []);
-
   return (
     <PageShell>
-      <div className="jdm-prose"
-        dangerouslySetInnerHTML={{ __html: html }} />
+      <SectionTitle
+        kicker="Documentation"
+        title="Aide & Installation"
+        desc="Naviguer la démo, installer en local, brancher le MCP, comprendre les formats de soumission JDM."
+      />
+
+      {/* 1. Naviguer dans la démo — cards par onglet */}
+      <h2 className="display" style={{
+        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+        margin: '40px 0 14px',
+      }}>1 · Naviguer dans la démo</h2>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: 1,
+        background: 'var(--line)', border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+        marginBottom: 40,
+      }}>
+        {TABS_TABLE.map((t) => (
+          <div key={t.name} style={{ background: 'var(--bg-card)', padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 18 }}>{t.icon}</span>
+              <strong style={{ fontSize: 14, color: 'var(--ink)' }}>{t.name}</strong>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5, marginBottom: 8 }}>
+              {t.what}
+            </div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Clé : <span style={{ color: 'var(--accent)' }}>{t.key}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 2. Jarvis en détail */}
+      <h2 className="display" style={{
+        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+        margin: '40px 0 8px',
+      }}>2 · Jarvis en détail — 5 flows guidés</h2>
+      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 18, lineHeight: 1.55 }}>
+        Tous les sous-onglets Jarvis partagent un <strong>bandeau</strong> en haut :
+        clé LLMDrops (override env), modèle LLM (Gemini par défaut, BYOK possible),
+        budget d&apos;appels d&apos;outils (10 / 25 / 50 / 100 / illimité — au-delà, le LLM reçoit un sentinel et consolide ce qu&apos;il a).
+      </p>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+        gap: 12, marginBottom: 40,
+      }}>
+        {JARVIS_FLOWS_HELP.map(f => (
+          <Card key={f.id} padding={18}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 20 }}>{f.icon}</span>
+              <strong style={{ fontSize: 16, color: 'var(--ink)' }}>{f.name}</strong>
+              <code className="mono" style={{
+                marginLeft: 'auto', background: 'var(--bg-elev)',
+                padding: '2px 6px', borderRadius: 3,
+                fontSize: 10, color: 'var(--accent)',
+              }}>{f.wf}</code>
+            </div>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>{f.desc}</p>
+          </Card>
+        ))}
+      </div>
+
+      {/* 3. Installation locale */}
+      <h2 className="display" style={{
+        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+        margin: '40px 0 14px',
+      }}>3 · Installation locale</h2>
+      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14, lineHeight: 1.55 }}>
+        Déployer la même app sur ta machine ou un serveur. Sur <strong>Debian 12 / Ubuntu 24.04</strong> (PEP 668),
+        le venv est <strong>obligatoire</strong> (pip refuse hors venv).
+      </p>
+      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
+        <pre style={{
+          margin: 0, padding: 18,
+          background: 'var(--bg-elev)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 12, lineHeight: 1.6,
+          color: 'var(--ink)',
+          overflowX: 'auto',
+          whiteSpace: 'pre',
+        }}>{INSTALL_SCRIPT}</pre>
+      </Card>
+      <div style={{
+        fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.55, marginBottom: 40,
+        padding: 12, background: 'var(--bg-elev)',
+        borderLeft: '3px solid var(--accent)', borderRadius: 'var(--radius)',
+      }}>
+        <strong style={{ color: 'var(--ink)' }}>Sous reverse-proxy</strong> (Apache/Nginx sur sous-chemin <code className="mono">/Jarvis/</code> par ex.) :
+        mets <code className="mono">APP_SUBPATH=/Jarvis</code> dans <code className="mono">.env</code>. Le frontend injecte <code className="mono">&lt;base href&gt;</code> automatiquement et les fetch API se résolvent.
+      </div>
+
+      {/* 4. MCP */}
+      <h2 className="display" style={{
+        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+        margin: '40px 0 14px',
+      }}>4 · Serveur MCP — outils JDM dans Claude Code / Cursor</h2>
+      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
+        <pre style={{
+          margin: 0, padding: 18,
+          background: 'var(--bg-elev)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 12, lineHeight: 1.6,
+          color: 'var(--ink)',
+          overflowX: 'auto',
+        }}>{MCP_SCRIPT}</pre>
+      </Card>
+      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 40, lineHeight: 1.55 }}>
+        Ensuite depuis Claude Code : <em>« Donne-moi les synonymes de voiture dans JDM »</em> → l&apos;agent appelle automatiquement les outils MCP exposés.
+      </p>
+
+      {/* 5. Clés API + Raccourcis (2 colonnes) */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 40,
+      }}>
+        <div>
+          <h2 className="display" style={{
+            fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+            margin: '0 0 14px',
+          }}>5 · Clés API</h2>
+          <Card padding={0}>
+            {API_KEYS_TABLE.map((k, i) => (
+              <a key={k.name} href={k.url}
+                style={{
+                  display: 'block', padding: 14,
+                  borderBottom: i < API_KEYS_TABLE.length - 1 ? '1px solid var(--line-soft)' : 'none',
+                  textDecoration: 'none', color: 'inherit',
+                  transition: 'background 0.12s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-elev)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = ''}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                  <strong style={{ fontSize: 13, color: 'var(--ink)' }}>{k.name}</strong>
+                  <span style={{ fontSize: 11, color: 'var(--accent)' }}>↗</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 4 }}>{k.where}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-2)' }}>{k.cost} · <em>{k.when}</em></div>
+              </a>
+            ))}
+          </Card>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 10, lineHeight: 1.55 }}>
+            ⚠️ Sécurité : les clés que tu colles dans l&apos;UI ne sont <strong>jamais persistées</strong> côté serveur — elles vivent uniquement le temps de ton onglet navigateur.
+          </div>
+        </div>
+
+        <div>
+          <h2 className="display" style={{
+            fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+            margin: '0 0 14px',
+          }}>Raccourcis clavier</h2>
+          <Card padding={0}>
+            {SHORTCUTS.map((s, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '12px 16px',
+                borderBottom: i < SHORTCUTS.length - 1 ? '1px solid var(--line-soft)' : 'none',
+              }}>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {s.keys.map((k, j) => <span key={j} className="kbd">{k}</span>)}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--ink-2)', marginLeft: 12 }}>{s.desc}</div>
+              </div>
+            ))}
+          </Card>
+        </div>
+      </div>
+
+      {/* 6. Formats de fichiers de soumission */}
+      <h2 className="display" style={{
+        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+        margin: '40px 0 14px',
+      }}>6 · Format des fichiers de soumission</h2>
+      <p style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 14, lineHeight: 1.55 }}>
+        Tous les fichiers produits par Jarvis suivent un <strong>format pipe</strong>.
+      </p>
+      <Card padding={0} style={{ overflow: 'hidden', marginBottom: 14 }}>
+        <pre style={{
+          margin: 0, padding: 18,
+          background: 'var(--bg-elev)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 12, lineHeight: 1.6,
+          color: 'var(--ink)',
+          overflowX: 'auto', whiteSpace: 'pre',
+        }}>{FORMAT_TEXT}</pre>
+      </Card>
+      <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 40, lineHeight: 1.55 }}>
+        Le LLM produit ces fichiers en local. Pour les pousser à JDM, soit :
+        <ul style={{ marginTop: 6, paddingLeft: 20 }}>
+          <li>coche <strong>Soumettre directement</strong> dans le formulaire (clé <code className="mono">JDM_DROPS_API_KEY</code> requise) ;</li>
+          <li>ou télécharge le fichier puis poste-le manuellement sur le formulaire LLMDrops de jeuxdemots.org.</li>
+        </ul>
+      </div>
+
+      {/* 7. Footer institutionnel — slots logos préservés */}
+      <div style={{
+        padding: 32, background: 'var(--bg-elev)',
+        border: '1px solid var(--line-soft)', borderRadius: 'var(--radius-lg)',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 48, marginBottom: 28, flexWrap: 'wrap',
+        }}>
+          <image-slot id="logo-lirmm" shape="rect" placeholder="Dépose le logo LIRMM ici"
+            style={{ width: 200, height: 80, background: 'transparent' }} />
+          <div style={{ width: 1, height: 60, background: 'var(--line)' }} />
+          <image-slot id="logo-um" shape="rect" placeholder="Dépose le logo Université de Montpellier ici"
+            style={{ width: 200, height: 80, background: 'transparent' }} />
+          <div style={{ width: 1, height: 60, background: 'var(--line)' }} />
+          <image-slot id="logo-cnrs" shape="rect" placeholder="Dépose le logo CNRS ici"
+            style={{ width: 120, height: 80, background: 'transparent' }} />
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 12, paddingTop: 24, borderTop: '1px solid var(--line-soft)',
+        }}>
+          <JDMMark size={28} />
+          <div>
+            <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600 }}>
+              jdmAgent
+            </div>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <a href="https://github.com/expAg/JDMAgent" style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
+              {' · '}
+              <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
+            </div>
+          </div>
+        </div>
+      </div>
     </PageShell>
   );
 }
