@@ -165,6 +165,11 @@ function ViewProjet({ goto }) {
 
       <FeaturesGrid features={features} goto={goto} />
 
+      {/* Espace de respiration entre les feature cards et la section
+          'Le projet en bref' (sinon le kicker SOUS LE CAPOT colle
+          aux cards du dessus). */}
+      <div style={{ height: 48 }} />
+
       {/* Le projet en bref — 4 sous-piliers du PROJET_MD */}
       <SectionTitle
         kicker="Sous le capot"
