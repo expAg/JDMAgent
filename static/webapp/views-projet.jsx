@@ -213,10 +213,12 @@ function ViewProjet({ goto }) {
       <div ref={modulesRef} data-panel="modules" style={{
         scrollSnapAlign: 'start', scrollMarginTop: 56,
         minHeight: 'calc(100vh - 56px)',
-        display: 'grid',
-        placeContent: 'center',
-        gridTemplateColumns: 'minmax(0, 1fr)',
-        gap: 24,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+        paddingTop: 'clamp(60px, 12vh, 140px)',
+        paddingBottom: 'clamp(40px, 8vh, 100px)',
+        gap: 28,
       }}>
         <SectionTitle
           kicker="Que peux-tu faire sur cette page ?"
@@ -231,10 +233,12 @@ function ViewProjet({ goto }) {
       <div ref={brefRef} data-panel="bref" style={{
         scrollSnapAlign: 'start', scrollMarginTop: 56,
         minHeight: 'calc(100vh - 56px)',
-        display: 'grid',
-        placeContent: 'center',
-        gridTemplateColumns: 'minmax(0, 1fr)',
-        gap: 24,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+        paddingTop: 'clamp(60px, 12vh, 140px)',
+        paddingBottom: 'clamp(40px, 8vh, 100px)',
+        gap: 28,
       }}>
       <SectionTitle
         kicker="Sous le capot"
@@ -427,8 +431,6 @@ function FeaturesGrid({ features, goto }) {
   const [canPrev, setCanPrev] = useState(false);
   const [canNext, setCanNext] = useState(true);
 
-  // Détection des bords : montre/cache les boutons + le fade selon
-  // que le scroll est en début / milieu / fin.
   const updateBounds = React.useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -450,67 +452,109 @@ function FeaturesGrid({ features, goto }) {
     };
   }, [updateBounds]);
 
-  // Défile d'une largeur de viewport carrousel (≈ 3 cartes).
-  const scrollBy = (dir) => {
+  // Animation JS du scroll — durée custom 650ms en ease-out cubic.
+  // Plus visible que scrollBy({behavior:'smooth'}) qui est ~250ms.
+  const animScroll = (dir) => {
     const el = scrollRef.current;
     if (!el) return;
-    const step = Math.max(280, el.clientWidth * 0.7);
-    el.scrollBy({ left: dir * step, behavior: 'smooth' });
+    const step = Math.max(300, el.clientWidth * 0.75);
+    const start = el.scrollLeft;
+    const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, start + dir * step));
+    const duration = 650;
+    const t0 = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - t0) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);  // ease-out cubic
+      el.scrollLeft = start + (target - start) * eased;
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   };
 
-  // Boutons rendus DANS le flow du layout (flexbox), pas en absolute.
-  // → Toujours visibles, jamais coupés, jamais positionnés hors écran.
-  const arrowBtn = (side, enabled) => (
-    <button
-      type="button"
-      onClick={() => scrollBy(side === 'left' ? -1 : 1)}
-      aria-label={side === 'left' ? 'Défiler à gauche' : 'Défiler à droite'}
-      disabled={!enabled}
-      style={{
-        flexShrink: 0,
-        width: 40, height: 40,
-        borderRadius: '50%',
-        border: '1px solid var(--line)',
-        background: 'var(--bg-card)',
-        color: enabled ? 'var(--ink-2)' : 'var(--ink-3)',
-        cursor: enabled ? 'pointer' : 'default',
-        opacity: enabled ? 1 : 0.35,
-        boxShadow: enabled ? 'var(--shadow)' : 'none',
-        fontSize: 20, lineHeight: 1, fontWeight: 600,
-        transition: 'background 0.15s, color 0.15s, transform 0.15s, opacity 0.15s',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 0,
-      }}
-      onMouseEnter={(e) => {
-        if (!enabled) return;
-        e.currentTarget.style.background = 'var(--accent)';
-        e.currentTarget.style.color = 'var(--bg)';
-        e.currentTarget.style.transform = 'scale(1.06)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'var(--bg-card)';
-        e.currentTarget.style.color = 'var(--ink-2)';
-        e.currentTarget.style.transform = '';
-      }}>
-      {side === 'left' ? '‹' : '›'}
-    </button>
-  );
+  // Style commun des boutons (skin-aware via vars CSS).
+  const btnStyle = (enabled) => ({
+    width: 44, height: 44,
+    borderRadius: '50%',
+    border: '1px solid var(--line)',
+    background: 'var(--bg-card)',
+    color: 'var(--ink-2)',
+    cursor: enabled ? 'pointer' : 'default',
+    opacity: enabled ? 1 : 0,
+    pointerEvents: enabled ? 'auto' : 'none',
+    boxShadow: 'var(--shadow)',
+    fontSize: 22, lineHeight: 1, fontWeight: 500,
+    transition: 'background 0.15s, color 0.15s, transform 0.18s, opacity 0.25s',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0,
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+  });
 
-  // Layout : [‹ button] [scroll container with cards] [› button]
-  // Tout dans un flex row — gros gain de robustesse vs absolute.
+  const hoverIn = (e) => {
+    e.currentTarget.style.background = 'var(--accent)';
+    e.currentTarget.style.color = 'var(--bg)';
+    e.currentTarget.style.transform = e.currentTarget.dataset.side === 'left'
+      ? 'translateY(-50%) scale(1.08)'
+      : 'translateY(-50%) scale(1.08)';
+  };
+  const hoverOut = (e) => {
+    e.currentTarget.style.background = 'var(--bg-card)';
+    e.currentTarget.style.color = 'var(--ink-2)';
+    e.currentTarget.style.transform = 'translateY(-50%)';
+  };
+
+  // Cards à PLEINE LARGEUR — on ne troque pas leur taille.
+  // Bouton gauche : absolute HORS de la rangée, à gauche.
+  // Bouton droit : absolute SUR la rangée à droite, avec un gradient
+  // fade en arrière-plan qui estompe la dernière carte visible.
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-    }}>
-      {arrowBtn('left', canPrev)}
+    <div style={{ position: 'relative' }}>
+      {/* Bouton gauche — hors de la rangée à gauche */}
+      <button
+        type="button"
+        data-side="left"
+        onClick={() => animScroll(-1)}
+        aria-label="Défiler à gauche"
+        onMouseEnter={hoverIn} onMouseLeave={hoverOut}
+        style={{
+          ...btnStyle(canPrev),
+          position: 'absolute',
+          left: -56, top: '50%',
+          transform: 'translateY(-50%)',
+          zIndex: 4,
+        }}>‹</button>
+
+      {/* Gradient fade + bouton droit (style 'estompé') — fade derrière
+          la dernière carte visible, bouton flottant par-dessus. */}
+      <div style={{
+        position: 'absolute',
+        right: 0, top: 0, bottom: 0,
+        width: 84,
+        pointerEvents: 'none',
+        zIndex: 3,
+        background: 'linear-gradient(to left, var(--bg) 25%, transparent 100%)',
+        opacity: canNext ? 1 : 0,
+        transition: 'opacity 0.25s',
+      }} />
+      <button
+        type="button"
+        data-side="right"
+        onClick={() => animScroll(1)}
+        aria-label="Défiler à droite"
+        onMouseEnter={hoverIn} onMouseLeave={hoverOut}
+        style={{
+          ...btnStyle(canNext),
+          position: 'absolute',
+          right: 12, top: '50%',
+          transform: 'translateY(-50%)',
+          zIndex: 4,
+        }}>›</button>
+
+      {/* Carousel — pleine largeur, jamais troqué pour les boutons. */}
       <div
         ref={scrollRef}
         className="jdm-carousel"
         style={{
-          flex: 1,
-          minWidth: 0,
           display: 'flex',
           gap: 14,
           overflowX: 'auto',
@@ -524,13 +568,13 @@ function FeaturesGrid({ features, goto }) {
             flex: '0 0 clamp(280px, 28vw, 340px)',
             scrollSnapAlign: 'start',
             display: 'flex',
+            // Anim subtile à l'entrée + hover : un peu de scale.
             transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}>
             <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
           </div>
         ))}
       </div>
-      {arrowBtn('right', canNext)}
     </div>
   );
 }
