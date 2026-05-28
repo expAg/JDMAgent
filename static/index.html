@@ -387,6 +387,21 @@
   }
   .jdm-carousel::-webkit-scrollbar { display: none; }
   .jdm-carousel > * { scroll-snap-stop: always; }
+  /* Boutons prev/next : invisibles par défaut, révélés au hover du
+     wrapper du carousel. data-enabled=0 → reste invisible (bord). */
+  .jdm-carousel-arrow[data-enabled="1"] { opacity: 0; }
+  .jdm-carousel-wrap:hover .jdm-carousel-arrow[data-enabled="1"] { opacity: 1; }
+  .jdm-carousel-arrow:hover {
+    background: var(--accent) !important;
+    color: var(--bg) !important;
+    transform: translateY(-50%) scale(1.06) !important;
+  }
+  /* Focus clavier : aussi révélé. */
+  .jdm-carousel-arrow:focus-visible {
+    opacity: 1 !important;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
   /* ── Gate admin ── Tout élément .admin-only est masqué par défaut.
      Si l'URL contient ?admin=1, un script (plus bas) ajoute la classe

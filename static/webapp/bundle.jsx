@@ -669,7 +669,45 @@ function useShuffledAccents(n) {
   }, [n]);
 }
 
+// 3 sections-panneaux : hero / features / briefs+footer. Chaque section
+// remplit le viewport (min-height: 100vh − nav) et s'aligne via
+// scroll-snap. Les dots latéraux pilotent la navigation entre panneaux.
+const PANELS = [
+  { id: 'hero',     label: 'Présentation' },
+  { id: 'modules',  label: 'Modules' },
+  { id: 'bref',     label: 'Sous le capot' },
+];
+
 function ViewProjet({ goto }) {
+  const heroRef = useRef(null);
+  const modulesRef = useRef(null);
+  const brefRef = useRef(null);
+  const refs = { hero: heroRef, modules: modulesRef, bref: brefRef };
+  const [activePanel, setActivePanel] = useState('hero');
+
+  // IntersectionObserver — quand un panneau couvre >50% du viewport,
+  // le dot correspondant devient actif.
+  React.useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      // On prend l'entry la plus visible
+      let best = null, bestRatio = 0;
+      for (const e of entries) {
+        if (e.intersectionRatio > bestRatio) {
+          bestRatio = e.intersectionRatio;
+          best = e.target;
+        }
+      }
+      if (best && best.dataset.panel) setActivePanel(best.dataset.panel);
+    }, { threshold: [0.3, 0.55, 0.8] });
+    Object.values(refs).forEach(r => { if (r.current) observer.observe(r.current); });
+    return () => observer.disconnect();
+  }, []);
+
+  const scrollToPanel = (id) => {
+    const r = refs[id];
+    if (r && r.current) r.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
   // Stats — chiffres tirés du README JDM (LIRMM/CNRS) et du projet.
   const stats = [
     { label: 'Termes JDM',   value: '2M+',    sub: 'JeuxDeMots'    },
@@ -743,20 +781,20 @@ function ViewProjet({ goto }) {
 
   return (
     <PageShell>
-      {/* Hero — designer layout, texte canonique.
-          - min-height calc(100vh - navbar - peek) : occupe la viewport
-            mais laisse VOIR la lisière de la section suivante en bas →
-            l'utilisateur sait qu'il y a plus en scrollant.
-          - scroll-snap-align: start → au prochain scroll, snap propre
-            sur la section 'Cinq modules' (le snap-type vit sur <html>).
-          - Marge auto en haut pour centrer le contenu hero dans le bloc. */}
-      <div style={{
+      {/* Dots latéraux + bouton back-to-top */}
+      <PanelDots activePanel={activePanel}
+        onSelect={scrollToPanel}
+        showBackToTop={activePanel === 'bref'}
+        onBackToTop={scrollToTop} />
+
+      {/* Panneau 1 — Hero. min-height calc(100vh − nav) → remplit la
+          viewport. Snap-align start aligne propre au sticky top. */}
+      <div ref={heroRef} data-panel="hero" style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
         gap: 48,
-        marginBottom: 'clamp(24px, 4vh, 60px)',
         alignItems: 'center',
-        minHeight: 'calc(100vh - 56px - clamp(80px, 12vh, 160px))',
+        minHeight: 'calc(100vh - 56px)',
         scrollSnapAlign: 'start',
         scrollMarginTop: 56,
       }}>
@@ -811,10 +849,14 @@ function ViewProjet({ goto }) {
         <StatsGrid stats={stats} />
       </div>
 
-      {/* Features — Que peux-tu faire sur cette page ?
-          Wrapper avec scroll-snap-align: start → un petit scroll
-          depuis le hero amène la section pile en haut. */}
-      <div style={{ scrollSnapAlign: 'start', scrollMarginTop: 56 }}>
+      {/* Panneau 2 — Modules (features carousel). Pleine viewport,
+          contenu centré verticalement. */}
+      <div ref={modulesRef} data-panel="modules" style={{
+        scrollSnapAlign: 'start', scrollMarginTop: 56,
+        minHeight: 'calc(100vh - 56px)',
+        display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        paddingTop: 32, paddingBottom: 32,
+      }}>
         <SectionTitle
           kicker="Que peux-tu faire sur cette page ?"
           title="Cinq modules · une seule API"
@@ -824,12 +866,14 @@ function ViewProjet({ goto }) {
         <FeaturesGrid features={features} goto={goto} />
       </div>
 
-      {/* Espace de respiration entre les feature cards et la section
-          'Le projet en bref' (sinon le kicker SOUS LE CAPOT colle
-          aux cards du dessus). */}
-      <div style={{ height: 48 }} />
-
-      {/* Le projet en bref — 4 sous-piliers du PROJET_MD */}
+      {/* Panneau 3 — Sous le capot + footer. Pleine viewport, contenu
+          centré, footer crédits à l'intérieur du même panneau. */}
+      <div ref={brefRef} data-panel="bref" style={{
+        scrollSnapAlign: 'start', scrollMarginTop: 56,
+        minHeight: 'calc(100vh - 56px)',
+        display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        paddingTop: 32, paddingBottom: 32,
+      }}>
       <SectionTitle
         kicker="Sous le capot"
         title="Le projet en bref"
@@ -839,7 +883,7 @@ function ViewProjet({ goto }) {
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-        gap: 12, marginBottom: 56,
+        gap: 12, marginBottom: 32,
       }}>
         {briefs.map((b, i) => (
           <div key={i} style={{
@@ -904,7 +948,75 @@ function ViewProjet({ goto }) {
           </div>
         </div>
       </div>
+      </div>{/* /panneau 3 */}
     </PageShell>
+  );
+}
+
+// ─── PanelDots : navigation latérale entre les 3 panneaux du Projet.
+// Position fixed à droite, vertical-center. Skin-aware (vars CSS).
+// Quand activePanel = 'bref' (dernier), un bouton ↑ remplace le dot
+// actif pour revenir en haut. Caché sur mobile (≤640px).
+function PanelDots({ activePanel, onSelect, showBackToTop, onBackToTop }) {
+  return (
+    <div className="jdm-panel-dots" style={{
+      position: 'fixed',
+      right: 22, top: '50%',
+      transform: 'translateY(-50%)',
+      display: 'flex', flexDirection: 'column', gap: 14,
+      zIndex: 40,
+    }}>
+      {PANELS.map(p => {
+        const active = activePanel === p.id;
+        return (
+          <button key={p.id}
+            type="button"
+            onClick={() => onSelect(p.id)}
+            aria-label={`Aller à ${p.label}`}
+            title={p.label}
+            className="jdm-panel-dot"
+            style={{
+              width: 10, height: 10, padding: 0,
+              borderRadius: '50%',
+              border: `1px solid ${active ? 'var(--accent)' : 'var(--ink-3)'}`,
+              background: active ? 'var(--accent)' : 'transparent',
+              cursor: 'pointer',
+              transition: 'background 0.18s, border-color 0.18s, transform 0.18s, width 0.18s, height 0.18s',
+              transform: active ? 'scale(1.25)' : 'scale(1)',
+            }} />
+        );
+      })}
+      {showBackToTop && (
+        <button
+          type="button"
+          onClick={onBackToTop}
+          aria-label="Revenir en haut"
+          title="Revenir en haut"
+          style={{
+            marginTop: 6,
+            width: 32, height: 32, padding: 0,
+            borderRadius: '50%',
+            border: '1px solid var(--line)',
+            background: 'var(--bg-card)',
+            color: 'var(--ink-2)',
+            cursor: 'pointer',
+            fontSize: 14, lineHeight: 1,
+            boxShadow: 'var(--shadow)',
+            transition: 'background 0.15s, color 0.15s, transform 0.15s',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'var(--accent)';
+            e.currentTarget.style.color = 'var(--bg)';
+            e.currentTarget.style.transform = 'scale(1.08)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'var(--bg-card)';
+            e.currentTarget.style.color = 'var(--ink-2)';
+            e.currentTarget.style.transform = '';
+          }}>↑</button>
+      )}
+    </div>
   );
 }
 
@@ -968,66 +1080,49 @@ function FeaturesGrid({ features, goto }) {
     el.scrollBy({ left: dir * step, behavior: 'smooth' });
   };
 
-  // Bouton de défilement — skin-aware (vars CSS), absolute sur le carousel.
+  // Boutons positionnés à L'EXTÉRIEUR du flow des cards — masqués par
+  // défaut, révélés au hover du carousel (parent .jdm-carousel-wrap)
+  // pour ne pas masquer la première/dernière carte.
   const arrowBtn = (side, enabled) => (
     <button
       type="button"
       onClick={() => scrollBy(side === 'left' ? -1 : 1)}
       aria-label={side === 'left' ? 'Défiler à gauche' : 'Défiler à droite'}
+      className={`jdm-carousel-arrow jdm-carousel-arrow-${side}`}
       style={{
         position: 'absolute',
-        top: '50%', transform: 'translateY(-50%)',
-        [side]: -6,
+        top: '50%',
+        [side]: -18,           // OUT du carousel pour ne pas couvrir les cards
+        transform: 'translateY(-50%)',
         width: 38, height: 38,
         borderRadius: '50%',
         border: '1px solid var(--line)',
         background: 'var(--bg-card)',
         color: 'var(--ink-2)',
         cursor: enabled ? 'pointer' : 'default',
-        opacity: enabled ? 1 : 0,
+        opacity: 0,            // hidden by default, .jdm-carousel-wrap:hover révèle
         pointerEvents: enabled ? 'auto' : 'none',
         boxShadow: 'var(--shadow)',
-        fontSize: 16,
-        lineHeight: 1,
-        zIndex: 3,
-        transition: 'opacity 0.2s, background 0.15s, color 0.15s, transform 0.15s',
+        fontSize: 18, lineHeight: 1,
+        zIndex: 5,
+        transition: 'opacity 0.25s, background 0.15s, color 0.15s, transform 0.15s',
         backdropFilter: 'blur(6px)',
         WebkitBackdropFilter: 'blur(6px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = 'var(--accent)';
-        e.currentTarget.style.color = 'var(--bg)';
-        e.currentTarget.style.transform = 'translateY(-50%) scale(1.05)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'var(--bg-card)';
-        e.currentTarget.style.color = 'var(--ink-2)';
-        e.currentTarget.style.transform = 'translateY(-50%)';
-      }}>
+      data-enabled={enabled ? '1' : '0'}>
       {side === 'left' ? '‹' : '›'}
     </button>
   );
 
-  // Gradient de fade aux bords — s'estompe automatiquement quand on
-  // arrive en début/fin de scroll (canPrev/canNext = false).
-  const fade = (side, visible) => (
-    <div style={{
-      position: 'absolute',
-      top: 0, bottom: 16, [side]: 0,
-      width: 56,
-      pointerEvents: 'none',
-      zIndex: 2,
-      background: `linear-gradient(to ${side === 'left' ? 'right' : 'left'}, var(--bg) 0%, transparent 100%)`,
-      opacity: visible ? 1 : 0,
-      transition: 'opacity 0.25s',
-    }} />
-  );
-
   return (
-    <div style={{ position: 'relative' }}>
-      {fade('left', canPrev)}
-      {fade('right', canNext)}
+    <div className="jdm-carousel-wrap" style={{
+      position: 'relative',
+      // Marge pour que les boutons (positionnés à -18) ne soient pas
+      // coupés par un parent overflow:hidden éventuel.
+      padding: '0 24px',
+      margin: '0 -24px',
+    }}>
       {arrowBtn('left', canPrev)}
       {arrowBtn('right', canNext)}
       <div
@@ -1035,18 +1130,20 @@ function FeaturesGrid({ features, goto }) {
         className="jdm-carousel"
         style={{
           display: 'flex',
-          gap: 12,
+          gap: 14,
           overflowX: 'auto',
           overflowY: 'visible',
           scrollSnapType: 'x mandatory',
-          padding: '4px 4px 16px',
-          margin: '-4px -4px 0',
+          padding: '8px 4px 18px',
+          margin: '-8px -4px 0',
         }}>
         {features.map((f, i) => (
           <div key={f.id} style={{
             flex: '0 0 clamp(280px, 28vw, 340px)',
             scrollSnapAlign: 'start',
             display: 'flex',
+            // anim sur entrée pour suivre le scroll
+            transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}>
             <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
           </div>
