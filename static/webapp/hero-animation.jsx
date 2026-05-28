@@ -323,6 +323,13 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
     (edgesByNode[e.to]   = edgesByNode[e.to]   || []).push(i);
   });
 
+  // Index id → label décodé pour les tooltips d'arêtes — les ids
+  // bruts JDM (N23, N1234…) ne sont pas lisibles. Le centre est
+  // déjà stocké par son label (cf. buildLiveScenario.remap).
+  const labelOf = {};
+  if (g.center) labelOf[g.center] = g.center;
+  g.nodes.forEach(n => { labelOf[n.id] = n.label || n.id; });
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`}
          preserveAspectRatio="xMidYMid meet"
@@ -372,7 +379,7 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
                   onMouseLeave={() => setHoverEdge(h => h === i ? null : h)}
                 >
                   <title>
-                    {`${e.from} —[${e.label || '?'}]→ ${e.to}`}
+                    {`${labelOf[e.from] || e.from} —[${e.label || '?'}]→ ${labelOf[e.to] || e.to}`}
                     {e.weight !== undefined ? `  (w=${e.weight})` : ''}
                     {e.negative ? '  [NÉGATION]' : ''}
                   </title>
