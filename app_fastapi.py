@@ -520,6 +520,177 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
 
 
 # ────────────────────────────────────────────────────────────────────
+# Route: Subgraph LIVE (SSE) — mode animé du sous-graphe
+# ────────────────────────────────────────────────────────────────────
+# Émet le graphe progressivement pour le mode LIVE de l'onglet Sous-graphe.
+# Format SSE (cf. INTEGRATION.md handoff designer) :
+#   event: graph    data: {nodes, edges}          ← snapshot complet immédiat
+#   event: node     data: {id, label, kind, depth} ← émis un par un
+#   event: edge     data: {from, to, relation, highlight}
+#   event: thinking data: {text}                  ← optionnel (LLM)
+#   event: response data: {text}                  ← optionnel (LLM)
+#   event: done     data: {}
+class SubgraphLiveRequest(BaseModel):
+    term: str
+    depth: int = 1
+    top_k: int = 4
+    relations: list[str] = []
+    max_nodes: int = 30
+    # Si fourni : question posée au LLM en parallèle de l'animation.
+    # Sa réponse est streamée via les events 'thinking' / 'response'.
+    question: Optional[str] = None
+    api_key: str = ""
+    model: str = "gemini-3.1-flash-lite"
+
+
+@app.post("/api/subgraph/live")
+async def api_subgraph_live(req: SubgraphLiveRequest):
+    """SSE qui anime la construction du sous-graphe d'un terme."""
+    c = get_client()
+    term, err = _resolve_and_check(c, req.term)
+    if err:
+        async def err_gen():
+            yield {"event": "error", "data": json.dumps({"text": err}, ensure_ascii=False)}
+        return EventSourceResponse(err_gen())
+
+    # Build le sous-graphe complet en JSON (réutilise build_subgraph existant)
+    try:
+        rels = list(req.relations) if req.relations else None
+        res = build_subgraph(
+            term, client=c,
+            depth=max(1, min(int(req.depth), 4)),
+            top_k_per_relation=int(req.top_k),
+            relations=rels,
+            output="json",
+        )
+    except Exception as e:
+        async def err_gen():
+            yield {"event": "error", "data": json.dumps({
+                "text": f"{type(e).__name__}: {e}"
+            }, ensure_ascii=False)}
+        return EventSourceResponse(err_gen())
+
+    raw_nodes = res.get("nodes", [])
+    raw_edges = res.get("edges", [])
+
+    # Aplatit vers la forme légère (id, label, kind, depth pour les nodes ;
+    # from/to/relation/highlight pour les edges).
+    nodes = [
+        {
+            "id": n["id"],
+            "label": n.get("label", n["id"]),
+            "kind": n.get("_kind", "assoc"),
+            "depth": n.get("_depth", 0),
+        }
+        for n in raw_nodes
+    ]
+    edges = [
+        {
+            "from": e["from"], "to": e["to"],
+            "relation": e.get("_relation", ""),
+            "weight": e.get("_weight", 0),
+            "negative": bool(e.get("_negative", False)),
+            "depth": e.get("_depth", 1),
+            "highlight": e.get("_depth", 1) == 1,  # 1er niveau = highlight
+        }
+        for e in raw_edges
+    ]
+
+    # Cap par max_nodes via BFS depuis ROOT (idem /api/subgraph).
+    if req.max_nodes and len(nodes) > req.max_nodes:
+        out_edges_idx: dict[str, list[dict]] = {}
+        for e in edges:
+            out_edges_idx.setdefault(e["from"], []).append(e)
+        for src in out_edges_idx:
+            out_edges_idx[src].sort(key=lambda e: -abs(e.get("weight", 0)))
+        keep: set[str] = {"ROOT"}
+        frontier = ["ROOT"]
+        while frontier and len(keep) < req.max_nodes:
+            nxt = []
+            for src in frontier:
+                for e in out_edges_idx.get(src, []):
+                    if e["to"] not in keep:
+                        keep.add(e["to"])
+                        nxt.append(e["to"])
+                        if len(keep) >= req.max_nodes:
+                            break
+                if len(keep) >= req.max_nodes:
+                    break
+            frontier = nxt
+        nodes = [n for n in nodes if n["id"] in keep]
+        edges = [e for e in edges if e["from"] in keep and e["to"] in keep]
+
+    # Option LLM : si une question est fournie, on lance chat_with_agent
+    # en parallèle et on stream la réponse. Sinon on saute cette partie.
+    has_question = bool((req.question or "").strip())
+
+    async def gen():
+        import asyncio
+        # 1) Snapshot global immédiat (fast clients qui ne veulent pas
+        # attendre l'animation peuvent l'utiliser direct)
+        yield {
+            "event": "graph",
+            "data": json.dumps({
+                "nodes": nodes, "edges": edges, "root": term,
+            }, ensure_ascii=False),
+        }
+
+        # 2) Émission progressive — node toutes les 120ms (l'anim
+        # designer dans HeroAnimation utilise des delays similaires)
+        for n in nodes:
+            yield {"event": "node", "data": json.dumps(n, ensure_ascii=False)}
+            await asyncio.sleep(0.12)
+
+        # 3) Émission progressive des edges après les nodes
+        for e in edges:
+            yield {"event": "edge", "data": json.dumps(e, ensure_ascii=False)}
+            await asyncio.sleep(0.08)
+
+        # 4) Optionnel : si question → on streame une réponse LLM
+        if has_question:
+            try:
+                llm = _app._build_llm(req.model, req.api_key, use_thinking=False)
+                from langchain_core.messages import HumanMessage
+                # Stream la réponse en tokens via astream_events
+                from jdm_agent.tools.jdm_agent import build_jdm_agent
+                agent = build_jdm_agent(client=c, llm=llm)
+                prompt = f"Pour le terme « {term} », réponds : {req.question}"
+                accumulated = ""
+                async for ev in agent.astream_events(
+                    {"messages": [HumanMessage(content=prompt)]},
+                    version="v2",
+                ):
+                    if ev.get("event") == "on_chat_model_stream":
+                        chunk = (ev.get("data") or {}).get("chunk")
+                        if chunk is None:
+                            continue
+                        content = chunk.content
+                        if isinstance(content, str):
+                            delta = content
+                        elif isinstance(content, list):
+                            delta = "".join(
+                                b.get("text", "") for b in content
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            )
+                        else:
+                            delta = ""
+                        if delta:
+                            accumulated += delta
+                            yield {
+                                "event": "response",
+                                "data": json.dumps({"text": accumulated}, ensure_ascii=False),
+                            }
+            except Exception as e:
+                yield {"event": "thinking", "data": json.dumps({
+                    "text": f"(LLM indisponible : {type(e).__name__}: {e})"
+                }, ensure_ascii=False)}
+
+        yield {"event": "done", "data": "{}"}
+
+    return EventSourceResponse(gen(), ping=15)
+
+
+# ────────────────────────────────────────────────────────────────────
 # Helper : wrap un générateur SYNC bloquant en async generator pour SSE
 # ────────────────────────────────────────────────────────────────────
 async def _to_async_gen(sync_gen):
