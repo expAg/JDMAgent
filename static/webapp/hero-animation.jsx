@@ -9,7 +9,8 @@
 
 const { useState: useStateHero, useEffect: useEffectHero, useRef: useRefHero } = React;
 
-function HeroAnimation({ height = 380, showChat = true, liveScenario = null }) {
+function HeroAnimation({ height = 380, showChat = true, liveScenario = null,
+                         interactive = false, onNodeClick = null }) {
   // Si liveScenario est fourni : on l'utilise À LA PLACE des scénarios
   // hardcodés (= mode "vraies données JDM" depuis /api/subgraph/live).
   // Pas de loop, pas de chat de démo — un seul rendu animé.
@@ -193,7 +194,8 @@ function HeroAnimation({ height = 380, showChat = true, liveScenario = null }) {
         height,
         overflow: 'hidden',
       }}>
-        <GraphCanvas scenario={scenario} tick={tick} height={height} />
+        <GraphCanvas scenario={scenario} tick={tick} height={height}
+                     interactive={interactive} onNodeClick={onNodeClick} />
         <div style={{
           position: 'absolute', top: 14, left: 16,
           display: 'flex', alignItems: 'center', gap: 8,
@@ -246,7 +248,7 @@ function sleepHero(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-function GraphCanvas({ scenario, tick, height }) {
+function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick = null }) {
   const W = 560, H = height;
   const cx = W / 2, cy = H / 2;
   const g = scenario.graph;
@@ -264,11 +266,25 @@ function GraphCanvas({ scenario, tick, height }) {
 
   // Path layout doesn't rotate — labels need to stay axis-aligned and
   // not drift off-frame. Radial layout has a slow drift.
+  // MODE INTERACTIF (LIVE) : aucune rotation pour que le hover soit
+  // utilisable et que les nœuds soient cliquables sans bouger.
   const isPath = g.layout === 'path';
-  const breathScale = 1 + (isPath ? 0.008 : 0.012) * Math.sin(tick * 0.6);
-  const rotateAll = isPath ? 0 : tick * 1.2;
+  const breathScale = 1 + (isPath || interactive ? 0.004 : 0.012) * Math.sin(tick * 0.6);
+  const rotateAll = (isPath || interactive) ? 0 : tick * 1.2;
 
   const transform = `translate(${cx} ${cy}) rotate(${rotateAll}) scale(${breathScale})`;
+
+  // Hover state — index d'arête/de nœud sous le curseur
+  const [hoverEdge, setHoverEdge] = useStateHero(null);
+  const [hoverNode, setHoverNode] = useStateHero(null);
+
+  // Index : pour un nœud donné, quelles arêtes le touchent ?
+  // Permet de SURBRILLER les arêtes connectées au nœud survolé.
+  const edgesByNode = {};
+  g.edges.forEach((e, i) => {
+    (edgesByNode[e.from] = edgesByNode[e.from] || []).push(i);
+    (edgesByNode[e.to]   = edgesByNode[e.to]   || []).push(i);
+  });
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`}
@@ -293,32 +309,59 @@ function GraphCanvas({ scenario, tick, height }) {
           if (!a || !b) return null;
           const x = a.x + (b.x - a.x) * t;
           const y = a.y + (b.y - a.y) * t;
-          // Couleur d'arête : utilise e.color si fourni (mode LIVE avec
-          // codage par type de relation), sinon fallback démo accent/ink-3.
           const edgeColor = e.color
             || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
           const labelColor = e.color
             || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
+          // États de surlignage : hover direct sur l'arête OU nœud
+          // adjacent survolé.
+          const adjacentHover = hoverNode != null &&
+            (e.from === hoverNode || e.to === hoverNode);
+          const isHot = hoverEdge === i || adjacentHover;
+          // En mode interactif, on dim les arêtes non concernées
+          // quand un hover est actif → "focus mode".
+          const someHoverActive = interactive && (hoverEdge != null || hoverNode != null);
+          const dimmed = someHoverActive && !isHot;
           return (
             <g key={i}>
+              {/* Hitbox transparente plus large pour faciliter le hover */}
+              {interactive && (
+                <line
+                  x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                  stroke="transparent"
+                  strokeWidth={14}
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setHoverEdge(i)}
+                  onMouseLeave={() => setHoverEdge(h => h === i ? null : h)}
+                >
+                  <title>
+                    {`${e.from} —[${e.label || '?'}]→ ${e.to}`}
+                    {e.weight !== undefined ? `  (w=${e.weight})` : ''}
+                    {e.negative ? '  [NÉGATION]' : ''}
+                  </title>
+                </line>
+              )}
               <line
                 x1={a.x} y1={a.y} x2={x} y2={y}
                 stroke={edgeColor}
-                strokeWidth={e.highlight ? 2 : 1.2}
-                strokeOpacity={e.color ? 0.82 : (e.highlight ? 0.9 : 0.45)}
+                strokeWidth={isHot ? 3.2 : (e.highlight ? 2 : 1.2)}
+                strokeOpacity={dimmed ? 0.15 : (isHot ? 1 : (e.color ? 0.82 : (e.highlight ? 0.9 : 0.45)))}
                 strokeLinecap="round"
                 strokeDasharray={e.negative ? '4 3' : undefined}
+                style={{ pointerEvents: 'none', transition: 'stroke-width 0.12s, stroke-opacity 0.12s' }}
               />
-              {e.label && t > 0.6 && (
+              {((e.label && t > 0.6) || isHot) && (
                 <text
                   x={(a.x + b.x) / 2}
                   y={(a.y + b.y) / 2 - 6}
                   textAnchor="middle"
                   fontFamily="var(--font-mono)"
-                  fontSize="9"
+                  fontSize={isHot ? 11 : 9}
+                  fontWeight={isHot ? 700 : 400}
                   fill={labelColor}
-                  opacity={(t - 0.6) / 0.4}
+                  opacity={dimmed ? 0.15 : (isHot ? 1 : ((t - 0.6) / 0.4))}
                   transform={`rotate(${-rotateAll}, ${(a.x + b.x) / 2}, ${(a.y + b.y) / 2 - 6})`}
+                  style={{ pointerEvents: 'none' }}
                 >
                   {e.label}
                 </text>
@@ -337,7 +380,15 @@ function GraphCanvas({ scenario, tick, height }) {
           const visible = tick >= n.delay;
           if (!visible) return null;
           const t = Math.min(1, (tick - n.delay) / 0.5);
-          const floatY = Math.sin(tick * 1.2 + i) * 1.5;
+          // Pas de flottement en mode interactif (sinon le clic rate).
+          const floatY = interactive ? 0 : Math.sin(tick * 1.2 + i) * 1.5;
+          const isHot = hoverNode === n.id;
+          const someHoverActive = interactive && (hoverEdge != null || hoverNode != null);
+          // Un nœud "concerné" par le hover d'arête = ses extrémités
+          const edgeHovered = hoverEdge != null ? g.edges[hoverEdge] : null;
+          const concerned = edgeHovered &&
+            (edgeHovered.from === n.id || edgeHovered.to === n.id);
+          const dimmed = someHoverActive && !isHot && !concerned;
           return (
             <NodeBubble
               key={n.id}
@@ -347,6 +398,13 @@ function GraphCanvas({ scenario, tick, height }) {
               dim={n.dim}
               appearT={t}
               counterRotate={-rotateAll}
+              interactive={interactive}
+              hot={isHot || concerned}
+              dimmed={dimmed}
+              onMouseEnter={interactive ? () => setHoverNode(n.id) : undefined}
+              onMouseLeave={interactive ? () => setHoverNode(h => h === n.id ? null : h) : undefined}
+              onClick={interactive && onNodeClick ? () => onNodeClick(n) : undefined}
+              tooltip={`${n.label}${n.dist != null ? `  (depth ${n.dim ? 2 : 1})` : ''}`}
             />
           );
         })}
@@ -377,23 +435,44 @@ function CenterNode({ label, tick, counterRotate }) {
   );
 }
 
-function NodeBubble({ x, y, label, color, dim, appearT, counterRotate }) {
+function NodeBubble({ x, y, label, color, dim, appearT, counterRotate,
+                     interactive = false, hot = false, dimmed = false,
+                     onMouseEnter, onMouseLeave, onClick, tooltip }) {
   const c = `var(--${color})`;
-  const r = (dim ? 5 : 9) * appearT;
-  const fontSize = dim ? 10 : 12;
+  // Hot = boost taille + opacité ; dimmed = recule visuellement.
+  const baseR = dim ? 5 : 9;
+  const r = (hot ? baseR * 1.4 : baseR) * appearT;
+  const fontSize = (dim ? 10 : 12) + (hot ? 2 : 0);
+  const opacity = dimmed ? 0.25 : appearT;
   return (
-    <g transform={`translate(${x} ${y})`} opacity={appearT}>
-      <circle r={r + 5} fill={c} opacity="0.12"/>
-      <circle r={r} fill={c}/>
-      <g transform={`rotate(${counterRotate})`}>
+    <g
+      transform={`translate(${x} ${y})`}
+      opacity={opacity}
+      data-node-bubble={interactive ? '1' : undefined}
+      style={{
+        cursor: interactive && onClick ? 'pointer' : (interactive ? 'default' : 'inherit'),
+        transition: 'opacity 0.15s',
+      }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onClick={onClick}
+    >
+      {tooltip && <title>{tooltip}</title>}
+      {/* Hitbox transparente pour faciliter hover/clic */}
+      {interactive && (
+        <circle r={Math.max(r + 8, 14)} fill="transparent" />
+      )}
+      <circle r={r + (hot ? 8 : 5)} fill={c} opacity={hot ? 0.28 : 0.12}/>
+      <circle r={r} fill={c} stroke={hot ? '#fff' : 'none'} strokeWidth={hot ? 1.5 : 0}/>
+      <g transform={`rotate(${counterRotate})`} style={{ pointerEvents: 'none' }}>
         <text
           y={r + fontSize + 4}
           textAnchor="middle"
           fontFamily="var(--font-sans)"
           fontSize={fontSize}
-          fontWeight={dim ? 400 : 600}
+          fontWeight={hot ? 700 : (dim ? 400 : 600)}
           fill="var(--ink)"
-          opacity={dim ? 0.65 : 1}
+          opacity={dim && !hot ? 0.65 : 1}
         >
           {label}
         </text>

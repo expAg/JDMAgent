@@ -255,26 +255,58 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
 // Wrapper qui MEMOIZE le scenario pour ne pas recréer un nouvel objet
 // à chaque render — sinon HeroAnimation re-trigger l'animation en
 // boucle infinie (sa useEffect dépend de liveScenario par référence).
-// Ajoute aussi le ZOOM (boutons +/- et molette) et la LÉGENDE des
-// couleurs de relations.
-function LiveAnimWrapper({ term, nodes, edges, layout }) {
+// Ajoute toutes les fonctionnalités de graphe communes :
+//   - Zoom (boutons +/− + molette Alt/Ctrl)
+//   - Pan (drag du canvas)
+//   - Hover arête → surlignage + tooltip natif (from/relation/to/poids)
+//   - Hover nœud → focus mode : arêtes connectées surlignées, reste dim
+//   - Clic nœud → recentre le graphe sur ce terme (via onRecenter)
+//   - Reset view (zoom 100% + pan 0,0)
+//   - Légende dynamique par type de relation
+function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
   const scenario = React.useMemo(
     () => buildLiveScenario(term, nodes, edges, layout),
     [term, layout, (nodes || []).length, (edges || []).length,
      (nodes || [])[0]?.id, (nodes || [])[(nodes || []).length - 1]?.id]
   );
 
-  // Zoom : multiplicateur CSS transform: scale(). 1 = taille naturelle.
-  // Bornes : 0.4 (très large) ↔ 3.0 (zoom serré).
+  // ── Zoom ──
   const [zoom, setZoom] = useState(1);
+  // ── Pan ──
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const drag = React.useRef({ active: false, sx: 0, sy: 0, px: 0, py: 0 });
+
   const onWheel = (e) => {
-    // Molette = zoom in/out continu (sans bloquer le scroll de la page :
-    // n'intercepte que si la touche Alt OU Ctrl est pressée).
+    // Molette = zoom in/out — bloque le scroll uniquement si Alt/Ctrl
+    // (sinon la page peut scroller normalement par-dessus le canvas).
     if (!(e.altKey || e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     const delta = -e.deltaY * 0.001;
     setZoom(z => Math.max(0.4, Math.min(3, z + delta)));
   };
+  const onMouseDown = (e) => {
+    if (e.button !== 0) return;          // bouton gauche uniquement
+    if (e.target.closest('[data-node-bubble]')) return; // pas si on clique un nœud
+    drag.current = { active: true, sx: e.clientX, sy: e.clientY,
+                     px: pan.x, py: pan.y };
+  };
+  const onMouseMove = (e) => {
+    if (!drag.current.active) return;
+    setPan({
+      x: drag.current.px + (e.clientX - drag.current.sx),
+      y: drag.current.py + (e.clientY - drag.current.sy),
+    });
+  };
+  const stopDrag = () => { drag.current.active = false; };
+
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+
+  // Recentre : clic nœud → relance la requête avec ce terme comme racine
+  const handleNodeClick = React.useCallback((node) => {
+    if (!onRecenter) return;
+    // Le label est le texte affiché (déjà décodé côté backend)
+    onRecenter(node.label || node.id);
+  }, [onRecenter]);
 
   // Relations effectivement présentes dans les arêtes → légende dynamique
   const presentRels = React.useMemo(() => {
@@ -283,24 +315,25 @@ function LiveAnimWrapper({ term, nodes, edges, layout }) {
     return Array.from(set).sort();
   }, [edges]);
 
+  const cursor = drag.current.active ? 'grabbing' : 'grab';
+
   return (
     <div style={{ position: 'relative', height: '100%', display: 'flex',
                   flexDirection: 'column' }}>
-      {/* Boutons de zoom — overlay coin haut-droit */}
+      {/* Boutons d'action — overlay coin haut-droit */}
       <div style={{
         position: 'absolute', top: 10, right: 10, zIndex: 5,
         display: 'flex', flexDirection: 'column', gap: 4,
       }}>
         {[
-          { label: '+', onClick: () => setZoom(z => Math.min(3, z + 0.2)) },
-          { label: '−', onClick: () => setZoom(z => Math.max(0.4, z - 0.2)) },
-          { label: '⟲', onClick: () => setZoom(1) },
+          { label: '+', title: 'Zoom +', onClick: () => setZoom(z => Math.min(3, z + 0.2)) },
+          { label: '−', title: 'Zoom −', onClick: () => setZoom(z => Math.max(0.4, z - 0.2)) },
+          { label: '⟲', title: 'Réinitialiser vue (zoom + pan)', onClick: resetView },
         ].map(b => (
           <button key={b.label}
             onClick={b.onClick}
             className="focus-ring"
-            title={b.label === '⟲' ? 'Réinitialiser le zoom' :
-                   b.label === '+' ? 'Zoom +' : 'Zoom −'}
+            title={b.title}
             style={{
               width: 28, height: 28,
               background: 'var(--bg-elev)',
@@ -320,20 +353,46 @@ function LiveAnimWrapper({ term, nodes, edges, layout }) {
         }}>{Math.round(zoom * 100)}%</div>
       </div>
 
-      {/* Canvas zoomable */}
+      {/* Hint d'usage — overlay coin haut-gauche, discret */}
+      <div style={{
+        position: 'absolute', bottom: 10, left: 10, zIndex: 5,
+        padding: '4px 8px',
+        background: 'rgba(0,0,0,0.35)',
+        border: '1px solid var(--line-soft)',
+        borderRadius: 4,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9, color: 'var(--ink-3)',
+        pointerEvents: 'none',
+        letterSpacing: '0.04em',
+      }}>
+        glisser : pan · Alt+molette : zoom · survoler : info · cliquer : recentrer
+      </div>
+
+      {/* Canvas zoomable + draggable */}
       <div
         onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={stopDrag}
+        onMouseLeave={stopDrag}
         style={{
           flex: 1, minHeight: 0, overflow: 'hidden',
           position: 'relative',
+          cursor,
+          userSelect: 'none',
         }}>
         <div style={{
           width: '100%', height: '100%',
-          transform: `scale(${zoom})`,
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: 'center center',
-          transition: 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: drag.current.active
+            ? 'none'
+            : 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
         }}>
-          <HeroAnimation height={560} showChat={false} liveScenario={scenario} />
+          <HeroAnimation height={560} showChat={false}
+                         liveScenario={scenario}
+                         interactive={true}
+                         onNodeClick={handleNodeClick} />
         </div>
       </div>
 
@@ -518,8 +577,20 @@ function ViewSubgraph() {
     }
   };
 
-  // Auto-run au mount
-  React.useEffect(() => { onBuild(); }, []);
+  // Auto-run au mount + à chaque incrément de runVersion
+  // (utilisé par recenterTo pour relancer après setTerm).
+  const [runVersion, setRunVersion] = useState(0);
+  React.useEffect(() => { onBuild(); /* eslint-disable-next-line */ }, [runVersion]);
+
+  // Recentre : utilisé par le clic sur un nœud en mode LIVE.
+  // setTerm(newTerm) → bump runVersion → useEffect → onBuild lit le
+  // term à jour. Pas de race condition : React garantit que le
+  // useEffect part avec la valeur de term post-render.
+  const recenterTo = React.useCallback((newTerm) => {
+    if (!newTerm || newTerm === term) return;
+    setTerm(newTerm);
+    setRunVersion(v => v + 1);
+  }, [term]);
 
   const stats = data.stats || {};
 
@@ -749,6 +820,7 @@ function ViewSubgraph() {
                     nodes={data.nodes}
                     edges={data.edges}
                     layout={liveLayout}
+                    onRecenter={recenterTo}
                   />
                 </div>
               ) : data.nodes && data.nodes.length > 0 ? (

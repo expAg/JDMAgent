@@ -667,7 +667,8 @@ Object.assign(window, {
 
 const { useState: useStateHero, useEffect: useEffectHero, useRef: useRefHero } = React;
 
-function HeroAnimation({ height = 380, showChat = true, liveScenario = null }) {
+function HeroAnimation({ height = 380, showChat = true, liveScenario = null,
+                         interactive = false, onNodeClick = null }) {
   // Si liveScenario est fourni : on l'utilise À LA PLACE des scénarios
   // hardcodés (= mode "vraies données JDM" depuis /api/subgraph/live).
   // Pas de loop, pas de chat de démo — un seul rendu animé.
@@ -851,7 +852,8 @@ function HeroAnimation({ height = 380, showChat = true, liveScenario = null }) {
         height,
         overflow: 'hidden',
       }}>
-        <GraphCanvas scenario={scenario} tick={tick} height={height} />
+        <GraphCanvas scenario={scenario} tick={tick} height={height}
+                     interactive={interactive} onNodeClick={onNodeClick} />
         <div style={{
           position: 'absolute', top: 14, left: 16,
           display: 'flex', alignItems: 'center', gap: 8,
@@ -904,7 +906,7 @@ function sleepHero(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-function GraphCanvas({ scenario, tick, height }) {
+function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick = null }) {
   const W = 560, H = height;
   const cx = W / 2, cy = H / 2;
   const g = scenario.graph;
@@ -922,11 +924,25 @@ function GraphCanvas({ scenario, tick, height }) {
 
   // Path layout doesn't rotate — labels need to stay axis-aligned and
   // not drift off-frame. Radial layout has a slow drift.
+  // MODE INTERACTIF (LIVE) : aucune rotation pour que le hover soit
+  // utilisable et que les nœuds soient cliquables sans bouger.
   const isPath = g.layout === 'path';
-  const breathScale = 1 + (isPath ? 0.008 : 0.012) * Math.sin(tick * 0.6);
-  const rotateAll = isPath ? 0 : tick * 1.2;
+  const breathScale = 1 + (isPath || interactive ? 0.004 : 0.012) * Math.sin(tick * 0.6);
+  const rotateAll = (isPath || interactive) ? 0 : tick * 1.2;
 
   const transform = `translate(${cx} ${cy}) rotate(${rotateAll}) scale(${breathScale})`;
+
+  // Hover state — index d'arête/de nœud sous le curseur
+  const [hoverEdge, setHoverEdge] = useStateHero(null);
+  const [hoverNode, setHoverNode] = useStateHero(null);
+
+  // Index : pour un nœud donné, quelles arêtes le touchent ?
+  // Permet de SURBRILLER les arêtes connectées au nœud survolé.
+  const edgesByNode = {};
+  g.edges.forEach((e, i) => {
+    (edgesByNode[e.from] = edgesByNode[e.from] || []).push(i);
+    (edgesByNode[e.to]   = edgesByNode[e.to]   || []).push(i);
+  });
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`}
@@ -951,32 +967,59 @@ function GraphCanvas({ scenario, tick, height }) {
           if (!a || !b) return null;
           const x = a.x + (b.x - a.x) * t;
           const y = a.y + (b.y - a.y) * t;
-          // Couleur d'arête : utilise e.color si fourni (mode LIVE avec
-          // codage par type de relation), sinon fallback démo accent/ink-3.
           const edgeColor = e.color
             || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
           const labelColor = e.color
             || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
+          // États de surlignage : hover direct sur l'arête OU nœud
+          // adjacent survolé.
+          const adjacentHover = hoverNode != null &&
+            (e.from === hoverNode || e.to === hoverNode);
+          const isHot = hoverEdge === i || adjacentHover;
+          // En mode interactif, on dim les arêtes non concernées
+          // quand un hover est actif → "focus mode".
+          const someHoverActive = interactive && (hoverEdge != null || hoverNode != null);
+          const dimmed = someHoverActive && !isHot;
           return (
             <g key={i}>
+              {/* Hitbox transparente plus large pour faciliter le hover */}
+              {interactive && (
+                <line
+                  x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                  stroke="transparent"
+                  strokeWidth={14}
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setHoverEdge(i)}
+                  onMouseLeave={() => setHoverEdge(h => h === i ? null : h)}
+                >
+                  <title>
+                    {`${e.from} —[${e.label || '?'}]→ ${e.to}`}
+                    {e.weight !== undefined ? `  (w=${e.weight})` : ''}
+                    {e.negative ? '  [NÉGATION]' : ''}
+                  </title>
+                </line>
+              )}
               <line
                 x1={a.x} y1={a.y} x2={x} y2={y}
                 stroke={edgeColor}
-                strokeWidth={e.highlight ? 2 : 1.2}
-                strokeOpacity={e.color ? 0.82 : (e.highlight ? 0.9 : 0.45)}
+                strokeWidth={isHot ? 3.2 : (e.highlight ? 2 : 1.2)}
+                strokeOpacity={dimmed ? 0.15 : (isHot ? 1 : (e.color ? 0.82 : (e.highlight ? 0.9 : 0.45)))}
                 strokeLinecap="round"
                 strokeDasharray={e.negative ? '4 3' : undefined}
+                style={{ pointerEvents: 'none', transition: 'stroke-width 0.12s, stroke-opacity 0.12s' }}
               />
-              {e.label && t > 0.6 && (
+              {((e.label && t > 0.6) || isHot) && (
                 <text
                   x={(a.x + b.x) / 2}
                   y={(a.y + b.y) / 2 - 6}
                   textAnchor="middle"
                   fontFamily="var(--font-mono)"
-                  fontSize="9"
+                  fontSize={isHot ? 11 : 9}
+                  fontWeight={isHot ? 700 : 400}
                   fill={labelColor}
-                  opacity={(t - 0.6) / 0.4}
+                  opacity={dimmed ? 0.15 : (isHot ? 1 : ((t - 0.6) / 0.4))}
                   transform={`rotate(${-rotateAll}, ${(a.x + b.x) / 2}, ${(a.y + b.y) / 2 - 6})`}
+                  style={{ pointerEvents: 'none' }}
                 >
                   {e.label}
                 </text>
@@ -995,7 +1038,15 @@ function GraphCanvas({ scenario, tick, height }) {
           const visible = tick >= n.delay;
           if (!visible) return null;
           const t = Math.min(1, (tick - n.delay) / 0.5);
-          const floatY = Math.sin(tick * 1.2 + i) * 1.5;
+          // Pas de flottement en mode interactif (sinon le clic rate).
+          const floatY = interactive ? 0 : Math.sin(tick * 1.2 + i) * 1.5;
+          const isHot = hoverNode === n.id;
+          const someHoverActive = interactive && (hoverEdge != null || hoverNode != null);
+          // Un nœud "concerné" par le hover d'arête = ses extrémités
+          const edgeHovered = hoverEdge != null ? g.edges[hoverEdge] : null;
+          const concerned = edgeHovered &&
+            (edgeHovered.from === n.id || edgeHovered.to === n.id);
+          const dimmed = someHoverActive && !isHot && !concerned;
           return (
             <NodeBubble
               key={n.id}
@@ -1005,6 +1056,13 @@ function GraphCanvas({ scenario, tick, height }) {
               dim={n.dim}
               appearT={t}
               counterRotate={-rotateAll}
+              interactive={interactive}
+              hot={isHot || concerned}
+              dimmed={dimmed}
+              onMouseEnter={interactive ? () => setHoverNode(n.id) : undefined}
+              onMouseLeave={interactive ? () => setHoverNode(h => h === n.id ? null : h) : undefined}
+              onClick={interactive && onNodeClick ? () => onNodeClick(n) : undefined}
+              tooltip={`${n.label}${n.dist != null ? `  (depth ${n.dim ? 2 : 1})` : ''}`}
             />
           );
         })}
@@ -1035,23 +1093,44 @@ function CenterNode({ label, tick, counterRotate }) {
   );
 }
 
-function NodeBubble({ x, y, label, color, dim, appearT, counterRotate }) {
+function NodeBubble({ x, y, label, color, dim, appearT, counterRotate,
+                     interactive = false, hot = false, dimmed = false,
+                     onMouseEnter, onMouseLeave, onClick, tooltip }) {
   const c = `var(--${color})`;
-  const r = (dim ? 5 : 9) * appearT;
-  const fontSize = dim ? 10 : 12;
+  // Hot = boost taille + opacité ; dimmed = recule visuellement.
+  const baseR = dim ? 5 : 9;
+  const r = (hot ? baseR * 1.4 : baseR) * appearT;
+  const fontSize = (dim ? 10 : 12) + (hot ? 2 : 0);
+  const opacity = dimmed ? 0.25 : appearT;
   return (
-    <g transform={`translate(${x} ${y})`} opacity={appearT}>
-      <circle r={r + 5} fill={c} opacity="0.12"/>
-      <circle r={r} fill={c}/>
-      <g transform={`rotate(${counterRotate})`}>
+    <g
+      transform={`translate(${x} ${y})`}
+      opacity={opacity}
+      data-node-bubble={interactive ? '1' : undefined}
+      style={{
+        cursor: interactive && onClick ? 'pointer' : (interactive ? 'default' : 'inherit'),
+        transition: 'opacity 0.15s',
+      }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onClick={onClick}
+    >
+      {tooltip && <title>{tooltip}</title>}
+      {/* Hitbox transparente pour faciliter hover/clic */}
+      {interactive && (
+        <circle r={Math.max(r + 8, 14)} fill="transparent" />
+      )}
+      <circle r={r + (hot ? 8 : 5)} fill={c} opacity={hot ? 0.28 : 0.12}/>
+      <circle r={r} fill={c} stroke={hot ? '#fff' : 'none'} strokeWidth={hot ? 1.5 : 0}/>
+      <g transform={`rotate(${counterRotate})`} style={{ pointerEvents: 'none' }}>
         <text
           y={r + fontSize + 4}
           textAnchor="middle"
           fontFamily="var(--font-sans)"
           fontSize={fontSize}
-          fontWeight={dim ? 400 : 600}
+          fontWeight={hot ? 700 : (dim ? 400 : 600)}
           fill="var(--ink)"
-          opacity={dim ? 0.65 : 1}
+          opacity={dim && !hot ? 0.65 : 1}
         >
           {label}
         </text>
@@ -3276,26 +3355,58 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
 // Wrapper qui MEMOIZE le scenario pour ne pas recréer un nouvel objet
 // à chaque render — sinon HeroAnimation re-trigger l'animation en
 // boucle infinie (sa useEffect dépend de liveScenario par référence).
-// Ajoute aussi le ZOOM (boutons +/- et molette) et la LÉGENDE des
-// couleurs de relations.
-function LiveAnimWrapper({ term, nodes, edges, layout }) {
+// Ajoute toutes les fonctionnalités de graphe communes :
+//   - Zoom (boutons +/− + molette Alt/Ctrl)
+//   - Pan (drag du canvas)
+//   - Hover arête → surlignage + tooltip natif (from/relation/to/poids)
+//   - Hover nœud → focus mode : arêtes connectées surlignées, reste dim
+//   - Clic nœud → recentre le graphe sur ce terme (via onRecenter)
+//   - Reset view (zoom 100% + pan 0,0)
+//   - Légende dynamique par type de relation
+function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
   const scenario = React.useMemo(
     () => buildLiveScenario(term, nodes, edges, layout),
     [term, layout, (nodes || []).length, (edges || []).length,
      (nodes || [])[0]?.id, (nodes || [])[(nodes || []).length - 1]?.id]
   );
 
-  // Zoom : multiplicateur CSS transform: scale(). 1 = taille naturelle.
-  // Bornes : 0.4 (très large) ↔ 3.0 (zoom serré).
+  // ── Zoom ──
   const [zoom, setZoom] = useState(1);
+  // ── Pan ──
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const drag = React.useRef({ active: false, sx: 0, sy: 0, px: 0, py: 0 });
+
   const onWheel = (e) => {
-    // Molette = zoom in/out continu (sans bloquer le scroll de la page :
-    // n'intercepte que si la touche Alt OU Ctrl est pressée).
+    // Molette = zoom in/out — bloque le scroll uniquement si Alt/Ctrl
+    // (sinon la page peut scroller normalement par-dessus le canvas).
     if (!(e.altKey || e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     const delta = -e.deltaY * 0.001;
     setZoom(z => Math.max(0.4, Math.min(3, z + delta)));
   };
+  const onMouseDown = (e) => {
+    if (e.button !== 0) return;          // bouton gauche uniquement
+    if (e.target.closest('[data-node-bubble]')) return; // pas si on clique un nœud
+    drag.current = { active: true, sx: e.clientX, sy: e.clientY,
+                     px: pan.x, py: pan.y };
+  };
+  const onMouseMove = (e) => {
+    if (!drag.current.active) return;
+    setPan({
+      x: drag.current.px + (e.clientX - drag.current.sx),
+      y: drag.current.py + (e.clientY - drag.current.sy),
+    });
+  };
+  const stopDrag = () => { drag.current.active = false; };
+
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+
+  // Recentre : clic nœud → relance la requête avec ce terme comme racine
+  const handleNodeClick = React.useCallback((node) => {
+    if (!onRecenter) return;
+    // Le label est le texte affiché (déjà décodé côté backend)
+    onRecenter(node.label || node.id);
+  }, [onRecenter]);
 
   // Relations effectivement présentes dans les arêtes → légende dynamique
   const presentRels = React.useMemo(() => {
@@ -3304,24 +3415,25 @@ function LiveAnimWrapper({ term, nodes, edges, layout }) {
     return Array.from(set).sort();
   }, [edges]);
 
+  const cursor = drag.current.active ? 'grabbing' : 'grab';
+
   return (
     <div style={{ position: 'relative', height: '100%', display: 'flex',
                   flexDirection: 'column' }}>
-      {/* Boutons de zoom — overlay coin haut-droit */}
+      {/* Boutons d'action — overlay coin haut-droit */}
       <div style={{
         position: 'absolute', top: 10, right: 10, zIndex: 5,
         display: 'flex', flexDirection: 'column', gap: 4,
       }}>
         {[
-          { label: '+', onClick: () => setZoom(z => Math.min(3, z + 0.2)) },
-          { label: '−', onClick: () => setZoom(z => Math.max(0.4, z - 0.2)) },
-          { label: '⟲', onClick: () => setZoom(1) },
+          { label: '+', title: 'Zoom +', onClick: () => setZoom(z => Math.min(3, z + 0.2)) },
+          { label: '−', title: 'Zoom −', onClick: () => setZoom(z => Math.max(0.4, z - 0.2)) },
+          { label: '⟲', title: 'Réinitialiser vue (zoom + pan)', onClick: resetView },
         ].map(b => (
           <button key={b.label}
             onClick={b.onClick}
             className="focus-ring"
-            title={b.label === '⟲' ? 'Réinitialiser le zoom' :
-                   b.label === '+' ? 'Zoom +' : 'Zoom −'}
+            title={b.title}
             style={{
               width: 28, height: 28,
               background: 'var(--bg-elev)',
@@ -3341,20 +3453,46 @@ function LiveAnimWrapper({ term, nodes, edges, layout }) {
         }}>{Math.round(zoom * 100)}%</div>
       </div>
 
-      {/* Canvas zoomable */}
+      {/* Hint d'usage — overlay coin haut-gauche, discret */}
+      <div style={{
+        position: 'absolute', bottom: 10, left: 10, zIndex: 5,
+        padding: '4px 8px',
+        background: 'rgba(0,0,0,0.35)',
+        border: '1px solid var(--line-soft)',
+        borderRadius: 4,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9, color: 'var(--ink-3)',
+        pointerEvents: 'none',
+        letterSpacing: '0.04em',
+      }}>
+        glisser : pan · Alt+molette : zoom · survoler : info · cliquer : recentrer
+      </div>
+
+      {/* Canvas zoomable + draggable */}
       <div
         onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={stopDrag}
+        onMouseLeave={stopDrag}
         style={{
           flex: 1, minHeight: 0, overflow: 'hidden',
           position: 'relative',
+          cursor,
+          userSelect: 'none',
         }}>
         <div style={{
           width: '100%', height: '100%',
-          transform: `scale(${zoom})`,
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: 'center center',
-          transition: 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: drag.current.active
+            ? 'none'
+            : 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
         }}>
-          <HeroAnimation height={560} showChat={false} liveScenario={scenario} />
+          <HeroAnimation height={560} showChat={false}
+                         liveScenario={scenario}
+                         interactive={true}
+                         onNodeClick={handleNodeClick} />
         </div>
       </div>
 
@@ -3539,8 +3677,20 @@ function ViewSubgraph() {
     }
   };
 
-  // Auto-run au mount
-  React.useEffect(() => { onBuild(); }, []);
+  // Auto-run au mount + à chaque incrément de runVersion
+  // (utilisé par recenterTo pour relancer après setTerm).
+  const [runVersion, setRunVersion] = useState(0);
+  React.useEffect(() => { onBuild(); /* eslint-disable-next-line */ }, [runVersion]);
+
+  // Recentre : utilisé par le clic sur un nœud en mode LIVE.
+  // setTerm(newTerm) → bump runVersion → useEffect → onBuild lit le
+  // term à jour. Pas de race condition : React garantit que le
+  // useEffect part avec la valeur de term post-render.
+  const recenterTo = React.useCallback((newTerm) => {
+    if (!newTerm || newTerm === term) return;
+    setTerm(newTerm);
+    setRunVersion(v => v + 1);
+  }, [term]);
 
   const stats = data.stats || {};
 
@@ -3770,6 +3920,7 @@ function ViewSubgraph() {
                     nodes={data.nodes}
                     edges={data.edges}
                     layout={liveLayout}
+                    onRecenter={recenterTo}
                   />
                 </div>
               ) : data.nodes && data.nodes.length > 0 ? (
