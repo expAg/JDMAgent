@@ -1076,7 +1076,9 @@ _EXPORTABLE_ENV_VARS = [
     "JDM_BASE_URL", "JDM_TIMEOUT",
     "JDM_CACHE_DIR", "JDM_CACHE_TTL_META", "JDM_CACHE_TTL_DATA",
     # LLM defaults
-    "LLM_PROVIDER", "LLM_MODEL",
+    "LLM_PROVIDER", "LLM_MODEL", "LLM_TEMPERATURE",
+    # Ollama (modèles locaux — branche ollama)
+    "OLLAMA_BASE_URL",
     # Provider API keys
     "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY",
     "DEEPSEEK_API_KEY", "GOOGLE_API_KEY", "GOOGLE_API_KEYS",

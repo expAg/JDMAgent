@@ -50,8 +50,17 @@ const JARVIS_FLOWS = [
 function ViewJarvis() {
   const [active, setActive] = useState(null);
   if (active) {
-    const flow = JARVIS_FLOWS.find(f => f.id === active);
-    return <JarvisRun flow={flow} onBack={() => setActive(null)} />;
+    const idx = JARVIS_FLOWS.findIndex(f => f.id === active);
+    const flow = JARVIS_FLOWS[idx];
+    const nextFlow = idx >= 0 && idx < JARVIS_FLOWS.length - 1 ? JARVIS_FLOWS[idx + 1] : null;
+    return (
+      <JarvisRun
+        flow={flow}
+        nextFlow={nextFlow}
+        onBack={() => setActive(null)}
+        onNext={nextFlow ? () => setActive(nextFlow.id) : null}
+      />
+    );
   }
   return (
     <PageShell>
@@ -147,7 +156,7 @@ function LoopGlyph({ color }) {
 }
 
 // ───── Run view — Sse-driven ─────
-function JarvisRun({ flow, onBack }) {
+function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const [params, setParams] = useState(defaultParamsFor(flow.id));
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
@@ -366,6 +375,13 @@ function JarvisRun({ flow, onBack }) {
         <Button variant="ghost" size="sm" onClick={onBack}>← Tous les flux</Button>
         <span style={{ color: 'var(--ink-3)' }}>/</span>
         <span className="mono" style={{ fontSize: 12, color: flow.accent, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{flow.kicker}</span>
+        {/* Symétrique : à droite, le flux suivant si pas en bout. */}
+        {onNext && nextFlow && (
+          <Button variant="ghost" size="sm" onClick={onNext}
+            style={{ marginLeft: 'auto' }}>
+            {nextFlow.title} →
+          </Button>
+        )}
       </div>
       <SectionTitle
         kicker={flow.kicker}

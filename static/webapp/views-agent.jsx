@@ -18,8 +18,26 @@ function ViewAgent() {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [poolStatus, setPoolStatus] = useState(null);
+  const chatScrollRef = useRef(null);
 
   const needsBYOK = model.startsWith('claude-') || model.startsWith('gpt-');
+
+  // Auto-scroll en bas quand le contenu change (génération en cours
+  // ou nouveau message envoyé). Évite le décalage à chaque token.
+  React.useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [convo, streaming]);
+
+  // Renvoie une question utilisateur précédente comme nouveau message.
+  // Utilisé par le bouton ↻ sur les bulles user.
+  const resendUserMessage = (text) => {
+    if (streaming || !text) return;
+    setInput(text);
+    // Trigger envoi dans le tick suivant — laisse setInput propager.
+    setTimeout(() => send(text), 30);
+  };
 
   // Charge l'état du pool pour griser les Gemini blown dans le dropdown.
   // Rafraîchi périodiquement et après chaque conversation (un PerDay
@@ -57,19 +75,20 @@ function ViewAgent() {
 
   // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
   // dernier message assistant (créé vide juste avant le fetch).
-  const send = async () => {
-    if (!input.trim() || streaming) return;
-    const userMsg = { role: 'user', content: input };
-    // Snapshot l'historique AVANT d'ajouter le message courant
-    // (le backend l'attend séparément via `message`).
+  // `overrideMsg` permet au bouton ↻ de re-soumettre une question
+  // précédente sans passer par le state input (qui est async).
+  const send = async (overrideMsg) => {
+    const effectiveMsg = (overrideMsg !== undefined ? overrideMsg : input);
+    if (!effectiveMsg.trim() || streaming) return;
+    const userMsg = { role: 'user', content: effectiveMsg };
     const historySnapshot = convo.map(m => ({
       role: m.role,
       content: m.role === 'assistant' ? (m.content || '') : m.content,
     }));
     const assistantStub = { role: 'assistant', thoughts: [], tools: [], content: '', error: '' };
     setConvo([...convo, userMsg, assistantStub]);
-    const msg = input;
-    setInput('');
+    const msg = effectiveMsg;
+    if (overrideMsg === undefined) setInput('');
     setStreaming(true);
 
     // Helper : update le dernier message (assistant) en place.
@@ -157,7 +176,7 @@ function ViewAgent() {
             display: 'flex',
             flexDirection: 'column',
           }}>
-            <div style={{
+            <div ref={chatScrollRef} style={{
               padding: '20px 24px',
               flex: 1,
               display: 'flex',
@@ -174,7 +193,11 @@ function ViewAgent() {
                   Pose une question sur la langue française — l'agent ira interroger JDM.
                 </div>
               )}
-              {convo.map((m, i) => <Message key={i} m={m} />)}
+              {convo.map((m, i) => (
+                <Message key={i} m={m}
+                  onResend={m.role === 'user' ? () => resendUserMessage(m.content) : null}
+                />
+              ))}
               {streaming && (
                 <div style={{
                   fontSize: 11, color: 'var(--ink-3)',
@@ -342,21 +365,9 @@ function handleEvent(ev, patchLast) {
 
 // ─── Rendu d'un message ────────────────────────────────────────
 
-function Message({ m }) {
+function Message({ m, onResend }) {
   if (m.role === 'user') {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <div style={{
-          maxWidth: '70%',
-          padding: '10px 14px',
-          background: 'var(--accent)',
-          color: 'var(--bg)',
-          borderRadius: 'var(--radius-lg)',
-          fontSize: 14,
-          lineHeight: 1.5,
-        }}>{m.content}</div>
-      </div>
-    );
+    return <UserMessage content={m.content} onResend={onResend} />;
   }
   return (
     <div style={{ display: 'flex', gap: 12 }}>
@@ -389,6 +400,61 @@ function Message({ m }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Bulle user — apparition des icônes copier / renvoyer au hover.
+function UserMessage({ content, onResend }) {
+  const [hovering, setHovering] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content || '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1000);
+    } catch {}
+  };
+  const btn = {
+    background: 'transparent',
+    border: '1px solid var(--line)',
+    borderRadius: 999,
+    padding: '4px 8px',
+    cursor: 'pointer',
+    fontSize: 11,
+    color: 'var(--ink-3)',
+    lineHeight: 1,
+  };
+  return (
+    <div
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end', gap: 6 }}>
+      {/* Boutons à GAUCHE de la bulle, alignés sur sa base */}
+      <div style={{
+        display: 'flex', gap: 4, alignItems: 'center',
+        opacity: hovering ? 1 : 0,
+        transition: 'opacity 0.15s',
+        marginBottom: 2,
+      }}>
+        <button type="button" onClick={copy} title="Copier" style={{
+          ...btn,
+          color: copied ? 'var(--jdm-green)' : 'var(--ink-3)',
+          borderColor: copied ? 'var(--jdm-green)' : 'var(--line)',
+        }}>{copied ? '✓' : '⎘'}</button>
+        {onResend && (
+          <button type="button" onClick={onResend} title="Renvoyer" style={btn}>↻</button>
+        )}
+      </div>
+      <div style={{
+        maxWidth: '70%',
+        padding: '10px 14px',
+        background: 'var(--accent)',
+        color: 'var(--bg)',
+        borderRadius: 'var(--radius-lg)',
+        fontSize: 14,
+        lineHeight: 1.5,
+      }}>{content}</div>
     </div>
   );
 }

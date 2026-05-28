@@ -743,7 +743,7 @@ function ViewProjet({ goto }) {
             Accès web à l&apos;agent <em style={{
               fontFamily: 'var(--font-display)',
               fontStyle: 'italic', color: 'var(--accent)',
-            }}>JeuxDeMots</em>.
+            }}>Jarvis</em>.
           </h1>
           <p style={{
             marginTop: 22,
@@ -752,7 +752,13 @@ function ViewProjet({ goto }) {
             color: 'var(--ink-2)',
             maxWidth: '52ch',
           }}>
-            Agentification de <a href="https://www.jeuxdemots.org" style={{ color: 'var(--accent)' }}>JeuxDeMots</a> (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées) pour les <strong style={{ color: 'var(--ink)' }}>LLM modernes</strong> via <strong style={{ color: 'var(--ink)' }}>LangChain</strong> et le <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
+            Projet d&apos;agentification de la ressource lexico-sémantique{' '}
+            <a href="https://www.jeuxdemots.org" target="_blank" rel="noopener noreferrer"
+              style={{ color: 'var(--accent)' }}>JeuxDeMots</a>{' '}
+            (LIRMM/CNRS, ~2 M nœuds, 180+ relations typées et pondérées) pour les{' '}
+            <strong style={{ color: 'var(--ink)' }}>LLM modernes</strong> via{' '}
+            <strong style={{ color: 'var(--ink)' }}>LangChain</strong> et le{' '}
+            <strong style={{ color: 'var(--ink)' }}>Model Context Protocol</strong>.
           </p>
           <div style={{ display: 'flex', gap: 10, marginTop: 28 }}>
             <Button onClick={() => goto('explorer')}>Commencer à explorer →</Button>
@@ -761,7 +767,7 @@ function ViewProjet({ goto }) {
           </div>
         </div>
 
-        {/* Stats column */}
+        {/* Stats column — chiffres animés count-up au hover */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
@@ -772,23 +778,7 @@ function ViewProjet({ goto }) {
           overflow: 'hidden',
         }}>
           {stats.map((s) => (
-            <div key={s.label} style={{
-              background: 'var(--bg-card)',
-              padding: '20px 22px',
-            }}>
-              <div className="mono" style={{
-                fontSize: 11, color: 'var(--ink-3)',
-                textTransform: 'uppercase', letterSpacing: '0.1em',
-                marginBottom: 8,
-              }}>{s.label}</div>
-              <div className="display" style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 32, fontWeight: 600,
-                color: 'var(--ink)', lineHeight: 1,
-                letterSpacing: '-0.02em',
-              }}>{s.value}</div>
-              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>{s.sub}</div>
-            </div>
+            <StatTile key={s.label} stat={s} />
           ))}
         </div>
       </div>
@@ -885,7 +875,7 @@ function ViewProjet({ goto }) {
         ))}
       </div>
 
-      {/* Footer — données + crédits + liens */}
+      {/* Footer — crédits + liens */}
       <div style={{
         padding: 24,
         background: 'var(--bg-elev)',
@@ -898,30 +888,109 @@ function ViewProjet({ goto }) {
       }}>
         <div style={{ flex: 1, minWidth: 240 }}>
           <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
             fontFamily: 'var(--font-display)',
-            fontSize: 18, fontWeight: 600, marginBottom: 4,
-          }}>Auto-hébergé, gratuit pour les visiteurs.</div>
+            fontSize: 18, fontWeight: 600, marginBottom: 6,
+          }}>
+            <GitHubMark size={20} />
+            <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+              style={{ color: 'var(--ink)', textDecoration: 'none' }}>
+              Projet open-source
+            </a>
+          </div>
           <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-            Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe TEXTE, LIRMM/CNRS.
-            Pool de clés Gemini partagé pour les visiteurs ; BYOK Claude/OpenAI dans l&apos;onglet Agent.
+            Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe SLICE, LIRMM/CNRS.
           </div>
           <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
-            <a href="https://github.com/expAg/JDMAgent" style={{ color: 'var(--accent)' }}>Code source</a>
+            <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+              style={{ color: 'var(--accent)' }}>Code source</a>
             <span style={{ color: 'var(--ink-3)' }}>·</span>
-            <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" style={{ color: 'var(--accent)' }}>USAGE.md</a>
+            <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+              style={{ color: 'var(--accent)' }}>USAGE.md</a>
             <span style={{ color: 'var(--ink-3)' }}>·</span>
-            <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" style={{ color: 'var(--accent)' }}>Notebook Colab</a>
+            <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" target="_blank" rel="noopener noreferrer"
+              style={{ color: 'var(--accent)' }}>Notebook Colab</a>
           </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Pill color="var(--jdm-green)" tone="outline">
-            <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
-            Pool Gemini
-          </Pill>
-          <Pill>500 req/jour</Pill>
         </div>
       </div>
     </PageShell>
+  );
+}
+
+// ─── StatTile : tuile de stat avec animation count-up au hover ─────
+function StatTile({ stat }) {
+  // Parse la valeur : "2M+" → {num: 2, suffix: "M+"}, "350M+" → {350, "M+"},
+  // "35" → {35, ""}, "5" → {5, ""}.
+  const parsed = React.useMemo(() => {
+    const m = String(stat.value).match(/^([\d.]+)(.*)$/);
+    if (!m) return { num: 0, suffix: stat.value };
+    return { num: parseFloat(m[1]), suffix: m[2] };
+  }, [stat.value]);
+
+  const [display, setDisplay] = useState(parsed.num);
+  const [hovering, setHovering] = useState(false);
+  const rafRef = useRef(null);
+
+  // Au hover : reset à 0 puis ease-out cubic vers la valeur cible.
+  // Classy : durée ~900ms, démarre rapide, ralentit, s'arrête pile.
+  const animate = () => {
+    cancelAnimationFrame(rafRef.current);
+    const start = performance.now();
+    const duration = 900;
+    const target = parsed.num;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - t, 3);
+      const v = target * eased;
+      // Pour les valeurs entières (35, 5) : pas de décimale ; pour
+      // les valeurs déjà décimales (2.0, 5.4) : 1 décimale en cours,
+      // valeur finale exacte.
+      const isInt = target === Math.floor(target);
+      setDisplay(t === 1 ? target : (isInt ? Math.floor(v) : v.toFixed(1)));
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+
+  React.useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
+
+  return (
+    <div
+      onMouseEnter={() => { setHovering(true); animate(); }}
+      onMouseLeave={() => setHovering(false)}
+      style={{
+        background: 'var(--bg-card)',
+        padding: '20px 22px',
+        transition: 'background 0.2s',
+        cursor: 'default',
+      }}>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-3)',
+        textTransform: 'uppercase', letterSpacing: '0.1em',
+        marginBottom: 8,
+      }}>{stat.label}</div>
+      <div className="display" style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: 32, fontWeight: 600,
+        color: hovering ? 'var(--accent)' : 'var(--ink)',
+        lineHeight: 1,
+        letterSpacing: '-0.02em',
+        transition: 'color 0.18s',
+        fontVariantNumeric: 'tabular-nums',  // évite le sautillement
+      }}>{display}{parsed.suffix}</div>
+      <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>{stat.sub}</div>
+    </div>
+  );
+}
+
+// ─── Petite icône GitHub (Octicon-like, SVG inline) ─────────────
+function GitHubMark({ size = 22 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"
+         style={{ flexShrink: 0 }} aria-label="GitHub">
+      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.87-1.54-3.87-1.54-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.18 1.18.92-.26 1.9-.39 2.88-.39.98 0 1.96.13 2.88.39 2.21-1.49 3.18-1.18 3.18-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.7 5.39-5.27 5.68.41.36.78 1.07.78 2.16 0 1.56-.01 2.82-.01 3.2 0 .31.21.68.79.56C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/>
+    </svg>
   );
 }
 
@@ -2039,8 +2108,26 @@ function ViewAgent() {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [poolStatus, setPoolStatus] = useState(null);
+  const chatScrollRef = useRef(null);
 
   const needsBYOK = model.startsWith('claude-') || model.startsWith('gpt-');
+
+  // Auto-scroll en bas quand le contenu change (génération en cours
+  // ou nouveau message envoyé). Évite le décalage à chaque token.
+  React.useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [convo, streaming]);
+
+  // Renvoie une question utilisateur précédente comme nouveau message.
+  // Utilisé par le bouton ↻ sur les bulles user.
+  const resendUserMessage = (text) => {
+    if (streaming || !text) return;
+    setInput(text);
+    // Trigger envoi dans le tick suivant — laisse setInput propager.
+    setTimeout(() => send(text), 30);
+  };
 
   // Charge l'état du pool pour griser les Gemini blown dans le dropdown.
   // Rafraîchi périodiquement et après chaque conversation (un PerDay
@@ -2078,19 +2165,20 @@ function ViewAgent() {
 
   // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
   // dernier message assistant (créé vide juste avant le fetch).
-  const send = async () => {
-    if (!input.trim() || streaming) return;
-    const userMsg = { role: 'user', content: input };
-    // Snapshot l'historique AVANT d'ajouter le message courant
-    // (le backend l'attend séparément via `message`).
+  // `overrideMsg` permet au bouton ↻ de re-soumettre une question
+  // précédente sans passer par le state input (qui est async).
+  const send = async (overrideMsg) => {
+    const effectiveMsg = (overrideMsg !== undefined ? overrideMsg : input);
+    if (!effectiveMsg.trim() || streaming) return;
+    const userMsg = { role: 'user', content: effectiveMsg };
     const historySnapshot = convo.map(m => ({
       role: m.role,
       content: m.role === 'assistant' ? (m.content || '') : m.content,
     }));
     const assistantStub = { role: 'assistant', thoughts: [], tools: [], content: '', error: '' };
     setConvo([...convo, userMsg, assistantStub]);
-    const msg = input;
-    setInput('');
+    const msg = effectiveMsg;
+    if (overrideMsg === undefined) setInput('');
     setStreaming(true);
 
     // Helper : update le dernier message (assistant) en place.
@@ -2178,7 +2266,7 @@ function ViewAgent() {
             display: 'flex',
             flexDirection: 'column',
           }}>
-            <div style={{
+            <div ref={chatScrollRef} style={{
               padding: '20px 24px',
               flex: 1,
               display: 'flex',
@@ -2195,7 +2283,11 @@ function ViewAgent() {
                   Pose une question sur la langue française — l'agent ira interroger JDM.
                 </div>
               )}
-              {convo.map((m, i) => <Message key={i} m={m} />)}
+              {convo.map((m, i) => (
+                <Message key={i} m={m}
+                  onResend={m.role === 'user' ? () => resendUserMessage(m.content) : null}
+                />
+              ))}
               {streaming && (
                 <div style={{
                   fontSize: 11, color: 'var(--ink-3)',
@@ -2363,21 +2455,9 @@ function handleEvent(ev, patchLast) {
 
 // ─── Rendu d'un message ────────────────────────────────────────
 
-function Message({ m }) {
+function Message({ m, onResend }) {
   if (m.role === 'user') {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <div style={{
-          maxWidth: '70%',
-          padding: '10px 14px',
-          background: 'var(--accent)',
-          color: 'var(--bg)',
-          borderRadius: 'var(--radius-lg)',
-          fontSize: 14,
-          lineHeight: 1.5,
-        }}>{m.content}</div>
-      </div>
-    );
+    return <UserMessage content={m.content} onResend={onResend} />;
   }
   return (
     <div style={{ display: 'flex', gap: 12 }}>
@@ -2410,6 +2490,61 @@ function Message({ m }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Bulle user — apparition des icônes copier / renvoyer au hover.
+function UserMessage({ content, onResend }) {
+  const [hovering, setHovering] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content || '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1000);
+    } catch {}
+  };
+  const btn = {
+    background: 'transparent',
+    border: '1px solid var(--line)',
+    borderRadius: 999,
+    padding: '4px 8px',
+    cursor: 'pointer',
+    fontSize: 11,
+    color: 'var(--ink-3)',
+    lineHeight: 1,
+  };
+  return (
+    <div
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end', gap: 6 }}>
+      {/* Boutons à GAUCHE de la bulle, alignés sur sa base */}
+      <div style={{
+        display: 'flex', gap: 4, alignItems: 'center',
+        opacity: hovering ? 1 : 0,
+        transition: 'opacity 0.15s',
+        marginBottom: 2,
+      }}>
+        <button type="button" onClick={copy} title="Copier" style={{
+          ...btn,
+          color: copied ? 'var(--jdm-green)' : 'var(--ink-3)',
+          borderColor: copied ? 'var(--jdm-green)' : 'var(--line)',
+        }}>{copied ? '✓' : '⎘'}</button>
+        {onResend && (
+          <button type="button" onClick={onResend} title="Renvoyer" style={btn}>↻</button>
+        )}
+      </div>
+      <div style={{
+        maxWidth: '70%',
+        padding: '10px 14px',
+        background: 'var(--accent)',
+        color: 'var(--bg)',
+        borderRadius: 'var(--radius-lg)',
+        fontSize: 14,
+        lineHeight: 1.5,
+      }}>{content}</div>
     </div>
   );
 }
@@ -2611,8 +2746,17 @@ const JARVIS_FLOWS = [
 function ViewJarvis() {
   const [active, setActive] = useState(null);
   if (active) {
-    const flow = JARVIS_FLOWS.find(f => f.id === active);
-    return <JarvisRun flow={flow} onBack={() => setActive(null)} />;
+    const idx = JARVIS_FLOWS.findIndex(f => f.id === active);
+    const flow = JARVIS_FLOWS[idx];
+    const nextFlow = idx >= 0 && idx < JARVIS_FLOWS.length - 1 ? JARVIS_FLOWS[idx + 1] : null;
+    return (
+      <JarvisRun
+        flow={flow}
+        nextFlow={nextFlow}
+        onBack={() => setActive(null)}
+        onNext={nextFlow ? () => setActive(nextFlow.id) : null}
+      />
+    );
   }
   return (
     <PageShell>
@@ -2708,7 +2852,7 @@ function LoopGlyph({ color }) {
 }
 
 // ───── Run view — Sse-driven ─────
-function JarvisRun({ flow, onBack }) {
+function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const [params, setParams] = useState(defaultParamsFor(flow.id));
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
@@ -2927,6 +3071,13 @@ function JarvisRun({ flow, onBack }) {
         <Button variant="ghost" size="sm" onClick={onBack}>← Tous les flux</Button>
         <span style={{ color: 'var(--ink-3)' }}>/</span>
         <span className="mono" style={{ fontSize: 12, color: flow.accent, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{flow.kicker}</span>
+        {/* Symétrique : à droite, le flux suivant si pas en bout. */}
+        {onNext && nextFlow && (
+          <Button variant="ghost" size="sm" onClick={onNext}
+            style={{ marginLeft: 'auto' }}>
+            {nextFlow.title} →
+          </Button>
+        )}
       </div>
       <SectionTitle
         kicker={flow.kicker}
@@ -4193,37 +4344,37 @@ function ViewAide() {
         <AdminPanel />
       </div>
 
-      {/* 8. Footer institutionnel — slots logos préservés */}
+      {/* 8. Footer institutionnel — crédits + liens cliquables */}
       <div style={{
-        padding: 32, background: 'var(--bg-elev)',
+        padding: 28, background: 'var(--bg-elev)',
         border: '1px solid var(--line-soft)', borderRadius: 'var(--radius-lg)',
       }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 48, marginBottom: 28, flexWrap: 'wrap',
+          gap: 16,
         }}>
-          <image-slot id="logo-lirmm" shape="rect" placeholder="Dépose le logo LIRMM ici"
-            style={{ width: 200, height: 80, background: 'transparent' }} />
-          <div style={{ width: 1, height: 60, background: 'var(--line)' }} />
-          <image-slot id="logo-um" shape="rect" placeholder="Dépose le logo Université de Montpellier ici"
-            style={{ width: 200, height: 80, background: 'transparent' }} />
-          <div style={{ width: 1, height: 60, background: 'var(--line)' }} />
-          <image-slot id="logo-cnrs" shape="rect" placeholder="Dépose le logo CNRS ici"
-            style={{ width: 120, height: 80, background: 'transparent' }} />
-        </div>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 12, paddingTop: 24, borderTop: '1px solid var(--line-soft)',
-        }}>
-          <JDMMark size={28} />
+          <JDMMark size={36} />
           <div>
-            <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600 }}>
+            <div className="display" style={{
+              fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600,
+              marginBottom: 4,
+            }}>
               jdmAgent
             </div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              <a href="https://github.com/expAg/JDMAgent" style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
+            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+              Mathieu Lafourcade ·{' '}
+              <a href="https://www.lirmm.fr/" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--accent)' }}>LIRMM</a>{' '}
+              (Université de Montpellier — CNRS) ·{' '}
+              <a href="https://www.lirmm.fr/equipes/slice/" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--accent)' }}>Équipe SLICE</a>
+            </div>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+              <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
               {' · '}
-              <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
+              <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
             </div>
           </div>
         </div>
@@ -4341,12 +4492,13 @@ function AdminPanel() {
     URL.revokeObjectURL(url);
   };
 
-  // Liste complète des vars autorisées côté backend (matchée à
-  // _EXPORTABLE_ENV_VARS) — toutes celles de .env.example
+  // Liste complète des vars autorisées côté backend
+  // (matchée à _EXPORTABLE_ENV_VARS).
   const EDITABLE_VARS = [
     'JDM_BASE_URL', 'JDM_TIMEOUT',
     'JDM_CACHE_DIR', 'JDM_CACHE_TTL_META', 'JDM_CACHE_TTL_DATA',
-    'LLM_PROVIDER', 'LLM_MODEL',
+    'LLM_PROVIDER', 'LLM_MODEL', 'LLM_TEMPERATURE',
+    'OLLAMA_BASE_URL',
     'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY',
     'DEEPSEEK_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
     'HF_TOKEN',
@@ -4436,30 +4588,20 @@ function AdminPanel() {
           <div style={{
             background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
             padding: 12, marginBottom: 8,
-            maxHeight: 380, overflow: 'auto',
+            maxHeight: 420, overflow: 'auto',
           }}>
             {EDITABLE_VARS.map(k => {
               const isSecret = /KEY|TOKEN|PASSWORD/.test(k);
               const cur = allVars[k] || '';
-              const display = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
+              // Affiche la valeur in extenso quand non-secret. Les secrets
+              // restent masqués (premier 4 / dernier 4) — copie copie la
+              // valeur COMPLÈTE quand même.
+              const displayMask = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
               return (
-                <div key={k} style={{
-                  display: 'grid', gridTemplateColumns: '180px 200px 1fr',
-                  gap: 8, alignItems: 'center', marginBottom: 6,
-                }}>
-                  <div className="mono" style={{
-                    fontSize: 11, color: 'var(--ink-2)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{k}</div>
-                  <div className="mono" style={{
-                    fontSize: 10, color: cur ? 'var(--ink-3)' : 'var(--ink-3)',
-                    fontStyle: cur ? 'normal' : 'italic',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{cur ? `actuel : ${display}` : '(non défini)'}</div>
-                  <Input value={edits[k] || ''}
-                    onChange={(v) => setOne(k, v)}
-                    placeholder="nouvelle valeur" mono />
-                </div>
+                <AdminVarRow key={k}
+                  name={k} current={cur} displayMask={displayMask}
+                  editValue={edits[k] || ''}
+                  onEdit={(v) => setOne(k, v)} />
               );
             })}
           </div>
@@ -4500,6 +4642,62 @@ function AdminPanel() {
         </>
       )}
     </Card>
+  );
+}
+
+// ─── Ligne d'édition d'une variable d'env (admin) ──────────────
+// Layout : nom (compact) | valeur actuelle (flex 2, monoespace, tronquée
+// si trop longue mais TITLE = valeur complète) | bouton copier |
+// nouvelle valeur (flex 1, étroit pour laisser de la place à la valeur).
+function AdminVarRow({ name, current, displayMask, editValue, onEdit }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (!current) return;
+    try {
+      await navigator.clipboard.writeText(current);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  };
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '170px 1fr 28px 220px',
+      gap: 8, alignItems: 'center', marginBottom: 6,
+    }}>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-2)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>{name}</div>
+      <div className="mono" title={current || '(non défini)'} style={{
+        fontSize: 11,
+        color: current ? 'var(--ink)' : 'var(--ink-3)',
+        fontStyle: current ? 'normal' : 'italic',
+        background: 'var(--bg-card)',
+        padding: '6px 10px',
+        borderRadius: 'var(--radius)',
+        border: '1px solid var(--line-soft)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>{current ? displayMask : '(non défini)'}</div>
+      <button
+        type="button"
+        onClick={copy}
+        disabled={!current}
+        title={current ? 'Copier la valeur' : ''}
+        style={{
+          width: 28, height: 28, padding: 0,
+          background: copied ? 'var(--jdm-green)' : 'transparent',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius)',
+          color: copied ? '#fff' : 'var(--ink-3)',
+          cursor: current ? 'pointer' : 'not-allowed',
+          opacity: current ? 1 : 0.4,
+          fontSize: 13,
+        }}>{copied ? '✓' : '⎘'}</button>
+      <Input value={editValue}
+        onChange={onEdit}
+        placeholder="nouvelle valeur (vide = ignore)" mono />
+    </div>
   );
 }
 

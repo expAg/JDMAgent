@@ -299,37 +299,37 @@ function ViewAide() {
         <AdminPanel />
       </div>
 
-      {/* 8. Footer institutionnel — slots logos préservés */}
+      {/* 8. Footer institutionnel — crédits + liens cliquables */}
       <div style={{
-        padding: 32, background: 'var(--bg-elev)',
+        padding: 28, background: 'var(--bg-elev)',
         border: '1px solid var(--line-soft)', borderRadius: 'var(--radius-lg)',
       }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 48, marginBottom: 28, flexWrap: 'wrap',
+          gap: 16,
         }}>
-          <image-slot id="logo-lirmm" shape="rect" placeholder="Dépose le logo LIRMM ici"
-            style={{ width: 200, height: 80, background: 'transparent' }} />
-          <div style={{ width: 1, height: 60, background: 'var(--line)' }} />
-          <image-slot id="logo-um" shape="rect" placeholder="Dépose le logo Université de Montpellier ici"
-            style={{ width: 200, height: 80, background: 'transparent' }} />
-          <div style={{ width: 1, height: 60, background: 'var(--line)' }} />
-          <image-slot id="logo-cnrs" shape="rect" placeholder="Dépose le logo CNRS ici"
-            style={{ width: 120, height: 80, background: 'transparent' }} />
-        </div>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 12, paddingTop: 24, borderTop: '1px solid var(--line-soft)',
-        }}>
-          <JDMMark size={28} />
+          <JDMMark size={36} />
           <div>
-            <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600 }}>
+            <div className="display" style={{
+              fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600,
+              marginBottom: 4,
+            }}>
               jdmAgent
             </div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              <a href="https://github.com/expAg/JDMAgent" style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
+            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+              Mathieu Lafourcade ·{' '}
+              <a href="https://www.lirmm.fr/" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--accent)' }}>LIRMM</a>{' '}
+              (Université de Montpellier — CNRS) ·{' '}
+              <a href="https://www.lirmm.fr/equipes/slice/" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--accent)' }}>Équipe SLICE</a>
+            </div>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+              <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--ink-3)' }}>github.com/expAg/JDMAgent</a>
               {' · '}
-              <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
+              <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--ink-3)' }}>USAGE.md</a>
             </div>
           </div>
         </div>
@@ -447,12 +447,13 @@ function AdminPanel() {
     URL.revokeObjectURL(url);
   };
 
-  // Liste complète des vars autorisées côté backend (matchée à
-  // _EXPORTABLE_ENV_VARS) — toutes celles de .env.example
+  // Liste complète des vars autorisées côté backend
+  // (matchée à _EXPORTABLE_ENV_VARS).
   const EDITABLE_VARS = [
     'JDM_BASE_URL', 'JDM_TIMEOUT',
     'JDM_CACHE_DIR', 'JDM_CACHE_TTL_META', 'JDM_CACHE_TTL_DATA',
-    'LLM_PROVIDER', 'LLM_MODEL',
+    'LLM_PROVIDER', 'LLM_MODEL', 'LLM_TEMPERATURE',
+    'OLLAMA_BASE_URL',
     'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY',
     'DEEPSEEK_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
     'HF_TOKEN',
@@ -542,30 +543,20 @@ function AdminPanel() {
           <div style={{
             background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
             padding: 12, marginBottom: 8,
-            maxHeight: 380, overflow: 'auto',
+            maxHeight: 420, overflow: 'auto',
           }}>
             {EDITABLE_VARS.map(k => {
               const isSecret = /KEY|TOKEN|PASSWORD/.test(k);
               const cur = allVars[k] || '';
-              const display = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
+              // Affiche la valeur in extenso quand non-secret. Les secrets
+              // restent masqués (premier 4 / dernier 4) — copie copie la
+              // valeur COMPLÈTE quand même.
+              const displayMask = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
               return (
-                <div key={k} style={{
-                  display: 'grid', gridTemplateColumns: '180px 200px 1fr',
-                  gap: 8, alignItems: 'center', marginBottom: 6,
-                }}>
-                  <div className="mono" style={{
-                    fontSize: 11, color: 'var(--ink-2)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{k}</div>
-                  <div className="mono" style={{
-                    fontSize: 10, color: cur ? 'var(--ink-3)' : 'var(--ink-3)',
-                    fontStyle: cur ? 'normal' : 'italic',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{cur ? `actuel : ${display}` : '(non défini)'}</div>
-                  <Input value={edits[k] || ''}
-                    onChange={(v) => setOne(k, v)}
-                    placeholder="nouvelle valeur" mono />
-                </div>
+                <AdminVarRow key={k}
+                  name={k} current={cur} displayMask={displayMask}
+                  editValue={edits[k] || ''}
+                  onEdit={(v) => setOne(k, v)} />
               );
             })}
           </div>
@@ -606,6 +597,62 @@ function AdminPanel() {
         </>
       )}
     </Card>
+  );
+}
+
+// ─── Ligne d'édition d'une variable d'env (admin) ──────────────
+// Layout : nom (compact) | valeur actuelle (flex 2, monoespace, tronquée
+// si trop longue mais TITLE = valeur complète) | bouton copier |
+// nouvelle valeur (flex 1, étroit pour laisser de la place à la valeur).
+function AdminVarRow({ name, current, displayMask, editValue, onEdit }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (!current) return;
+    try {
+      await navigator.clipboard.writeText(current);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  };
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '170px 1fr 28px 220px',
+      gap: 8, alignItems: 'center', marginBottom: 6,
+    }}>
+      <div className="mono" style={{
+        fontSize: 11, color: 'var(--ink-2)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>{name}</div>
+      <div className="mono" title={current || '(non défini)'} style={{
+        fontSize: 11,
+        color: current ? 'var(--ink)' : 'var(--ink-3)',
+        fontStyle: current ? 'normal' : 'italic',
+        background: 'var(--bg-card)',
+        padding: '6px 10px',
+        borderRadius: 'var(--radius)',
+        border: '1px solid var(--line-soft)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>{current ? displayMask : '(non défini)'}</div>
+      <button
+        type="button"
+        onClick={copy}
+        disabled={!current}
+        title={current ? 'Copier la valeur' : ''}
+        style={{
+          width: 28, height: 28, padding: 0,
+          background: copied ? 'var(--jdm-green)' : 'transparent',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius)',
+          color: copied ? '#fff' : 'var(--ink-3)',
+          cursor: current ? 'pointer' : 'not-allowed',
+          opacity: current ? 1 : 0.4,
+          fontSize: 13,
+        }}>{copied ? '✓' : '⎘'}</button>
+      <Input value={editValue}
+        onChange={onEdit}
+        placeholder="nouvelle valeur (vide = ignore)" mono />
+    </div>
   );
 }
 
