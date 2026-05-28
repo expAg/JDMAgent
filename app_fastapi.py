@@ -536,10 +536,11 @@ class SubgraphLiveRequest(BaseModel):
     top_k: int = 4
     relations: list[str] = []
     max_nodes: int = 30
-    # Seuil sur le poids des RELATIONS (arêtes) ; les nœuds orphelins
-    # consécutifs sont retirés. Les NÉGATIONS sont toujours conservées,
-    # peu importe le poids (cf. UI : « négations toujours visibles »).
-    min_weight: float = 0
+    # Rang max par type de relation : pour chaque relation distincte,
+    # garde les `rank_cap` arêtes de plus fort poids. 0 = aucun (super
+    # restrictif), valeur élevée = permissif. Les négations sont
+    # toujours conservées indépendamment du rang.
+    rank_cap: int = 999
     # Si fourni : question posée au LLM en parallèle de l'animation.
     # Sa réponse est streamée via les events 'thinking' / 'response'.
     question: Optional[str] = None
@@ -601,19 +602,27 @@ async def api_subgraph_live(req: SubgraphLiveRequest):
     ]
 
     # ─────────────────────────────────────────────────────────────
-    # Filtre par POIDS DES RELATIONS (≠ filtre par nœud) :
-    # On ne garde que les arêtes dont |w| ≥ min_weight.
-    # Les NÉGATIONS sont toujours conservées (signal sémantique fort,
-    # indépendant du consensus mesuré).
-    # Puis on retire les nœuds devenus orphelins (plus aucune arête
-    # touchée), sauf ROOT qu'on garde toujours.
+    # Filtre par RANG (≠ filtre par poids absolu) :
+    # pour chaque type de relation distinct, garde les `rank_cap`
+    # arêtes de plus fort |poids|. Les NÉGATIONS sont toujours
+    # conservées (signal sémantique fort, indépendant du rang).
+    # 0 = ultra restrictif (aucune positive), grande valeur = permissif.
+    # Puis nœuds orphelins retirés (sauf ROOT).
     # ─────────────────────────────────────────────────────────────
-    mw = float(req.min_weight or 0)
-    if mw > 0:
-        edges = [
-            e for e in edges
-            if e["negative"] or abs(float(e.get("weight", 0))) >= mw
-        ]
+    rc = int(req.rank_cap)
+    if rc < 999:  # < 999 = cap actif (sinon : tout passe)
+        by_rel: dict[str, list[dict]] = {}
+        kept_neg: list[dict] = []
+        for e in edges:
+            if e["negative"]:
+                kept_neg.append(e)
+            else:
+                by_rel.setdefault(e["relation"], []).append(e)
+        kept_pos: list[dict] = []
+        for rel, arr in by_rel.items():
+            arr.sort(key=lambda x: -abs(float(x.get("weight", 0))))
+            kept_pos.extend(arr[:rc])
+        edges = kept_pos + kept_neg
         touched: set[str] = {"ROOT"}
         for e in edges:
             touched.add(e["from"]); touched.add(e["to"])

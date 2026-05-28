@@ -281,6 +281,8 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree', opts = {}) {
       // Les négations passent en rouge dédié pour signal fort.
       color: e.negative ? '#ef4444' : relColor(e.relation),
       negative: !!e.negative,
+      // Poids JDM exposé au tooltip survol (cf. GraphCanvas <title>).
+      weight: e.weight,
       highlight: e.highlight !== false,
     }));
 
@@ -492,7 +494,11 @@ function ViewSubgraph() {
   const [activeRelsD2, setActiveRelsD2] = useState(SUBGRAPH_DEFAULT_D2);
   const [activeRelsD3, setActiveRelsD3] = useState(SUBGRAPH_DEFAULT_D3);
   const [activeRelsD4, setActiveRelsD4] = useState(SUBGRAPH_DEFAULT_D4);
-  const [minWeight, setMinWeight] = useState(0);
+  // Rang max par relation : pour chaque type de relation distinct,
+  // garde les N arêtes de plus fort poids. 0 = aucune relation
+  // (le plus restrictif), 20 = très permissif. Négations toujours
+  // affichées peu importe la valeur.
+  const [rankCap, setRankCap] = useState(20);
   const [maxNodes, setMaxNodes] = useState(40);
   const [format, setFormat] = useState('live');  // 'live' par défaut (animation graphique)
   // Layout en mode LIVE : 'tree' (arbre radial, défaut) ou 'rings' (cercles concentriques).
@@ -539,10 +545,10 @@ function ViewSubgraph() {
             top_k: Number(topK),
             relations: activeRels,
             max_nodes: liveMaxNodes,
-            // Seuil sur le POIDS des relations (arêtes), pas sur les
-            // nœuds. Les négations sont toujours conservées côté
-            // backend, peu importe la valeur.
-            min_weight: Number(minWeight) || 0,
+            // Cap par RANG (par type de relation) — pas un seuil de
+            // poids absolu. Les négations sont toujours conservées
+            // côté backend, peu importe la valeur.
+            rank_cap: Number(rankCap),
           }),
         });
         if (!res.ok || !res.body) {
@@ -617,7 +623,10 @@ function ViewSubgraph() {
           relations_d2: activeRelsD2,
           relations_d3: activeRelsD3,
           relations_d4: activeRelsD4,
-          min_weight: Number(minWeight),
+          // En HTML/SVG REST, on n'envoie plus min_weight (le slider
+          // est désormais un cap par rang, géré côté live). Le backend
+          // REST n'utilise pas cette info ; le top_k_per_relation y
+          // joue déjà ce rôle.
           max_nodes: Number(maxNodes),
           format,
         }),
@@ -676,7 +685,7 @@ function ViewSubgraph() {
   }, [
     term, depth, format,
     topK, topKd2, topKd3, topKd4,
-    minWeight, maxNodes,
+    rankCap, maxNodes,
     // Sérialisation des listes pour détecter les toggles de relations
     activeRels.join(','), activeRelsD2.join(','),
     activeRelsD3.join(','), activeRelsD4.join(','),
@@ -764,13 +773,16 @@ function ViewSubgraph() {
                 })}
               </div>
             </Field>
-            <Field label={`Poids min des relations · ${minWeight}`}>
-              <Slider value={minWeight} onChange={setMinWeight} min={0} max={300} step={5} />
+            <Field label={`Rang max par relation · ${rankCap}`}>
+              <Slider value={rankCap} onChange={setRankCap} min={0} max={20} step={1} />
               <div className="mono" style={{
                 marginTop: 4, fontSize: 9, color: 'var(--ink-3)',
                 letterSpacing: '0.04em',
               }}>
-                seuil sur |w| des arêtes · négations toujours visibles
+                {rankCap === 0
+                  ? '0 = aucune relation positive'
+                  : `garde les ${rankCap} plus forts par type`}
+                {' · négations toujours visibles'}
               </div>
             </Field>
             {(format === 'json' || format === 'live') && (
