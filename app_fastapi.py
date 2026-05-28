@@ -446,12 +446,41 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True):
         return get_llm(provider="openai", model=model)
 
     if model.startswith("gemini-"):
-        # GOOGLE_API_KEY lue depuis l'env (pool / rotation = step 3).
-        if not os.environ.get("GOOGLE_API_KEY"):
+        # SDK natif Google : préserve les thought_signature entre tours
+        # (cf. langchain issue #34056). Lit GOOGLE_API_KEY de l'env.
+        # Le pool (step 3) override l'env via /api/pool/rotate.
+        token = os.environ.get("GOOGLE_API_KEY", "").strip()
+        if not token:
             raise ValueError(
-                "Aucune clé Google disponible côté serveur (GOOGLE_API_KEY)."
+                "Aucune clé Google disponible côté serveur (GOOGLE_API_KEY). "
+                "Configure le pool via GOOGLE_API_KEYS ou la clé singulière."
             )
-        return get_llm(provider="google_genai", model=model)
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+        except ImportError:
+            raise ValueError(
+                "Le paquet `langchain-google-genai` est requis pour Gemini."
+            )
+        # Gemini 3.x : `thinking_level="low"` + `include_thoughts=True`
+        # exposent le chain-of-thought. Gemini 2.5 ne supporte pas.
+        kwargs: dict = {
+            "model": model,
+            "google_api_key": token,
+            "temperature": 1.5,  # variété forte pour l'agent
+        }
+        if use_thinking and "2.5" not in model:
+            try:
+                kwargs["thinking_level"] = "low"
+                kwargs["include_thoughts"] = True
+            except Exception:
+                pass
+        try:
+            return ChatGoogleGenerativeAI(**kwargs)
+        except TypeError:
+            # Vieille version de langchain-google-genai → fallback sans thinking
+            kwargs.pop("thinking_level", None)
+            kwargs.pop("include_thoughts", None)
+            return ChatGoogleGenerativeAI(**kwargs)
 
     raise ValueError(f"Modèle non supporté : {model!r}")
 
