@@ -1189,13 +1189,17 @@ function FeaturesGrid({ features, goto }) {
         }}>‹</button>
 
       {/* Wrapper-clip pour la rangée — overflow hidden = AUCUN bleed
-          possible (scrollbar carousel, edge cards, etc.) */}
+          (scrollbar, edge card, content au-delà). Padding vertical
+          (12 haut, 28 bas) donne de l'air au hover lift (-2px) et
+          à l'ombre colorée du card (qui s'étend ~24px). */}
       <div style={{
         position: 'relative',
         overflow: 'hidden',
         borderRadius: 'var(--radius-lg)',
+        padding: '12px 0 28px',
+        margin: '-12px 0 -28px',
       }}>
-        {/* Carousel — pleine largeur, jamais troqué */}
+        {/* Carousel — pleine largeur, padding/margin HORIZONTAL only */}
         <div
           ref={scrollRef}
           className="jdm-carousel"
@@ -1205,8 +1209,8 @@ function FeaturesGrid({ features, goto }) {
             overflowX: 'auto',
             overflowY: 'visible',
             scrollSnapType: 'x mandatory',
-            padding: '8px 4px 18px',
-            margin: '-8px -4px 0',
+            padding: '0 4px',
+            margin: '0 -4px',
           }}>
           {features.map((f, i) => (
             <div key={f.id} style={{
