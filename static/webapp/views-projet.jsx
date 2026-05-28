@@ -207,32 +207,34 @@ function ViewProjet({ goto }) {
         <StatsGrid stats={stats} />
       </div>
 
-      {/* Panneau 2 — Modules (features carousel). Pleine viewport,
-          contenu centré verticalement. */}
+      {/* Panneau 2 — Modules. Grid avec place-content: center ET grille
+          auto sur 1 colonne : centre VERTICALEMENT + HORIZONTALEMENT
+          le bloc contenu, peu importe sa hauteur. */}
       <div ref={modulesRef} data-panel="modules" style={{
         scrollSnapAlign: 'start', scrollMarginTop: 56,
         minHeight: 'calc(100vh - 56px)',
-        display: 'flex', flexDirection: 'column', justifyContent: 'center',
-        paddingTop: 'clamp(24px, 6vh, 80px)',
-        paddingBottom: 'clamp(24px, 4vh, 60px)',
+        display: 'grid',
+        placeContent: 'center',
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        gap: 24,
       }}>
         <SectionTitle
           kicker="Que peux-tu faire sur cette page ?"
           title="Cinq modules · une seule API"
           desc="Chaque module utilise la même API JDM mise en cache, sans appel LLM superflu sauf quand c'est explicitement utile."
         />
-
         <FeaturesGrid features={features} goto={goto} />
       </div>
 
-      {/* Panneau 3 — Sous le capot + footer. Pleine viewport, contenu
-          centré, footer crédits à l'intérieur du même panneau. */}
+      {/* Panneau 3 — Sous le capot + footer. Même technique de centrage
+          que le panneau 2. */}
       <div ref={brefRef} data-panel="bref" style={{
         scrollSnapAlign: 'start', scrollMarginTop: 56,
         minHeight: 'calc(100vh - 56px)',
-        display: 'flex', flexDirection: 'column', justifyContent: 'center',
-        paddingTop: 'clamp(24px, 6vh, 80px)',
-        paddingBottom: 'clamp(24px, 4vh, 60px)',
+        display: 'grid',
+        placeContent: 'center',
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        gap: 24,
       }}>
       <SectionTitle
         kicker="Sous le capot"
@@ -456,55 +458,59 @@ function FeaturesGrid({ features, goto }) {
     el.scrollBy({ left: dir * step, behavior: 'smooth' });
   };
 
-  // Boutons positionnés à L'EXTÉRIEUR du flow des cards — masqués par
-  // défaut, révélés au hover du carousel (parent .jdm-carousel-wrap)
-  // pour ne pas masquer la première/dernière carte.
+  // Boutons rendus DANS le flow du layout (flexbox), pas en absolute.
+  // → Toujours visibles, jamais coupés, jamais positionnés hors écran.
   const arrowBtn = (side, enabled) => (
     <button
       type="button"
       onClick={() => scrollBy(side === 'left' ? -1 : 1)}
       aria-label={side === 'left' ? 'Défiler à gauche' : 'Défiler à droite'}
-      className={`jdm-carousel-arrow jdm-carousel-arrow-${side}`}
+      disabled={!enabled}
       style={{
-        position: 'absolute',
-        top: '50%',
-        [side]: -18,           // OUT du carousel pour ne pas couvrir les cards
-        transform: 'translateY(-50%)',
-        width: 38, height: 38,
+        flexShrink: 0,
+        width: 40, height: 40,
         borderRadius: '50%',
         border: '1px solid var(--line)',
         background: 'var(--bg-card)',
-        color: 'var(--ink-2)',
+        color: enabled ? 'var(--ink-2)' : 'var(--ink-3)',
         cursor: enabled ? 'pointer' : 'default',
-        opacity: 0,            // hidden by default, .jdm-carousel-wrap:hover révèle
-        pointerEvents: enabled ? 'auto' : 'none',
-        boxShadow: 'var(--shadow)',
-        fontSize: 18, lineHeight: 1,
-        zIndex: 5,
-        transition: 'opacity 0.25s, background 0.15s, color 0.15s, transform 0.15s',
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
+        opacity: enabled ? 1 : 0.35,
+        boxShadow: enabled ? 'var(--shadow)' : 'none',
+        fontSize: 20, lineHeight: 1, fontWeight: 600,
+        transition: 'background 0.15s, color 0.15s, transform 0.15s, opacity 0.15s',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 0,
       }}
-      data-enabled={enabled ? '1' : '0'}>
+      onMouseEnter={(e) => {
+        if (!enabled) return;
+        e.currentTarget.style.background = 'var(--accent)';
+        e.currentTarget.style.color = 'var(--bg)';
+        e.currentTarget.style.transform = 'scale(1.06)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'var(--bg-card)';
+        e.currentTarget.style.color = 'var(--ink-2)';
+        e.currentTarget.style.transform = '';
+      }}>
       {side === 'left' ? '‹' : '›'}
     </button>
   );
 
+  // Layout : [‹ button] [scroll container with cards] [› button]
+  // Tout dans un flex row — gros gain de robustesse vs absolute.
   return (
-    <div className="jdm-carousel-wrap" style={{
-      position: 'relative',
-      // Marge pour que les boutons (positionnés à -18) ne soient pas
-      // coupés par un parent overflow:hidden éventuel.
-      padding: '0 24px',
-      margin: '0 -24px',
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
     }}>
       {arrowBtn('left', canPrev)}
-      {arrowBtn('right', canNext)}
       <div
         ref={scrollRef}
         className="jdm-carousel"
         style={{
+          flex: 1,
+          minWidth: 0,
           display: 'flex',
           gap: 14,
           overflowX: 'auto',
@@ -518,13 +524,13 @@ function FeaturesGrid({ features, goto }) {
             flex: '0 0 clamp(280px, 28vw, 340px)',
             scrollSnapAlign: 'start',
             display: 'flex',
-            // anim sur entrée pour suivre le scroll
             transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}>
             <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
           </div>
         ))}
       </div>
+      {arrowBtn('right', canNext)}
     </div>
   );
 }
