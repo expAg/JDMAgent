@@ -374,17 +374,31 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
         for e in raw_edges
     ]
 
-    # Optionnel : tronquer à max_nodes en gardant centre + plus forts poids.
+    # Optionnel : tronquer à max_nodes en préservant la connectivité.
+    # Stratégie : BFS depuis ROOT en respectant l'ordre par poids d'arête
+    # descendant. Garde tous les nœuds atteignables jusqu'à saturation.
     if req.max_nodes and len(nodes_out) > req.max_nodes:
-        # Garde le centre puis prend les `max_nodes - 1` nœuds dont l'arête
-        # entrante a le poids le plus fort.
-        weight_per_node: dict[str, float] = {}
+        # Index edges sortantes par source, triées par poids desc.
+        out_edges: dict[str, list[dict]] = {}
         for e in edges_out:
-            w = abs(e["weight"])
-            if e["to"] != "ROOT":
-                weight_per_node[e["to"]] = max(weight_per_node.get(e["to"], 0), w)
-        ordered = sorted(weight_per_node.items(), key=lambda kv: -kv[1])
-        keep = {"ROOT"} | {nid for nid, _ in ordered[: req.max_nodes - 1]}
+            out_edges.setdefault(e["from"], []).append(e)
+        for src in out_edges:
+            out_edges[src].sort(key=lambda e: -abs(e["weight"]))
+        # BFS depuis ROOT, en saturant par couches.
+        keep: set[str] = {"ROOT"}
+        frontier = ["ROOT"]
+        while frontier and len(keep) < req.max_nodes:
+            next_frontier = []
+            for src in frontier:
+                for e in out_edges.get(src, []):
+                    if e["to"] not in keep:
+                        keep.add(e["to"])
+                        next_frontier.append(e["to"])
+                        if len(keep) >= req.max_nodes:
+                            break
+                if len(keep) >= req.max_nodes:
+                    break
+            frontier = next_frontier
         nodes_out = [n for n in nodes_out if n["id"] in keep]
         edges_out = [e for e in edges_out if e["from"] in keep and e["to"] in keep]
 
