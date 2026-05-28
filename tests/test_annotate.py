@@ -197,15 +197,15 @@ def test_write_annotation_file_two_sections(tmp_path):
     assert stats["n_skipped"] == 1
 
     content = path.read_text(encoding="utf-8")
-    # Section principale
-    assert "avocat (juriste)|r_isa|juriste|constitutif" in content
+    # Section principale — nouveau format avec espaces + crochets
+    assert "avocat (juriste) | r_isa | juriste | [constitutif]" in content
     assert "définition essentielle" in content
-    # Section signalement
+    # Section signalement — espaces + crochets
     assert "=====SIGNALEMENT=====" in content
-    assert "JDM:constitutif|LLM:exception" in content
+    assert "JDM:[constitutif] | LLM:[exception]" in content
     assert "biologiquement faux" in content
     # Skip : le triplet x|r_isa|y n'apparaît PAS
-    assert "|r_isa|y" not in content
+    assert "r_isa | y" not in content
 
 
 def test_write_annotation_file_no_signalement_no_header(tmp_path):
@@ -222,6 +222,31 @@ def test_write_annotation_file_no_signalement_no_header(tmp_path):
     assert "=====SIGNALEMENT=====" not in content
 
 
+def test_write_annotation_file_agreement_not_in_signalement(tmp_path):
+    """RÉGRESSION : si JDM et LLM ont la MÊME annotation, le triplet
+    va dans la section principale, JAMAIS dans SIGNALEMENT.
+    Bug rapporté : 'mouette | r_isa | oiseau | JDM:non spécifique |
+    LLM:non spécifique < Aucun désaccord >' apparaissait en SIGNALEMENT."""
+    proposals = [
+        # Accord parfait JDM == LLM → section principale
+        AnnotationProposal(
+            subject="mouette", relation="r_isa", target="oiseau",
+            category=AnnotationCategory.NON_SPECIFIQUE,
+            justification="peu informatif",
+            existing_jdm="non spécifique"),
+    ]
+    path = tmp_path / "test.annot"
+    stats = write_annotation_file(path, proposals)
+    assert stats["n_annotated"] == 1
+    assert stats["n_signalement"] == 0
+    content = path.read_text(encoding="utf-8")
+    # En section principale (avec espaces + crochets)
+    assert "mouette | r_isa | oiseau | [non spécifique]" in content
+    # PAS dans section signalement (qui ne doit même pas exister)
+    assert "=====SIGNALEMENT=====" not in content
+    assert "JDM:[non spécifique] | LLM:[non spécifique]" not in content
+
+
 def test_write_annotation_file_pipe_escape(tmp_path):
     """Un pipe dans un label ne doit pas casser le parser JDM côté serveur."""
     proposals = [
@@ -232,8 +257,8 @@ def test_write_annotation_file_pipe_escape(tmp_path):
     path = tmp_path / "test.annot"
     write_annotation_file(path, proposals)
     content = path.read_text(encoding="utf-8")
-    # Les pipes des labels sont remplacés par /
-    assert "terme/tordu|r_isa|cible/piégée|constitutif" in content
+    # Les pipes des labels sont remplacés par /, espaces + crochets autour
+    assert "terme/tordu | r_isa | cible/piégée | [constitutif]" in content
 
 
 # ─────────────────────── compute_submission_filename .annot ───────────────────────

@@ -5909,19 +5909,43 @@ function parseFilePreview(text, flowId) {
     }
 
     // Format avec explication entre < > (commune à .enrich/.annot/.audit)
-    const mWithExplain = line.match(/^([^|]+)\|([^|]+)\|([^|]+)\|(.+?)(?:\s+<\s*(.+?)\s*>\s*)?$/);
+    // Accepte les pipes avec OU sans espaces (\s*) et l'annotation entre
+    // crochets optionnels [...] (le nouveau format) — rétro-compat
+    // avec l'ancien format sans espaces/crochets.
+    const mWithExplain = line.match(/^([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)(?:\s+<\s*(.+?)\s*>\s*)?$/);
     if (mWithExplain) {
-      const [, subject, relation, target, rest, explanation] = mWithExplain;
+      const [, subject, relation, target, restRaw, explanation] = mWithExplain;
+      // Strip les crochets autour de l'annotation pour l'affichage
+      // (le nouveau format les ajoute, on les retire pour l'UI).
+      const stripBrackets = (s) => (s || '').trim().replace(/^\[(.*)\]$/, '$1').trim();
+      const rest = restRaw.trim();
       // Section SIGNALEMENT du .annot : rest peut contenir
-      // "JDM:<x>|LLM:<y>" → on extrait les deux.
+      // "JDM:[x] | LLM:[y]" (nouveau) ou "JDM:<x>|LLM:<y>" (ancien) → extraction tolérante.
       if (inSignalement && /JDM\s*:/i.test(rest) && /LLM\s*:/i.test(rest)) {
-        const jdmM = rest.match(/JDM\s*:\s*([^|]+)\|LLM\s*:\s*(.+)/i);
+        const jdmM = rest.match(/JDM\s*:\s*\[?([^|\]]+)\]?\s*\|\s*LLM\s*:\s*\[?(.+?)\]?\s*$/i);
         if (jdmM) {
+          const jdmVal = jdmM[1].trim();
+          const llmVal = jdmM[2].trim();
+          // Filtrage anti-bug : si JDM == LLM (= pas un vrai désaccord),
+          // on REND quand même la ligne mais comme `consolidated` pour
+          // ne pas tromper le compteur de signalements et ne pas
+          // laisser ce faux désaccord en évidence.
+          if (jdmVal.toLowerCase() === llmVal.toLowerCase()) {
+            items.push({
+              type: 'consolidated',
+              subject: subject.trim(), relation: relation.trim(),
+              target: target.trim(),
+              category: llmVal,
+              explanation: (explanation || '').trim(),
+              raw: line,
+            });
+            continue;
+          }
           items.push({
             type: 'signalement',
             subject: subject.trim(), relation: relation.trim(),
             target: target.trim(),
-            jdm: jdmM[1].trim(), llm: jdmM[2].trim(),
+            jdm: jdmVal, llm: llmVal,
             explanation: (explanation || '').trim(),
             raw: line,
           });
@@ -5934,7 +5958,7 @@ function parseFilePreview(text, flowId) {
           type: 'flagged',
           subject: subject.trim(), relation: relation.trim(),
           target: target.trim(),
-          category: rest.trim(),
+          category: stripBrackets(rest),
           explanation: (explanation || '').trim(),
           raw: line,
         });
@@ -5946,18 +5970,18 @@ function parseFilePreview(text, flowId) {
           type: 'audit_signalement',
           subject: subject.trim(), relation: relation.trim(),
           target: target.trim(),
-          verdict: rest.trim(),
+          verdict: stripBrackets(rest),
           explanation: (explanation || '').trim(),
           raw: line,
         });
         continue;
       }
-      // .enrich / .annot : rest = annotation
+      // .enrich / .annot : rest = annotation (avec ou sans crochets)
       items.push({
         type: inSignalement ? 'signalement' : 'consolidated',
         subject: subject.trim(), relation: relation.trim(),
         target: target.trim(),
-        category: rest.trim(),
+        category: stripBrackets(rest),
         explanation: (explanation || '').trim(),
         raw: line,
       });

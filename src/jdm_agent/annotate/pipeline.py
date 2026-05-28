@@ -188,20 +188,28 @@ def write_annotation_file(
     """Écrit le fichier .annot avec deux sections.
 
     Section principale : triplets ANNOTÉS par le LLM (catégorie non vide).
-    Section SIGNALEMENT : triplets dont l'annotation LLM DIFFÈRE de
-    l'annotation JDM existante (le LLM remet en question l'existant).
+    Section SIGNALEMENT : triplets dont l'annotation LLM DIFFÈRE STRICTEMENT
+    de l'annotation JDM existante. Si JDM et LLM sont d'accord (même
+    catégorie), le triplet va dans la section PRINCIPALE — PAS dans
+    SIGNALEMENT.
 
-    Format ligne section principale :
-        sujet|relation|objet|annotation < justification >
+    Format pipe-spaced + annotation entre crochets :
 
-    Format ligne section signalement :
-        sujet|relation|objet|JDM:<existant>|LLM:<proposé> < argument contre >
+      Section principale :
+        sujet | relation | objet | [annotation] < justification >
+
+      Section SIGNALEMENT (désaccord réel) :
+        sujet | relation | objet | JDM:[existant] | LLM:[proposé] < argument contre >
 
     Returns:
         Dict `{n_annotated, n_signalement, n_skipped, path}` — stats utiles
         pour l'appelant (CLI / UI).
     """
     proposals = list(proposals)
+    # disagrees_with_jdm() est STRICTE : retourne False si JDM == LLM
+    # (même chaîne normalisée). Le LLM-orchestré peut quand même bypasser
+    # ce filtre s'il écrit en mode `{line:...}` directement — d'où les
+    # garde-fous explicites dans annotation_workflow / build_annotation_prompt.
     annotated = [p for p in proposals if p.is_annotable() and not p.disagrees_with_jdm()]
     signalements = [p for p in proposals if p.is_annotable() and p.disagrees_with_jdm()]
     skipped = [p for p in proposals if not p.is_annotable()]
@@ -213,19 +221,20 @@ def write_annotation_file(
 
     lines: list[str] = [
         f"# Annotation JeuxDeMots — {len(annotated)} triplet(s) annoté(s)"
-        f" + {len(signalements)} signalement(s)"
+        f" + {len(signalements)} signalement(s) de désaccord"
         f" ({len(skipped)} triplet(s) non annotable(s) — ignoré(s)).",
         "# Section principale — format : "
-        "sujet|relation|objet|annotation < justification >",
-        "# Section SIGNALEMENT — format : "
-        "sujet|relation|objet|JDM:<existant>|LLM:<proposé> < argument contre >",
+        "sujet | relation | objet | [annotation] < justification >",
+        "# Section SIGNALEMENT (uniquement si désaccord avec JDM) — format : "
+        "sujet | relation | objet | JDM:[existant] | LLM:[proposé] < argument contre >",
         "",
     ]
     for p in annotated:
         cat = p.category.value if p.category else ""
         just = " ".join((p.justification or "").split())
         lines.append(
-            f"{_esc(p.subject)}|{p.relation}|{_esc(p.target)}|{cat} < {just} >"
+            f"{_esc(p.subject)} | {p.relation} | {_esc(p.target)} | "
+            f"[{cat}] < {just} >"
         )
 
     if signalements:
@@ -240,8 +249,8 @@ def write_annotation_file(
             arg = " ".join((p.justification or "").split())
             jdm = (p.existing_jdm or "").strip()
             lines.append(
-                f"{_esc(p.subject)}|{p.relation}|{_esc(p.target)}"
-                f"|JDM:{jdm}|LLM:{cat} < {arg} >"
+                f"{_esc(p.subject)} | {p.relation} | {_esc(p.target)} | "
+                f"JDM:[{jdm}] | LLM:[{cat}] < {arg} >"
             )
 
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")

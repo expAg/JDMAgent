@@ -1194,11 +1194,21 @@ def build_annotation_prompt(
         unit="annotation utile (pertinente, non forcée)",
     ))
     parts.append(
+        "FORMAT EXACT (espaces autour des | et annotation entre "
+        "CROCHETS) :\n"
+        "  Section principale : "
+        "`sujet | relation | objet | [annotation] < justification >`\n"
+        "  Section SIGNALEMENT : "
+        "`sujet | relation | objet | JDM:[existant] | LLM:[tien] < argument >`"
+    )
+    parts.append(
         "Section SIGNALEMENT du `.annot` : pour CHAQUE triplet annoté, "
         "vérifie via `get_triplet_annotations` si JDM a déjà une "
-        "annotation parmi la taxonomie. Si tu es en DÉSACCORD → écris "
-        "le triplet en SECTION SIGNALEMENT (format JDM:<existant>|LLM:"
-        "<tien> < argument contre >) au lieu de la section principale."
+        "annotation parmi la taxonomie. ⚠️ N'écris en SIGNALEMENT que "
+        "si ton annotation DIFFÈRE STRICTEMENT de celle de JDM. Si JDM "
+        "et toi êtes d'accord (même catégorie), garde le triplet en "
+        "section principale — NE PAS écrire « JDM:[X] | LLM:[X] < Aucun "
+        "désaccord… > », c'est inutile et trompeur."
     )
     if upload:
         parts.append(
