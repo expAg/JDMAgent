@@ -536,6 +536,10 @@ class SubgraphLiveRequest(BaseModel):
     top_k: int = 4
     relations: list[str] = []
     max_nodes: int = 30
+    # Seuil sur le poids des RELATIONS (arêtes) ; les nœuds orphelins
+    # consécutifs sont retirés. Les NÉGATIONS sont toujours conservées,
+    # peu importe le poids (cf. UI : « négations toujours visibles »).
+    min_weight: float = 0
     # Si fourni : question posée au LLM en parallèle de l'animation.
     # Sa réponse est streamée via les events 'thinking' / 'response'.
     question: Optional[str] = None
@@ -595,6 +599,25 @@ async def api_subgraph_live(req: SubgraphLiveRequest):
         }
         for e in raw_edges
     ]
+
+    # ─────────────────────────────────────────────────────────────
+    # Filtre par POIDS DES RELATIONS (≠ filtre par nœud) :
+    # On ne garde que les arêtes dont |w| ≥ min_weight.
+    # Les NÉGATIONS sont toujours conservées (signal sémantique fort,
+    # indépendant du consensus mesuré).
+    # Puis on retire les nœuds devenus orphelins (plus aucune arête
+    # touchée), sauf ROOT qu'on garde toujours.
+    # ─────────────────────────────────────────────────────────────
+    mw = float(req.min_weight or 0)
+    if mw > 0:
+        edges = [
+            e for e in edges
+            if e["negative"] or abs(float(e.get("weight", 0))) >= mw
+        ]
+        touched: set[str] = {"ROOT"}
+        for e in edges:
+            touched.add(e["from"]); touched.add(e["to"])
+        nodes = [n for n in nodes if n["id"] in touched]
 
     # Cap par max_nodes via BFS depuis ROOT (idem /api/subgraph).
     if req.max_nodes and len(nodes) > req.max_nodes:

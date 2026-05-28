@@ -3608,6 +3608,10 @@ function ViewSubgraph() {
             top_k: Number(topK),
             relations: activeRels,
             max_nodes: liveMaxNodes,
+            // Seuil sur le POIDS des relations (arêtes), pas sur les
+            // nœuds. Les négations sont toujours conservées côté
+            // backend, peu importe la valeur.
+            min_weight: Number(minWeight) || 0,
           }),
         });
         if (!res.ok || !res.body) {
@@ -3801,8 +3805,14 @@ function ViewSubgraph() {
                 })}
               </div>
             </Field>
-            <Field label={`Poids minimum · ${minWeight}`}>
+            <Field label={`Poids min des relations · ${minWeight}`}>
               <Slider value={minWeight} onChange={setMinWeight} min={0} max={300} step={5} />
+              <div className="mono" style={{
+                marginTop: 4, fontSize: 9, color: 'var(--ink-3)',
+                letterSpacing: '0.04em',
+              }}>
+                seuil sur |w| des arêtes · négations toujours visibles
+              </div>
             </Field>
             {(format === 'json' || format === 'live') && (
               <Field label={`Nœuds max · ${maxNodes}`}>
