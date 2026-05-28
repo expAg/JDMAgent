@@ -1,4 +1,5 @@
 // View: Explorer — fetch relations for a term.
+// Migration FastAPI : remplace FAKE_DATA par fetch('/api/explore').
 
 const EXPLORE_RELATIONS = [
   { value: 'r_syn', label: 'Synonymes', sub: 'r_syn' },
@@ -19,62 +20,55 @@ const EXPLORE_RELATIONS = [
   { value: 'r_manner', label: 'Manière (verbe / processus)', sub: 'r_manner' },
 ];
 
-// Fake dataset for the demo — different by (term, relation).
-const FAKE_DATA = {
-  'chat | r_has_part': [
-    { t: 'patte', w: 142, a: 'constitutif (w=12)' },
-    { t: 'queue', w: 138 },
-    { t: 'oreille', w: 121, a: 'constitutif (w=10)' },
-    { t: 'griffe', w: 110 },
-    { t: 'moustache', w: 104 },
-    { t: 'œil', w: 98 },
-    { t: 'fourrure', w: 85 },
-    { t: 'pelage', w: 72 },
-    { t: 'crocs', w: 51 },
-  ],
-  'chat | r_isa': [
-    { t: 'félin', w: 215, a: 'constitutif (w=18)' },
-    { t: 'mammifère', w: 198 },
-    { t: 'animal de compagnie', w: 142 },
-    { t: 'carnivore', w: 121 },
-    { t: 'animal domestique', w: 118 },
-    { t: 'animal', w: 102 },
-    { t: 'vertébré', w: 56 },
-  ],
-  'chat | r_syn': [
-    { t: 'matou', w: 89 },
-    { t: 'minet', w: 72 },
-    { t: 'félin', w: 58 },
-    { t: 'greffier', w: 14, a: 'familier (w=8)' },
-    { t: 'mistigri', w: 11, a: 'familier (w=6)' },
-  ],
-  'avocat | r_isa': [
-    { t: 'fruit', w: 121, a: 'sens : fruit' },
-    { t: 'juriste', w: 118, a: 'sens : profession' },
-    { t: 'légume', w: 32 },
-    { t: 'défenseur', w: 28 },
-  ],
-};
-
 function ViewExplorer() {
   const [term, setTerm] = useState('chat');
   const [rel, setRel] = useState('r_has_part');
   const [minWeight, setMinWeight] = useState(25);
   const [limit, setLimit] = useState(50);
   const [annotations, setAnnotations] = useState(true);
-  const [loaded, setLoaded] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
+  // rows = liste de {source, relation, target, weight, annotations, target_id}
+  // (forme directement renvoyee par /api/explore — pas de remapping cote front)
+  const [rows, setRows] = useState([]);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
 
-  const key = `${term} | ${rel}`;
-  const data = FAKE_DATA[key] || FAKE_DATA['chat | r_has_part'];
-  const rows = data
-    .filter(r => r.w >= minWeight)
-    .slice(0, limit);
-
-  const onRun = () => {
+  const onRun = async () => {
     setLoading(true);
-    setTimeout(() => { setLoading(false); setLoaded(true); }, 380);
+    setError('');
+    setMessage('');
+    try {
+      const res = await fetch('/api/explore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          term,
+          relation: rel,
+          min_weight: Number(minWeight),
+          limit: Number(limit),
+          with_annotations: !!annotations,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      setRows(Array.isArray(data.rows) ? data.rows : []);
+      setMessage(data.message || '');
+      setLoaded(true);
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+      setRows([]);
+      setLoaded(true);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // Auto-run au premier render pour montrer un resultat (chat r_has_part)
+  React.useEffect(() => { onRun(); }, []);
 
   return (
     <PageShell>
@@ -84,7 +78,7 @@ function ViewExplorer() {
         desc="Récupère les relations d'un terme dans JeuxDeMots. Instantané, déterministe, mis en cache."
       />
 
-      {/* Controls + sense-disambiguation hint */}
+      {/* Controls */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
@@ -98,7 +92,7 @@ function ViewExplorer() {
         <Field label="Type de relation">
           <Select value={rel} options={EXPLORE_RELATIONS} onChange={setRel} />
         </Field>
-        <Button onClick={onRun} size="lg">
+        <Button onClick={onRun} size="lg" disabled={loading}>
           {loading ? 'Chargement…' : 'Interroger'}
         </Button>
       </div>
@@ -132,8 +126,23 @@ function ViewExplorer() {
         </label>
       </div>
 
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          padding: 16,
+          marginBottom: 16,
+          background: 'rgba(200, 58, 115, 0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)',
+          fontSize: 13,
+        }}>
+          ⚠️ {error}
+        </div>
+      )}
+
       {/* Results */}
-      {loaded && (
+      {loaded && !error && (
         <div>
           <div style={{
             display: 'flex',
@@ -147,36 +156,42 @@ function ViewExplorer() {
               <span style={{ color: 'var(--ink)' }}>{term}</span> | <span style={{ color: 'var(--accent)' }}>{rel}</span> | ?
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <Button size="sm" variant="secondary">Exporter CSV</Button>
-              <Button size="sm" variant="ghost">Voir le graphe →</Button>
+              <Button size="sm" variant="secondary"
+                onClick={() => exportCSV(rows, term, rel)}>Exporter CSV</Button>
+              <Button size="sm" variant="ghost"
+                onClick={() => window.dispatchEvent(new CustomEvent('jdm:goto', { detail: { view: 'subgraph', term } }))}>
+                Voir le graphe →
+              </Button>
             </div>
           </div>
 
           {/* Distribution sparkline */}
-          <Card padding={16} style={{ marginBottom: 16 }}>
-            <div style={{
-              display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-              marginBottom: 10,
-            }}>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                Distribution des poids
+          {rows.length > 0 && (
+            <Card padding={16} style={{ marginBottom: 16 }}>
+              <div style={{
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                marginBottom: 10,
+              }}>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Distribution des poids
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  max {Math.max(...rows.map(r => r.weight))} · min {Math.min(...rows.map(r => r.weight))}
+                </div>
               </div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                max {Math.max(...rows.map(r => r.w))} · min {Math.min(...rows.map(r => r.w))}
-              </div>
-            </div>
-            <Bars rows={rows} />
-          </Card>
+              <Bars rows={rows} />
+            </Card>
+          )}
 
           {/* Triplets list */}
           <div style={{ display: 'grid', gap: 6 }}>
             {rows.map((r, i) => (
               <Triplet key={i}
-                subject={term}
-                relation={rel}
-                object={r.t}
-                weight={r.w}
-                annotations={annotations ? r.a : undefined}
+                subject={r.source || term}
+                relation={r.relation || rel}
+                object={r.target}
+                weight={r.weight}
+                annotations={annotations && r.annotations ? r.annotations : undefined}
               />
             ))}
           </div>
@@ -184,7 +199,7 @@ function ViewExplorer() {
           {rows.length === 0 && (
             <EmptyState
               title="Aucun triplet"
-              desc={`Aucun « ${term} | ${rel} | ? » avec w ≥ ${minWeight}. Essaie un seuil plus bas.`}
+              desc={message || `Aucun « ${term} | ${rel} | ? » avec w ≥ ${minWeight}. Essaie un seuil plus bas.`}
             />
           )}
         </div>
@@ -194,7 +209,7 @@ function ViewExplorer() {
 }
 
 function Bars({ rows }) {
-  const max = Math.max(...rows.map(r => r.w), 1);
+  const max = Math.max(...rows.map(r => r.weight), 1);
   return (
     <div style={{
       display: 'flex',
@@ -203,18 +218,41 @@ function Bars({ rows }) {
       height: 64,
     }}>
       {rows.map((r, i) => (
-        <div key={i} title={`${r.t} · w=${r.w}`}
+        <div key={i} title={`${r.target} · w=${r.weight}`}
           style={{
             flex: 1,
-            height: `${(r.w / max) * 100}%`,
+            height: `${(r.weight / max) * 100}%`,
             minHeight: 2,
             background: 'var(--accent)',
-            opacity: 0.3 + 0.7 * (r.w / max),
+            opacity: 0.3 + 0.7 * (r.weight / max),
             borderRadius: '2px 2px 0 0',
           }} />
       ))}
     </div>
   );
+}
+
+// Helper : export CSV simple (téléchargement client-side)
+function exportCSV(rows, term, rel) {
+  if (!rows || rows.length === 0) return;
+  const header = ['source', 'relation', 'target', 'weight', 'annotations', 'target_id'];
+  const escape = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [header.join(',')];
+  for (const r of rows) {
+    lines.push(header.map(k => escape(r[k])).join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `jdm_${term}_${rel}.csv`.replace(/[^a-z0-9_\-.]/gi, '_');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 window.ViewExplorer = ViewExplorer;
