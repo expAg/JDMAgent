@@ -781,11 +781,12 @@ function ViewProjet({ goto }) {
 
   return (
     <PageShell>
-      {/* Dots latéraux + bouton back-to-top */}
-      <PanelDots activePanel={activePanel}
-        onSelect={scrollToPanel}
-        showBackToTop={activePanel === 'bref'}
-        onBackToTop={scrollToTop} />
+      {/* Dots latéraux (panneau actif) */}
+      <PanelDots activePanel={activePanel} onSelect={scrollToPanel} />
+
+      {/* Back-to-top — bouton flottant bottom-center, visible UNIQUEMENT
+          sur le 3ᵉ panneau. Placé loin des dots et du carousel. */}
+      <BackToTopBtn visible={activePanel === 'bref'} onClick={scrollToTop} />
 
       {/* Panneau 1 — Hero. min-height calc(100vh − nav) → remplit la
           viewport. Snap-align start aligne propre au sticky top. */}
@@ -855,7 +856,8 @@ function ViewProjet({ goto }) {
         scrollSnapAlign: 'start', scrollMarginTop: 56,
         minHeight: 'calc(100vh - 56px)',
         display: 'flex', flexDirection: 'column', justifyContent: 'center',
-        paddingTop: 32, paddingBottom: 32,
+        paddingTop: 'clamp(24px, 6vh, 80px)',
+        paddingBottom: 'clamp(24px, 4vh, 60px)',
       }}>
         <SectionTitle
           kicker="Que peux-tu faire sur cette page ?"
@@ -872,7 +874,8 @@ function ViewProjet({ goto }) {
         scrollSnapAlign: 'start', scrollMarginTop: 56,
         minHeight: 'calc(100vh - 56px)',
         display: 'flex', flexDirection: 'column', justifyContent: 'center',
-        paddingTop: 32, paddingBottom: 32,
+        paddingTop: 'clamp(24px, 6vh, 80px)',
+        paddingBottom: 'clamp(24px, 4vh, 60px)',
       }}>
       <SectionTitle
         kicker="Sous le capot"
@@ -955,9 +958,7 @@ function ViewProjet({ goto }) {
 
 // ─── PanelDots : navigation latérale entre les 3 panneaux du Projet.
 // Position fixed à droite, vertical-center. Skin-aware (vars CSS).
-// Quand activePanel = 'bref' (dernier), un bouton ↑ remplace le dot
-// actif pour revenir en haut. Caché sur mobile (≤640px).
-function PanelDots({ activePanel, onSelect, showBackToTop, onBackToTop }) {
+function PanelDots({ activePanel, onSelect }) {
   return (
     <div className="jdm-panel-dots" style={{
       position: 'fixed',
@@ -981,42 +982,60 @@ function PanelDots({ activePanel, onSelect, showBackToTop, onBackToTop }) {
               border: `1px solid ${active ? 'var(--accent)' : 'var(--ink-3)'}`,
               background: active ? 'var(--accent)' : 'transparent',
               cursor: 'pointer',
-              transition: 'background 0.18s, border-color 0.18s, transform 0.18s, width 0.18s, height 0.18s',
+              transition: 'background 0.18s, border-color 0.18s, transform 0.18s',
               transform: active ? 'scale(1.25)' : 'scale(1)',
             }} />
         );
       })}
-      {showBackToTop && (
-        <button
-          type="button"
-          onClick={onBackToTop}
-          aria-label="Revenir en haut"
-          title="Revenir en haut"
-          style={{
-            marginTop: 6,
-            width: 32, height: 32, padding: 0,
-            borderRadius: '50%',
-            border: '1px solid var(--line)',
-            background: 'var(--bg-card)',
-            color: 'var(--ink-2)',
-            cursor: 'pointer',
-            fontSize: 14, lineHeight: 1,
-            boxShadow: 'var(--shadow)',
-            transition: 'background 0.15s, color 0.15s, transform 0.15s',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'var(--accent)';
-            e.currentTarget.style.color = 'var(--bg)';
-            e.currentTarget.style.transform = 'scale(1.08)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'var(--bg-card)';
-            e.currentTarget.style.color = 'var(--ink-2)';
-            e.currentTarget.style.transform = '';
-          }}>↑</button>
-      )}
     </div>
+  );
+}
+
+// ─── BackToTopBtn : bouton flottant bottom-center, fade in/out selon
+// `visible`. Placé EN BAS de la fenêtre (loin des dots latéraux et du
+// carousel). Skin-aware.
+function BackToTopBtn({ visible, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Revenir en haut"
+      title="Revenir en haut"
+      style={{
+        position: 'fixed',
+        bottom: 28,
+        left: '50%',
+        transform: visible
+          ? 'translate(-50%, 0)'
+          : 'translate(-50%, 24px)',
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? 'auto' : 'none',
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '10px 18px',
+        borderRadius: 999,
+        border: '1px solid var(--line)',
+        background: 'var(--bg-card)',
+        color: 'var(--ink)',
+        cursor: 'pointer',
+        fontSize: 13,
+        fontFamily: 'var(--font-mono)',
+        boxShadow: 'var(--shadow)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
+        transition: 'opacity 0.25s, transform 0.25s, background 0.15s, color 0.15s',
+        zIndex: 45,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'var(--accent)';
+        e.currentTarget.style.color = 'var(--bg)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'var(--bg-card)';
+        e.currentTarget.style.color = 'var(--ink)';
+      }}>
+      <span style={{ fontSize: 14, lineHeight: 1 }}>↑</span>
+      Revenir en haut
+    </button>
   );
 }
 

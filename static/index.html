@@ -387,18 +387,17 @@
   }
   .jdm-carousel::-webkit-scrollbar { display: none; }
   .jdm-carousel > * { scroll-snap-stop: always; }
-  /* Boutons prev/next : invisibles par défaut, révélés au hover du
-     wrapper du carousel. data-enabled=0 → reste invisible (bord). */
-  .jdm-carousel-arrow[data-enabled="1"] { opacity: 0; }
-  .jdm-carousel-wrap:hover .jdm-carousel-arrow[data-enabled="1"] { opacity: 1; }
+  /* Boutons prev/next : visibles par défaut quand enabled, masqués
+     seulement en bordure (data-enabled=0). data-enabled=1 = scroll
+     possible dans cette direction. */
+  .jdm-carousel-arrow[data-enabled="1"] { opacity: 1; }
+  .jdm-carousel-arrow[data-enabled="0"] { opacity: 0; pointer-events: none; }
   .jdm-carousel-arrow:hover {
     background: var(--accent) !important;
     color: var(--bg) !important;
     transform: translateY(-50%) scale(1.06) !important;
   }
-  /* Focus clavier : aussi révélé. */
   .jdm-carousel-arrow:focus-visible {
-    opacity: 1 !important;
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
