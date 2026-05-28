@@ -3044,29 +3044,30 @@ const KIND_OF_REL = {
   r_domain: 'domain', r_associated: 'assoc',
 };
 
-// Convertit {nodes, edges} reçus du SSE /api/subgraph/live en scénario
-// au format HeroAnimation : groupe les nœuds par profondeur (anneaux
-// concentriques), distribue les angles, mappe le kind → couleur JDM,
-// calcule les delays cumulatifs pour l'animation par vague.
+// Convertit {nodes, edges} SSE en scénario HeroAnimation avec un
+// LAYOUT EN ARBRE RADIAL (= comme l'animation d'accueil) :
+// - depth 1 : distribué autour du centre (espacement constant)
+// - depth ≥ 2 : positionné À PROXIMITÉ de son parent direct (offset
+//   serré autour de l'angle du parent → effet branche)
+// → plus de cercle parfait : chaque branche est lisible visuellement.
 function buildLiveScenario(rootTerm, nodes, edges) {
   if (!nodes || nodes.length === 0) return null;
 
-  // Identifie le centre : node id == 'ROOT' (forme renvoyée par
-  // build_subgraph) ou fallback sur le 1er node.
   const centerNode = nodes.find(n => n.id === 'ROOT') || nodes[0];
   const center = centerNode.label || rootTerm;
+  const centerId = centerNode.id;
 
-  // Groupe les NON-center par profondeur
-  const byDepth = {};
-  for (const n of nodes) {
-    if (n.id === centerNode.id) continue;
-    const d = Math.min(n.depth || 1, 4);
-    if (!byDepth[d]) byDepth[d] = [];
-    byDepth[d].push(n);
+  // Index parent ↔ enfants à partir des arêtes (premier parent gardé).
+  const childrenOf = {};
+  const parentOf = {};
+  for (const e of edges || []) {
+    if (!childrenOf[e.from]) childrenOf[e.from] = [];
+    if (!childrenOf[e.from].includes(e.to)) childrenOf[e.from].push(e.to);
+    if (!(e.to in parentOf)) parentOf[e.to] = e.from;
   }
 
-  // Distances des anneaux et couleurs par kind (palette JDM)
-  const DIST = { 1: 110, 2: 180, 3: 240, 4: 290 };
+  // Distances par anneau + palette
+  const DIST = [0, 130, 215, 280, 330];
   const COLOR_BY_KIND = {
     isa: 'jdm-magenta', hypo: 'jdm-green', syn: 'jdm-cyan',
     anto: 'jdm-magenta', carac: 'jdm-violet', part: 'jdm-orange',
@@ -3074,34 +3075,73 @@ function buildLiveScenario(rootTerm, nodes, edges) {
     assoc: 'jdm-violet', center: 'jdm-magenta',
   };
 
-  // Délais : anneau 1 démarre à 0.5s, anneau 2 à 1.5s, etc.
-  // Chaque nœud d'un anneau démarre 0.15s après le précédent.
-  const liveNodes = [];
-  const nodeDelays = { [centerNode.id]: 0 };
-  for (const dStr of Object.keys(byDepth).sort()) {
-    const d = Number(dStr);
-    const arr = byDepth[d];
-    arr.forEach((n, i) => {
-      const angle = (i / arr.length) * 360 - 90 + d * 18;
-      const dist = DIST[d] || 290;
-      const delay = 0.5 + (d - 1) * 1.0 + i * 0.18;
-      nodeDelays[n.id] = delay;
-      liveNodes.push({
-        id: n.id,
-        label: n.label || n.id,
-        angle, dist,
-        color: COLOR_BY_KIND[n.kind] || 'jdm-violet',
-        delay,
-        dim: d >= 3,
-      });
+  // BFS depuis centre, accumule angles. depth 1 = uniformément réparti
+  // autour du centre ; depth ≥ 2 = placé à l'angle parent ± offset
+  // proportionnel au nombre de frères (pas la couronne entière).
+  const placed = { [centerId]: { angle: 0, dist: 0, depth: 0 } };
+  const queue = [centerId];
+
+  // Pré-collecte des nœuds existants par id pour accès rapide
+  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+  // Pour chaque parent traité, on place ses enfants (depth+1) à des
+  // angles dérivés de l'angle parent. Le centre (depth 0) a un cas
+  // spécial : ses enfants se répartissent sur tout 360°.
+  while (queue.length) {
+    const parentId = queue.shift();
+    const parentPos = placed[parentId];
+    const children = (childrenOf[parentId] || [])
+      .filter(id => byId[id] && !(id in placed));
+    if (children.length === 0) continue;
+
+    const childDepth = parentPos.depth + 1;
+    const childDist = DIST[Math.min(childDepth, 4)] || 330;
+
+    children.forEach((id, i) => {
+      let angle;
+      if (parentPos.depth === 0) {
+        // Enfants du centre : 360° / N, légèrement décalé.
+        angle = (i / children.length) * 360 - 90;
+      } else {
+        // Enfants d'un sous-arbre : étalés autour de l'angle parent.
+        // Span = min(70°, N * 22°) → garde les frères proches.
+        const span = Math.min(70, children.length * 22);
+        const off = children.length === 1
+          ? 0
+          : (i / (children.length - 1)) * span - span / 2;
+        angle = parentPos.angle + off;
+      }
+      placed[id] = { angle, dist: childDist, depth: childDepth };
+      queue.push(id);
     });
   }
 
-  // Edges : le delay vaut max(delay_from, delay_to) + 0.15 pour que
-  // l'arête apparaisse APRÈS ses 2 extrémités.
+  // Construit les listes finales (nodes / edges au format HeroAnimation).
+  // Delays : enfants de centre démarrent à 0.5 + i*0.15 ; sous-arbres
+  // démarrent après leur parent, propagation en cascade naturelle.
+  const liveNodes = [];
+  const nodeDelays = { [centerId]: 0 };
+  // Sort nodes by depth for a clean wave animation
+  const sortedIds = Object.keys(placed)
+    .filter(id => id !== centerId && byId[id])
+    .sort((a, b) => placed[a].depth - placed[b].depth);
+  sortedIds.forEach((id, i) => {
+    const pos = placed[id];
+    const n = byId[id];
+    const parentDelay = nodeDelays[parentOf[id] || centerId] || 0;
+    const delay = Math.max(parentDelay + 0.18, 0.4 + i * 0.07);
+    nodeDelays[id] = delay;
+    liveNodes.push({
+      id, label: n.label || id,
+      angle: pos.angle, dist: pos.dist,
+      color: COLOR_BY_KIND[n.kind] || 'jdm-violet',
+      delay, dim: pos.depth >= 3,
+    });
+  });
+
   const liveEdges = (edges || []).map(e => ({
     from: e.from, to: e.to,
-    delay: Math.max(nodeDelays[e.from] || 0, nodeDelays[e.to] || 0) + 0.15,
+    delay: Math.max(nodeDelays[e.from] || 0, nodeDelays[e.to] || 0) + 0.12,
     label: e.relation || '',
     highlight: e.highlight !== false,
   }));
@@ -3151,6 +3191,11 @@ function ViewSubgraph() {
     // parallèle, mais on a maintenant un graphe réel JDM en data.
     if (format === 'live') {
       try {
+        // En mode LIVE, on cap dur max_nodes à 18 pour garder une
+        // visualisation lisible (au-delà : nœuds se chevauchent).
+        // L'utilisateur peut quand même augmenter la profondeur ou
+        // le top_k pour explorer — mais la couronne reste bornée.
+        const liveMaxNodes = Math.min(Number(maxNodes) || 18, 18);
         const res = await fetch('api/subgraph/live', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3159,7 +3204,7 @@ function ViewSubgraph() {
             depth: Number(depth),
             top_k: Number(topK),
             relations: activeRels,
-            max_nodes: Number(maxNodes),
+            max_nodes: liveMaxNodes,
           }),
         });
         if (!res.ok || !res.body) {
