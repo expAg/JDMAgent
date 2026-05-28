@@ -43,6 +43,54 @@ function App() {
     return () => window.removeEventListener('jdm:goto', handler);
   }, []);
 
+  // Raccourcis clavier — séquence "G E" pour Aller à Explorer, etc.
+  // Annoncés dans l'onglet Aide. Désactivés quand on est dans un input
+  // (textarea, contenteditable, [type=text|password|...]) pour ne pas
+  // intercepter les saisies utilisateur.
+  useEffect(() => {
+    let pendingG = false;
+    let pendingGTimer = null;
+    const SHORTCUTS_G = {
+      'KeyE': 'explorer', 'KeyC': 'claim',  'KeyS': 'subgraph',
+      'KeyA': 'agent',    'KeyJ': 'jarvis', 'KeyP': 'productions',
+      'KeyH': 'aide',
+    };
+    const isTyping = (target) => {
+      if (!target) return false;
+      const tag = (target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+      if (target.isContentEditable) return true;
+      return false;
+    };
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTyping(e.target)) return;
+      if (e.code === 'KeyG' && !pendingG) {
+        pendingG = true;
+        clearTimeout(pendingGTimer);
+        pendingGTimer = setTimeout(() => { pendingG = false; }, 1200);
+        return;
+      }
+      if (pendingG && SHORTCUTS_G[e.code]) {
+        e.preventDefault();
+        pendingG = false;
+        clearTimeout(pendingGTimer);
+        setView(SHORTCUTS_G[e.code]);
+        return;
+      }
+      // ? = aller à l'aide
+      if (e.key === '?' && !e.shiftKey === false) {  // shift+/ = ?
+        e.preventDefault();
+        setView('aide');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      clearTimeout(pendingGTimer);
+    };
+  }, []);
+
   const VIEWS = {
     projet:      <ViewProjet goto={setView} />,
     explorer:    <ViewExplorer />,

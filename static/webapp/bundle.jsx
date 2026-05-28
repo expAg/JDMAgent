@@ -3578,6 +3578,11 @@ function ViewProductions() {
         </div>
       )}
 
+      {/* Section admin — réservée ?admin=1 */}
+      <div className="admin-only" style={{ marginTop: 32 }}>
+        <AdminPanel />
+      </div>
+
       {/* Log d'actions */}
       {actionLog.length > 0 && (
         <Card padding={0} style={{ marginTop: 28, overflow: 'hidden' }}>
@@ -3753,6 +3758,141 @@ function formatAge(s) {
   if (s < 3600) return `${Math.floor(s / 60)}min`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}j`;
+}
+
+// ─── Panneau admin — réservé ?admin=1 ─────────────────────────
+
+function AdminPanel() {
+  const [info, setInfo] = useState(null);
+  const [password, setPassword] = useState('');
+  const [exported, setExported] = useState(null);
+  const [exportError, setExportError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  React.useEffect(() => {
+    fetch('api/admin/info')
+      .then(r => r.json())
+      .then(setInfo)
+      .catch(() => setInfo({ error: 'Impossible de charger les infos.' }));
+  }, []);
+
+  const doExport = async () => {
+    if (!password) { setExportError('Mot de passe requis.'); return; }
+    setBusy(true); setExportError(''); setExported(null);
+    try {
+      const r = await fetch('api/admin/export-secrets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (r.status === 401) { setExportError('Mot de passe invalide.'); return; }
+      if (r.status === 503) {
+        setExportError('Export désactivé côté serveur (EXPORT_SECRETS_PASSWORD non défini).');
+        return;
+      }
+      if (!r.ok) { setExportError(`HTTP ${r.status}`); return; }
+      const d = await r.json();
+      setExported(d.vars || {});
+    } catch (e) {
+      setExportError(String(e && e.message ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadEnv = () => {
+    if (!exported) return;
+    const lines = Object.entries(exported).map(([k, v]) => `${k}=${v}`);
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = '.env.export';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Card padding={20} style={{ border: '1px dashed var(--jdm-magenta)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
+        <div className="mono" style={{
+          fontSize: 11, color: 'var(--jdm-magenta)',
+          textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600,
+        }}>Panneau admin</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          Réservé · activé via <code className="mono">?admin=1</code> dans l'URL.
+        </div>
+      </div>
+
+      {/* Diag info */}
+      {info && !info.error && (
+        <div style={{
+          background: 'var(--bg-elev)',
+          border: '1px solid var(--line-soft)',
+          borderRadius: 'var(--radius)',
+          padding: 14, marginBottom: 14,
+          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7,
+        }}>
+          <div>Python : <strong style={{ color: 'var(--ink)' }}>{info.python}</strong></div>
+          <div>APP_SUBPATH : <strong style={{ color: 'var(--ink)' }}>{info.app_subpath || '(racine)'}</strong></div>
+          <div>Pool Gemini : <strong style={{ color: 'var(--ink)' }}>{info.pool_size} clé(s)</strong></div>
+          <div>Export secrets : <strong style={{ color: info.export_secrets_enabled ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>
+            {info.export_secrets_enabled ? 'activé (EXPORT_SECRETS_PASSWORD défini)' : 'désactivé'}
+          </strong></div>
+          <div style={{ marginTop: 8 }}>Env vars présentes ({(info.env_vars_present || []).length}) :</div>
+          <div style={{ paddingLeft: 12, color: 'var(--ink-2)' }}>
+            {(info.env_vars_present || []).join(', ') || '—'}
+          </div>
+        </div>
+      )}
+
+      {/* Export secrets */}
+      {info && info.export_secrets_enabled && (
+        <>
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: 8,
+          }}>Export des secrets (.env)</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8 }}>
+            <Input value={password} onChange={setPassword}
+              placeholder="Mot de passe (EXPORT_SECRETS_PASSWORD)" mono />
+            <Button size="sm" onClick={doExport} disabled={busy}>
+              {busy ? '…' : 'Exporter'}
+            </Button>
+            {exported && (
+              <Button size="sm" variant="secondary" onClick={downloadEnv}>
+                ⬇ .env
+              </Button>
+            )}
+          </div>
+          {exportError && (
+            <div style={{
+              marginTop: 8, padding: 10,
+              background: 'rgba(200,58,115,0.08)',
+              border: '1px solid var(--jdm-magenta)',
+              borderRadius: 'var(--radius)',
+              color: 'var(--jdm-magenta)', fontSize: 12,
+            }}>{exportError}</div>
+          )}
+          {exported && (
+            <div style={{
+              marginTop: 10, padding: 12,
+              background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+              fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
+              maxHeight: 240, overflow: 'auto',
+            }}>
+              {Object.entries(exported).map(([k, v]) => (
+                <div key={k} style={{ wordBreak: 'break-all' }}>
+                  <strong style={{ color: 'var(--accent)' }}>{k}</strong>
+                  =<span style={{ color: 'var(--ink-2)' }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
 }
 
 window.ViewProductions = ViewProductions;
@@ -4134,6 +4274,54 @@ function App() {
     };
     window.addEventListener('jdm:goto', handler);
     return () => window.removeEventListener('jdm:goto', handler);
+  }, []);
+
+  // Raccourcis clavier — séquence "G E" pour Aller à Explorer, etc.
+  // Annoncés dans l'onglet Aide. Désactivés quand on est dans un input
+  // (textarea, contenteditable, [type=text|password|...]) pour ne pas
+  // intercepter les saisies utilisateur.
+  useEffect(() => {
+    let pendingG = false;
+    let pendingGTimer = null;
+    const SHORTCUTS_G = {
+      'KeyE': 'explorer', 'KeyC': 'claim',  'KeyS': 'subgraph',
+      'KeyA': 'agent',    'KeyJ': 'jarvis', 'KeyP': 'productions',
+      'KeyH': 'aide',
+    };
+    const isTyping = (target) => {
+      if (!target) return false;
+      const tag = (target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+      if (target.isContentEditable) return true;
+      return false;
+    };
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTyping(e.target)) return;
+      if (e.code === 'KeyG' && !pendingG) {
+        pendingG = true;
+        clearTimeout(pendingGTimer);
+        pendingGTimer = setTimeout(() => { pendingG = false; }, 1200);
+        return;
+      }
+      if (pendingG && SHORTCUTS_G[e.code]) {
+        e.preventDefault();
+        pendingG = false;
+        clearTimeout(pendingGTimer);
+        setView(SHORTCUTS_G[e.code]);
+        return;
+      }
+      // ? = aller à l'aide
+      if (e.key === '?' && !e.shiftKey === false) {  // shift+/ = ?
+        e.preventDefault();
+        setView('aide');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      clearTimeout(pendingGTimer);
+    };
   }, []);
 
   const VIEWS = {
