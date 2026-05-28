@@ -60,9 +60,19 @@ function ViewClaim() {
         throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
       }
       const data = await res.json();
+      // SNAPSHOT du triplet AU MOMENT DE LA VÉRIFICATION — sinon si
+      // l'utilisateur change un champ du formulaire après le verdict,
+      // l'affichage du résultat utiliserait la nouvelle valeur du form
+      // (faux : on verrait le verdict de A appliqué au triplet B).
+      const submitted = {
+        subject, relation,
+        object: object_,
+        effort: Number(effort),
+        bypass: !!bypass,
+      };
       if (data.error) {
-        // Cas terme inconnu : on affiche le banner UNKNOWN avec le message
         setResult({
+          submitted,
           status: 'unknown',
           confidence: 0,
           explanation: data.error,
@@ -70,6 +80,7 @@ function ViewClaim() {
         });
       } else {
         setResult({
+          submitted,
           status: data.status,
           confidence: data.confidence,
           explanation: data.explanation,
@@ -206,8 +217,42 @@ function ViewClaim() {
         </div>
       )}
 
-      {/* Result */}
-      {result && <ClaimResult result={result} subject={subject} relation={relation} object={object_} />}
+      {/* Indicateur « résultats périmés » si le formulaire a changé
+          depuis la dernière vérification. */}
+      {result && result.submitted && (
+        result.submitted.subject !== subject ||
+        result.submitted.relation !== relation ||
+        result.submitted.object !== object_ ||
+        result.submitted.effort !== Number(effort) ||
+        result.submitted.bypass !== !!bypass
+      ) && (
+        <div style={{
+          padding: '8px 14px', marginBottom: 12,
+          background: 'var(--bg-elev)',
+          border: '1px dashed var(--jdm-orange)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-orange)',
+          fontSize: 12, fontFamily: 'var(--font-mono)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          <span>⚠️ Le formulaire a changé — le verdict ci-dessous concerne le triplet précédent.</span>
+          <Button size="sm" onClick={run} disabled={loading}>Re-vérifier</Button>
+        </div>
+      )}
+
+      {/* Result — utilise les valeurs SNAPSHOTÉES dans result.submitted
+          pour éviter le bug stale : si l'utilisateur change le form
+          après vérification, le banner affiche le verdict avec le
+          triplet *réellement vérifié*, pas le triplet en cours
+          d'édition. */}
+      {result && (
+        <ClaimResult
+          result={result}
+          subject={result.submitted ? result.submitted.subject : subject}
+          relation={result.submitted ? result.submitted.relation : relation}
+          object={result.submitted ? result.submitted.object : object_}
+        />
+      )}
     </PageShell>
   );
 }

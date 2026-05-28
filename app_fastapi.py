@@ -665,6 +665,15 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                 auto_switch_on_perday=bool(p.get("auto_switch", False)),
                 resume_state=p.get("resume_state"),
             )
+            # Importe le compteur consolidés du registre (mécanique
+            # battle-tested de jdm_agent.enrich) — fournit le VRAI nombre
+            # de triplets ayant passé l'inférence, pas un grep markdown.
+            try:
+                from jdm_agent.enrich import count_consolidations, list_consolidations
+            except ImportError:
+                count_consolidations = lambda: 0
+                list_consolidations = lambda: []
+
             async for chunk in _to_async_gen(sync_gen):
                 # run_jarvis_flow yield :
                 #   3-tuple : (messages, fpath, fpreview)
@@ -675,6 +684,7 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                 fpath = chunk[1] if len(chunk) >= 2 else None
                 fpreview = chunk[2] if len(chunk) >= 3 else None
                 state = chunk[3] if len(chunk) >= 4 else None
+
                 # Sérialise messages (peut contenir des objets Gradio
                 # gr.update — on filtre pour ne garder que les dict).
                 msgs_clean = []
@@ -685,6 +695,17 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                                 "role": m.get("role", ""),
                                 "content": m.get("content", ""),
                             })
+
+                # Compteur consolidations depuis le registre (jamais via
+                # parsing du markdown). list_consolidations() renvoie
+                # aussi les triplets pour les afficher dans la sidebar.
+                try:
+                    cc = int(count_consolidations() or 0)
+                    consolidated = list_consolidations() or []
+                except Exception:
+                    cc = 0
+                    consolidated = []
+
                 yield {
                     "event": "jarvis",
                     "data": json.dumps({
@@ -692,6 +713,8 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                         "file_path": str(fpath) if fpath else None,
                         "file_preview": fpreview if isinstance(fpreview, str) else "",
                         "state": state if isinstance(state, dict) else None,
+                        "consolidated_count": cc,
+                        "consolidated": consolidated[-50:],  # cap pour le payload
                     }, ensure_ascii=False, default=str),
                 }
             yield {"event": "done", "data": "{}"}
@@ -736,9 +759,11 @@ def api_pool_status() -> dict[str, Any]:
     today = _today_utc()
     models = list(_app.GEMINI_MODELS.keys())
     out_keys = []
-    for k in keys:
+    for i, k in enumerate(keys):
         out_keys.append({
-            "masked": _app._masked_key(k),
+            # On n'envoie PAS le préfixe/suffixe — un attaquant pourrait
+            # corréler avec d'autres fuites. Juste l'index 1-based.
+            "index": i + 1,
             "is_current": (k == current_key),
             "invalid": (k in _app._INVALID_KEYS),
             "blown_by_model": {
@@ -749,7 +774,6 @@ def api_pool_status() -> dict[str, Any]:
     return {
         "keys": out_keys,
         "current_model": current_model,
-        "current_key_masked": _app._masked_key(current_key) if current_key else None,
         "models": models,
     }
 

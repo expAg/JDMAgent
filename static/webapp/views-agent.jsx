@@ -463,7 +463,7 @@ function PoolWidget({ model }) {
                 fontFamily: 'var(--font-mono)', fontSize: 11,
               }}>
                 <span style={{ color: status_color }}>{status_icon}</span>
-                <span style={{ color: 'var(--ink-2)' }}>{k.masked}</span>
+                <span style={{ color: 'var(--ink-2)' }}>Clé {i + 1}</span>
                 {k.is_current && (
                   <span style={{
                     marginLeft: 'auto', fontSize: 9,

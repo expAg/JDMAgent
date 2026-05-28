@@ -1245,9 +1245,19 @@ function ViewClaim() {
         throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
       }
       const data = await res.json();
+      // SNAPSHOT du triplet AU MOMENT DE LA VÉRIFICATION — sinon si
+      // l'utilisateur change un champ du formulaire après le verdict,
+      // l'affichage du résultat utiliserait la nouvelle valeur du form
+      // (faux : on verrait le verdict de A appliqué au triplet B).
+      const submitted = {
+        subject, relation,
+        object: object_,
+        effort: Number(effort),
+        bypass: !!bypass,
+      };
       if (data.error) {
-        // Cas terme inconnu : on affiche le banner UNKNOWN avec le message
         setResult({
+          submitted,
           status: 'unknown',
           confidence: 0,
           explanation: data.error,
@@ -1255,6 +1265,7 @@ function ViewClaim() {
         });
       } else {
         setResult({
+          submitted,
           status: data.status,
           confidence: data.confidence,
           explanation: data.explanation,
@@ -1391,8 +1402,42 @@ function ViewClaim() {
         </div>
       )}
 
-      {/* Result */}
-      {result && <ClaimResult result={result} subject={subject} relation={relation} object={object_} />}
+      {/* Indicateur « résultats périmés » si le formulaire a changé
+          depuis la dernière vérification. */}
+      {result && result.submitted && (
+        result.submitted.subject !== subject ||
+        result.submitted.relation !== relation ||
+        result.submitted.object !== object_ ||
+        result.submitted.effort !== Number(effort) ||
+        result.submitted.bypass !== !!bypass
+      ) && (
+        <div style={{
+          padding: '8px 14px', marginBottom: 12,
+          background: 'var(--bg-elev)',
+          border: '1px dashed var(--jdm-orange)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-orange)',
+          fontSize: 12, fontFamily: 'var(--font-mono)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          <span>⚠️ Le formulaire a changé — le verdict ci-dessous concerne le triplet précédent.</span>
+          <Button size="sm" onClick={run} disabled={loading}>Re-vérifier</Button>
+        </div>
+      )}
+
+      {/* Result — utilise les valeurs SNAPSHOTÉES dans result.submitted
+          pour éviter le bug stale : si l'utilisateur change le form
+          après vérification, le banner affiche le verdict avec le
+          triplet *réellement vérifié*, pas le triplet en cours
+          d'édition. */}
+      {result && (
+        <ClaimResult
+          result={result}
+          subject={result.submitted ? result.submitted.subject : subject}
+          relation={result.submitted ? result.submitted.relation : relation}
+          object={result.submitted ? result.submitted.object : object_}
+        />
+      )}
     </PageShell>
   );
 }
@@ -1780,13 +1825,28 @@ function ViewSubgraph() {
                 {' · '}<span className="mono" style={{ color: 'var(--accent)', textTransform: 'uppercase' }}>{data.format || format}</span>
               </div>
             </div>
-            <div style={{ height: 640, background: '#ffffff', position: 'relative' }}>
+            <div style={{
+              height: 'min(900px, calc(100vh - 220px))',
+              minHeight: 600,
+              background: 'var(--bg-card)',
+              position: 'relative',
+            }}>
               {data.format === 'html' && data.html ? (
                 <iframe
                   title="JDM subgraph"
                   srcDoc={data.html}
                   sandbox="allow-scripts allow-same-origin"
-                  style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+                  style={{
+                    width: '100%', height: '100%', border: 0, display: 'block',
+                    // L'HTML interne vis-network a un fond blanc fixe ; on
+                    // ne peut pas le re-skinner sans toucher au template
+                    // côté backend. Le filter inverse couleurs en mode
+                    // lab seulement (preserve les couleurs des nœuds via
+                    // hue-rotate). Compromis temporaire en attendant un
+                    // vrai theming du template HTML.
+                    filter: document.body.dataset.theme === 'lab'
+                            ? 'invert(0.92) hue-rotate(180deg)' : 'none',
+                  }}
                 />
               ) : data.nodes && data.nodes.length > 0 ? (
                 <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
@@ -2410,7 +2470,7 @@ function PoolWidget({ model }) {
                 fontFamily: 'var(--font-mono)', fontSize: 11,
               }}>
                 <span style={{ color: status_color }}>{status_icon}</span>
-                <span style={{ color: 'var(--ink-2)' }}>{k.masked}</span>
+                <span style={{ color: 'var(--ink-2)' }}>Clé {i + 1}</span>
                 {k.is_current && (
                   <span style={{
                     marginLeft: 'auto', fontSize: 9,
@@ -2607,7 +2667,12 @@ function JarvisRun({ flow, onBack }) {
     toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0,
   });
   const [accepted, setAccepted] = useState([]);
-  const [finalText, setFinalText] = useState('');
+  // narrationHTML = trace markdown/HTML cumulative du LLM (left panel)
+  // filePreview = contenu du fichier .enrich/.audit/.err qui se construit
+  //              (right panel — c'est CE qu'on appelle « réponse finale »)
+  const [narrationHTML, setNarrationHTML] = useState('');
+  const [filePreview, setFilePreview] = useState('');
+  const [filePath, setFilePath] = useState(null);
   const [headline, setHeadline] = useState('');
   const logRef = useRef(null);
   const abortRef = useRef(null);
@@ -2628,7 +2693,8 @@ function JarvisRun({ flow, onBack }) {
   }, [state]);
 
   const reset = () => {
-    setLog([]); setAccepted([]); setFinalText(''); setHeadline('');
+    setLog([]); setAccepted([]); setNarrationHTML(''); setFilePreview('');
+    setFilePath(null); setHeadline('');
     setMetrics({ toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0 });
     setState('idle');
   };
@@ -2657,14 +2723,18 @@ function JarvisRun({ flow, onBack }) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buf = '';
-      // Le backend wrappe run_jarvis_flow qui yield (messages, fpath,
-      // fpreview, [state]). On reçoit donc des events de type "jarvis"
-      // avec le contenu narratif complet (markdown cumulatif) dans le
-      // dernier message assistant. On compte les triplets consolidés
-      // en parsant la narration côté client (le pattern « consolidé »
-      // apparaît dans la trace markdown).
+      // Backend yield des events { type: jarvis } portant :
+      //   messages          [{role, content}]
+      //   file_path         chemin du fichier .enrich/.audit/.err
+      //   file_preview      contenu courant du fichier (gradually appended)
+      //   consolidated_count int — VRAI compteur depuis count_consolidations()
+      //   consolidated      list[{term, relation, target, ...}]
+      // Le narration HTML (avec divs .jdm-narration et spans .jarvis-term)
+      // est dans le dernier message assistant — on l'injecte tel quel dans
+      // le panneau LOG (HTML interprété via dangerouslySetInnerHTML).
+      // file_preview va dans le panneau « RÉPONSE FINALE » (= état du
+      // fichier en construction).
       let prevConsolidatedCount = 0;
-      let lastFilePath = null;
       const dispatchEvent = (ev) => {
         const d = ev.data || {};
         switch (ev.event) {
@@ -2673,38 +2743,40 @@ function JarvisRun({ flow, onBack }) {
             setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
             break;
           case 'jarvis': {
-            // d.messages = [{role, content}], d.file_path, d.file_preview
             const msgs = d.messages || [];
-            // Affiche la dernière bulle assistant comme « réponse finale
-            // live » (run_jarvis_flow accumule tout dans la 2ème bulle).
             const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            // Met à jour la narration HTML pour le panneau LOG
             if (assistant && assistant.content) {
-              setFinalText(assistant.content);
-              // Compte les consolidations dans le markdown narratif :
-              // chaque triplet validé+consolidé crée une ligne avec un
-              // marqueur reconnaissable (✓ consolidé / triplet écrit).
-              const text = assistant.content;
-              const matches = text.match(/✓\s*(consolid|écrit|appended)/gi) || [];
-              if (matches.length > prevConsolidatedCount) {
-                const delta = matches.length - prevConsolidatedCount;
-                setMetrics(m => ({ ...m, accepted: m.accepted + delta }));
-                prevConsolidatedCount = matches.length;
-              }
-              // Compteur d'outils approximatif via lignes « 🔧 » ou
-              // narrations connues (`* nom_outil *` dans la trace).
-              const toolMatches = text.match(/🔧|<div class="jdm-narration">/g) || [];
+              setNarrationHTML(assistant.content);
+            }
+            // Compteur consolidés depuis le registry (source de vérité)
+            const cc = Number(d.consolidated_count || 0);
+            if (cc !== prevConsolidatedCount) {
+              setMetrics(m => ({ ...m, accepted: cc }));
+              prevConsolidatedCount = cc;
+            }
+            // Compteur outils via marqueurs de narration HTML
+            if (assistant && assistant.content) {
+              const toolMatches = assistant.content.match(/class="jdm-narration"/g) || [];
               setMetrics(m => ({ ...m, toolsCalled: toolMatches.length }));
             }
-            // Si le fichier de sortie change, log + push dans accepted
-            if (d.file_path && d.file_path !== lastFilePath) {
-              lastFilePath = d.file_path;
+            // Triplets consolidés depuis le registry (pas du parsing)
+            if (Array.isArray(d.consolidated)) {
+              setAccepted(d.consolidated.map(c => ({
+                label: `${c.term} | ${c.relation} | ${c.target}`,
+                score: '✓',
+              })));
+            }
+            // Aperçu du fichier qui se construit (gradually appended)
+            if (typeof d.file_preview === 'string') {
+              setFilePreview(d.file_preview);
+            }
+            // Path du fichier (téléchargement)
+            if (d.file_path && d.file_path !== filePath) {
+              setFilePath(d.file_path);
               setLog(l => [...l, {
                 t: ts(), tag: '[file]', kind: 'accept',
-                msg: `Fichier écrit : ${d.file_path}`,
-              }]);
-              setAccepted(prev => [...prev, {
-                label: d.file_path.split(/[\\/]/).slice(-1)[0],
-                score: '📄',
+                msg: `Fichier : ${d.file_path}`,
               }]);
             }
             break;
@@ -2910,7 +2982,8 @@ function JarvisRun({ flow, onBack }) {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
-            {/* Log stream */}
+            {/* Narration (markdown HTML interprété — narrations LLM,
+                tools, consolidations) — c'est notre VRAI log temps réel. */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 display: 'flex', justifyContent: 'space-between',
@@ -2921,94 +2994,102 @@ function JarvisRun({ flow, onBack }) {
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>Log temps réel</div>
+                }}>Narration LLM</div>
                 {state === 'running' && <span className="pulse-dot" style={{ background: flow.accent }} />}
               </div>
-              <div ref={logRef} style={{
+              <div ref={logRef} className="jdm-narration-pane" style={{
                 height: 420,
                 overflowY: 'auto',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 11,
-                lineHeight: 1.55,
-                padding: 12,
+                padding: 14,
                 background: 'var(--bg-card)',
+                fontSize: 13,
+                lineHeight: 1.55,
+                color: 'var(--ink)',
               }}>
-                {log.length === 0 && (
+                {!narrationHTML && log.length === 0 && (
                   <div style={{ color: 'var(--ink-3)', textAlign: 'center', padding: '40px 0' }}>
                     {state === 'idle' ? 'En attente du lancement…' : '—'}
                   </div>
                 )}
-                {log.map((l, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
-                    <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
-                    <span style={{
-                      flexShrink: 0,
-                      color: l.kind === 'tool' ? 'var(--accent)' :
-                             l.kind === 'accept' ? 'var(--jdm-green)' :
-                             l.kind === 'reject' ? 'var(--jdm-magenta)' :
-                             l.kind === 'thought' ? 'var(--ink-3)' :
-                             l.kind === 'iter' ? flow.accent :
-                             'var(--ink-3)',
-                      minWidth: 64,
-                    }}>{l.tag}</span>
-                    <span style={{
-                      color: l.kind === 'thought' ? 'var(--ink-3)' : 'var(--ink)',
-                      fontStyle: l.kind === 'thought' ? 'italic' : 'normal',
-                      wordBreak: 'break-word',
-                    }}>{l.msg}</span>
-                  </div>
-                ))}
+                {narrationHTML ? (
+                  <div dangerouslySetInnerHTML={{ __html: narrationHTML }} />
+                ) : (
+                  // Fallback : entrées tag/temps des events headline/file/etc.
+                  log.map((l, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 4, alignItems: 'baseline', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                      <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                      <span style={{
+                        flexShrink: 0, minWidth: 64,
+                        color: l.kind === 'accept' ? 'var(--jdm-green)'
+                              : l.kind === 'reject' ? 'var(--jdm-magenta)'
+                              : l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
+                      }}>{l.tag}</span>
+                      <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </Card>
 
-            {/* Accepted / final answer */}
+            {/* Réponse finale = état du fichier .enrich/.audit/.err
+                en cours de construction (file_preview, gradually appended). */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 padding: '10px 14px',
                 background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
                 }}>
-                  {finalText ? 'Réponse finale' : `Triplets consolidés · ${accepted.length}`}
+                  Fichier en construction
+                  {filePath && (
+                    <span style={{ color: 'var(--ink-2)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
+                      · {filePath.split(/[\\/]/).slice(-1)[0]}
+                    </span>
+                  )}
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--jdm-green)' }}>
+                  {metrics.accepted} consolidé{metrics.accepted > 1 ? 's' : ''}
                 </div>
               </div>
               <div style={{
                 height: 420,
                 overflowY: 'auto',
-                padding: 12,
+                padding: 0,
                 background: 'var(--bg-card)',
-                fontSize: 13,
-                lineHeight: 1.55,
-                color: 'var(--ink)',
-                whiteSpace: 'pre-wrap',
               }}>
-                {finalText ? finalText : (
-                  accepted.length === 0 ? (
-                    <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
-                      Aucun fichier encore.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'grid', gap: 4 }}>
-                      {accepted.map((a, i) => (
-                        <div key={i} className="fade-up" style={{
-                          display: 'flex', alignItems: 'center', gap: 8,
-                          padding: '6px 8px',
-                          background: 'var(--bg-elev)',
-                          border: '1px solid var(--line-soft)',
-                          borderRadius: 'var(--radius)',
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 11,
-                        }}>
-                          <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>✓</span>
-                          <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
-                          <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{a.score}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )
+                {filePreview ? (
+                  <pre style={{
+                    margin: 0, padding: 14,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11, lineHeight: 1.6,
+                    color: 'var(--ink)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}>{filePreview}</pre>
+                ) : accepted.length > 0 ? (
+                  <div style={{ display: 'grid', gap: 4, padding: 12 }}>
+                    {accepted.map((a, i) => (
+                      <div key={i} className="fade-up" style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '6px 8px',
+                        background: 'var(--bg-elev)',
+                        border: '1px solid var(--line-soft)',
+                        borderRadius: 'var(--radius)',
+                        fontFamily: 'var(--font-mono)', fontSize: 11,
+                      }}>
+                        <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>{a.score}</span>
+                        <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)' }}>{a.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
+                    {state === 'idle' ? 'Aucun fichier encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
+                  </div>
                 )}
               </div>
             </Card>

@@ -247,13 +247,28 @@ function ViewSubgraph() {
                 {' · '}<span className="mono" style={{ color: 'var(--accent)', textTransform: 'uppercase' }}>{data.format || format}</span>
               </div>
             </div>
-            <div style={{ height: 640, background: '#ffffff', position: 'relative' }}>
+            <div style={{
+              height: 'min(900px, calc(100vh - 220px))',
+              minHeight: 600,
+              background: 'var(--bg-card)',
+              position: 'relative',
+            }}>
               {data.format === 'html' && data.html ? (
                 <iframe
                   title="JDM subgraph"
                   srcDoc={data.html}
                   sandbox="allow-scripts allow-same-origin"
-                  style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+                  style={{
+                    width: '100%', height: '100%', border: 0, display: 'block',
+                    // L'HTML interne vis-network a un fond blanc fixe ; on
+                    // ne peut pas le re-skinner sans toucher au template
+                    // côté backend. Le filter inverse couleurs en mode
+                    // lab seulement (preserve les couleurs des nœuds via
+                    // hue-rotate). Compromis temporaire en attendant un
+                    // vrai theming du template HTML.
+                    filter: document.body.dataset.theme === 'lab'
+                            ? 'invert(0.92) hue-rotate(180deg)' : 'none',
+                  }}
                 />
               ) : data.nodes && data.nodes.length > 0 ? (
                 <GraphViz nodes={data.nodes} edges={data.edges} relations={activeRels} />
