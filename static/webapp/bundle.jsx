@@ -3727,7 +3727,17 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   </div>
                 )}
                 {narrationHTML ? (
-                  <div dangerouslySetInnerHTML={{ __html: narrationHTML }} />
+                  // marked.js parse le markdown (**bold**, *italic*,
+                  // `code`, listes) MAIS laisse intactes les balises
+                  // HTML déjà présentes (div.jdm-narration, div.jdm-thinking,
+                  // span.jarvis-term, etc.). Fallback : raw HTML si
+                  // marked.js indisponible.
+                  <div className="jdm-agent-bubble"
+                    dangerouslySetInnerHTML={{
+                      __html: (typeof window !== 'undefined' && window.marked)
+                        ? (window.marked.setOptions({ gfm: true, breaks: true }), window.marked.parse(narrationHTML))
+                        : narrationHTML
+                    }} />
                 ) : (
                   // Fallback : entrées tag/temps des events headline/file/etc.
                   log.map((l, i) => (
