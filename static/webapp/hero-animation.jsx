@@ -271,6 +271,33 @@ function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick 
     }
   });
 
+  // ── AUTOFIT — rescale toutes les positions pour que TOUT le graphe
+  //    (bulles + labels) rentre dans le viewBox, sans clipping.
+  //    Marges :
+  //      horizontal = bubble radius (≈14) + demi-largeur label (≈70)
+  //      vertical   = bubble radius (≈14) + hauteur label sous bulle (≈30)
+  //    On calcule un facteur d'échelle ≤ 1 ; jamais d'agrandissement.
+  //    Activé uniquement en mode interactif (LIVE) — les scénarios
+  //    démo accueil sont calibrés à la main.
+  if (interactive) {
+    const margX = 84, margY = 44;
+    const maxX = Math.max(1, ...Object.values(positions).map(p => Math.abs(p.x)));
+    const maxY = Math.max(1, ...Object.values(positions).map(p => Math.abs(p.y)));
+    const safeX = Math.max(40, cx - margX);
+    const safeY = Math.max(40, cy - margY);
+    const sX = maxX > safeX ? safeX / maxX : 1;
+    const sY = maxY > safeY ? safeY / maxY : 1;
+    const fitScale = Math.min(sX, sY, 1);
+    if (fitScale < 1) {
+      for (const id of Object.keys(positions)) {
+        positions[id] = {
+          x: positions[id].x * fitScale,
+          y: positions[id].y * fitScale,
+        };
+      }
+    }
+  }
+
   // Path layout doesn't rotate — labels need to stay axis-aligned and
   // not drift off-frame. Radial layout has a slow drift.
   // MODE INTERACTIF (LIVE) : aucune rotation pour que le hover soit
