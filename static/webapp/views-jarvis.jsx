@@ -1219,18 +1219,18 @@ function defaultParamsFor(flowId) {
   };
   switch (flowId) {
     case 'enrich':
-      return { ...common, term: '', relation: '',
+      return { ...common, term: '', relation: [],
                target_count: 3, vary_relations: true, iterate: true, upload: false };
     case 'audit':
-      return { ...common, term: '', relation: '', upload: false };
+      return { ...common, term: '', relation: [], upload: false };
     case 'gap':
       return { ...common, term: '' };
     case 'signalement':
-      return { ...common, term: '', relation: '', upload: false };
+      return { ...common, term: '', relation: [], upload: false };
     case 'stats':
-      return { ...common, term: '', relation: '', upload: false };
+      return { ...common, term: '', relation: [], upload: false };
     case 'annotation':
-      return { ...common, term: '', relation: '', top_k: 8,
+      return { ...common, term: '', relation: [], top_k: 8,
                target_count: 10, upload: false };
   }
   return common;
@@ -1249,10 +1249,11 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label="Terme à enrichir">
         <Input value={params.term} onChange={(v) => set('term', v)} mono />
       </Field>
-      <Field label="Relation cible (optionnelle)">
-        <Select value={params.relation || ''}
+      <Field label="Relations cibles (optionnel, multi)">
+        <MultiSelect value={params.relation || []}
           onChange={(v) => set('relation', v)}
-          options={[{ value: '', label: '— libre —' }, ...REL_OPTS_COMMON]} />
+          placeholder="— libre (toutes par défaut) —"
+          options={REL_OPTS_COMMON} />
       </Field>
       <Field label={`Nombre cible · ${params.target_count}`}>
         <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
@@ -1286,10 +1287,11 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label="Terme">
         <Input value={params.term} onChange={(v) => set('term', v)} mono />
       </Field>
-      <Field label="Relation (optionnelle)">
-        <Select value={params.relation || ''}
+      <Field label="Relations (optionnel, multi)">
+        <MultiSelect value={params.relation || []}
           onChange={(v) => set('relation', v)}
-          options={[{ value: '', label: '— toutes —' }, ...REL_OPTS_COMMON]} />
+          placeholder="— toutes —"
+          options={REL_OPTS_COMMON} />
       </Field>
       <Field label="Budget d'outils">
         <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
@@ -1326,10 +1328,11 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label="Terme (optionnel)">
         <Input value={params.term} onChange={(v) => set('term', v)} mono />
       </Field>
-      <Field label="Relation (optionnelle)">
-        <Select value={params.relation || ''}
+      <Field label="Relations (optionnel, multi)">
+        <MultiSelect value={params.relation || []}
           onChange={(v) => set('relation', v)}
-          options={[{ value: '', label: '— toutes principales —' }, ...REL_OPTS_COMMON]} />
+          placeholder="— toutes principales —"
+          options={REL_OPTS_COMMON} />
       </Field>
       <Field label={`Cible d'annotations utiles · ${params.target_count}`}>
         <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />

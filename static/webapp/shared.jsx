@@ -180,6 +180,161 @@ function Select({ value, options, onChange, placeholder = 'Choisir…', width })
   );
 }
 
+// ───────── MultiSelect — sélection multiple à cases à cocher ─────────
+// Même look que `Select`. `value` = tableau de valeurs sélectionnées.
+// `onChange(newArray)` appelé à chaque toggle. `placeholder` affiché
+// quand vide. Affiche en pastilles compactes quand 1-3 items, sinon
+// « N sélectionnés ». Cliquer en dehors ferme le menu (idem Select).
+function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélection', width }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const selected = Array.isArray(value) ? value : (value ? [value] : []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const toggle = (v) => {
+    const next = selected.includes(v)
+      ? selected.filter(x => x !== v)
+      : [...selected, v];
+    onChange(next);
+  };
+
+  // Label : pastilles si peu de sélection, compteur sinon
+  const labelNode = () => {
+    if (selected.length === 0) {
+      return <span style={{ color: 'var(--ink-3)' }}>{placeholder}</span>;
+    }
+    if (selected.length <= 3) {
+      return (
+        <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap',
+                        alignItems: 'center', overflow: 'hidden' }}>
+          {selected.map(v => {
+            const o = options.find(o => (o.value ?? o) === v);
+            const l = o ? (o.label ?? o) : v;
+            return (
+              <span key={v} style={{
+                fontSize: 11, padding: '1px 6px',
+                background: 'var(--bg-elev)',
+                border: '1px solid var(--line-soft)',
+                borderRadius: 3,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--ink)',
+              }}>{l}</span>
+            );
+          })}
+        </span>
+      );
+    }
+    return (
+      <span style={{ color: 'var(--ink)' }}>
+        {selected.length} sélectionné{selected.length > 1 ? 's' : ''}
+      </span>
+    );
+  };
+
+  return (
+    <div className="om-select" ref={rootRef} style={{ width }}>
+      <button
+        type="button"
+        className="om-select__trigger focus-ring"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}>
+        <span style={{
+          overflow: 'hidden', textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+          textAlign: 'left',
+        }}>{labelNode()}</span>
+        <svg className="om-select__chevron" width="12" height="12" viewBox="0 0 12 12">
+          <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="om-select__menu fade-up" role="listbox">
+          {/* Petite barre d'action pour tout sélectionner/désélectionner */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            padding: '4px 10px', borderBottom: '1px solid var(--line-soft)',
+            fontSize: 10, fontFamily: 'var(--font-mono)',
+            color: 'var(--ink-3)', letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+          }}>
+            <span>{selected.length}/{options.length}</span>
+            <span style={{ display: 'flex', gap: 8 }}>
+              <button type="button"
+                onClick={(e) => { e.stopPropagation(); onChange(options.map(o => o.value ?? o)); }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--accent)', fontSize: 10,
+                  fontFamily: 'var(--font-mono)', padding: 0,
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>tout</button>
+              <button type="button"
+                onClick={(e) => { e.stopPropagation(); onChange([]); }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--ink-3)', fontSize: 10,
+                  fontFamily: 'var(--font-mono)', padding: 0,
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>aucun</button>
+            </span>
+          </div>
+          {options.map((o, i) => {
+            const v = o.value ?? o;
+            const l = o.label ?? o;
+            const sub = o.sub;
+            const isSel = selected.includes(v);
+            return (
+              <div key={i}
+                className="om-select__option"
+                role="option"
+                aria-selected={isSel}
+                onClick={() => toggle(v)}>
+                {/* Case à cocher visuelle */}
+                <span style={{
+                  width: 14, height: 14, borderRadius: 3,
+                  border: `1.5px solid ${isSel ? 'var(--accent)' : 'var(--line)'}`,
+                  background: isSel ? 'var(--accent)' : 'transparent',
+                  display: 'inline-flex', alignItems: 'center',
+                  justifyContent: 'center', flexShrink: 0, marginRight: 8,
+                }}>
+                  {isSel && (
+                    <svg width="9" height="9" viewBox="0 0 12 12">
+                      <path d="M2 6l3 3 5-6" fill="none" stroke="var(--bg)"
+                            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{l}</div>
+                  {sub && (
+                    <div style={{
+                      fontSize: 11, color: 'var(--ink-3)',
+                      marginTop: 2, fontFamily: 'var(--font-mono)',
+                    }}>{sub}</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ───────── Field — label + helper + control ─────────
 function Field({ label, hint, children, inline }) {
   return (
