@@ -5122,7 +5122,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
   const [metrics, setMetrics] = useState({
-    toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0,
+    toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0,
   });
   const [accepted, setAccepted] = useState([]);
   // narrationHTML = trace markdown/HTML cumulative du LLM (left panel)
@@ -5173,9 +5173,31 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const reset = () => {
     setLog([]); setAccepted([]); setNarrationHTML(''); setFilePreview('');
     setFilePath(null); setHeadline('');
-    setMetrics({ toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0 });
+    setMetrics({ toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 });
     setState('idle');
   };
+
+  // Parse le file_preview pour extraire les items à afficher dans le
+  // panneau de droite. Mémoïsé sur (filePreview, flow.id) — la parse
+  // est cheap mais évite de re-allouer N fois par seconde pendant
+  // que le fichier grandit.
+  const parsed = React.useMemo(
+    () => parseFilePreview(filePreview, flow.id),
+    [filePreview, flow.id]
+  );
+
+  // Synchronise le compteur "produced" du dashboard avec les items
+  // parsés (signalements + verdicts + annotations). Pour enrich, on
+  // garde la source registry (`accepted`) qui est canonique.
+  React.useEffect(() => {
+    if (flow.id === 'enrich') {
+      setMetrics(m => ({ ...m, produced: m.accepted }));
+    } else {
+      // Compteur unifié : on additionne tous les items hors méta-prose.
+      const n = parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
+      setMetrics(m => ({ ...m, produced: n }));
+    }
+  }, [parsed.items.length, metrics.accepted, flow.id]);
 
   const launch = async (continueFromResume) => {
     const isResume = !!continueFromResume;
@@ -5526,7 +5548,14 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
           }}>
             <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
             <Metric label="Tokens" value={fmtTokens(metrics.tokens)} sub="estimés" mono />
-            <Metric label="Consolidés" value={metrics.accepted} sub="triplets" color="var(--jdm-green)" />
+            {/* Compteur "produits" dynamique selon le flow : pour enrich
+                = consolidés depuis le registry ; pour audit/err/annot/stats
+                = items extraits du file_preview (signalements + verdicts +
+                annotations + lignes). Le label s'adapte. */}
+            <Metric label={metricLabelFor(flow.id).label}
+                    value={metrics.produced}
+                    sub={metricLabelFor(flow.id).sub}
+                    color="var(--jdm-green)" />
             <Metric label="Temps" value={fmtElapsed(metrics.elapsed)} sub="écoulé" mono />
           </div>
 
@@ -5561,7 +5590,14 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   </div>
                 )}
                 {narrationHTML ? (
-                  <div dangerouslySetInnerHTML={{ __html: narrationHTML }} />
+                  // Le contenu sortant du LLM est markdown + parfois
+                  // des divs HTML <jdm-narration> embeddés (trace
+                  // d'outils). marked.js préserve les blocs HTML
+                  // inline → la trace reste structurée, mais les
+                  // titres / listes / **gras** / `code` se rendent
+                  // correctement (cf. chatbot et enrich qui font pareil).
+                  <div className="jdm-prose"
+                       dangerouslySetInnerHTML={{ __html: renderMarkdownLite(narrationHTML) }} />
                 ) : (
                   // Fallback : entrées tag/temps des events headline/file/etc.
                   log.map((l, i) => (
@@ -5597,7 +5633,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   flex: 1, minWidth: 0,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  Triplets consolidés · <span style={{ color: 'var(--jdm-green)' }}>{metrics.accepted}</span>
+                  {panelTitleFor(flow.id)} · <span style={{ color: 'var(--jdm-green)' }}>{metrics.produced}</span>
                   {filePath && (
                     <span style={{ color: 'var(--ink-2)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
                       · {filePath.split(/[\\/]/).slice(-1)[0]}
@@ -5625,27 +5661,58 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                 padding: 0,
                 background: 'var(--bg-card)',
               }}>
-                {accepted.length > 0 ? (
-                  <div style={{ display: 'grid', gap: 4, padding: 12 }}>
-                    {accepted.map((a, i) => (
-                      <div key={i} className="fade-up" style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev)',
-                        border: '1px solid var(--line-soft)',
-                        borderRadius: 'var(--radius)',
-                        fontFamily: 'var(--font-mono)', fontSize: 11,
-                      }}>
-                        <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>{a.score}</span>
-                        <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)' }}>{a.label}</span>
+                {/* Rendu adaptatif selon flow.id et type de chaque item.
+                    Enrich = liste simple (canonique du registry).
+                    Audit/err/annot = cartes stylisées par type, avec
+                    bloc explication mis en valeur quand il existe. */}
+                {(() => {
+                  // Enrich : on garde la source registry (accepted) qui
+                  // ne contient QUE les consolidés vérifiés.
+                  if (flow.id === 'enrich') {
+                    if (accepted.length === 0) {
+                      return (
+                        <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
+                          {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ display: 'grid', gap: 4, padding: 12 }}>
+                        {accepted.map((a, i) => (
+                          <div key={i} className="fade-up" style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '6px 8px',
+                            background: 'var(--bg-elev)',
+                            border: '1px solid var(--line-soft)',
+                            borderRadius: 'var(--radius)',
+                            fontFamily: 'var(--font-mono)', fontSize: 11,
+                          }}>
+                            <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>{a.score}</span>
+                            <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)' }}>{a.label}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
-                    {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
-                  </div>
-                )}
+                    );
+                  }
+
+                  // Autres flows : on parse le file_preview.
+                  if (parsed.items.length === 0) {
+                    return (
+                      <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
+                        {state === 'idle'
+                          ? 'Le panneau se remplira au fur et à mesure que le fichier est écrit.'
+                          : 'En attente des premiers résultats…'}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{ display: 'grid', gap: 8, padding: 12 }}>
+                      {parsed.items.map((it, i) => (
+                        <ItemCard key={i} item={it} accent={flow.accent} />
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             </Card>
           </div>
@@ -5657,6 +5724,293 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
 }
 
 // ───── Helpers ─────
+
+// ─── ItemCard — rendu stylisé d'un item parsé ───────────────────
+// 5 types affichables : consolidated, flagged (.err), signalement
+// (.annot/.audit), audit_signalement (.audit verdicts), meta (prose).
+// Quand un item a une `explanation` (= ce que le LLM a dit sur le
+// flag / signalement), on l'affiche dans un bloc stylisé sous le
+// triplet — c'est le coeur de la demande utilisateur.
+function ItemCard({ item, accent }) {
+  // Couleur de bord par type — signal visuel rapide.
+  const typeStyle = {
+    consolidated:       { border: 'var(--jdm-green)',   icon: '✓', label: 'consolidé' },
+    flagged:            { border: 'var(--jdm-orange)',  icon: '⚠', label: 'suspect' },
+    signalement:        { border: 'var(--jdm-magenta)', icon: '!', label: 'désaccord JDM' },
+    audit_signalement:  { border: 'var(--jdm-magenta)', icon: '!', label: 'verdict' },
+    sens:               { border: 'var(--line)',        icon: '·', label: 'sens' },
+    meta:               { border: 'var(--accent)',      icon: '✎', label: 'observation' },
+  }[item.type] || { border: 'var(--line)', icon: '·', label: '' };
+
+  // Item meta = ligne de prose simple, pas un triplet.
+  if (item.type === 'meta') {
+    return (
+      <div className="fade-up" style={{
+        padding: '8px 10px',
+        background: 'var(--bg-elev)',
+        borderLeft: `3px solid ${typeStyle.border}`,
+        borderRadius: '0 var(--radius) var(--radius) 0',
+        fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5,
+      }}>{item.raw}</div>
+    );
+  }
+
+  // Triplet + (option) catégorie + (option) bloc explication.
+  const tripletLine = (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap',
+      fontFamily: 'var(--font-mono)', fontSize: 11,
+    }}>
+      <span style={{ color: typeStyle.border, flexShrink: 0,
+                     fontWeight: 700, width: 12, textAlign: 'center' }}>
+        {typeStyle.icon}
+      </span>
+      <span style={{ color: 'var(--ink)' }}>
+        {item.subject} <span style={{ color: 'var(--ink-3)' }}>|</span>
+        {' '}{item.relation} <span style={{ color: 'var(--ink-3)' }}>|</span>
+        {' '}{item.target}
+      </span>
+    </div>
+  );
+
+  // Catégorie / verdict / JDM≠LLM — affiché en chip discret sous le triplet.
+  const chips = [];
+  if (item.category) chips.push({ k: 'cat', v: item.category });
+  if (item.verdict)  chips.push({ k: 'verdict', v: item.verdict });
+  if (item.jdm)      chips.push({ k: 'JDM', v: item.jdm });
+  if (item.llm)      chips.push({ k: 'LLM', v: item.llm });
+
+  return (
+    <div className="fade-up" style={{
+      padding: '8px 10px',
+      background: 'var(--bg-elev)',
+      border: '1px solid var(--line-soft)',
+      borderLeft: `3px solid ${typeStyle.border}`,
+      borderRadius: '0 var(--radius) var(--radius) 0',
+    }}>
+      {tripletLine}
+      {chips.length > 0 && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 4,
+          marginTop: 6, marginLeft: 18,
+        }}>
+          {chips.map((c, i) => (
+            <span key={i} style={{
+              fontSize: 10, fontFamily: 'var(--font-mono)',
+              padding: '1px 6px',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 3,
+              color: c.k === 'LLM' ? typeStyle.border
+                   : c.k === 'JDM' ? 'var(--ink-3)'
+                   : 'var(--ink-2)',
+            }}>
+              <span style={{ color: 'var(--ink-3)' }}>{c.k}:</span> {c.v}
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Bloc explication stylisé — c'est ce que le LLM a dit sur ce
+          signalement / verdict / désaccord. C'est ÇA la valeur ajoutée
+          du flow ; on la met bien en évidence. */}
+      {item.explanation && (
+        <div style={{
+          marginTop: 6, marginLeft: 18,
+          padding: '6px 9px',
+          background: 'var(--bg-card)',
+          borderLeft: `2px solid ${accent || typeStyle.border}`,
+          borderRadius: '0 3px 3px 0',
+          fontSize: 11, color: 'var(--ink-2)',
+          lineHeight: 1.5, fontStyle: 'italic',
+        }}>
+          {item.explanation}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Markdown render (reuse pattern from views-agent) ────────────
+// Contenu produit par notre propre LLM = confiance, on n'escape pas.
+// marked.js (chargé dans index.html) fait tout le boulot ; fallback
+// léger si non disponible.
+function renderMarkdownLite(s) {
+  s = s || '';
+  if (typeof window !== 'undefined' && window.marked) {
+    try {
+      window.marked.setOptions({ gfm: true, breaks: true });
+      return window.marked.parse(s);
+    } catch {}
+  }
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')
+    .replace(/\n/g, '<br/>');
+}
+
+// ─── parseFilePreview ─────────────────────────────────────────────
+// À partir du contenu textuel d'un .enrich / .err / .audit / .annot /
+// .stat, extrait une liste structurée d'items à afficher dans le
+// panneau de droite. Chaque item :
+//   { type: 'consolidated'|'flagged'|'signalement'|'annotation'|'meta'|'sens',
+//     subject, relation, target,    (canonique pipe-separated)
+//     category, verdict, jdm, llm,  (champs optionnels selon type)
+//     explanation,                  (justification / argument contre)
+//     raw }                         (la ligne brute pour fallback)
+//
+// Comprend les 4 formats :
+//   .enrich : term|rel|target|annotation < explanation >
+//   .err    : term|rel|target|catégorie_suspect|justification
+//   .annot  : sujet|rel|objet|annotation < justif >  +  section
+//             =====SIGNALEMENT===== : sujet|rel|objet|JDM:x|LLM:y < arg >
+//   .audit  : sections === SENS ===, === SIGNALEMENTS ===, === META ===
+//             la section SIGNALEMENTS contient term|rel|target|verdict|justif
+function parseFilePreview(text, flowId) {
+  text = (text || '').toString();
+  if (!text.trim()) return { items: [], counts: {} };
+  const lines = text.split(/\r?\n/);
+  const items = [];
+  let inSignalement = false;
+  let inAuditSignalements = false;
+  let inAuditMeta = false;
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    // Commentaires (# ...) sauvent comme meta light, on saute pour
+    // l'affichage principal mais on sait les détecter.
+    if (line.startsWith('#')) continue;
+
+    // Délimiteurs de sections
+    const upper = line.toUpperCase();
+    if (/^=====+SIGNALEMENT=====+/i.test(line) ||
+        upper.includes('SIGNALEMENT')) {
+      inSignalement = true;
+      inAuditSignalements = upper.includes('=== SIGNALEMENT') ||
+                            upper.includes('SIGNALEMENTS ===');
+      inAuditMeta = false;
+      continue;
+    }
+    if (/^===\s*META\s*===$/i.test(line)) {
+      inAuditMeta = true; inSignalement = false; inAuditSignalements = false;
+      continue;
+    }
+    if (/^===\s*SENS\s*===$/i.test(line)) {
+      inAuditMeta = false; inSignalement = false; inAuditSignalements = false;
+      // SENS dans audit → on les push comme type 'sens'
+      // (la 1re ligne après le délimiteur sera la suivante)
+      continue;
+    }
+    // Bloc META : prose, on peut le montrer dans une carte spéciale
+    if (inAuditMeta) {
+      items.push({ type: 'meta', raw: line });
+      continue;
+    }
+
+    // Format avec explication entre < > (commune à .enrich/.annot/.audit)
+    const mWithExplain = line.match(/^([^|]+)\|([^|]+)\|([^|]+)\|(.+?)(?:\s+<\s*(.+?)\s*>\s*)?$/);
+    if (mWithExplain) {
+      const [, subject, relation, target, rest, explanation] = mWithExplain;
+      // Section SIGNALEMENT du .annot : rest peut contenir
+      // "JDM:<x>|LLM:<y>" → on extrait les deux.
+      if (inSignalement && /JDM\s*:/i.test(rest) && /LLM\s*:/i.test(rest)) {
+        const jdmM = rest.match(/JDM\s*:\s*([^|]+)\|LLM\s*:\s*(.+)/i);
+        if (jdmM) {
+          items.push({
+            type: 'signalement',
+            subject: subject.trim(), relation: relation.trim(),
+            target: target.trim(),
+            jdm: jdmM[1].trim(), llm: jdmM[2].trim(),
+            explanation: (explanation || '').trim(),
+            raw: line,
+          });
+          continue;
+        }
+      }
+      // .err format : rest = catégorie_suspect, explanation
+      if (flowId === 'signalement' || /suspect/i.test(rest)) {
+        items.push({
+          type: 'flagged',
+          subject: subject.trim(), relation: relation.trim(),
+          target: target.trim(),
+          category: rest.trim(),
+          explanation: (explanation || '').trim(),
+          raw: line,
+        });
+        continue;
+      }
+      // .audit signalements section : rest = verdict
+      if (inAuditSignalements) {
+        items.push({
+          type: 'audit_signalement',
+          subject: subject.trim(), relation: relation.trim(),
+          target: target.trim(),
+          verdict: rest.trim(),
+          explanation: (explanation || '').trim(),
+          raw: line,
+        });
+        continue;
+      }
+      // .enrich / .annot : rest = annotation
+      items.push({
+        type: inSignalement ? 'signalement' : 'consolidated',
+        subject: subject.trim(), relation: relation.trim(),
+        target: target.trim(),
+        category: rest.trim(),
+        explanation: (explanation || '').trim(),
+        raw: line,
+      });
+      continue;
+    }
+
+    // Lignes 'pure pipe' (.audit SENS, autres tableaux .stat)
+    const piped = line.match(/^([^|]+)\|([^|]+)\|([^|]+)$/);
+    if (piped) {
+      items.push({
+        type: 'sens',
+        subject: piped[1].trim(),
+        relation: piped[2].trim(),
+        target: piped[3].trim(),
+        raw: line,
+      });
+      continue;
+    }
+  }
+
+  // Compteurs par type — utiles pour le dashboard.
+  const counts = items.reduce((acc, it) => {
+    acc[it.type] = (acc[it.type] || 0) + 1;
+    return acc;
+  }, {});
+  return { items, counts };
+}
+
+// Libellé adaptatif du compteur "Consolidés" selon le flow.
+function metricLabelFor(flowId) {
+  switch (flowId) {
+    case 'enrich':      return { label: 'Consolidés', sub: 'triplets' };
+    case 'audit':       return { label: 'Verdicts',   sub: 'signalements' };
+    case 'signalement': return { label: 'Suspects',   sub: 'triplets flaggés' };
+    case 'annotation':  return { label: 'Annotations',sub: '+ signalements' };
+    case 'stats':       return { label: 'Lignes',     sub: 'produites' };
+    case 'gap':         return { label: 'Trous',      sub: 'détectés' };
+    default:            return { label: 'Items',      sub: 'produits' };
+  }
+}
+
+// Titre adaptatif du panneau de droite selon le flow.
+function panelTitleFor(flowId) {
+  switch (flowId) {
+    case 'enrich':      return 'Triplets consolidés';
+    case 'audit':       return 'Verdicts d\'audit (signalements)';
+    case 'signalement': return 'Triplets suspects (signalés)';
+    case 'annotation':  return 'Annotations + signalements';
+    case 'stats':       return 'Lignes produites';
+    case 'gap':         return 'Trous détectés';
+    default:            return 'Résultats';
+  }
+}
 
 function parseSSEEventJarvis(raw) {
   raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -5892,6 +6246,11 @@ function ParamsForm({ flow, params, setParams, locked }) {
   }
 
   if (flow.id === 'annotation') {
+    // Pas de Top-K exposé : le param top_k est laissé à sa valeur par
+    // défaut (8) en arrière-plan, il configure la profondeur de
+    // récup de triplets candidats par get_relations_of_type. Le seul
+    // levier utile pour l'utilisateur est la CIBLE d'annotations
+    // (= nombre d'annotations utiles à atteindre par itération).
     return wrap(<>
       <Field label="Terme (optionnel)">
         <Input value={params.term} onChange={(v) => set('term', v)} mono />
@@ -5900,9 +6259,6 @@ function ParamsForm({ flow, params, setParams, locked }) {
         <Select value={params.relation || ''}
           onChange={(v) => set('relation', v)}
           options={[{ value: '', label: '— toutes principales —' }, ...REL_OPTS_COMMON]} />
-      </Field>
-      <Field label={`Top-K par relation · ${params.top_k}`}>
-        <Slider value={params.top_k} onChange={(v) => set('top_k', v)} min={3} max={15} step={1} />
       </Field>
       <Field label={`Cible d'annotations utiles · ${params.target_count}`}>
         <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
