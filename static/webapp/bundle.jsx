@@ -951,14 +951,21 @@ function GraphCanvas({ scenario, tick, height }) {
           if (!a || !b) return null;
           const x = a.x + (b.x - a.x) * t;
           const y = a.y + (b.y - a.y) * t;
+          // Couleur d'arête : utilise e.color si fourni (mode LIVE avec
+          // codage par type de relation), sinon fallback démo accent/ink-3.
+          const edgeColor = e.color
+            || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
+          const labelColor = e.color
+            || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
           return (
             <g key={i}>
               <line
                 x1={a.x} y1={a.y} x2={x} y2={y}
-                stroke={e.highlight ? 'var(--accent)' : 'var(--ink-3)'}
-                strokeWidth={e.highlight ? 2 : 1}
-                strokeOpacity={e.highlight ? 0.9 : 0.45}
+                stroke={edgeColor}
+                strokeWidth={e.highlight ? 2 : 1.2}
+                strokeOpacity={e.color ? 0.82 : (e.highlight ? 0.9 : 0.45)}
                 strokeLinecap="round"
+                strokeDasharray={e.negative ? '4 3' : undefined}
               />
               {e.label && t > 0.6 && (
                 <text
@@ -967,7 +974,7 @@ function GraphCanvas({ scenario, tick, height }) {
                   textAnchor="middle"
                   fontFamily="var(--font-mono)"
                   fontSize="9"
-                  fill={e.highlight ? 'var(--accent)' : 'var(--ink-3)'}
+                  fill={labelColor}
                   opacity={(t - 0.6) / 0.4}
                   transform={`rotate(${-rotateAll}, ${(a.x + b.x) / 2}, ${(a.y + b.y) / 2 - 6})`}
                 >
@@ -3044,6 +3051,35 @@ const KIND_OF_REL = {
   r_domain: 'domain', r_associated: 'assoc',
 };
 
+// Couleurs LIVE — vives, lisibles sur fond sombre (≠ KIND_COLOR qui est
+// taillé pour le SVG sur fond clair). Utilisées pour les arêtes en
+// mode LIVE et la légende.
+const REL_COLOR_LIVE = {
+  r_isa:        '#4ea1ff',   // bleu
+  r_hypo:       '#5cd6a8',   // vert menthe
+  r_syn:        '#a8e063',   // vert lime
+  r_anto:       '#ff5c87',   // rose vif
+  r_carac:      '#c084fc',   // violet
+  r_has_part:   '#ffa94d',   // orange
+  r_lieu:       '#22d3ee',   // cyan
+  r_domain:     '#94a3b8',   // ardoise
+  r_has_color:  '#fbbf24',   // jaune
+  r_agent:      '#f97316',   // orange foncé
+  r_patient:    '#ec4899',   // magenta
+  r_instr:      '#06b6d4',   // teal
+  r_telic_role: '#84cc16',   // lime
+  r_has_causatif: '#dc2626', // rouge
+  r_has_conseq: '#a78bfa',   // violet clair
+  'r_patient-1': '#fb923c',  // orange clair
+  'r_agent-1':  '#f59e0b',   // ambre
+  r_associated: '#9ca3af',   // gris
+  r_raff_sem:   '#e879f9',   // magenta clair
+};
+const REL_COLOR_DEFAULT = '#6b7280';
+function relColor(rel) {
+  return REL_COLOR_LIVE[rel] || REL_COLOR_DEFAULT;
+}
+
 // Convertit {nodes, edges} SSE en scénario HeroAnimation, en
 // REPRODUISANT EXACTEMENT le pattern du scénario 'voiture' de la
 // démo accueil (hero-animation.jsx) :
@@ -3221,6 +3257,10 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
       to:   remap(e.to),
       delay: Math.max(nodeDelays[e.from] || 0, nodeDelays[e.to] || 0) + 0.12,
       label: e.relation || '',
+      // Couleur par TYPE DE RELATION (visible sur fond sombre).
+      // Les négations passent en rouge dédié pour signal fort.
+      color: e.negative ? '#ef4444' : relColor(e.relation),
+      negative: !!e.negative,
       highlight: e.highlight !== false,
     }));
 
@@ -3236,16 +3276,118 @@ function buildLiveScenario(rootTerm, nodes, edges, layout = 'tree') {
 // Wrapper qui MEMOIZE le scenario pour ne pas recréer un nouvel objet
 // à chaque render — sinon HeroAnimation re-trigger l'animation en
 // boucle infinie (sa useEffect dépend de liveScenario par référence).
+// Ajoute aussi le ZOOM (boutons +/- et molette) et la LÉGENDE des
+// couleurs de relations.
 function LiveAnimWrapper({ term, nodes, edges, layout }) {
   const scenario = React.useMemo(
     () => buildLiveScenario(term, nodes, edges, layout),
-    // Dépend de la longueur + premier/dernier id pour détecter des
-    // données réellement différentes sans tomber dans le piège du
-    // "nouvelle référence à chaque tick SSE".
     [term, layout, (nodes || []).length, (edges || []).length,
      (nodes || [])[0]?.id, (nodes || [])[(nodes || []).length - 1]?.id]
   );
-  return <HeroAnimation height={560} showChat={false} liveScenario={scenario} />;
+
+  // Zoom : multiplicateur CSS transform: scale(). 1 = taille naturelle.
+  // Bornes : 0.4 (très large) ↔ 3.0 (zoom serré).
+  const [zoom, setZoom] = useState(1);
+  const onWheel = (e) => {
+    // Molette = zoom in/out continu (sans bloquer le scroll de la page :
+    // n'intercepte que si la touche Alt OU Ctrl est pressée).
+    if (!(e.altKey || e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const delta = -e.deltaY * 0.001;
+    setZoom(z => Math.max(0.4, Math.min(3, z + delta)));
+  };
+
+  // Relations effectivement présentes dans les arêtes → légende dynamique
+  const presentRels = React.useMemo(() => {
+    const set = new Set();
+    for (const e of edges || []) if (e.relation) set.add(e.relation);
+    return Array.from(set).sort();
+  }, [edges]);
+
+  return (
+    <div style={{ position: 'relative', height: '100%', display: 'flex',
+                  flexDirection: 'column' }}>
+      {/* Boutons de zoom — overlay coin haut-droit */}
+      <div style={{
+        position: 'absolute', top: 10, right: 10, zIndex: 5,
+        display: 'flex', flexDirection: 'column', gap: 4,
+      }}>
+        {[
+          { label: '+', onClick: () => setZoom(z => Math.min(3, z + 0.2)) },
+          { label: '−', onClick: () => setZoom(z => Math.max(0.4, z - 0.2)) },
+          { label: '⟲', onClick: () => setZoom(1) },
+        ].map(b => (
+          <button key={b.label}
+            onClick={b.onClick}
+            className="focus-ring"
+            title={b.label === '⟲' ? 'Réinitialiser le zoom' :
+                   b.label === '+' ? 'Zoom +' : 'Zoom −'}
+            style={{
+              width: 28, height: 28,
+              background: 'var(--bg-elev)',
+              border: '1px solid var(--line)',
+              color: 'var(--ink)',
+              borderRadius: 6,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 14, fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>{b.label}</button>
+        ))}
+        <div className="mono" style={{
+          marginTop: 2,
+          fontSize: 9, color: 'var(--ink-3)',
+          textAlign: 'center', letterSpacing: '0.05em',
+        }}>{Math.round(zoom * 100)}%</div>
+      </div>
+
+      {/* Canvas zoomable */}
+      <div
+        onWheel={onWheel}
+        style={{
+          flex: 1, minHeight: 0, overflow: 'hidden',
+          position: 'relative',
+        }}>
+        <div style={{
+          width: '100%', height: '100%',
+          transform: `scale(${zoom})`,
+          transformOrigin: 'center center',
+          transition: 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+        }}>
+          <HeroAnimation height={560} showChat={false} liveScenario={scenario} />
+        </div>
+      </div>
+
+      {/* Légende — codage couleur par type de relation présente */}
+      {presentRels.length > 0 && (
+        <div style={{
+          padding: '8px 12px',
+          borderTop: '1px solid var(--line-soft)',
+          background: 'var(--bg-elev)',
+          display: 'flex', flexWrap: 'wrap', gap: 10,
+          alignItems: 'center',
+        }}>
+          <span className="mono" style={{
+            fontSize: 9, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+          }}>Légende</span>
+          {presentRels.map(r => (
+            <span key={r} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              fontFamily: 'var(--font-mono)', fontSize: 10,
+              color: 'var(--ink-2)',
+            }}>
+              <span style={{
+                width: 18, height: 3, borderRadius: 2,
+                background: relColor(r),
+              }}/>
+              {r}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ViewSubgraph() {

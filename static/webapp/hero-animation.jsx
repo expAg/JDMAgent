@@ -293,14 +293,21 @@ function GraphCanvas({ scenario, tick, height }) {
           if (!a || !b) return null;
           const x = a.x + (b.x - a.x) * t;
           const y = a.y + (b.y - a.y) * t;
+          // Couleur d'arête : utilise e.color si fourni (mode LIVE avec
+          // codage par type de relation), sinon fallback démo accent/ink-3.
+          const edgeColor = e.color
+            || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
+          const labelColor = e.color
+            || (e.highlight ? 'var(--accent)' : 'var(--ink-3)');
           return (
             <g key={i}>
               <line
                 x1={a.x} y1={a.y} x2={x} y2={y}
-                stroke={e.highlight ? 'var(--accent)' : 'var(--ink-3)'}
-                strokeWidth={e.highlight ? 2 : 1}
-                strokeOpacity={e.highlight ? 0.9 : 0.45}
+                stroke={edgeColor}
+                strokeWidth={e.highlight ? 2 : 1.2}
+                strokeOpacity={e.color ? 0.82 : (e.highlight ? 0.9 : 0.45)}
                 strokeLinecap="round"
+                strokeDasharray={e.negative ? '4 3' : undefined}
               />
               {e.label && t > 0.6 && (
                 <text
@@ -309,7 +316,7 @@ function GraphCanvas({ scenario, tick, height }) {
                   textAnchor="middle"
                   fontFamily="var(--font-mono)"
                   fontSize="9"
-                  fill={e.highlight ? 'var(--accent)' : 'var(--ink-3)'}
+                  fill={labelColor}
                   opacity={(t - 0.6) / 0.4}
                   transform={`rotate(${-rotateAll}, ${(a.x + b.x) / 2}, ${(a.y + b.y) / 2 - 6})`}
                 >
