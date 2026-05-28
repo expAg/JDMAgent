@@ -452,24 +452,47 @@ function FeaturesGrid({ features, goto }) {
     };
   }, [updateBounds]);
 
-  // Animation JS du scroll — durée custom 650ms en ease-out cubic.
-  // Plus visible que scrollBy({behavior:'smooth'}) qui est ~250ms.
+  // Animation JS du scroll : interpolation ralentie, élégante.
+  // Pendant l'anim, on désactive scroll-snap (mandatory snape sinon
+  // les positions intermédiaires → saccades). On rétablit en fin.
+  // ease-out quint ralentit plus que cubic → effet 'glissé'.
+  // En cas de clic rapide, on annule l'anim en cours (cancelAnimationFrame).
+  const animFrameRef = useRef(null);
+
   const animScroll = (dir) => {
     const el = scrollRef.current;
     if (!el) return;
-    const step = Math.max(300, el.clientWidth * 0.75);
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+    // Désactive le snap pendant l'animation (évite les saccades).
+    const prevSnap = el.style.scrollSnapType;
+    el.style.scrollSnapType = 'none';
+
+    const step = Math.max(320, el.clientWidth * 0.78);
     const start = el.scrollLeft;
     const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, start + dir * step));
-    const duration = 650;
+    const duration = 900;  // 900ms = sensation 'élégante' sans être lent
     const t0 = performance.now();
+
     const tick = (now) => {
       const t = Math.min(1, (now - t0) / duration);
-      const eased = 1 - Math.pow(1 - t, 3);  // ease-out cubic
+      // ease-out quint : décélération douce et marquée à la fin
+      const eased = 1 - Math.pow(1 - t, 5);
       el.scrollLeft = start + (target - start) * eased;
-      if (t < 1) requestAnimationFrame(tick);
+      if (t < 1) {
+        animFrameRef.current = requestAnimationFrame(tick);
+      } else {
+        animFrameRef.current = null;
+        // Restaure le snap (mandatory) en fin d'anim
+        el.style.scrollSnapType = prevSnap || 'x mandatory';
+      }
     };
-    requestAnimationFrame(tick);
+    animFrameRef.current = requestAnimationFrame(tick);
   };
+
+  React.useEffect(() => () => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+  }, []);
 
   // Style commun des boutons (skin-aware via vars CSS).
   const btnStyle = (enabled) => ({
@@ -503,13 +526,11 @@ function FeaturesGrid({ features, goto }) {
     e.currentTarget.style.transform = 'translateY(-50%)';
   };
 
-  // Cards à PLEINE LARGEUR — on ne troque pas leur taille.
-  // Bouton gauche : absolute HORS de la rangée, à gauche.
-  // Bouton droit : absolute SUR la rangée à droite, avec un gradient
-  // fade en arrière-plan qui estompe la dernière carte visible.
+  // Structure : wrapper-clip (overflow: hidden, clipe TOUT bleed) avec
+  // boutons + carousel à l'intérieur.
   return (
     <div style={{ position: 'relative' }}>
-      {/* Bouton gauche — hors de la rangée à gauche */}
+      {/* Bouton gauche — hors de la rangée à gauche, sur la marge */}
       <button
         type="button"
         data-side="left"
@@ -521,21 +542,57 @@ function FeaturesGrid({ features, goto }) {
           position: 'absolute',
           left: -56, top: '50%',
           transform: 'translateY(-50%)',
-          zIndex: 4,
+          zIndex: 6,
         }}>‹</button>
 
-      {/* Gradient fade + bouton droit (style 'estompé') — fade derrière
-          la dernière carte visible, bouton flottant par-dessus. */}
+      {/* Wrapper-clip pour la rangée — overflow hidden = AUCUN bleed
+          possible (scrollbar carousel, edge cards, etc.) */}
       <div style={{
-        position: 'absolute',
-        right: 0, top: 0, bottom: 0,
-        width: 84,
-        pointerEvents: 'none',
-        zIndex: 3,
-        background: 'linear-gradient(to left, var(--bg) 25%, transparent 100%)',
-        opacity: canNext ? 1 : 0,
-        transition: 'opacity 0.25s',
-      }} />
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: 'var(--radius-lg)',
+      }}>
+        {/* Carousel — pleine largeur, jamais troqué */}
+        <div
+          ref={scrollRef}
+          className="jdm-carousel"
+          style={{
+            display: 'flex',
+            gap: 14,
+            overflowX: 'auto',
+            overflowY: 'visible',
+            scrollSnapType: 'x mandatory',
+            padding: '8px 4px 18px',
+            margin: '-8px -4px 0',
+          }}>
+          {features.map((f, i) => (
+            <div key={f.id} style={{
+              flex: '0 0 clamp(280px, 28vw, 340px)',
+              scrollSnapAlign: 'start',
+              display: 'flex',
+              transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+            }}>
+              <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
+            </div>
+          ))}
+        </div>
+
+        {/* Gradient fade SUR la dernière carte (style 'estompé') —
+            DANS le wrapper clip, à l'INTÉRIEUR (= au-dessus du carousel).
+            Élargi à 120px, var(--bg) opaque sur 45% droite, fade gauche. */}
+        <div style={{
+          position: 'absolute',
+          right: 0, top: 0, bottom: 0,
+          width: 120,
+          pointerEvents: 'none',
+          zIndex: 3,
+          background: 'linear-gradient(to left, var(--bg) 45%, transparent 100%)',
+          opacity: canNext ? 1 : 0,
+          transition: 'opacity 0.25s',
+        }} />
+      </div>
+
+      {/* Bouton droit — par-dessus le gradient, au niveau du wrapper */}
       <button
         type="button"
         data-side="right"
@@ -545,36 +602,10 @@ function FeaturesGrid({ features, goto }) {
         style={{
           ...btnStyle(canNext),
           position: 'absolute',
-          right: 12, top: '50%',
+          right: 16, top: '50%',
           transform: 'translateY(-50%)',
-          zIndex: 4,
+          zIndex: 6,
         }}>›</button>
-
-      {/* Carousel — pleine largeur, jamais troqué pour les boutons. */}
-      <div
-        ref={scrollRef}
-        className="jdm-carousel"
-        style={{
-          display: 'flex',
-          gap: 14,
-          overflowX: 'auto',
-          overflowY: 'visible',
-          scrollSnapType: 'x mandatory',
-          padding: '8px 4px 18px',
-          margin: '-8px -4px 0',
-        }}>
-        {features.map((f, i) => (
-          <div key={f.id} style={{
-            flex: '0 0 clamp(280px, 28vw, 340px)',
-            scrollSnapAlign: 'start',
-            display: 'flex',
-            // Anim subtile à l'entrée + hover : un peu de scale.
-            transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
-          }}>
-            <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
