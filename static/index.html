@@ -322,6 +322,14 @@
   }
   .jdm-prose hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
   .jdm-prose small { font-size: 11px; opacity: 0.85; }
+
+  /* ── Gate admin ── Tout élément .admin-only est masqué par défaut.
+     Si l'URL contient ?admin=1, un script (plus bas) ajoute la classe
+     .admin-revealed sur chaque .admin-only → affichage débloqué.
+     On gate par classe sur l'élément lui-même (pas sur body) pour
+     résister à un éventuel scoping CSS parent. */
+  .admin-only { display: none !important; }
+  .admin-only.admin-revealed { display: revert !important; }
 </style>
 
 <template id="__bundler_thumbnail">
@@ -346,6 +354,27 @@
 <body data-theme="paper">
 
 <div id="root"></div>
+
+<!-- Gate admin : si ?admin=1 dans l'URL, on révèle les .admin-only.
+     On observe le DOM pour aussi gater les éléments montés après le
+     premier render (les vues React ajoutent .admin-only dynamiquement). -->
+<script>
+  (function() {
+    var qs = new URLSearchParams(window.location.search);
+    window.__JDM_ADMIN__ = (qs.get('admin') === '1');
+    function reveal() {
+      if (!window.__JDM_ADMIN__) return;
+      document.querySelectorAll('.admin-only:not(.admin-revealed)')
+        .forEach(function(el) { el.classList.add('admin-revealed'); });
+    }
+    reveal();
+    var mo = new MutationObserver(reveal);
+    document.addEventListener('DOMContentLoaded', function() {
+      reveal();
+      mo.observe(document.body, { childList: true, subtree: true });
+    });
+  })();
+</script>
 
 <script type="text/babel" src="webapp/tweaks-panel.jsx"></script>
 <script type="text/babel" src="webapp/bundle.jsx"></script>

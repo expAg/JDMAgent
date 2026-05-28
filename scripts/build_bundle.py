@@ -28,6 +28,7 @@ FILES = [
     "views-subgraph.jsx",
     "views-agent.jsx",
     "views-jarvis.jsx",
+    "views-productions.jsx",
     "views-aide.jsx",
     "app.jsx",
 ]

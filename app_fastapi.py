@@ -811,6 +811,265 @@ def health():
 
 
 # ────────────────────────────────────────────────────────────────────
+# Productions — liste / download / submit / delete (port app.py)
+# ────────────────────────────────────────────────────────────────────
+PRODUCTIONS_DIR = Path("/tmp/jdm_outputs")
+PRODUCTIONS_DIR.mkdir(parents=True, exist_ok=True)
+PRODUCTIONS_OLDIES_DIR = PRODUCTIONS_DIR / "oldies"
+PRODUCTIONS_SUBMITTED_FILE = PRODUCTIONS_DIR / ".submitted.json"
+PRODUCTIONS_OLDIES_THRESHOLD_SEC = 48 * 3600  # 48h
+
+
+def _load_submitted_set() -> set:
+    """Charge l'ensemble des noms de fichiers déjà soumis (cf. app.py)."""
+    if not PRODUCTIONS_SUBMITTED_FILE.exists():
+        return set()
+    try:
+        data = json.loads(PRODUCTIONS_SUBMITTED_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return set(data.keys())
+        if isinstance(data, list):
+            return set(data)
+    except Exception:
+        pass
+    return set()
+
+
+def _mark_submitted(filename: str) -> None:
+    """Ajoute filename au registre des fichiers soumis (persiste)."""
+    import time as _t
+    try:
+        current: dict = {}
+        if PRODUCTIONS_SUBMITTED_FILE.exists():
+            try:
+                current = json.loads(PRODUCTIONS_SUBMITTED_FILE.read_text(encoding="utf-8"))
+                if not isinstance(current, dict):
+                    current = {}
+            except Exception:
+                current = {}
+        current[filename] = _t.time()
+        PRODUCTIONS_DIR.mkdir(exist_ok=True)
+        PRODUCTIONS_SUBMITTED_FILE.write_text(
+            json.dumps(current, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _move_old_to_oldies() -> None:
+    """Déplace les fichiers du root PRODUCTIONS_DIR plus vieux que 48h
+    vers PRODUCTIONS_DIR/oldies/. Idempotent."""
+    import time as _t
+    if not PRODUCTIONS_DIR.exists():
+        return
+    now = _t.time()
+    PRODUCTIONS_OLDIES_DIR.mkdir(exist_ok=True)
+    for p in PRODUCTIONS_DIR.iterdir():
+        if not p.is_file() or p.name.startswith("."):
+            continue
+        try:
+            age = now - p.stat().st_mtime
+            if age >= PRODUCTIONS_OLDIES_THRESHOLD_SEC:
+                dst = PRODUCTIONS_OLDIES_DIR / p.name
+                if dst.exists():
+                    dst = PRODUCTIONS_OLDIES_DIR / f"{int(p.stat().st_mtime)}_{p.name}"
+                p.rename(dst)
+        except OSError:
+            continue
+
+
+def _file_meta(p: Path, submitted_set: set) -> dict:
+    import time as _t
+    st = p.stat()
+    age = int(_t.time() - st.st_mtime)
+    return {
+        "name": p.name,
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "age_s": age,
+        "submitted": p.name in submitted_set,
+        # Hint d'extension pour l'UI
+        "ext": p.suffix.lstrip(".").lower() or "txt",
+    }
+
+
+@app.get("/api/productions")
+def api_productions_list() -> dict[str, Any]:
+    """Liste les fichiers produits : `recent` (root) + `oldies` (archivés
+    >48h). Lance auto-archive avant le scan.
+    """
+    _move_old_to_oldies()
+    sub = _load_submitted_set()
+    recent: list[dict] = []
+    oldies: list[dict] = []
+    if PRODUCTIONS_DIR.exists():
+        for p in PRODUCTIONS_DIR.iterdir():
+            if p.is_file() and not p.name.startswith("."):
+                try:
+                    recent.append(_file_meta(p, sub))
+                except OSError:
+                    pass
+    if PRODUCTIONS_OLDIES_DIR.exists():
+        for p in PRODUCTIONS_OLDIES_DIR.iterdir():
+            if p.is_file():
+                try:
+                    oldies.append(_file_meta(p, sub))
+                except OSError:
+                    pass
+    recent.sort(key=lambda f: -f["mtime"])
+    oldies.sort(key=lambda f: -f["mtime"])
+    return {"recent": recent, "oldies": oldies}
+
+
+@app.get("/api/productions/file")
+def api_productions_get(name: str, archived: bool = False):
+    """Renvoie le CONTENU TEXTE d'un fichier de productions (preview).
+    `name` est validé pour éviter le path traversal."""
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        raise HTTPException(400, "Nom de fichier invalide.")
+    base = PRODUCTIONS_OLDIES_DIR if archived else PRODUCTIONS_DIR
+    p = base / name
+    if not p.exists() or not p.is_file():
+        raise HTTPException(404, f"Fichier introuvable : {name}")
+    try:
+        content = p.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"Erreur lecture : {e}")
+    return {"name": name, "content": content, "size": p.stat().st_size}
+
+
+@app.get("/api/productions/download")
+def api_productions_download(name: str, archived: bool = False):
+    """Télécharge le fichier brut (Content-Disposition: attachment)."""
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        raise HTTPException(400, "Nom de fichier invalide.")
+    base = PRODUCTIONS_OLDIES_DIR if archived else PRODUCTIONS_DIR
+    p = base / name
+    if not p.exists() or not p.is_file():
+        raise HTTPException(404, f"Fichier introuvable : {name}")
+    return FileResponse(str(p), filename=name,
+                        media_type="application/octet-stream")
+
+
+class ProductionsSubmitRequest(BaseModel):
+    names: list[str]
+    archived: bool = False
+    api_key: str = ""  # override JDM_DROPS_API_KEY (optionnel)
+    model_name: str = ""  # passé à submit_to_jdm pour le nom uploadé
+
+
+@app.post("/api/productions/submit")
+def api_productions_submit(req: ProductionsSubmitRequest) -> dict[str, Any]:
+    """Soumet un ou plusieurs fichiers à LLMDrops. Marque chaque
+    succès dans .submitted.json."""
+    from jdm_agent.enrich.uploader import submit_to_jdm
+    base = PRODUCTIONS_OLDIES_DIR if req.archived else PRODUCTIONS_DIR
+    results = []
+    for name in req.names:
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            results.append({"name": name, "ok": False, "error": "Nom invalide."})
+            continue
+        p = base / name
+        if not p.exists() or not p.is_file():
+            results.append({"name": name, "ok": False, "error": "Introuvable."})
+            continue
+        try:
+            res = submit_to_jdm(
+                p,
+                api_key=req.api_key or None,
+                model_name=req.model_name or None,
+            )
+            ok = bool(res.get("ok"))
+            if ok:
+                _mark_submitted(name)
+            results.append({"name": name, **res})
+        except Exception as e:
+            results.append({"name": name, "ok": False,
+                            "error": f"{type(e).__name__}: {e}"})
+    return {"results": results}
+
+
+class ProductionsDeleteRequest(BaseModel):
+    names: list[str]
+    archived: bool = False
+
+
+@app.post("/api/productions/delete")
+def api_productions_delete(req: ProductionsDeleteRequest) -> dict[str, Any]:
+    """Supprime un ou plusieurs fichiers de productions. Réservé admin
+    (le frontend gate via ?admin=1, mais ici on n'enforce pas — c'est
+    de la donnée non sensible, juste des outputs locaux)."""
+    base = PRODUCTIONS_OLDIES_DIR if req.archived else PRODUCTIONS_DIR
+    results = []
+    for name in req.names:
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            results.append({"name": name, "ok": False, "error": "Nom invalide."})
+            continue
+        p = base / name
+        try:
+            if p.exists() and p.is_file():
+                p.unlink()
+                results.append({"name": name, "ok": True})
+            else:
+                results.append({"name": name, "ok": False, "error": "Introuvable."})
+        except OSError as e:
+            results.append({"name": name, "ok": False, "error": str(e)})
+    return {"results": results}
+
+
+# ────────────────────────────────────────────────────────────────────
+# Admin — export secrets (mot de passe EXPORT_SECRETS_PASSWORD)
+# ────────────────────────────────────────────────────────────────────
+class ExportSecretsRequest(BaseModel):
+    password: str
+
+
+# Liste des variables d'env exportables — calque app.py.
+_EXPORTABLE_ENV_VARS = [
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+    "GOOGLE_API_KEYS", "GROQ_API_KEY", "DEEPSEEK_API_KEY",
+    "HF_TOKEN", "JDM_DROPS_API_KEY", "JDM_DROPS_URL",
+    "JDM_BASE_URL", "JDM_TIMEOUT", "JDM_CACHE_DIR",
+    "LLM_PROVIDER", "LLM_MODEL", "APP_SUBPATH",
+]
+
+
+@app.post("/api/admin/export-secrets")
+def api_admin_export_secrets(req: ExportSecretsRequest) -> dict[str, Any]:
+    """Export les secrets d'env (clés API, etc.) si le mot de passe
+    matche `EXPORT_SECRETS_PASSWORD`. Ne renvoie JAMAIS la valeur de
+    `EXPORT_SECRETS_PASSWORD` elle-même."""
+    expected = os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
+    if not expected:
+        raise HTTPException(503,
+            "Export désactivé : `EXPORT_SECRETS_PASSWORD` n'est pas défini côté serveur.")
+    if (req.password or "").strip() != expected:
+        raise HTTPException(401, "Mot de passe invalide.")
+    out = {}
+    for k in _EXPORTABLE_ENV_VARS:
+        v = os.environ.get(k, "")
+        if v:
+            out[k] = v
+    return {"vars": out, "count": len(out)}
+
+
+@app.get("/api/admin/info")
+def api_admin_info() -> dict[str, Any]:
+    """Diagnostic admin : versions, état pool, env vars présentes (noms
+    seulement, pas les valeurs)."""
+    import sys as _sys
+    present_env = sorted(k for k in _EXPORTABLE_ENV_VARS if os.environ.get(k))
+    return {
+        "python": _sys.version.split()[0],
+        "app_subpath": APP_SUBPATH or "",
+        "pool_size": len(_app._parse_google_keys()),
+        "env_vars_present": present_env,
+        "export_secrets_enabled": bool(os.environ.get("EXPORT_SECRETS_PASSWORD")),
+    }
+
+
+# ────────────────────────────────────────────────────────────────────
 # Static files — IMPORTANT : déclarer EN DERNIER (catch-all)
 # ────────────────────────────────────────────────────────────────────
 STATIC_DIR = _root / "static"

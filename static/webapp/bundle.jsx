@@ -467,13 +467,14 @@ function Triplet({ subject, relation, object, weight, annotations }) {
 // ───────── Top nav (horizontal) — used by all themes ─────────
 function TopNav({ active, setActive, theme, setTheme }) {
   const items = [
-    { id: 'projet',    label: 'Projet' },
-    { id: 'explorer',  label: 'Explorer' },
-    { id: 'claim',     label: 'Claim checker' },
-    { id: 'subgraph',  label: 'Sous-graphe' },
-    { id: 'agent',     label: 'Agent' },
-    { id: 'jarvis',    label: 'Jarvis' },
-    { id: 'aide',      label: 'Aide' },
+    { id: 'projet',      label: 'Projet' },
+    { id: 'explorer',    label: 'Explorer' },
+    { id: 'claim',       label: 'Claim checker' },
+    { id: 'subgraph',    label: 'Sous-graphe' },
+    { id: 'agent',       label: 'Agent' },
+    { id: 'jarvis',      label: 'Jarvis' },
+    { id: 'productions', label: 'Productions' },
+    { id: 'aide',        label: 'Aide' },
   ];
   return (
     <header style={{
@@ -2674,6 +2675,11 @@ function JarvisRun({ flow, onBack }) {
   const [filePreview, setFilePreview] = useState('');
   const [filePath, setFilePath] = useState(null);
   const [headline, setHeadline] = useState('');
+  // Etat de reprise après PerDay sur modèle non-3.1 — run_jarvis_flow
+  // yield un 5-tuple avec state quand l'agent abort. Le state contient
+  // accumulated_messages + canonical_path + budget courant → re-passe
+  // à un nouveau call pour reprendre exactement où on s'est arrêté.
+  const [resumeState, setResumeState] = useState(null);
   const logRef = useRef(null);
   const abortRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -2699,14 +2705,25 @@ function JarvisRun({ flow, onBack }) {
     setState('idle');
   };
 
-  const launch = async () => {
-    reset();
+  const launch = async (continueFromResume) => {
+    const isResume = !!continueFromResume;
+    if (!isResume) {
+      reset();
+    } else {
+      // Pour Continuer : on garde le log, narration, fichier en cours,
+      // metrics — on ajoute juste une ligne de reprise.
+      setLog(l => [...l, { t: ts(), tag: '[resume]', kind: 'iter', msg: 'Reprise après abort PerDay…' }]);
+    }
     setState('running');
-    startTimeRef.current = Date.now();
+    if (!isResume) startTimeRef.current = Date.now();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    const flowParams = { ...params };
+    const flowParams = {
+      ...params,
+      ...(isResume && resumeState ? { resume_state: resumeState } : {}),
+    };
+    if (isResume) setResumeState(null);  // clear pour ne pas reprendre 2x
     const ts = () => new Date().toTimeString().slice(0, 8);
 
     try {
@@ -2745,6 +2762,9 @@ function JarvisRun({ flow, onBack }) {
           case 'jarvis': {
             const msgs = d.messages || [];
             const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            // Stocke le state de reprise s'il est fourni (= l'agent a
+            // abort sur PerDay sans auto-bascule → on offre Continuer).
+            if (d.state) setResumeState(d.state);
             // Met à jour la narration HTML pour le panneau LOG
             if (assistant && assistant.content) {
               setNarrationHTML(assistant.content);
@@ -2873,7 +2893,7 @@ function JarvisRun({ flow, onBack }) {
             }}>Contrôles</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {(state === 'idle' || state === 'done' || state === 'error') && (
-                <Button full onClick={launch}>
+                <Button full onClick={() => launch(false)}>
                   {state === 'idle' ? '▶ Lancer' : '↻ Relancer'}
                 </Button>
               )}
@@ -2881,6 +2901,36 @@ function JarvisRun({ flow, onBack }) {
                 <Button variant="secondary" full onClick={stop}>⏹ Stop</Button>
               )}
             </div>
+
+            {/* Bouton Continuer — apparaît si l'agent a abort (mode B) */}
+            {resumeState && state !== 'running' && (
+              <div style={{ marginTop: 10 }}>
+                <Button full onClick={() => launch(true)}>
+                  ▶ Continuer avec 3.1
+                </Button>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink-3)' }}>
+                  L'agent a saturé son quota — reprends sur Gemini 3.1 Flash Lite
+                  (pool partagé, 500 req/jour) en gardant l'historique.
+                </div>
+              </div>
+            )}
+
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginTop: 12, fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer',
+            }}>
+              <input type="checkbox"
+                checked={!!params.auto_switch}
+                onChange={(e) => setParams(p => ({ ...p, auto_switch: e.target.checked }))}
+                style={{ accentColor: 'var(--accent)' }}
+                disabled={state === 'running'} />
+              Auto-bascule sur 3.1 si quota épuisé
+            </label>
+            <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 4, lineHeight: 1.45 }}>
+              Décoché (défaut) : abort propre + bouton « Continuer » apparaît.
+              Coché : retry silencieux sans intervention.
+            </div>
+
             {state === 'running' && (
               <div style={{
                 marginTop: 10,
@@ -3210,12 +3260,14 @@ const BUDGET_OPTS = [
 function defaultParamsFor(flowId) {
   // Defaults alignés sur la branche deploy-self / app.py :
   // term vide partout (= tirage au hasard côté backend), budget illimité,
-  // thinking=false (Jarvis = robustesse > raisonnement), upload=false.
+  // thinking=false (Jarvis = robustesse > raisonnement), upload=false,
+  // auto_switch=false (= mode B : abort + bouton Continuer).
   const common = {
     model: 'gemini-3.1-flash-lite',
     api_key: '', drops_key: '',
     use_thinking: false,
     budget_label: 'illimité',
+    auto_switch: false,
   };
   switch (flowId) {
     case 'enrich':
@@ -3317,6 +3369,393 @@ function ParamsForm({ flow, params, setParams, locked }) {
 }
 
 window.ViewJarvis = ViewJarvis;
+
+// === webapp/views-productions.jsx ===
+// View: Productions — fichiers .enrich / .audit / .err / .stat /
+// visualisations produits par les flux Jarvis. Liste + download +
+// soumission LLMDrops + suppression (admin).
+
+function ViewProductions() {
+  const [recent, setRecent] = useState([]);
+  const [oldies, setOldies] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedRecent, setSelectedRecent] = useState(new Set());
+  const [selectedOldies, setSelectedOldies] = useState(new Set());
+  const [busy, setBusy] = useState(false);
+  const [previewName, setPreviewName] = useState(null);
+  const [previewArchived, setPreviewArchived] = useState(false);
+  const [previewContent, setPreviewContent] = useState('');
+  const [actionLog, setActionLog] = useState([]);
+  // Bandeau Drops + modèle (pour soumissions)
+  const [dropsKey, setDropsKey] = useState('');
+  const [modelName, setModelName] = useState('claude-sonnet');
+
+  const isAdmin = typeof window !== 'undefined' && window.__JDM_ADMIN__;
+
+  const load = async () => {
+    setLoading(true); setError('');
+    try {
+      const r = await fetch('api/productions');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      setRecent(d.recent || []);
+      setOldies(d.oldies || []);
+    } catch (e) {
+      setError(String(e && e.message ? e.message : e));
+    } finally {
+      setLoading(false);
+    }
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const openPreview = async (name, archived) => {
+    setPreviewName(name);
+    setPreviewArchived(archived);
+    setPreviewContent('… chargement …');
+    try {
+      const r = await fetch(`api/productions/file?name=${encodeURIComponent(name)}&archived=${archived ? 1 : 0}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      setPreviewContent(d.content || '(vide)');
+    } catch (e) {
+      setPreviewContent(`Erreur : ${e && e.message ? e.message : e}`);
+    }
+  };
+
+  const downloadOne = (name, archived) => {
+    const url = `api/productions/download?name=${encodeURIComponent(name)}&archived=${archived ? 1 : 0}`;
+    // Force download via <a download>
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  };
+
+  const toggle = (set, setSet) => (name) => {
+    const next = new Set(set);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    setSet(next);
+  };
+
+  const submitSelected = async (archived) => {
+    const selected = archived ? selectedOldies : selectedRecent;
+    if (selected.size === 0) return;
+    setBusy(true);
+    try {
+      const r = await fetch('api/productions/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          names: Array.from(selected),
+          archived,
+          api_key: dropsKey,
+          model_name: modelName,
+        }),
+      });
+      const d = await r.json();
+      const results = d.results || [];
+      const ok = results.filter(x => x.ok).length;
+      const ko = results.length - ok;
+      setActionLog(prev => [...prev,
+        ...results.map(x => ({
+          t: new Date().toTimeString().slice(0, 8),
+          ok: !!x.ok, name: x.name,
+          msg: x.ok ? `Soumis · uploaded_as=${x.uploaded_as || ''}` : (x.error || 'échec'),
+        })),
+      ]);
+      if (ok) {
+        // Clear selection des items réussis et recharge la liste pour
+        // que .submitted réapparaisse en ✅ vert.
+        const remaining = new Set();
+        results.forEach(x => { if (!x.ok) remaining.add(x.name); });
+        if (archived) setSelectedOldies(remaining); else setSelectedRecent(remaining);
+        await load();
+      }
+    } catch (e) {
+      setActionLog(prev => [...prev, {
+        t: new Date().toTimeString().slice(0, 8),
+        ok: false, name: '?', msg: String(e),
+      }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteSelected = async (archived) => {
+    const selected = archived ? selectedOldies : selectedRecent;
+    if (selected.size === 0) return;
+    if (!confirm(`Supprimer ${selected.size} fichier(s) ?`)) return;
+    setBusy(true);
+    try {
+      const r = await fetch('api/productions/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          names: Array.from(selected),
+          archived,
+        }),
+      });
+      const d = await r.json();
+      setActionLog(prev => [...prev,
+        ...(d.results || []).map(x => ({
+          t: new Date().toTimeString().slice(0, 8),
+          ok: !!x.ok, name: x.name,
+          msg: x.ok ? 'Supprimé' : (x.error || 'échec'),
+        })),
+      ]);
+      if (archived) setSelectedOldies(new Set()); else setSelectedRecent(new Set());
+      await load();
+    } catch (e) {
+      setActionLog(prev => [...prev, {
+        t: new Date().toTimeString().slice(0, 8),
+        ok: false, name: '?', msg: String(e),
+      }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <PageShell>
+      <SectionTitle
+        kicker="Sorties Jarvis"
+        title="Productions"
+        desc="Fichiers .enrich / .audit / .err / .stat / visualisations produits par les flux Jarvis. Liste, prévisualisation, téléchargement, soumission LLMDrops."
+      />
+
+      {/* Bandeau actions */}
+      <Card padding={16} style={{ marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, alignItems: 'end' }}>
+          <Field label="Clé LLMDrops (override env)">
+            <Input value={dropsKey} onChange={setDropsKey} placeholder="optionnel…" mono />
+          </Field>
+          <Field label="Nom modèle (filename uploadé)">
+            <Input value={modelName} onChange={setModelName} placeholder="claude-sonnet" mono />
+          </Field>
+          <Button variant="ghost" onClick={load} disabled={loading || busy}>
+            ↻ Rafraîchir
+          </Button>
+        </div>
+      </Card>
+
+      {error && (
+        <div style={{
+          padding: 12, marginBottom: 16,
+          background: 'rgba(200,58,115,0.08)',
+          border: '1px solid var(--jdm-magenta)',
+          borderRadius: 'var(--radius)',
+          color: 'var(--jdm-magenta)', fontSize: 13,
+        }}>⚠️ {error}</div>
+      )}
+
+      {/* Récents */}
+      <ProductionsSection
+        title={`Récents · ${recent.length}`}
+        files={recent} archived={false}
+        selected={selectedRecent}
+        onToggle={toggle(selectedRecent, setSelectedRecent)}
+        onPreview={openPreview}
+        onDownload={downloadOne}
+        onSubmit={() => submitSelected(false)}
+        onDelete={() => deleteSelected(false)}
+        busy={busy} isAdmin={isAdmin}
+      />
+
+      {/* Oldies (archives > 48h) */}
+      {oldies.length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <ProductionsSection
+            title={`Archives oldies · ${oldies.length}`}
+            files={oldies} archived={true}
+            selected={selectedOldies}
+            onToggle={toggle(selectedOldies, setSelectedOldies)}
+            onPreview={openPreview}
+            onDownload={downloadOne}
+            onSubmit={() => submitSelected(true)}
+            onDelete={() => deleteSelected(true)}
+            busy={busy} isAdmin={isAdmin}
+          />
+        </div>
+      )}
+
+      {/* Log d'actions */}
+      {actionLog.length > 0 && (
+        <Card padding={0} style={{ marginTop: 28, overflow: 'hidden' }}>
+          <div style={{
+            padding: '10px 14px',
+            background: 'var(--bg-elev)',
+            borderBottom: '1px solid var(--line-soft)',
+          }}>
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--ink-3)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+            }}>Log d'actions · {actionLog.length}</div>
+          </div>
+          <div style={{ maxHeight: 200, overflowY: 'auto', padding: 12, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+            {actionLog.slice().reverse().map((l, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
+                <span style={{ color: 'var(--ink-3)' }}>{l.t}</span>
+                <span style={{ color: l.ok ? 'var(--jdm-green)' : 'var(--jdm-magenta)', minWidth: 12 }}>{l.ok ? '✓' : '✗'}</span>
+                <span style={{ color: 'var(--ink)' }}>{l.name}</span>
+                <span style={{ color: 'var(--ink-3)', marginLeft: 6 }}>—</span>
+                <span style={{ color: 'var(--ink-2)' }}>{l.msg}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Modal preview */}
+      {previewName && (
+        <div onClick={() => setPreviewName(null)} style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.45)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 20,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--radius-lg)',
+            maxWidth: 920, width: '100%',
+            maxHeight: '88vh', display: 'flex', flexDirection: 'column',
+          }}>
+            <div style={{
+              padding: '14px 18px',
+              borderBottom: '1px solid var(--line-soft)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>
+                {previewArchived ? 'oldies/' : ''}{previewName}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Button size="sm" variant="secondary" onClick={() => downloadOne(previewName, previewArchived)}>
+                  Télécharger
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setPreviewName(null)}>×</Button>
+              </div>
+            </div>
+            <pre style={{
+              margin: 0, padding: 18, overflow: 'auto',
+              fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
+              color: 'var(--ink)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              flex: 1,
+            }}>{previewContent}</pre>
+          </div>
+        </div>
+      )}
+    </PageShell>
+  );
+}
+
+function ProductionsSection({ title, files, archived, selected, onToggle,
+                              onPreview, onDownload, onSubmit, onDelete,
+                              busy, isAdmin }) {
+  return (
+    <div>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 10,
+      }}>
+        <h2 className="display" style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 22, fontWeight: 600, margin: 0,
+        }}>{title}</h2>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          <Button size="sm" onClick={onSubmit}
+            disabled={busy || selected.size === 0}>
+            📤 Soumettre {selected.size > 0 ? `(${selected.size})` : ''}
+          </Button>
+          <span className="admin-only">
+            <Button size="sm" variant="ghost" onClick={onDelete}
+              disabled={busy || selected.size === 0}>
+              🗑 Supprimer {selected.size > 0 ? `(${selected.size})` : ''}
+            </Button>
+          </span>
+        </div>
+      </div>
+
+      {files.length === 0 ? (
+        <div style={{
+          padding: 24, textAlign: 'center',
+          color: 'var(--ink-3)', fontSize: 13,
+          background: 'var(--bg-elev)',
+          border: '1px dashed var(--line)',
+          borderRadius: 'var(--radius-lg)',
+        }}>
+          Aucun fichier {archived ? 'archivé' : 'récent'}.
+        </div>
+      ) : (
+        <Card padding={0} style={{ overflow: 'hidden' }}>
+          {files.map((f, i) => (
+            <ProductionsRow
+              key={f.name + i}
+              file={f} archived={archived}
+              selected={selected.has(f.name)}
+              onToggle={() => onToggle(f.name)}
+              onPreview={() => onPreview(f.name, archived)}
+              onDownload={() => onDownload(f.name, archived)}
+              isLast={i === files.length - 1}
+            />
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function ProductionsRow({ file, archived, selected, onToggle, onPreview, onDownload, isLast }) {
+  const sizeKB = (file.size / 1024).toFixed(1);
+  const age = formatAge(file.age_s);
+  const extColor = {
+    'enrich':  'var(--jdm-magenta)',
+    'audit':   'var(--jdm-cyan)',
+    'err':     'var(--jdm-orange)',
+    'stat':    'var(--jdm-violet)',
+    'html':    'var(--jdm-green)',
+  }[file.ext] || 'var(--ink-3)';
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '10px 14px',
+      borderBottom: isLast ? 'none' : '1px solid var(--line-soft)',
+      background: file.submitted ? 'rgba(78,166,60,0.06)' : 'transparent',
+    }}>
+      <input type="checkbox"
+        checked={selected}
+        onChange={onToggle}
+        style={{ accentColor: 'var(--accent)', flexShrink: 0 }} />
+      {file.submitted && <span style={{ color: 'var(--jdm-green)' }}>✅</span>}
+      <span className="mono" style={{
+        padding: '2px 6px', borderRadius: 3,
+        background: 'var(--bg-elev)',
+        color: extColor, fontSize: 10, fontWeight: 600,
+        textTransform: 'uppercase',
+        flexShrink: 0,
+      }}>{file.ext}</span>
+      <span className="mono" style={{
+        flex: 1, minWidth: 0,
+        fontSize: 13, color: 'var(--ink)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>{file.name}</span>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', flexShrink: 0 }}>
+        {sizeKB}KB · {age}
+      </span>
+      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+        <Button size="sm" variant="ghost" onClick={onPreview}>👁 Aperçu</Button>
+        <Button size="sm" variant="ghost" onClick={onDownload}>⬇ DL</Button>
+      </div>
+    </div>
+  );
+}
+
+function formatAge(s) {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}min`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}j`;
+}
+
+window.ViewProductions = ViewProductions;
 
 // === webapp/views-aide.jsx ===
 // View: Aide — installation, usage, MCP, soumission.
@@ -3698,13 +4137,14 @@ function App() {
   }, []);
 
   const VIEWS = {
-    projet:   <ViewProjet goto={setView} />,
-    explorer: <ViewExplorer />,
-    claim:    <ViewClaim />,
-    subgraph: <ViewSubgraph />,
-    agent:    <ViewAgent />,
-    jarvis:   <ViewJarvis />,
-    aide:     <ViewAide />,
+    projet:      <ViewProjet goto={setView} />,
+    explorer:    <ViewExplorer />,
+    claim:       <ViewClaim />,
+    subgraph:    <ViewSubgraph />,
+    agent:       <ViewAgent />,
+    jarvis:      <ViewJarvis />,
+    productions: <ViewProductions />,
+    aide:        <ViewAide />,
   };
 
   // Accent swatches — first one is the theme default (terracotta).
@@ -3764,6 +4204,7 @@ function App() {
               ['subgraph', 'Sous-graphe'],
               ['agent', 'Agent'],
               ['jarvis', 'Jarvis'],
+              ['productions', 'Productions'],
               ['aide', 'Aide'],
             ].map(([id, label]) => (
               <button key={id}

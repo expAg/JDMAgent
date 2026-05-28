@@ -466,13 +466,14 @@ function Triplet({ subject, relation, object, weight, annotations }) {
 // ───────── Top nav (horizontal) — used by all themes ─────────
 function TopNav({ active, setActive, theme, setTheme }) {
   const items = [
-    { id: 'projet',    label: 'Projet' },
-    { id: 'explorer',  label: 'Explorer' },
-    { id: 'claim',     label: 'Claim checker' },
-    { id: 'subgraph',  label: 'Sous-graphe' },
-    { id: 'agent',     label: 'Agent' },
-    { id: 'jarvis',    label: 'Jarvis' },
-    { id: 'aide',      label: 'Aide' },
+    { id: 'projet',      label: 'Projet' },
+    { id: 'explorer',    label: 'Explorer' },
+    { id: 'claim',       label: 'Claim checker' },
+    { id: 'subgraph',    label: 'Sous-graphe' },
+    { id: 'agent',       label: 'Agent' },
+    { id: 'jarvis',      label: 'Jarvis' },
+    { id: 'productions', label: 'Productions' },
+    { id: 'aide',        label: 'Aide' },
   ];
   return (
     <header style={{

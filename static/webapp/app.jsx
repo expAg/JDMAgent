@@ -44,13 +44,14 @@ function App() {
   }, []);
 
   const VIEWS = {
-    projet:   <ViewProjet goto={setView} />,
-    explorer: <ViewExplorer />,
-    claim:    <ViewClaim />,
-    subgraph: <ViewSubgraph />,
-    agent:    <ViewAgent />,
-    jarvis:   <ViewJarvis />,
-    aide:     <ViewAide />,
+    projet:      <ViewProjet goto={setView} />,
+    explorer:    <ViewExplorer />,
+    claim:       <ViewClaim />,
+    subgraph:    <ViewSubgraph />,
+    agent:       <ViewAgent />,
+    jarvis:      <ViewJarvis />,
+    productions: <ViewProductions />,
+    aide:        <ViewAide />,
   };
 
   // Accent swatches — first one is the theme default (terracotta).
@@ -110,6 +111,7 @@ function App() {
               ['subgraph', 'Sous-graphe'],
               ['agent', 'Agent'],
               ['jarvis', 'Jarvis'],
+              ['productions', 'Productions'],
               ['aide', 'Aide'],
             ].map(([id, label]) => (
               <button key={id}

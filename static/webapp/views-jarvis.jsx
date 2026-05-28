@@ -162,6 +162,11 @@ function JarvisRun({ flow, onBack }) {
   const [filePreview, setFilePreview] = useState('');
   const [filePath, setFilePath] = useState(null);
   const [headline, setHeadline] = useState('');
+  // Etat de reprise après PerDay sur modèle non-3.1 — run_jarvis_flow
+  // yield un 5-tuple avec state quand l'agent abort. Le state contient
+  // accumulated_messages + canonical_path + budget courant → re-passe
+  // à un nouveau call pour reprendre exactement où on s'est arrêté.
+  const [resumeState, setResumeState] = useState(null);
   const logRef = useRef(null);
   const abortRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -187,14 +192,25 @@ function JarvisRun({ flow, onBack }) {
     setState('idle');
   };
 
-  const launch = async () => {
-    reset();
+  const launch = async (continueFromResume) => {
+    const isResume = !!continueFromResume;
+    if (!isResume) {
+      reset();
+    } else {
+      // Pour Continuer : on garde le log, narration, fichier en cours,
+      // metrics — on ajoute juste une ligne de reprise.
+      setLog(l => [...l, { t: ts(), tag: '[resume]', kind: 'iter', msg: 'Reprise après abort PerDay…' }]);
+    }
     setState('running');
-    startTimeRef.current = Date.now();
+    if (!isResume) startTimeRef.current = Date.now();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    const flowParams = { ...params };
+    const flowParams = {
+      ...params,
+      ...(isResume && resumeState ? { resume_state: resumeState } : {}),
+    };
+    if (isResume) setResumeState(null);  // clear pour ne pas reprendre 2x
     const ts = () => new Date().toTimeString().slice(0, 8);
 
     try {
@@ -233,6 +249,9 @@ function JarvisRun({ flow, onBack }) {
           case 'jarvis': {
             const msgs = d.messages || [];
             const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            // Stocke le state de reprise s'il est fourni (= l'agent a
+            // abort sur PerDay sans auto-bascule → on offre Continuer).
+            if (d.state) setResumeState(d.state);
             // Met à jour la narration HTML pour le panneau LOG
             if (assistant && assistant.content) {
               setNarrationHTML(assistant.content);
@@ -361,7 +380,7 @@ function JarvisRun({ flow, onBack }) {
             }}>Contrôles</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {(state === 'idle' || state === 'done' || state === 'error') && (
-                <Button full onClick={launch}>
+                <Button full onClick={() => launch(false)}>
                   {state === 'idle' ? '▶ Lancer' : '↻ Relancer'}
                 </Button>
               )}
@@ -369,6 +388,36 @@ function JarvisRun({ flow, onBack }) {
                 <Button variant="secondary" full onClick={stop}>⏹ Stop</Button>
               )}
             </div>
+
+            {/* Bouton Continuer — apparaît si l'agent a abort (mode B) */}
+            {resumeState && state !== 'running' && (
+              <div style={{ marginTop: 10 }}>
+                <Button full onClick={() => launch(true)}>
+                  ▶ Continuer avec 3.1
+                </Button>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink-3)' }}>
+                  L'agent a saturé son quota — reprends sur Gemini 3.1 Flash Lite
+                  (pool partagé, 500 req/jour) en gardant l'historique.
+                </div>
+              </div>
+            )}
+
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginTop: 12, fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer',
+            }}>
+              <input type="checkbox"
+                checked={!!params.auto_switch}
+                onChange={(e) => setParams(p => ({ ...p, auto_switch: e.target.checked }))}
+                style={{ accentColor: 'var(--accent)' }}
+                disabled={state === 'running'} />
+              Auto-bascule sur 3.1 si quota épuisé
+            </label>
+            <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 4, lineHeight: 1.45 }}>
+              Décoché (défaut) : abort propre + bouton « Continuer » apparaît.
+              Coché : retry silencieux sans intervention.
+            </div>
+
             {state === 'running' && (
               <div style={{
                 marginTop: 10,
@@ -698,12 +747,14 @@ const BUDGET_OPTS = [
 function defaultParamsFor(flowId) {
   // Defaults alignés sur la branche deploy-self / app.py :
   // term vide partout (= tirage au hasard côté backend), budget illimité,
-  // thinking=false (Jarvis = robustesse > raisonnement), upload=false.
+  // thinking=false (Jarvis = robustesse > raisonnement), upload=false,
+  // auto_switch=false (= mode B : abort + bouton Continuer).
   const common = {
     model: 'gemini-3.1-flash-lite',
     api_key: '', drops_key: '',
     use_thinking: false,
     budget_label: 'illimité',
+    auto_switch: false,
   };
   switch (flowId) {
     case 'enrich':
