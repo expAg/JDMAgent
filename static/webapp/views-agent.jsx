@@ -17,8 +17,43 @@ function ViewAgent() {
   const [convo, setConvo] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [poolStatus, setPoolStatus] = useState(null);
 
   const needsBYOK = model.startsWith('claude-') || model.startsWith('gpt-');
+
+  // Charge l'état du pool pour griser les Gemini blown dans le dropdown.
+  // Rafraîchi périodiquement et après chaque conversation (un PerDay
+  // se déclare au cours du flow).
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('api/pool/status');
+        if (r.ok && alive) setPoolStatus(await r.json());
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30_000);  // poll toutes les 30s
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // Construit les options du dropdown avec marquage ❌ pour Gemini blown.
+  const modelOptions = React.useMemo(() => {
+    return AGENT_MODELS.map(m => {
+      let label = m.label;
+      let sub = m.sub;
+      if (poolStatus && m.value.startsWith('gemini-')) {
+        const allBlown = (poolStatus.keys || []).every(
+          k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
+        );
+        if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
+          label = `❌ ${label} — épuisé sur toutes les clés`;
+          sub = 'pool entièrement consommé aujourd\'hui';
+        }
+      }
+      return { ...m, label, sub };
+    });
+  }, [poolStatus]);
 
   // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
   // dernier message assistant (créé vide juste avant le fetch).
@@ -101,8 +136,8 @@ function ViewAgent() {
   return (
     <PageShell>
       <SectionTitle
-        kicker="Module · agent LLM"
-        title="Agent"
+        kicker="Module · chat LLM + outils JDM"
+        title="Chatbot LLM"
         desc="Chat conversationnel. Le modèle a accès aux outils JDM via LangChain."
       />
 
@@ -216,7 +251,7 @@ function ViewAgent() {
         }}>
           <Card padding={16}>
             <Field label="Modèle">
-              <Select value={model} options={AGENT_MODELS} onChange={setModel} />
+              <Select value={model} options={modelOptions} onChange={setModel} />
             </Field>
             <label style={{
               display: 'flex', alignItems: 'center', gap: 8,

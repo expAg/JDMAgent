@@ -1,7 +1,12 @@
 // Main app: theme switcher + router + Tweaks panel wiring.
 
+// Thème par défaut suit la préférence système (prefers-color-scheme).
+// L'utilisateur peut toujours forcer via le Tweaks panel ; sa préférence
+// est persistée par useTweaks via localStorage.
+const _PREFERS_DARK = (typeof window !== 'undefined' &&
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "theme": "paper",
+  "theme": _PREFERS_DARK ? "lab" : "paper",
   "accent": "#c0411a"
 }/*EDITMODE-END*/;
 
@@ -9,10 +14,27 @@ function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [view, setView] = useState('projet');
 
-  // Apply theme to body
+  // Apply theme to body — suit le système au boot, persisté ensuite.
   useEffect(() => {
-    document.body.dataset.theme = tweaks.theme || 'paper';
+    document.body.dataset.theme = tweaks.theme || (_PREFERS_DARK ? 'lab' : 'paper');
   }, [tweaks.theme]);
+
+  // Écoute les changements de préférence système et applique si
+  // l'utilisateur n'a pas explicitement override (= valeur === default).
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e) => {
+      // Only auto-flip if user hasn't explicitly chosen a different theme
+      // (heuristic : si la valeur stockée correspond au système actuel,
+      // on suit le nouveau ; sinon on respecte le choix utilisateur)
+      const sysTheme = e.matches ? 'lab' : 'paper';
+      const wasSystem = (tweaks.theme === 'lab') === e.matches;
+      // (no-op for now : on laisse le user souverain — il y a un toggle)
+    };
+    mq.addEventListener && mq.addEventListener('change', handler);
+    return () => mq.removeEventListener && mq.removeEventListener('change', handler);
+  }, []);
 
   // Apply accent override
   useEffect(() => {
@@ -157,7 +179,7 @@ function App() {
               ['explorer', 'Explorer'],
               ['claim', 'Claim'],
               ['subgraph', 'Sous-graphe'],
-              ['agent', 'Agent'],
+              ['agent', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
               ['productions', 'Productions'],
               ['aide', 'Aide'],

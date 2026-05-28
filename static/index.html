@@ -86,6 +86,18 @@
     border-color: var(--ink-3);
   }
 
+  /* Avant que React monte, on applique le thème système via CSS
+     pour éviter un flash blanc sur un user en dark mode. */
+  body:not([data-theme]) { /* paper tokens (= défaut clair) */ }
+  @media (prefers-color-scheme: dark) {
+    body:not([data-theme]) {
+      --bg: #181b22; --bg-elev: #1f232c; --bg-card: #262b36;
+      --ink: #ebe9e4; --ink-2: #a09c92; --ink-3: #6b6760;
+      --line: #353a47; --line-soft: #2a2f3a;
+      --accent: #7eb5c5; --accent-soft: #1f3a44;
+    }
+  }
+
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
@@ -351,7 +363,7 @@
 <script src="webapp/image-slot.js"></script>
 
 </head>
-<body data-theme="paper">
+<body>
 
 <div id="root"></div>
 

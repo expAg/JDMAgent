@@ -152,7 +152,7 @@ function JarvisRun({ flow, onBack }) {
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
   const [metrics, setMetrics] = useState({
-    toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0,
+    toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0,
   });
   const [accepted, setAccepted] = useState([]);
   // narrationHTML = trace markdown/HTML cumulative du LLM (left panel)
@@ -167,6 +167,21 @@ function JarvisRun({ flow, onBack }) {
   // accumulated_messages + canonical_path + budget courant → re-passe
   // à un nouveau call pour reprendre exactement où on s'est arrêté.
   const [resumeState, setResumeState] = useState(null);
+  const [poolStatus, setPoolStatus] = useState(null);
+
+  // Pool status pour griser les Gemini blown dans le dropdown modèle.
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('api/pool/status');
+        if (r.ok && alive) setPoolStatus(await r.json());
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
   const logRef = useRef(null);
   const abortRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -188,7 +203,7 @@ function JarvisRun({ flow, onBack }) {
   const reset = () => {
     setLog([]); setAccepted([]); setNarrationHTML(''); setFilePreview('');
     setFilePath(null); setHeadline('');
-    setMetrics({ toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0 });
+    setMetrics({ toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0 });
     setState('idle');
   };
 
@@ -266,6 +281,10 @@ function JarvisRun({ flow, onBack }) {
             if (assistant && assistant.content) {
               const toolMatches = assistant.content.match(/class="jdm-narration"/g) || [];
               setMetrics(m => ({ ...m, toolsCalled: toolMatches.length }));
+            }
+            // Tokens estimés (sert à voir le gain après truncate/relance)
+            if (typeof d.tokens_estimate === 'number') {
+              setMetrics(m => ({ ...m, tokens: d.tokens_estimate }));
             }
             // Triplets consolidés depuis le registry (pas du parsing)
             if (Array.isArray(d.consolidated)) {
@@ -447,7 +466,19 @@ function JarvisRun({ flow, onBack }) {
                   { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
                   { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
                   { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
-                ]} />
+                ].map(m => {
+                  // Grise les Gemini blown sur TOUTES les clés du pool.
+                  if (poolStatus && m.value.startsWith('gemini-')) {
+                    const allBlown = (poolStatus.keys || []).every(
+                      k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
+                    );
+                    if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
+                      return { ...m, label: `❌ ${m.label} — épuisé`,
+                               sub: 'pool entièrement consommé aujourd\'hui' };
+                    }
+                  }
+                  return m;
+                })} />
             </Field>
             {(params.model || '').match(/^(claude|gpt)-/) && (
               <Field label="Clé API">
@@ -513,7 +544,7 @@ function JarvisRun({ flow, onBack }) {
             marginBottom: 14,
           }}>
             <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
-            <Metric label="Pensées" value={metrics.thoughts} sub="thoughts" />
+            <Metric label="Tokens" value={fmtTokens(metrics.tokens)} sub="estimés" mono />
             <Metric label="Consolidés" value={metrics.accepted} sub="triplets" color="var(--jdm-green)" />
             <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
           </div>
@@ -661,6 +692,14 @@ function parseSSEEventJarvis(raw) {
   let parsed;
   try { parsed = JSON.parse(data); } catch { parsed = { text: data }; }
   return { event, data: parsed };
+}
+
+// Formatte un nombre de tokens : 1234 → "1.2k", 1234567 → "1.2M".
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0) + 'k';
+  return (n / 1_000_000).toFixed(1) + 'M';
 }
 
 function shortArgs(args) {

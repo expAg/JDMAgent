@@ -289,7 +289,17 @@ function ViewAide() {
         </ul>
       </div>
 
-      {/* 7. Footer institutionnel — slots logos préservés */}
+      {/* 7. Panneau admin — réservé ?admin=1 (positionné en bas, avant
+          le footer institutionnel, comme requis par l'utilisateur). */}
+      <div className="admin-only" style={{ marginTop: 40, marginBottom: 28 }}>
+        <h2 className="display" style={{
+          fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+          margin: '0 0 14px',
+        }}>7 · Panneau admin</h2>
+        <AdminPanel />
+      </div>
+
+      {/* 8. Footer institutionnel — slots logos préservés */}
       <div style={{
         padding: 32, background: 'var(--bg-elev)',
         border: '1px solid var(--line-soft)', borderRadius: 'var(--radius-lg)',
@@ -325,6 +335,277 @@ function ViewAide() {
         </div>
       </div>
     </PageShell>
+  );
+}
+
+// ─── Panneau admin (gate par mot de passe) ─────────────────────
+
+function AdminPanel() {
+  const [info, setInfo] = useState(null);
+  const [password, setPassword] = useState('');
+  const [authed, setAuthed] = useState(false);
+  const [authErr, setAuthErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  // Edition env vars
+  const [allVars, setAllVars] = useState({});  // {NAME: currentValue}
+  const [edits, setEdits] = useState({});      // {NAME: newValue}
+  const [editMsg, setEditMsg] = useState('');
+  const [cacheMsg, setCacheMsg] = useState('');
+
+  React.useEffect(() => {
+    fetch('api/admin/info').then(r => r.json()).then(setInfo).catch(() => {});
+  }, []);
+
+  const auth = async () => {
+    if (!password) { setAuthErr('Mot de passe requis.'); return; }
+    setBusy(true); setAuthErr('');
+    try {
+      const r = await fetch('api/admin/auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (r.status === 401) { setAuthErr('Mot de passe invalide.'); return; }
+      if (r.status === 503) {
+        setAuthErr('Admin désactivé : EXPORT_SECRETS_PASSWORD non défini côté serveur.');
+        return;
+      }
+      if (!r.ok) { setAuthErr(`HTTP ${r.status}`); return; }
+      setAuthed(true);
+      // Charge les valeurs actuelles (via export — réutilise l'endpoint)
+      const exp = await fetch('api/admin/export-secrets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (exp.ok) {
+        const d = await exp.json();
+        setAllVars(d.vars || {});
+      }
+    } catch (e) {
+      setAuthErr(String(e && e.message ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const logout = () => {
+    setAuthed(false); setPassword(''); setAllVars({}); setEdits({});
+    setEditMsg(''); setCacheMsg('');
+  };
+
+  const setOne = (k, v) => setEdits(e => ({ ...e, [k]: v }));
+
+  const submitEdits = async () => {
+    setEditMsg('');
+    const vars = Object.fromEntries(Object.entries(edits).filter(([_, v]) => v !== undefined && v !== ''));
+    if (Object.keys(vars).length === 0) { setEditMsg('Aucune modification à appliquer.'); return; }
+    try {
+      const r = await fetch('api/admin/env-set', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, vars }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour · .env persisté : ${d.persisted_to_dotenv ? 'oui' : 'non'}`);
+        // Reload current values
+        setAllVars(av => ({ ...av, ...vars }));
+        setEdits({});
+      } else {
+        setEditMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setEditMsg(`✗ ${e && e.message ? e.message : e}`);
+    }
+  };
+
+  const clearCache = async () => {
+    setCacheMsg('');
+    if (!confirm('Vider tout le cache disque JDM ? Les prochains appels iront refrapper l\'API.')) return;
+    try {
+      const r = await fetch('api/admin/cache-clear', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setCacheMsg(`✓ ${d.deleted_files} fichier(s) supprimé(s) dans ${d.cache_dir}`);
+      } else {
+        setCacheMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setCacheMsg(`✗ ${e && e.message ? e.message : e}`);
+    }
+  };
+
+  const downloadEnv = () => {
+    if (!allVars || Object.keys(allVars).length === 0) return;
+    const lines = Object.entries(allVars).map(([k, v]) => `${k}=${v}`);
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = '.env.export';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Liste complète des vars autorisées côté backend (matchée à
+  // _EXPORTABLE_ENV_VARS) — toutes celles de .env.example
+  const EDITABLE_VARS = [
+    'JDM_BASE_URL', 'JDM_TIMEOUT',
+    'JDM_CACHE_DIR', 'JDM_CACHE_TTL_META', 'JDM_CACHE_TTL_DATA',
+    'LLM_PROVIDER', 'LLM_MODEL',
+    'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY',
+    'DEEPSEEK_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
+    'HF_TOKEN',
+    'JDM_DROPS_API_KEY', 'JDM_DROPS_URL',
+    'APP_SUBPATH',
+  ];
+
+  return (
+    <Card padding={20} style={{ border: '1px dashed var(--jdm-magenta)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
+        <div className="mono" style={{
+          fontSize: 11, color: 'var(--jdm-magenta)',
+          textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600,
+        }}>Panneau admin</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          Réservé · activé via <code className="mono">?admin=1</code> dans l'URL.
+        </div>
+        {authed && (
+          <Button size="sm" variant="ghost"
+            style={{ marginLeft: 'auto' }}
+            onClick={logout}>🔒 Verrouiller</Button>
+        )}
+      </div>
+
+      {/* Diag info (toujours visible si admin URL) */}
+      {info && (
+        <div style={{
+          background: 'var(--bg-elev)',
+          border: '1px solid var(--line-soft)',
+          borderRadius: 'var(--radius)',
+          padding: 14, marginBottom: 14,
+          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7,
+        }}>
+          <div>Python : <strong style={{ color: 'var(--ink)' }}>{info.python}</strong></div>
+          <div>APP_SUBPATH : <strong style={{ color: 'var(--ink)' }}>{info.app_subpath || '(racine)'}</strong></div>
+          <div>Pool Gemini : <strong style={{ color: 'var(--ink)' }}>{info.pool_size} clé(s)</strong></div>
+          <div>Export secrets : <strong style={{ color: info.export_secrets_enabled ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>
+            {info.export_secrets_enabled ? 'activé' : 'désactivé (EXPORT_SECRETS_PASSWORD non défini)'}
+          </strong></div>
+          <div>Env vars présentes : <strong style={{ color: 'var(--ink)' }}>{(info.env_vars_present || []).length}</strong> / {EDITABLE_VARS.length}</div>
+        </div>
+      )}
+
+      {/* AVANT auth : juste le champ password. Les contrôles d'édition,
+          cache clear, export ne s'affichent QU'après validation OK. */}
+      {!authed ? (
+        <>
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: 8,
+          }}>Authentification requise</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+            <Input value={password} onChange={setPassword}
+              placeholder="Mot de passe EXPORT_SECRETS_PASSWORD" mono />
+            <Button size="sm" onClick={auth} disabled={busy || !password}>
+              {busy ? '…' : 'Déverrouiller'}
+            </Button>
+          </div>
+          {authErr && (
+            <div style={{
+              marginTop: 8, padding: 10,
+              background: 'rgba(200,58,115,0.08)',
+              border: '1px solid var(--jdm-magenta)',
+              borderRadius: 'var(--radius)',
+              color: 'var(--jdm-magenta)', fontSize: 12,
+            }}>{authErr}</div>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{
+            marginBottom: 16, padding: 10,
+            background: 'rgba(78,166,60,0.08)',
+            border: '1px solid var(--jdm-green)',
+            borderRadius: 'var(--radius)',
+            color: 'var(--jdm-green)', fontSize: 12,
+            fontFamily: 'var(--font-mono)',
+          }}>✓ Mot de passe accepté — contrôles débloqués</div>
+
+          {/* 1 · Edition env vars */}
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: 8,
+          }}>1 · Variables d'environnement</div>
+          <div style={{
+            background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+            padding: 12, marginBottom: 8,
+            maxHeight: 380, overflow: 'auto',
+          }}>
+            {EDITABLE_VARS.map(k => {
+              const isSecret = /KEY|TOKEN|PASSWORD/.test(k);
+              const cur = allVars[k] || '';
+              const display = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
+              return (
+                <div key={k} style={{
+                  display: 'grid', gridTemplateColumns: '180px 200px 1fr',
+                  gap: 8, alignItems: 'center', marginBottom: 6,
+                }}>
+                  <div className="mono" style={{
+                    fontSize: 11, color: 'var(--ink-2)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{k}</div>
+                  <div className="mono" style={{
+                    fontSize: 10, color: cur ? 'var(--ink-3)' : 'var(--ink-3)',
+                    fontStyle: cur ? 'normal' : 'italic',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{cur ? `actuel : ${display}` : '(non défini)'}</div>
+                  <Input value={edits[k] || ''}
+                    onChange={(v) => setOne(k, v)}
+                    placeholder="nouvelle valeur" mono />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <Button size="sm" onClick={submitEdits}>✓ Appliquer les modifications</Button>
+            <Button size="sm" variant="secondary" onClick={downloadEnv}>⬇ Télécharger .env complet</Button>
+          </div>
+          {editMsg && (
+            <div style={{
+              marginBottom: 16, padding: 10,
+              background: editMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+              border: `1px solid ${editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+              borderRadius: 'var(--radius)',
+              color: editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+              fontSize: 12,
+            }}>{editMsg}</div>
+          )}
+
+          {/* 2 · Cache JDM */}
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: 8,
+          }}>2 · Cache disque JDM</div>
+          <Button size="sm" variant="secondary" onClick={clearCache}>
+            🗑 Vider le cache JDM
+          </Button>
+          {cacheMsg && (
+            <div style={{
+              marginTop: 8, padding: 10,
+              background: cacheMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+              border: `1px solid ${cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+              borderRadius: 'var(--radius)',
+              color: cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+              fontSize: 12,
+            }}>{cacheMsg}</div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 

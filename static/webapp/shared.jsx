@@ -475,7 +475,7 @@ function TopNav({ active, setActive, theme, setTheme }) {
     { id: 'explorer',    label: 'Explorer' },
     { id: 'claim',       label: 'Claim checker' },
     { id: 'subgraph',    label: 'Sous-graphe' },
-    { id: 'agent',       label: 'Agent' },
+    { id: 'agent',       label: 'Chatbot LLM' },
     { id: 'jarvis',      label: 'Jarvis' },
     { id: 'productions', label: 'Productions' },
     { id: 'aide',        label: 'Aide' },
@@ -502,7 +502,7 @@ function TopNav({ active, setActive, theme, setTheme }) {
           <JDMMark size={26} />
           <JDMWordmark />
         </div>
-        <nav style={{ display: 'flex', gap: 2, marginLeft: 12, overflow: 'auto' }}>
+        <nav style={{ display: 'flex', gap: 2, marginLeft: 12, overflow: 'hidden', scrollbarWidth: 'none' }}>
           {items.map(it => {
             const isActive = active === it.id;
             return (

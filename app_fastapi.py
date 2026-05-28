@@ -432,20 +432,26 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
             finally:
                 try: tmppath.unlink()
                 except Exception: pass
-            # Override CSS injecté pour fond transparent — l'iframe côté
-            # frontend hérite alors du thème parent (paper/lab) au lieu
-            # du gris fixe du template. Les nœuds + arêtes vis-network
-            # restent dessinés par-dessus.
+            # Override CSS injecté :
+            # 1. fond transparent partout (l'iframe parent affiche son
+            #    thème paper/lab)
+            # 2. layout flex sur body → #net prend l'espace restant
+            #    APRÈS header + legend, pas calc(100vh - 110px) qui
+            #    dépasse de la zone visible et tronque la légende
+            # 3. couleurs adoucies pour header/legend (héritage parent)
             transparent_css = (
                 "<style id='__jdm-skin-override'>"
-                "html,body{background:transparent!important;color:inherit!important}"
+                "html,body{background:transparent!important;color:inherit!important;"
+                "height:100%!important;overflow:hidden!important}"
+                "body{display:flex!important;flex-direction:column!important}"
                 "header{background:rgba(128,128,128,0.08)!important;"
                 "border-bottom-color:rgba(128,128,128,0.25)!important;"
-                "color:inherit!important}"
-                "#net{background:transparent!important}"
+                "color:inherit!important;flex:0 0 auto!important}"
+                "#net{background:transparent!important;"
+                "flex:1 1 auto!important;height:auto!important;min-height:0!important}"
                 ".legend{background:rgba(128,128,128,0.08)!important;"
                 "border-top-color:rgba(128,128,128,0.25)!important;"
-                "color:inherit!important}"
+                "color:inherit!important;flex:0 0 auto!important}"
                 "</style>"
             )
             if "</head>" in html:
@@ -721,6 +727,12 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                     cc = 0
                     consolidated = []
 
+                # Estimation de tokens utilisés (somme des chars / 4) —
+                # utile pour voir le gain quand `build_relance_summary`
+                # truncate l'history pour relancer.
+                text_chars = sum(len(m.get("content", "") or "") for m in msgs_clean)
+                tokens_estimate = text_chars // 4
+
                 yield {
                     "event": "jarvis",
                     "data": json.dumps({
@@ -729,7 +741,8 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                         "file_preview": fpreview if isinstance(fpreview, str) else "",
                         "state": state if isinstance(state, dict) else None,
                         "consolidated_count": cc,
-                        "consolidated": consolidated[-50:],  # cap pour le payload
+                        "consolidated": consolidated[-50:],
+                        "tokens_estimate": tokens_estimate,
                     }, ensure_ascii=False, default=str),
                 }
             yield {"event": "done", "data": "{}"}
@@ -1036,17 +1049,42 @@ def api_productions_delete(req: ProductionsDeleteRequest) -> dict[str, Any]:
 # ────────────────────────────────────────────────────────────────────
 # Admin — export secrets (mot de passe EXPORT_SECRETS_PASSWORD)
 # ────────────────────────────────────────────────────────────────────
+class AdminAuthRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/admin/auth")
+def api_admin_auth(req: AdminAuthRequest) -> dict[str, Any]:
+    """Valide juste le mot de passe — sert au frontend pour révéler les
+    contrôles d'admin AVANT de tenter l'export/edit/cache-clear."""
+    expected = os.environ.get("EXPORT_SECRETS_PASSWORD", "").strip()
+    if not expected:
+        raise HTTPException(503, "Admin désactivé : EXPORT_SECRETS_PASSWORD non défini.")
+    if (req.password or "").strip() != expected:
+        raise HTTPException(401, "Mot de passe invalide.")
+    return {"ok": True}
+
+
 class ExportSecretsRequest(BaseModel):
     password: str
 
 
-# Liste des variables d'env exportables — calque app.py.
+# Liste complète des vars d'env modifiables — tout ce qui est dans
+# .env.example (cf. user feedback : « il manque des TTL etc »).
 _EXPORTABLE_ENV_VARS = [
-    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
-    "GOOGLE_API_KEYS", "GROQ_API_KEY", "DEEPSEEK_API_KEY",
-    "HF_TOKEN", "JDM_DROPS_API_KEY", "JDM_DROPS_URL",
-    "JDM_BASE_URL", "JDM_TIMEOUT", "JDM_CACHE_DIR",
-    "LLM_PROVIDER", "LLM_MODEL", "APP_SUBPATH",
+    # JDM API
+    "JDM_BASE_URL", "JDM_TIMEOUT",
+    "JDM_CACHE_DIR", "JDM_CACHE_TTL_META", "JDM_CACHE_TTL_DATA",
+    # LLM defaults
+    "LLM_PROVIDER", "LLM_MODEL",
+    # Provider API keys
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY",
+    "DEEPSEEK_API_KEY", "GOOGLE_API_KEY", "GOOGLE_API_KEYS",
+    "HF_TOKEN",
+    # LLMDrops (soumission JDM)
+    "JDM_DROPS_API_KEY", "JDM_DROPS_URL",
+    # Reverse-proxy subpath
+    "APP_SUBPATH",
 ]
 
 

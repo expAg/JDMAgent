@@ -476,7 +476,7 @@ function TopNav({ active, setActive, theme, setTheme }) {
     { id: 'explorer',    label: 'Explorer' },
     { id: 'claim',       label: 'Claim checker' },
     { id: 'subgraph',    label: 'Sous-graphe' },
-    { id: 'agent',       label: 'Agent' },
+    { id: 'agent',       label: 'Chatbot LLM' },
     { id: 'jarvis',      label: 'Jarvis' },
     { id: 'productions', label: 'Productions' },
     { id: 'aide',        label: 'Aide' },
@@ -503,7 +503,7 @@ function TopNav({ active, setActive, theme, setTheme }) {
           <JDMMark size={26} />
           <JDMWordmark />
         </div>
-        <nav style={{ display: 'flex', gap: 2, marginLeft: 12, overflow: 'auto' }}>
+        <nav style={{ display: 'flex', gap: 2, marginLeft: 12, overflow: 'hidden', scrollbarWidth: 'none' }}>
           {items.map(it => {
             const isActive = active === it.id;
             return (
@@ -1014,7 +1014,7 @@ function ViewExplorer() {
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
         gap: 14,
-        alignItems: 'flex-end',
+        alignItems: 'end',
         marginBottom: 16,
       }}>
         <Field label="Terme">
@@ -1023,9 +1023,14 @@ function ViewExplorer() {
         <Field label="Type de relation">
           <Select value={rel} options={EXPLORE_RELATIONS} onChange={setRel} />
         </Field>
-        <Button onClick={onRun} size="lg" disabled={loading}>
-          {loading ? 'Chargement…' : 'Interroger'}
-        </Button>
+        {/* Spacer marginBottom matches Field's marginBottom:14 so the
+            visible button aligns with the visible input row (le Field
+            réserve 14px sous l'input pour son espacement). */}
+        <div style={{ marginBottom: 14 }}>
+          <Button onClick={onRun} size="lg" disabled={loading}>
+            {loading ? 'Chargement…' : 'Interroger'}
+          </Button>
+        </div>
       </div>
 
       {/* Secondary controls */}
@@ -2033,8 +2038,43 @@ function ViewAgent() {
   const [convo, setConvo] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [poolStatus, setPoolStatus] = useState(null);
 
   const needsBYOK = model.startsWith('claude-') || model.startsWith('gpt-');
+
+  // Charge l'état du pool pour griser les Gemini blown dans le dropdown.
+  // Rafraîchi périodiquement et après chaque conversation (un PerDay
+  // se déclare au cours du flow).
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('api/pool/status');
+        if (r.ok && alive) setPoolStatus(await r.json());
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30_000);  // poll toutes les 30s
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // Construit les options du dropdown avec marquage ❌ pour Gemini blown.
+  const modelOptions = React.useMemo(() => {
+    return AGENT_MODELS.map(m => {
+      let label = m.label;
+      let sub = m.sub;
+      if (poolStatus && m.value.startsWith('gemini-')) {
+        const allBlown = (poolStatus.keys || []).every(
+          k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
+        );
+        if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
+          label = `❌ ${label} — épuisé sur toutes les clés`;
+          sub = 'pool entièrement consommé aujourd\'hui';
+        }
+      }
+      return { ...m, label, sub };
+    });
+  }, [poolStatus]);
 
   // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
   // dernier message assistant (créé vide juste avant le fetch).
@@ -2117,8 +2157,8 @@ function ViewAgent() {
   return (
     <PageShell>
       <SectionTitle
-        kicker="Module · agent LLM"
-        title="Agent"
+        kicker="Module · chat LLM + outils JDM"
+        title="Chatbot LLM"
         desc="Chat conversationnel. Le modèle a accès aux outils JDM via LangChain."
       />
 
@@ -2232,7 +2272,7 @@ function ViewAgent() {
         }}>
           <Card padding={16}>
             <Field label="Modèle">
-              <Select value={model} options={AGENT_MODELS} onChange={setModel} />
+              <Select value={model} options={modelOptions} onChange={setModel} />
             </Field>
             <label style={{
               display: 'flex', alignItems: 'center', gap: 8,
@@ -2673,7 +2713,7 @@ function JarvisRun({ flow, onBack }) {
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
   const [metrics, setMetrics] = useState({
-    toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0,
+    toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0,
   });
   const [accepted, setAccepted] = useState([]);
   // narrationHTML = trace markdown/HTML cumulative du LLM (left panel)
@@ -2688,6 +2728,21 @@ function JarvisRun({ flow, onBack }) {
   // accumulated_messages + canonical_path + budget courant → re-passe
   // à un nouveau call pour reprendre exactement où on s'est arrêté.
   const [resumeState, setResumeState] = useState(null);
+  const [poolStatus, setPoolStatus] = useState(null);
+
+  // Pool status pour griser les Gemini blown dans le dropdown modèle.
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('api/pool/status');
+        if (r.ok && alive) setPoolStatus(await r.json());
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
   const logRef = useRef(null);
   const abortRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -2709,7 +2764,7 @@ function JarvisRun({ flow, onBack }) {
   const reset = () => {
     setLog([]); setAccepted([]); setNarrationHTML(''); setFilePreview('');
     setFilePath(null); setHeadline('');
-    setMetrics({ toolsCalled: 0, accepted: 0, thoughts: 0, elapsed: 0 });
+    setMetrics({ toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0 });
     setState('idle');
   };
 
@@ -2787,6 +2842,10 @@ function JarvisRun({ flow, onBack }) {
             if (assistant && assistant.content) {
               const toolMatches = assistant.content.match(/class="jdm-narration"/g) || [];
               setMetrics(m => ({ ...m, toolsCalled: toolMatches.length }));
+            }
+            // Tokens estimés (sert à voir le gain après truncate/relance)
+            if (typeof d.tokens_estimate === 'number') {
+              setMetrics(m => ({ ...m, tokens: d.tokens_estimate }));
             }
             // Triplets consolidés depuis le registry (pas du parsing)
             if (Array.isArray(d.consolidated)) {
@@ -2968,7 +3027,19 @@ function JarvisRun({ flow, onBack }) {
                   { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
                   { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
                   { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
-                ]} />
+                ].map(m => {
+                  // Grise les Gemini blown sur TOUTES les clés du pool.
+                  if (poolStatus && m.value.startsWith('gemini-')) {
+                    const allBlown = (poolStatus.keys || []).every(
+                      k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
+                    );
+                    if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
+                      return { ...m, label: `❌ ${m.label} — épuisé`,
+                               sub: 'pool entièrement consommé aujourd\'hui' };
+                    }
+                  }
+                  return m;
+                })} />
             </Field>
             {(params.model || '').match(/^(claude|gpt)-/) && (
               <Field label="Clé API">
@@ -3034,7 +3105,7 @@ function JarvisRun({ flow, onBack }) {
             marginBottom: 14,
           }}>
             <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
-            <Metric label="Pensées" value={metrics.thoughts} sub="thoughts" />
+            <Metric label="Tokens" value={fmtTokens(metrics.tokens)} sub="estimés" mono />
             <Metric label="Consolidés" value={metrics.accepted} sub="triplets" color="var(--jdm-green)" />
             <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
           </div>
@@ -3182,6 +3253,14 @@ function parseSSEEventJarvis(raw) {
   let parsed;
   try { parsed = JSON.parse(data); } catch { parsed = { text: data }; }
   return { event, data: parsed };
+}
+
+// Formatte un nombre de tokens : 1234 → "1.2k", 1234567 → "1.2M".
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0) + 'k';
+  return (n / 1_000_000).toFixed(1) + 'M';
 }
 
 function shortArgs(args) {
@@ -3575,27 +3654,43 @@ function ViewProductions() {
         busy={busy} isAdmin={isAdmin}
       />
 
-      {/* Oldies (archives > 48h) */}
+      {/* Oldies (archives > 48h) — section pliable */}
       {oldies.length > 0 && (
-        <div style={{ marginTop: 28 }}>
-          <ProductionsSection
-            title={`Archives oldies · ${oldies.length}`}
-            files={oldies} archived={true}
-            selected={selectedOldies}
-            onToggle={toggle(selectedOldies, setSelectedOldies)}
-            onPreview={openPreview}
-            onDownload={downloadOne}
-            onSubmit={() => submitSelected(true)}
-            onDelete={() => deleteSelected(true)}
-            busy={busy} isAdmin={isAdmin}
-          />
-        </div>
+        <details style={{ marginTop: 28 }}>
+          <summary style={{
+            cursor: 'pointer',
+            padding: '12px 14px',
+            background: 'var(--bg-elev)',
+            border: '1px solid var(--line-soft)',
+            borderRadius: 'var(--radius)',
+            display: 'flex', alignItems: 'baseline', gap: 10,
+            fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600,
+            color: 'var(--ink-2)',
+            listStyle: 'none',
+          }}>
+            <span style={{
+              fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+            }}>▸ Archives oldies</span>
+            <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--ink-3)' }}>
+              · {oldies.length} fichier{oldies.length > 1 ? 's' : ''} de plus de 48h
+            </span>
+          </summary>
+          <div style={{ marginTop: 12 }}>
+            <ProductionsSection
+              title=""  /* le titre est déjà dans le summary */
+              files={oldies} archived={true}
+              selected={selectedOldies}
+              onToggle={toggle(selectedOldies, setSelectedOldies)}
+              onPreview={openPreview}
+              onDownload={downloadOne}
+              onSubmit={() => submitSelected(true)}
+              onDelete={() => deleteSelected(true)}
+              busy={busy} isAdmin={isAdmin}
+            />
+          </div>
+        </details>
       )}
-
-      {/* Section admin — réservée ?admin=1 */}
-      <div className="admin-only" style={{ marginTop: 32 }}>
-        <AdminPanel />
-      </div>
 
       {/* Log d'actions */}
       {actionLog.length > 0 && (
@@ -3689,10 +3784,12 @@ function ProductionsSection({ title, files, archived, selected, onToggle,
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 10,
       }}>
-        <h2 className="display" style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 22, fontWeight: 600, margin: 0,
-        }}>{title}</h2>
+        {title && (
+          <h2 className="display" style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 22, fontWeight: 600, margin: 0,
+          }}>{title}</h2>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <Button size="sm" onClick={onSubmit}
             disabled={busy || selected.size === 0}>
@@ -3739,19 +3836,23 @@ function ProductionsSection({ title, files, archived, selected, onToggle,
 function ProductionsRow({ file, archived, selected, onToggle, onPreview, onDownload, isLast }) {
   const sizeKB = (file.size / 1024).toFixed(1);
   const age = formatAge(file.age_s);
-  const extColor = {
-    'enrich':  'var(--jdm-magenta)',
-    'audit':   'var(--jdm-cyan)',
-    'err':     'var(--jdm-orange)',
-    'stat':    'var(--jdm-violet)',
-    'html':    'var(--jdm-green)',
-  }[file.ext] || 'var(--ink-3)';
+  // Couleur par type (badge ET teinte de la ligne, très douce).
+  const extColors = {
+    'enrich':  { fg: 'var(--jdm-magenta)', tint: 'rgba(200, 58, 115, 0.04)' },
+    'audit':   { fg: 'var(--jdm-cyan)',    tint: 'rgba(31, 151, 177, 0.04)' },
+    'err':     { fg: 'var(--jdm-orange)',  tint: 'rgba(217, 104, 16, 0.04)' },
+    'stat':    { fg: 'var(--jdm-violet)',  tint: 'rgba(122, 79, 190, 0.04)' },
+    'html':    { fg: 'var(--jdm-green)',   tint: 'rgba(78, 166, 60, 0.04)' },
+  };
+  const { fg: extColor, tint: extTint } = extColors[file.ext] || { fg: 'var(--ink-3)', tint: 'transparent' };
+  // Si déjà soumis, le vert prend le pas sur la teinte par type.
+  const bg = file.submitted ? 'rgba(78,166,60,0.10)' : extTint;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12,
       padding: '10px 14px',
       borderBottom: isLast ? 'none' : '1px solid var(--line-soft)',
-      background: file.submitted ? 'rgba(78,166,60,0.06)' : 'transparent',
+      background: bg,
     }}>
       <input type="checkbox"
         checked={selected}
@@ -3786,272 +3887,6 @@ function formatAge(s) {
   if (s < 3600) return `${Math.floor(s / 60)}min`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}j`;
-}
-
-// ─── Panneau admin — réservé ?admin=1 ─────────────────────────
-
-function AdminPanel() {
-  const [info, setInfo] = useState(null);
-  const [password, setPassword] = useState('');
-  const [exported, setExported] = useState(null);
-  const [exportError, setExportError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  React.useEffect(() => {
-    fetch('api/admin/info')
-      .then(r => r.json())
-      .then(setInfo)
-      .catch(() => setInfo({ error: 'Impossible de charger les infos.' }));
-  }, []);
-
-  const doExport = async () => {
-    if (!password) { setExportError('Mot de passe requis.'); return; }
-    setBusy(true); setExportError(''); setExported(null);
-    try {
-      const r = await fetch('api/admin/export-secrets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-      if (r.status === 401) { setExportError('Mot de passe invalide.'); return; }
-      if (r.status === 503) {
-        setExportError('Export désactivé côté serveur (EXPORT_SECRETS_PASSWORD non défini).');
-        return;
-      }
-      if (!r.ok) { setExportError(`HTTP ${r.status}`); return; }
-      const d = await r.json();
-      setExported(d.vars || {});
-    } catch (e) {
-      setExportError(String(e && e.message ? e.message : e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const downloadEnv = () => {
-    if (!exported) return;
-    const lines = Object.entries(exported).map(([k, v]) => `${k}=${v}`);
-    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = '.env.export';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <Card padding={20} style={{ border: '1px dashed var(--jdm-magenta)' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
-        <div className="mono" style={{
-          fontSize: 11, color: 'var(--jdm-magenta)',
-          textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600,
-        }}>Panneau admin</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-          Réservé · activé via <code className="mono">?admin=1</code> dans l'URL.
-        </div>
-      </div>
-
-      {/* Diag info */}
-      {info && !info.error && (
-        <div style={{
-          background: 'var(--bg-elev)',
-          border: '1px solid var(--line-soft)',
-          borderRadius: 'var(--radius)',
-          padding: 14, marginBottom: 14,
-          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7,
-        }}>
-          <div>Python : <strong style={{ color: 'var(--ink)' }}>{info.python}</strong></div>
-          <div>APP_SUBPATH : <strong style={{ color: 'var(--ink)' }}>{info.app_subpath || '(racine)'}</strong></div>
-          <div>Pool Gemini : <strong style={{ color: 'var(--ink)' }}>{info.pool_size} clé(s)</strong></div>
-          <div>Export secrets : <strong style={{ color: info.export_secrets_enabled ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>
-            {info.export_secrets_enabled ? 'activé (EXPORT_SECRETS_PASSWORD défini)' : 'désactivé'}
-          </strong></div>
-          <div style={{ marginTop: 8 }}>Env vars présentes ({(info.env_vars_present || []).length}) :</div>
-          <div style={{ paddingLeft: 12, color: 'var(--ink-2)' }}>
-            {(info.env_vars_present || []).join(', ') || '—'}
-          </div>
-        </div>
-      )}
-
-      {/* Export secrets + édition + cache clear */}
-      {info && info.export_secrets_enabled && (
-        <AdminSecretsSection password={password} setPassword={setPassword}
-          doExport={doExport} busy={busy} exported={exported}
-          exportError={exportError} downloadEnv={downloadEnv} />
-      )}
-    </Card>
-  );
-}
-
-function AdminSecretsSection({ password, setPassword, doExport, busy,
-                               exported, exportError, downloadEnv }) {
-  const [edits, setEdits] = useState({});
-  const [editMsg, setEditMsg] = useState('');
-  const [cacheMsg, setCacheMsg] = useState('');
-
-  const setOne = (k, v) => setEdits(e => ({ ...e, [k]: v }));
-
-  const submitEdits = async () => {
-    setEditMsg('');
-    const vars = Object.fromEntries(Object.entries(edits).filter(([_, v]) => v !== undefined));
-    if (Object.keys(vars).length === 0) { setEditMsg('Rien à modifier.'); return; }
-    try {
-      const r = await fetch('api/admin/env-set', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password, vars }),
-      });
-      const d = await r.json();
-      if (r.ok) {
-        setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour. .env persisté : ${d.persisted_to_dotenv}.`);
-        setEdits({});
-      } else {
-        setEditMsg(`✗ ${d.detail || r.status}`);
-      }
-    } catch (e) {
-      setEditMsg(`✗ ${e.message || e}`);
-    }
-  };
-
-  const clearCache = async () => {
-    setCacheMsg('');
-    if (!confirm('Vider tout le cache disque JDM ?')) return;
-    try {
-      const r = await fetch('api/admin/cache-clear', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-      const d = await r.json();
-      if (r.ok) {
-        setCacheMsg(`✓ ${d.deleted_files} fichier(s) supprimé(s) dans ${d.cache_dir}`);
-      } else {
-        setCacheMsg(`✗ ${d.detail || r.status}`);
-      }
-    } catch (e) {
-      setCacheMsg(`✗ ${e.message || e}`);
-    }
-  };
-
-  // Variables modifiables (whitelist alignée backend _EXPORTABLE_ENV_VARS)
-  const EDITABLE_VARS = [
-    'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
-    'JDM_DROPS_API_KEY', 'JDM_DROPS_URL', 'LLM_PROVIDER', 'LLM_MODEL',
-  ];
-
-  return (
-    <>
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>Authentification</div>
-      <Input value={password} onChange={setPassword}
-        placeholder="Mot de passe (EXPORT_SECRETS_PASSWORD)" mono />
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4, marginBottom: 16 }}>
-        Requis pour toutes les actions ci-dessous (export, modif env, clear cache).
-      </div>
-
-      {/* Export */}
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>1 · Export des secrets (.env)</div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <Button size="sm" onClick={doExport} disabled={busy || !password}>
-          {busy ? '…' : 'Exporter'}
-        </Button>
-        {exported && (
-          <Button size="sm" variant="secondary" onClick={downloadEnv}>
-            ⬇ Télécharger .env
-          </Button>
-        )}
-      </div>
-      {exportError && (
-        <div style={{
-          marginBottom: 8, padding: 10,
-          background: 'rgba(200,58,115,0.08)',
-          border: '1px solid var(--jdm-magenta)',
-          borderRadius: 'var(--radius)',
-          color: 'var(--jdm-magenta)', fontSize: 12,
-        }}>{exportError}</div>
-      )}
-      {exported && (
-        <div style={{
-          marginBottom: 16, padding: 12,
-          background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
-          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
-          maxHeight: 200, overflow: 'auto',
-        }}>
-          {Object.entries(exported).map(([k, v]) => (
-            <div key={k} style={{ wordBreak: 'break-all' }}>
-              <strong style={{ color: 'var(--accent)' }}>{k}</strong>
-              =<span style={{ color: 'var(--ink-2)' }}>{v}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Édition env */}
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>2 · Modifier les variables d'environnement</div>
-      <div style={{
-        background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
-        padding: 12, marginBottom: 8,
-      }}>
-        {EDITABLE_VARS.map(k => (
-          <div key={k} style={{
-            display: 'grid', gridTemplateColumns: '160px 1fr',
-            gap: 8, alignItems: 'center', marginBottom: 6,
-          }}>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{k}</div>
-            <Input value={edits[k] || ''}
-              onChange={(v) => setOne(k, v)}
-              placeholder="nouvelle valeur (vide = laisse l'actuelle)" mono />
-          </div>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <Button size="sm" onClick={submitEdits} disabled={!password}>
-          ✓ Appliquer les modifications
-        </Button>
-      </div>
-      {editMsg && (
-        <div style={{
-          marginBottom: 16, padding: 10,
-          background: editMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
-          border: `1px solid ${editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
-          borderRadius: 'var(--radius)',
-          color: editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
-          fontSize: 12,
-        }}>{editMsg}</div>
-      )}
-
-      {/* Cache clear */}
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>3 · Cache disque JDM</div>
-      <Button size="sm" variant="secondary" onClick={clearCache} disabled={!password}>
-        🗑 Vider le cache JDM
-      </Button>
-      {cacheMsg && (
-        <div style={{
-          marginTop: 8, padding: 10,
-          background: cacheMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
-          border: `1px solid ${cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
-          borderRadius: 'var(--radius)',
-          color: cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
-          fontSize: 12,
-        }}>{cacheMsg}</div>
-      )}
-    </>
-  );
 }
 
 window.ViewProductions = ViewProductions;
@@ -4348,7 +4183,17 @@ function ViewAide() {
         </ul>
       </div>
 
-      {/* 7. Footer institutionnel — slots logos préservés */}
+      {/* 7. Panneau admin — réservé ?admin=1 (positionné en bas, avant
+          le footer institutionnel, comme requis par l'utilisateur). */}
+      <div className="admin-only" style={{ marginTop: 40, marginBottom: 28 }}>
+        <h2 className="display" style={{
+          fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+          margin: '0 0 14px',
+        }}>7 · Panneau admin</h2>
+        <AdminPanel />
+      </div>
+
+      {/* 8. Footer institutionnel — slots logos préservés */}
       <div style={{
         padding: 32, background: 'var(--bg-elev)',
         border: '1px solid var(--line-soft)', borderRadius: 'var(--radius-lg)',
@@ -4387,13 +4232,289 @@ function ViewAide() {
   );
 }
 
+// ─── Panneau admin (gate par mot de passe) ─────────────────────
+
+function AdminPanel() {
+  const [info, setInfo] = useState(null);
+  const [password, setPassword] = useState('');
+  const [authed, setAuthed] = useState(false);
+  const [authErr, setAuthErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  // Edition env vars
+  const [allVars, setAllVars] = useState({});  // {NAME: currentValue}
+  const [edits, setEdits] = useState({});      // {NAME: newValue}
+  const [editMsg, setEditMsg] = useState('');
+  const [cacheMsg, setCacheMsg] = useState('');
+
+  React.useEffect(() => {
+    fetch('api/admin/info').then(r => r.json()).then(setInfo).catch(() => {});
+  }, []);
+
+  const auth = async () => {
+    if (!password) { setAuthErr('Mot de passe requis.'); return; }
+    setBusy(true); setAuthErr('');
+    try {
+      const r = await fetch('api/admin/auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (r.status === 401) { setAuthErr('Mot de passe invalide.'); return; }
+      if (r.status === 503) {
+        setAuthErr('Admin désactivé : EXPORT_SECRETS_PASSWORD non défini côté serveur.');
+        return;
+      }
+      if (!r.ok) { setAuthErr(`HTTP ${r.status}`); return; }
+      setAuthed(true);
+      // Charge les valeurs actuelles (via export — réutilise l'endpoint)
+      const exp = await fetch('api/admin/export-secrets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (exp.ok) {
+        const d = await exp.json();
+        setAllVars(d.vars || {});
+      }
+    } catch (e) {
+      setAuthErr(String(e && e.message ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const logout = () => {
+    setAuthed(false); setPassword(''); setAllVars({}); setEdits({});
+    setEditMsg(''); setCacheMsg('');
+  };
+
+  const setOne = (k, v) => setEdits(e => ({ ...e, [k]: v }));
+
+  const submitEdits = async () => {
+    setEditMsg('');
+    const vars = Object.fromEntries(Object.entries(edits).filter(([_, v]) => v !== undefined && v !== ''));
+    if (Object.keys(vars).length === 0) { setEditMsg('Aucune modification à appliquer.'); return; }
+    try {
+      const r = await fetch('api/admin/env-set', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, vars }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour · .env persisté : ${d.persisted_to_dotenv ? 'oui' : 'non'}`);
+        // Reload current values
+        setAllVars(av => ({ ...av, ...vars }));
+        setEdits({});
+      } else {
+        setEditMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setEditMsg(`✗ ${e && e.message ? e.message : e}`);
+    }
+  };
+
+  const clearCache = async () => {
+    setCacheMsg('');
+    if (!confirm('Vider tout le cache disque JDM ? Les prochains appels iront refrapper l\'API.')) return;
+    try {
+      const r = await fetch('api/admin/cache-clear', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setCacheMsg(`✓ ${d.deleted_files} fichier(s) supprimé(s) dans ${d.cache_dir}`);
+      } else {
+        setCacheMsg(`✗ ${d.detail || r.status}`);
+      }
+    } catch (e) {
+      setCacheMsg(`✗ ${e && e.message ? e.message : e}`);
+    }
+  };
+
+  const downloadEnv = () => {
+    if (!allVars || Object.keys(allVars).length === 0) return;
+    const lines = Object.entries(allVars).map(([k, v]) => `${k}=${v}`);
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = '.env.export';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Liste complète des vars autorisées côté backend (matchée à
+  // _EXPORTABLE_ENV_VARS) — toutes celles de .env.example
+  const EDITABLE_VARS = [
+    'JDM_BASE_URL', 'JDM_TIMEOUT',
+    'JDM_CACHE_DIR', 'JDM_CACHE_TTL_META', 'JDM_CACHE_TTL_DATA',
+    'LLM_PROVIDER', 'LLM_MODEL',
+    'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GROQ_API_KEY',
+    'DEEPSEEK_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
+    'HF_TOKEN',
+    'JDM_DROPS_API_KEY', 'JDM_DROPS_URL',
+    'APP_SUBPATH',
+  ];
+
+  return (
+    <Card padding={20} style={{ border: '1px dashed var(--jdm-magenta)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
+        <div className="mono" style={{
+          fontSize: 11, color: 'var(--jdm-magenta)',
+          textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600,
+        }}>Panneau admin</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          Réservé · activé via <code className="mono">?admin=1</code> dans l'URL.
+        </div>
+        {authed && (
+          <Button size="sm" variant="ghost"
+            style={{ marginLeft: 'auto' }}
+            onClick={logout}>🔒 Verrouiller</Button>
+        )}
+      </div>
+
+      {/* Diag info (toujours visible si admin URL) */}
+      {info && (
+        <div style={{
+          background: 'var(--bg-elev)',
+          border: '1px solid var(--line-soft)',
+          borderRadius: 'var(--radius)',
+          padding: 14, marginBottom: 14,
+          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7,
+        }}>
+          <div>Python : <strong style={{ color: 'var(--ink)' }}>{info.python}</strong></div>
+          <div>APP_SUBPATH : <strong style={{ color: 'var(--ink)' }}>{info.app_subpath || '(racine)'}</strong></div>
+          <div>Pool Gemini : <strong style={{ color: 'var(--ink)' }}>{info.pool_size} clé(s)</strong></div>
+          <div>Export secrets : <strong style={{ color: info.export_secrets_enabled ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>
+            {info.export_secrets_enabled ? 'activé' : 'désactivé (EXPORT_SECRETS_PASSWORD non défini)'}
+          </strong></div>
+          <div>Env vars présentes : <strong style={{ color: 'var(--ink)' }}>{(info.env_vars_present || []).length}</strong> / {EDITABLE_VARS.length}</div>
+        </div>
+      )}
+
+      {/* AVANT auth : juste le champ password. Les contrôles d'édition,
+          cache clear, export ne s'affichent QU'après validation OK. */}
+      {!authed ? (
+        <>
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: 8,
+          }}>Authentification requise</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+            <Input value={password} onChange={setPassword}
+              placeholder="Mot de passe EXPORT_SECRETS_PASSWORD" mono />
+            <Button size="sm" onClick={auth} disabled={busy || !password}>
+              {busy ? '…' : 'Déverrouiller'}
+            </Button>
+          </div>
+          {authErr && (
+            <div style={{
+              marginTop: 8, padding: 10,
+              background: 'rgba(200,58,115,0.08)',
+              border: '1px solid var(--jdm-magenta)',
+              borderRadius: 'var(--radius)',
+              color: 'var(--jdm-magenta)', fontSize: 12,
+            }}>{authErr}</div>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{
+            marginBottom: 16, padding: 10,
+            background: 'rgba(78,166,60,0.08)',
+            border: '1px solid var(--jdm-green)',
+            borderRadius: 'var(--radius)',
+            color: 'var(--jdm-green)', fontSize: 12,
+            fontFamily: 'var(--font-mono)',
+          }}>✓ Mot de passe accepté — contrôles débloqués</div>
+
+          {/* 1 · Edition env vars */}
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: 8,
+          }}>1 · Variables d'environnement</div>
+          <div style={{
+            background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+            padding: 12, marginBottom: 8,
+            maxHeight: 380, overflow: 'auto',
+          }}>
+            {EDITABLE_VARS.map(k => {
+              const isSecret = /KEY|TOKEN|PASSWORD/.test(k);
+              const cur = allVars[k] || '';
+              const display = isSecret && cur ? (cur.slice(0, 4) + '…' + cur.slice(-4)) : cur;
+              return (
+                <div key={k} style={{
+                  display: 'grid', gridTemplateColumns: '180px 200px 1fr',
+                  gap: 8, alignItems: 'center', marginBottom: 6,
+                }}>
+                  <div className="mono" style={{
+                    fontSize: 11, color: 'var(--ink-2)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{k}</div>
+                  <div className="mono" style={{
+                    fontSize: 10, color: cur ? 'var(--ink-3)' : 'var(--ink-3)',
+                    fontStyle: cur ? 'normal' : 'italic',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{cur ? `actuel : ${display}` : '(non défini)'}</div>
+                  <Input value={edits[k] || ''}
+                    onChange={(v) => setOne(k, v)}
+                    placeholder="nouvelle valeur" mono />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <Button size="sm" onClick={submitEdits}>✓ Appliquer les modifications</Button>
+            <Button size="sm" variant="secondary" onClick={downloadEnv}>⬇ Télécharger .env complet</Button>
+          </div>
+          {editMsg && (
+            <div style={{
+              marginBottom: 16, padding: 10,
+              background: editMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+              border: `1px solid ${editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+              borderRadius: 'var(--radius)',
+              color: editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+              fontSize: 12,
+            }}>{editMsg}</div>
+          )}
+
+          {/* 2 · Cache JDM */}
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: 8,
+          }}>2 · Cache disque JDM</div>
+          <Button size="sm" variant="secondary" onClick={clearCache}>
+            🗑 Vider le cache JDM
+          </Button>
+          {cacheMsg && (
+            <div style={{
+              marginTop: 8, padding: 10,
+              background: cacheMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
+              border: `1px solid ${cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
+              borderRadius: 'var(--radius)',
+              color: cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
+              fontSize: 12,
+            }}>{cacheMsg}</div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 window.ViewAide = ViewAide;
 
 // === webapp/app.jsx ===
 // Main app: theme switcher + router + Tweaks panel wiring.
 
+// Thème par défaut suit la préférence système (prefers-color-scheme).
+// L'utilisateur peut toujours forcer via le Tweaks panel ; sa préférence
+// est persistée par useTweaks via localStorage.
+const _PREFERS_DARK = (typeof window !== 'undefined' &&
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "theme": "paper",
+  "theme": _PREFERS_DARK ? "lab" : "paper",
   "accent": "#c0411a"
 }/*EDITMODE-END*/;
 
@@ -4401,10 +4522,27 @@ function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [view, setView] = useState('projet');
 
-  // Apply theme to body
+  // Apply theme to body — suit le système au boot, persisté ensuite.
   useEffect(() => {
-    document.body.dataset.theme = tweaks.theme || 'paper';
+    document.body.dataset.theme = tweaks.theme || (_PREFERS_DARK ? 'lab' : 'paper');
   }, [tweaks.theme]);
+
+  // Écoute les changements de préférence système et applique si
+  // l'utilisateur n'a pas explicitement override (= valeur === default).
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e) => {
+      // Only auto-flip if user hasn't explicitly chosen a different theme
+      // (heuristic : si la valeur stockée correspond au système actuel,
+      // on suit le nouveau ; sinon on respecte le choix utilisateur)
+      const sysTheme = e.matches ? 'lab' : 'paper';
+      const wasSystem = (tweaks.theme === 'lab') === e.matches;
+      // (no-op for now : on laisse le user souverain — il y a un toggle)
+    };
+    mq.addEventListener && mq.addEventListener('change', handler);
+    return () => mq.removeEventListener && mq.removeEventListener('change', handler);
+  }, []);
 
   // Apply accent override
   useEffect(() => {
@@ -4549,7 +4687,7 @@ function App() {
               ['explorer', 'Explorer'],
               ['claim', 'Claim'],
               ['subgraph', 'Sous-graphe'],
-              ['agent', 'Agent'],
+              ['agent', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
               ['productions', 'Productions'],
               ['aide', 'Aide'],

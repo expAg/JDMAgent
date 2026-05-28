@@ -84,7 +84,7 @@ function ViewExplorer() {
         display: 'grid',
         gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
         gap: 14,
-        alignItems: 'flex-end',
+        alignItems: 'end',
         marginBottom: 16,
       }}>
         <Field label="Terme">
@@ -93,9 +93,14 @@ function ViewExplorer() {
         <Field label="Type de relation">
           <Select value={rel} options={EXPLORE_RELATIONS} onChange={setRel} />
         </Field>
-        <Button onClick={onRun} size="lg" disabled={loading}>
-          {loading ? 'Chargement…' : 'Interroger'}
-        </Button>
+        {/* Spacer marginBottom matches Field's marginBottom:14 so the
+            visible button aligns with the visible input row (le Field
+            réserve 14px sous l'input pour son espacement). */}
+        <div style={{ marginBottom: 14 }}>
+          <Button onClick={onRun} size="lg" disabled={loading}>
+            {loading ? 'Chargement…' : 'Interroger'}
+          </Button>
+        </div>
       </div>
 
       {/* Secondary controls */}

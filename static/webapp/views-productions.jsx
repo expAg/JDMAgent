@@ -188,27 +188,43 @@ function ViewProductions() {
         busy={busy} isAdmin={isAdmin}
       />
 
-      {/* Oldies (archives > 48h) */}
+      {/* Oldies (archives > 48h) — section pliable */}
       {oldies.length > 0 && (
-        <div style={{ marginTop: 28 }}>
-          <ProductionsSection
-            title={`Archives oldies · ${oldies.length}`}
-            files={oldies} archived={true}
-            selected={selectedOldies}
-            onToggle={toggle(selectedOldies, setSelectedOldies)}
-            onPreview={openPreview}
-            onDownload={downloadOne}
-            onSubmit={() => submitSelected(true)}
-            onDelete={() => deleteSelected(true)}
-            busy={busy} isAdmin={isAdmin}
-          />
-        </div>
+        <details style={{ marginTop: 28 }}>
+          <summary style={{
+            cursor: 'pointer',
+            padding: '12px 14px',
+            background: 'var(--bg-elev)',
+            border: '1px solid var(--line-soft)',
+            borderRadius: 'var(--radius)',
+            display: 'flex', alignItems: 'baseline', gap: 10,
+            fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600,
+            color: 'var(--ink-2)',
+            listStyle: 'none',
+          }}>
+            <span style={{
+              fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+            }}>▸ Archives oldies</span>
+            <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--ink-3)' }}>
+              · {oldies.length} fichier{oldies.length > 1 ? 's' : ''} de plus de 48h
+            </span>
+          </summary>
+          <div style={{ marginTop: 12 }}>
+            <ProductionsSection
+              title=""  /* le titre est déjà dans le summary */
+              files={oldies} archived={true}
+              selected={selectedOldies}
+              onToggle={toggle(selectedOldies, setSelectedOldies)}
+              onPreview={openPreview}
+              onDownload={downloadOne}
+              onSubmit={() => submitSelected(true)}
+              onDelete={() => deleteSelected(true)}
+              busy={busy} isAdmin={isAdmin}
+            />
+          </div>
+        </details>
       )}
-
-      {/* Section admin — réservée ?admin=1 */}
-      <div className="admin-only" style={{ marginTop: 32 }}>
-        <AdminPanel />
-      </div>
 
       {/* Log d'actions */}
       {actionLog.length > 0 && (
@@ -302,10 +318,12 @@ function ProductionsSection({ title, files, archived, selected, onToggle,
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 10,
       }}>
-        <h2 className="display" style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 22, fontWeight: 600, margin: 0,
-        }}>{title}</h2>
+        {title && (
+          <h2 className="display" style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 22, fontWeight: 600, margin: 0,
+          }}>{title}</h2>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <Button size="sm" onClick={onSubmit}
             disabled={busy || selected.size === 0}>
@@ -352,19 +370,23 @@ function ProductionsSection({ title, files, archived, selected, onToggle,
 function ProductionsRow({ file, archived, selected, onToggle, onPreview, onDownload, isLast }) {
   const sizeKB = (file.size / 1024).toFixed(1);
   const age = formatAge(file.age_s);
-  const extColor = {
-    'enrich':  'var(--jdm-magenta)',
-    'audit':   'var(--jdm-cyan)',
-    'err':     'var(--jdm-orange)',
-    'stat':    'var(--jdm-violet)',
-    'html':    'var(--jdm-green)',
-  }[file.ext] || 'var(--ink-3)';
+  // Couleur par type (badge ET teinte de la ligne, très douce).
+  const extColors = {
+    'enrich':  { fg: 'var(--jdm-magenta)', tint: 'rgba(200, 58, 115, 0.04)' },
+    'audit':   { fg: 'var(--jdm-cyan)',    tint: 'rgba(31, 151, 177, 0.04)' },
+    'err':     { fg: 'var(--jdm-orange)',  tint: 'rgba(217, 104, 16, 0.04)' },
+    'stat':    { fg: 'var(--jdm-violet)',  tint: 'rgba(122, 79, 190, 0.04)' },
+    'html':    { fg: 'var(--jdm-green)',   tint: 'rgba(78, 166, 60, 0.04)' },
+  };
+  const { fg: extColor, tint: extTint } = extColors[file.ext] || { fg: 'var(--ink-3)', tint: 'transparent' };
+  // Si déjà soumis, le vert prend le pas sur la teinte par type.
+  const bg = file.submitted ? 'rgba(78,166,60,0.10)' : extTint;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12,
       padding: '10px 14px',
       borderBottom: isLast ? 'none' : '1px solid var(--line-soft)',
-      background: file.submitted ? 'rgba(78,166,60,0.06)' : 'transparent',
+      background: bg,
     }}>
       <input type="checkbox"
         checked={selected}
@@ -399,272 +421,6 @@ function formatAge(s) {
   if (s < 3600) return `${Math.floor(s / 60)}min`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}j`;
-}
-
-// ─── Panneau admin — réservé ?admin=1 ─────────────────────────
-
-function AdminPanel() {
-  const [info, setInfo] = useState(null);
-  const [password, setPassword] = useState('');
-  const [exported, setExported] = useState(null);
-  const [exportError, setExportError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  React.useEffect(() => {
-    fetch('api/admin/info')
-      .then(r => r.json())
-      .then(setInfo)
-      .catch(() => setInfo({ error: 'Impossible de charger les infos.' }));
-  }, []);
-
-  const doExport = async () => {
-    if (!password) { setExportError('Mot de passe requis.'); return; }
-    setBusy(true); setExportError(''); setExported(null);
-    try {
-      const r = await fetch('api/admin/export-secrets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-      if (r.status === 401) { setExportError('Mot de passe invalide.'); return; }
-      if (r.status === 503) {
-        setExportError('Export désactivé côté serveur (EXPORT_SECRETS_PASSWORD non défini).');
-        return;
-      }
-      if (!r.ok) { setExportError(`HTTP ${r.status}`); return; }
-      const d = await r.json();
-      setExported(d.vars || {});
-    } catch (e) {
-      setExportError(String(e && e.message ? e.message : e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const downloadEnv = () => {
-    if (!exported) return;
-    const lines = Object.entries(exported).map(([k, v]) => `${k}=${v}`);
-    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = '.env.export';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <Card padding={20} style={{ border: '1px dashed var(--jdm-magenta)' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
-        <div className="mono" style={{
-          fontSize: 11, color: 'var(--jdm-magenta)',
-          textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600,
-        }}>Panneau admin</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-          Réservé · activé via <code className="mono">?admin=1</code> dans l'URL.
-        </div>
-      </div>
-
-      {/* Diag info */}
-      {info && !info.error && (
-        <div style={{
-          background: 'var(--bg-elev)',
-          border: '1px solid var(--line-soft)',
-          borderRadius: 'var(--radius)',
-          padding: 14, marginBottom: 14,
-          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7,
-        }}>
-          <div>Python : <strong style={{ color: 'var(--ink)' }}>{info.python}</strong></div>
-          <div>APP_SUBPATH : <strong style={{ color: 'var(--ink)' }}>{info.app_subpath || '(racine)'}</strong></div>
-          <div>Pool Gemini : <strong style={{ color: 'var(--ink)' }}>{info.pool_size} clé(s)</strong></div>
-          <div>Export secrets : <strong style={{ color: info.export_secrets_enabled ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>
-            {info.export_secrets_enabled ? 'activé (EXPORT_SECRETS_PASSWORD défini)' : 'désactivé'}
-          </strong></div>
-          <div style={{ marginTop: 8 }}>Env vars présentes ({(info.env_vars_present || []).length}) :</div>
-          <div style={{ paddingLeft: 12, color: 'var(--ink-2)' }}>
-            {(info.env_vars_present || []).join(', ') || '—'}
-          </div>
-        </div>
-      )}
-
-      {/* Export secrets + édition + cache clear */}
-      {info && info.export_secrets_enabled && (
-        <AdminSecretsSection password={password} setPassword={setPassword}
-          doExport={doExport} busy={busy} exported={exported}
-          exportError={exportError} downloadEnv={downloadEnv} />
-      )}
-    </Card>
-  );
-}
-
-function AdminSecretsSection({ password, setPassword, doExport, busy,
-                               exported, exportError, downloadEnv }) {
-  const [edits, setEdits] = useState({});
-  const [editMsg, setEditMsg] = useState('');
-  const [cacheMsg, setCacheMsg] = useState('');
-
-  const setOne = (k, v) => setEdits(e => ({ ...e, [k]: v }));
-
-  const submitEdits = async () => {
-    setEditMsg('');
-    const vars = Object.fromEntries(Object.entries(edits).filter(([_, v]) => v !== undefined));
-    if (Object.keys(vars).length === 0) { setEditMsg('Rien à modifier.'); return; }
-    try {
-      const r = await fetch('api/admin/env-set', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password, vars }),
-      });
-      const d = await r.json();
-      if (r.ok) {
-        setEditMsg(`✓ ${(d.updated || []).length} mise(s) à jour. .env persisté : ${d.persisted_to_dotenv}.`);
-        setEdits({});
-      } else {
-        setEditMsg(`✗ ${d.detail || r.status}`);
-      }
-    } catch (e) {
-      setEditMsg(`✗ ${e.message || e}`);
-    }
-  };
-
-  const clearCache = async () => {
-    setCacheMsg('');
-    if (!confirm('Vider tout le cache disque JDM ?')) return;
-    try {
-      const r = await fetch('api/admin/cache-clear', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-      const d = await r.json();
-      if (r.ok) {
-        setCacheMsg(`✓ ${d.deleted_files} fichier(s) supprimé(s) dans ${d.cache_dir}`);
-      } else {
-        setCacheMsg(`✗ ${d.detail || r.status}`);
-      }
-    } catch (e) {
-      setCacheMsg(`✗ ${e.message || e}`);
-    }
-  };
-
-  // Variables modifiables (whitelist alignée backend _EXPORTABLE_ENV_VARS)
-  const EDITABLE_VARS = [
-    'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_API_KEYS',
-    'JDM_DROPS_API_KEY', 'JDM_DROPS_URL', 'LLM_PROVIDER', 'LLM_MODEL',
-  ];
-
-  return (
-    <>
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>Authentification</div>
-      <Input value={password} onChange={setPassword}
-        placeholder="Mot de passe (EXPORT_SECRETS_PASSWORD)" mono />
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4, marginBottom: 16 }}>
-        Requis pour toutes les actions ci-dessous (export, modif env, clear cache).
-      </div>
-
-      {/* Export */}
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>1 · Export des secrets (.env)</div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <Button size="sm" onClick={doExport} disabled={busy || !password}>
-          {busy ? '…' : 'Exporter'}
-        </Button>
-        {exported && (
-          <Button size="sm" variant="secondary" onClick={downloadEnv}>
-            ⬇ Télécharger .env
-          </Button>
-        )}
-      </div>
-      {exportError && (
-        <div style={{
-          marginBottom: 8, padding: 10,
-          background: 'rgba(200,58,115,0.08)',
-          border: '1px solid var(--jdm-magenta)',
-          borderRadius: 'var(--radius)',
-          color: 'var(--jdm-magenta)', fontSize: 12,
-        }}>{exportError}</div>
-      )}
-      {exported && (
-        <div style={{
-          marginBottom: 16, padding: 12,
-          background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
-          fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
-          maxHeight: 200, overflow: 'auto',
-        }}>
-          {Object.entries(exported).map(([k, v]) => (
-            <div key={k} style={{ wordBreak: 'break-all' }}>
-              <strong style={{ color: 'var(--accent)' }}>{k}</strong>
-              =<span style={{ color: 'var(--ink-2)' }}>{v}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Édition env */}
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>2 · Modifier les variables d'environnement</div>
-      <div style={{
-        background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
-        padding: 12, marginBottom: 8,
-      }}>
-        {EDITABLE_VARS.map(k => (
-          <div key={k} style={{
-            display: 'grid', gridTemplateColumns: '160px 1fr',
-            gap: 8, alignItems: 'center', marginBottom: 6,
-          }}>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{k}</div>
-            <Input value={edits[k] || ''}
-              onChange={(v) => setOne(k, v)}
-              placeholder="nouvelle valeur (vide = laisse l'actuelle)" mono />
-          </div>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <Button size="sm" onClick={submitEdits} disabled={!password}>
-          ✓ Appliquer les modifications
-        </Button>
-      </div>
-      {editMsg && (
-        <div style={{
-          marginBottom: 16, padding: 10,
-          background: editMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
-          border: `1px solid ${editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
-          borderRadius: 'var(--radius)',
-          color: editMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
-          fontSize: 12,
-        }}>{editMsg}</div>
-      )}
-
-      {/* Cache clear */}
-      <div className="mono" style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 8,
-      }}>3 · Cache disque JDM</div>
-      <Button size="sm" variant="secondary" onClick={clearCache} disabled={!password}>
-        🗑 Vider le cache JDM
-      </Button>
-      {cacheMsg && (
-        <div style={{
-          marginTop: 8, padding: 10,
-          background: cacheMsg.startsWith('✓') ? 'rgba(78,166,60,0.08)' : 'rgba(200,58,115,0.08)',
-          border: `1px solid ${cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)'}`,
-          borderRadius: 'var(--radius)',
-          color: cacheMsg.startsWith('✓') ? 'var(--jdm-green)' : 'var(--jdm-magenta)',
-          fontSize: 12,
-        }}>{cacheMsg}</div>
-      )}
-    </>
-  );
 }
 
 window.ViewProductions = ViewProductions;
