@@ -30,3 +30,4 @@ design_handoff_jdm_redesign/
 design_handoff_jdm_fastapi/
 # IDE
 .idea/
+_tmp_redesign/

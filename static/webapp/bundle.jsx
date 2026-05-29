@@ -7271,6 +7271,963 @@ const J_PANELS = [
 ];
 const JPANEL_BASIS = `${100 / J_PANELS.length}%`;
 
+// ─────────────────────────────────────────────────────────────────────
+
+// REAL BACKEND WIRING (extrait de fastapi-self) — câble le design Jarvis
+
+// sur le vrai /api/jarvis/{flow_id}/stream + JarvisStore (singleton qui
+
+// survit aux unmount, persiste runId en localStorage, reconcile au boot).
+
+// ─────────────────────────────────────────────────────────────────────
+
+// LLM peut le faire directement via upload=True). Gap n'écrit pas
+// de fichier → pas soumissible. Tous les autres sortent un fichier
+// avec une extension reconnue par submit_to_jdm.
+const SUBMITTABLE_FLOWS = new Set(['enrich', 'audit', 'signalement',
+                                    'stats', 'annotation']);
+
+
+// ─────────────────────────────────────────────────────────────────────
+// JarvisStore — singleton qui survit aux unmounts de JarvisRun.
+//
+// Pourquoi : quand l'utilisateur quitte l'onglet Jarvis pendant un run,
+// sans ce store le composant unmount, son fetch SSE est aborted par GC,
+// sse-starlette détecte la déconnexion côté serveur, le générateur
+// Python lève CancelledError → flow tué, progrès perdu, tokens LLM
+// consommés pour rien.
+//
+// Avec : le reader SSE vit dans le store, indépendant du cycle React.
+// Le composant lit l'état et se réabonne au mount. Le serveur ne voit
+// pas de déconnexion, le flow continue, on retrouve tout en revenant.
+//
+// Bonus : permet l'affichage du badge « 🟢 en cours » sur la liste
+// des flows (activeFlowIds()) — y compris depuis ViewJarvis.
+// ─────────────────────────────────────────────────────────────────────
+const _JARVIS_RUNS = {};
+const _JARVIS_LISTENERS = {};
+
+function _emptyJarvisRun(flowId) {
+  return {
+    flowId,
+    status: 'idle',  // 'idle' | 'running' | 'done' | 'error'
+    headline: '',
+    log: [],
+    metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+    accepted: [],
+    narrationHTML: '',
+    filePreview: '',
+    filePath: null,
+    resumeState: null,
+    // internes — pas lus par le composant
+    _abortCtrl: null,
+    _startTime: null,
+    _elapsedTimer: null,
+    _prevConsolidatedCount: 0,
+  };
+}
+
+const JarvisStore = {
+  get(flowId) {
+    if (!_JARVIS_RUNS[flowId]) _JARVIS_RUNS[flowId] = _emptyJarvisRun(flowId);
+    return _JARVIS_RUNS[flowId];
+  },
+  patch(flowId, partial) {
+    Object.assign(this.get(flowId), partial);
+    this._emit(flowId);
+  },
+  _emit(flowId) {
+    const subs = _JARVIS_LISTENERS[flowId];
+    if (subs) for (const cb of subs) { try { cb(); } catch {} }
+    const glob = _JARVIS_LISTENERS['*'];
+    if (glob) for (const cb of glob) { try { cb(); } catch {} }
+  },
+  subscribe(flowId, cb) {
+    if (!_JARVIS_LISTENERS[flowId]) _JARVIS_LISTENERS[flowId] = new Set();
+    _JARVIS_LISTENERS[flowId].add(cb);
+    return () => { if (_JARVIS_LISTENERS[flowId]) _JARVIS_LISTENERS[flowId].delete(cb); };
+  },
+  activeFlowIds() {
+    return Object.entries(_JARVIS_RUNS)
+      .filter(([, s]) => s.status === 'running')
+      .map(([id]) => id);
+  },
+  stop(flowId) {
+    // Stop = cooperative cancellation côté serveur (POST /cancel) qui
+    // pose un flag que le bg thread voit entre deux chunks → break du
+    // for loop → finally blocs propres (exclusion_context exit, etc.).
+    // Latence ≈ 5-15s (le round-trip LLM en cours se termine, aucun
+    // nouveau ne démarre). En parallèle on coupe l'observation SSE
+    // locale pour libérer le reader.
+    const cur = this.get(flowId);
+    if (cur.runId) {
+      // Fire-and-forget : on n'attend pas la réponse pour ne pas bloquer
+      // l'UI. Le bg confirmera le stop via event 'cancelled' dans la SSE
+      // (que l'observation soit encore branchée ou pas — au pire on le
+      // récupère au prochain bootReconcile via GET /runs).
+      fetch(`api/jarvis/runs/${encodeURIComponent(cur.runId)}/cancel`, {
+        method: 'POST',
+      }).catch(() => {});
+      const ts = () => new Date().toTimeString().slice(0, 8);
+      cur.log = [...cur.log, {
+        t: ts(), tag: '[stop]', kind: 'iter',
+        msg: 'Demande d\'arrêt envoyée — le flow se termine après le chunk en cours (~5-15s).',
+      }];
+      this._emit(flowId);
+    }
+    if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
+  },
+  reset(flowId) {
+    const cur = this.get(flowId);
+    if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
+    if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
+    _localRunIdSet(flowId, null);  // purge la persistance localStorage
+    _JARVIS_RUNS[flowId] = _emptyJarvisRun(flowId);
+    this._emit(flowId);
+  },
+
+  // Helpers internes ─────────────────────────────────────
+  _resetRunData(cur) {
+    Object.assign(cur, {
+      status: 'running',
+      log: [],
+      accepted: [],
+      narrationHTML: '',
+      filePreview: '',
+      filePath: null,
+      headline: '',
+      metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+      _prevConsolidatedCount: 0,
+      _startTime: Date.now(),
+      runId: null,
+    });
+  },
+  _startElapsedTimer(cur) {
+    if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
+    cur._elapsedTimer = setInterval(() => {
+      cur.metrics = { ...cur.metrics, elapsed: Date.now() - (cur._startTime || Date.now()) };
+      this._emit(cur.flowId);
+    }, 250);
+  },
+
+  /**
+   * Réattache une stream SSE à un run_id existant côté serveur. Utilisé
+   * au boot pour reconnecter aux runs qui tournaient avant un refresh
+   * ou une tab close. Le serveur replay tous les events bufferés puis
+   * passe en live → on retrouve l'état exact.
+   *
+   * Cas d'usage : au boot, on lit localStorage, on GET /api/jarvis/runs
+   * pour filtrer les still-active, et on appelle attach() pour chacun.
+   */
+  async attach(flowId, runId, knownHeadline) {
+    const cur = this.get(flowId);
+    if (cur.status === 'running') return;  // déjà attaché ou en cours
+    this._resetRunData(cur);
+    cur.status = 'running';
+    cur.runId = runId;
+    if (knownHeadline) cur.headline = knownHeadline;
+    cur._abortCtrl = new AbortController();
+    this._startElapsedTimer(cur);
+    this._emit(flowId);
+    await this._consumeStream(
+      flowId,
+      `api/jarvis/runs/${encodeURIComponent(runId)}/stream`,
+      { method: 'GET' },
+      cur._abortCtrl,
+    );
+  },
+  async start(flowId, { params, isResume, resumeState }) {
+    const cur = this.get(flowId);
+    if (cur.status === 'running') return;
+    if (!isResume) {
+      this._resetRunData(cur);
+    } else {
+      const ts = () => new Date().toTimeString().slice(0, 8);
+      cur.status = 'running';
+      cur.log = [...cur.log, { t: ts(), tag: '[resume]', kind: 'iter', msg: 'Reprise après abort PerDay…' }];
+    }
+    cur._abortCtrl = new AbortController();
+    this._startElapsedTimer(cur);
+    this._emit(flowId);
+
+    const flowParams = {
+      ...params,
+      ...(isResume && resumeState ? { resume_state: resumeState } : {}),
+    };
+    await this._consumeStream(
+      flowId,
+      `api/jarvis/${flowId}/stream`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_id: flowId, params: flowParams }),
+      },
+      cur._abortCtrl,
+    );
+  },
+
+  // Boucle de consommation SSE partagée par start() et attach(). Le
+  // dispatchEv gère désormais 'run_id' (persisté en localStorage pour
+  // reconnexion ultérieure) et 'ping' (keepalive — ignoré).
+  async _consumeStream(flowId, url, fetchInit, abortCtrl) {
+    const cur = this.get(flowId);
+    const ts = () => new Date().toTimeString().slice(0, 8);
+    try {
+      const res = await fetch(url, {
+        ...fetchInit,
+        signal: abortCtrl.signal,
+      });
+      if (!res.ok || !res.body) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      const dispatchEv = (ev) => {
+        const d = ev.data || {};
+        switch (ev.event) {
+          case 'run_id':
+            // Premier event de la SSE POST — on persiste pour reconnect.
+            if (d.run_id) {
+              cur.runId = d.run_id;
+              _localRunIdSet(flowId, d.run_id);
+            }
+            break;
+          case 'ping':
+            // Keepalive serveur (toutes les ~20s d'idle) — no-op.
+            break;
+          case 'headline':
+            cur.headline = d.text || '';
+            // Premier event utile : on enregistre le run_id côté serveur
+            // si présent dans le payload (sécurité / cas de reconnect).
+            if (d.run_id && !cur.runId) {
+              cur.runId = d.run_id;
+              _localRunIdSet(flowId, d.run_id);
+            }
+            cur.log = [...cur.log, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }];
+            break;
+          case 'jarvis': {
+            const msgs = d.messages || [];
+            const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            if (d.state) cur.resumeState = d.state;
+            if (assistant && assistant.content) cur.narrationHTML = assistant.content;
+            const cc = Number(d.consolidated_count || 0);
+            if (cc !== cur._prevConsolidatedCount) {
+              cur.metrics = { ...cur.metrics, accepted: cc };
+              cur._prevConsolidatedCount = cc;
+            }
+            if (assistant && assistant.content) {
+              const toolMatches = assistant.content.match(/class="jdm-narration"/g) || [];
+              cur.metrics = { ...cur.metrics, toolsCalled: toolMatches.length };
+            }
+            if (typeof d.tokens_estimate === 'number') {
+              cur.metrics = { ...cur.metrics, tokens: d.tokens_estimate };
+            }
+            if (Array.isArray(d.consolidated)) {
+              // On garde tous les champs utiles à <ItemCard> (subject/
+              // relation/target/explanation) pour pouvoir afficher
+              // l'explication d'inférence sous chaque triplet — même
+              // rendu que les autres flows.
+              cur.accepted = d.consolidated.map(c => ({
+                type: 'consolidated',
+                subject: c.term || '',
+                relation: c.relation || '',
+                target: c.target || '',
+                explanation: c.explanation || '',
+                // Compat ancien rendu (label/score) : conservés au cas où.
+                label: `${c.term} | ${c.relation} | ${c.target}`,
+                score: '✓',
+              }));
+            }
+            if (typeof d.file_preview === 'string') cur.filePreview = d.file_preview;
+            if (d.file_path && d.file_path !== cur.filePath) {
+              cur.filePath = d.file_path;
+              cur.log = [...cur.log, {
+                t: ts(), tag: '[file]', kind: 'accept',
+                msg: `Fichier : ${d.file_path}`,
+              }];
+            }
+            break;
+          }
+          case 'cancelled':
+            // Le bg thread a vu le flag et a fait sync_gen.close() —
+            // les finally ont tourné, le flow s'est arrêté proprement.
+            // Le serveur peut encore pousser un 'done' juste après pour
+            // confirmer la fin de boucle — on ignorera le doublon car
+            // status est déjà 'done'.
+            cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: d.text || 'Flow annulé.' }];
+            cur.status = 'done';
+            _localRunIdSet(flowId, null);
+            break;
+          case 'done':
+            // Idempotent : si déjà 'done' (post-cancellation), on ne
+            // ré-écrit pas l'event log avec un message contradictoire.
+            if (cur.status !== 'done') {
+              cur.log = [...cur.log, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }];
+              cur.status = 'done';
+            }
+            _localRunIdSet(flowId, null);
+            break;
+          case 'error':
+            cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }];
+            cur.status = 'error';
+            _localRunIdSet(flowId, null);
+            break;
+        }
+        this._emit(flowId);
+      };
+      const flush = () => {
+        const re = /\r\n\r\n|\n\n|\r\r/;
+        let m;
+        while ((m = re.exec(buf)) !== null) {
+          const raw = buf.slice(0, m.index);
+          buf = buf.slice(m.index + m[0].length);
+          const ev = parseSSEEventJarvis(raw);
+          if (ev) dispatchEv(ev);
+        }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        flush();
+      }
+      if (buf.trim()) {
+        const ev = parseSSEEventJarvis(buf);
+        if (ev) dispatchEv(ev);
+      }
+      if (cur.status === 'running') cur.status = 'done';
+    } catch (e) {
+      if (cur._abortCtrl && cur._abortCtrl.signal.aborted) {
+        // Abort côté client = on arrête l'observation. Le bg thread
+        // serveur peut continuer — donc on ne marque PAS done, on
+        // garde le runId. La reconnexion ultérieure (boot reconcile)
+        // récupérera la progression.
+        cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: 'Observation arrêtée (le flow continue côté serveur).' }];
+        // Statut = idle pour signaler que le composant local est détaché ;
+        // le badge "en cours" reste via le serveur listing au prochain
+        // bootReconcile() ou getRunStatus().
+        cur.status = 'idle';
+      } else {
+        cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }];
+        cur.status = 'error';
+        _localRunIdSet(flowId, null);
+      }
+    } finally {
+      if (cur._elapsedTimer) { clearInterval(cur._elapsedTimer); cur._elapsedTimer = null; }
+      this._emit(flowId);
+    }
+  },
+
+  // Boot reconcile : appelée une fois au démarrage de l'app pour
+  // détecter les runs qui tournaient encore côté serveur quand
+  // l'utilisateur a fermé la tab / refresh / etc. Pour chaque
+  // (flowId, runId) trouvé en localStorage qui est encore actif
+  // côté serveur, on rouvre une stream pour récupérer la progression.
+  async bootReconcile() {
+    let local = {};
+    try { local = _localRunIdMap(); } catch {}
+    const flowIds = Object.keys(local);
+    if (flowIds.length === 0) return;
+    let serverRuns = [];
+    try {
+      const r = await fetch('api/jarvis/runs');
+      if (r.ok) {
+        const d = await r.json();
+        serverRuns = d.runs || [];
+      }
+    } catch {}
+    const activeOnServer = new Map(
+      serverRuns
+        .filter(s => s.status === 'starting' || s.status === 'running')
+        .map(s => [s.run_id, s])
+    );
+    for (const flowId of flowIds) {
+      const runId = local[flowId];
+      if (!runId) continue;
+      const serverInfo = activeOnServer.get(runId);
+      if (!serverInfo) {
+        // Plus actif côté serveur (terminé, ou TTL dépassé, ou process
+        // restart) → purge la persistance.
+        _localRunIdSet(flowId, null);
+        continue;
+      }
+      // Reconnect — fire-and-forget. attach() retourne après que la
+      // stream se ferme (= run terminé) ou que l'observation est
+      // arrêtée par l'utilisateur. Pas besoin d'attendre.
+      this.attach(flowId, runId, serverInfo.headline).catch(() => {});
+    }
+  },
+};
+
+// ── localStorage helpers ────────────────────────────────────────
+// Stocke un mapping {[flowId]: runId} pour permettre la reconnexion
+// au boot après refresh / tab close. Effacée à la terminaison normale
+// (done / error) du flow ou au reset explicite.
+const _JARVIS_LS_KEY = 'jdm_jarvis_runs_v1';
+
+function _localRunIdMap() {
+  try {
+    const raw = localStorage.getItem(_JARVIS_LS_KEY);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch { return {}; }
+}
+function _localRunIdSet(flowId, runId) {
+  try {
+    const cur = _localRunIdMap();
+    if (runId) cur[flowId] = runId; else delete cur[flowId];
+    localStorage.setItem(_JARVIS_LS_KEY, JSON.stringify(cur));
+  } catch {}
+}
+if (typeof window !== 'undefined') window.__jdmJarvisStore = JarvisStore;
+
+function useJarvisRunState(flowId) {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => JarvisStore.subscribe(flowId, force), [flowId]);
+  return JarvisStore.get(flowId);
+}
+
+function useJarvisActiveSet() {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => JarvisStore.subscribe('*', force), []);
+  return new Set(JarvisStore.activeFlowIds());
+
+function ItemCard({ item, accent }) {
+  // Couleur de bord par type — signal visuel rapide.
+  const typeStyle = {
+    consolidated:       { border: 'var(--jdm-green)',   icon: '✓', label: 'consolidé' },
+    flagged:            { border: 'var(--jdm-orange)',  icon: '⚠', label: 'suspect' },
+    signalement:        { border: 'var(--jdm-magenta)', icon: '!', label: 'désaccord JDM' },
+    audit_signalement:  { border: 'var(--jdm-magenta)', icon: '!', label: 'verdict' },
+    sens:               { border: 'var(--line)',        icon: '·', label: 'sens' },
+    meta:               { border: 'var(--accent)',      icon: '✎', label: 'observation' },
+  }[item.type] || { border: 'var(--line)', icon: '·', label: '' };
+
+  // Item meta = ligne de prose simple, pas un triplet.
+  if (item.type === 'meta') {
+    return (
+      <div className="fade-up" style={{
+        padding: '8px 10px',
+        background: 'var(--bg-elev)',
+        borderLeft: `3px solid ${typeStyle.border}`,
+        borderRadius: '0 var(--radius) var(--radius) 0',
+        fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5,
+      }}>{item.raw}</div>
+    );
+  }
+
+  // Triplet + (option) catégorie + (option) bloc explication.
+  const tripletLine = (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap',
+      fontFamily: 'var(--font-mono)', fontSize: 11,
+    }}>
+      <span style={{ color: typeStyle.border, flexShrink: 0,
+                     fontWeight: 700, width: 12, textAlign: 'center' }}>
+        {typeStyle.icon}
+      </span>
+      <span style={{ color: 'var(--ink)' }}>
+        {item.subject} <span style={{ color: 'var(--ink-3)' }}>|</span>
+        {' '}{item.relation} <span style={{ color: 'var(--ink-3)' }}>|</span>
+        {' '}{item.target}
+      </span>
+    </div>
+  );
+
+  // Catégorie / verdict / JDM≠LLM — affiché en chip discret sous le triplet.
+  const chips = [];
+  if (item.category) chips.push({ k: 'cat', v: item.category });
+  if (item.verdict)  chips.push({ k: 'verdict', v: item.verdict });
+  if (item.jdm)      chips.push({ k: 'JDM', v: item.jdm });
+  if (item.llm)      chips.push({ k: 'LLM', v: item.llm });
+
+  return (
+    <div className="fade-up" style={{
+      padding: '8px 10px',
+      background: 'var(--bg-elev)',
+      border: '1px solid var(--line-soft)',
+      borderLeft: `3px solid ${typeStyle.border}`,
+      borderRadius: '0 var(--radius) var(--radius) 0',
+    }}>
+      {tripletLine}
+      {chips.length > 0 && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 4,
+          marginTop: 6, marginLeft: 18,
+        }}>
+          {chips.map((c, i) => (
+            <span key={i} style={{
+              fontSize: 10, fontFamily: 'var(--font-mono)',
+              padding: '1px 6px',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 3,
+              color: c.k === 'LLM' ? typeStyle.border
+                   : c.k === 'JDM' ? 'var(--ink-3)'
+                   : 'var(--ink-2)',
+            }}>
+              <span style={{ color: 'var(--ink-3)' }}>{c.k}:</span> {c.v}
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Bloc explication stylisé — c'est ce que le LLM a dit sur ce
+          signalement / verdict / désaccord. C'est ÇA la valeur ajoutée
+          du flow ; on la met bien en évidence. */}
+      {item.explanation && (
+        <div style={{
+          marginTop: 6, marginLeft: 18,
+          padding: '6px 9px',
+          background: 'var(--bg-card)',
+          borderLeft: `2px solid ${accent || typeStyle.border}`,
+          borderRadius: '0 3px 3px 0',
+          fontSize: 11, color: 'var(--ink-2)',
+          lineHeight: 1.5, fontStyle: 'italic',
+        }}>
+          {item.explanation}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Markdown render (reuse pattern from views-agent) ────────────
+// Contenu produit par notre propre LLM = confiance, on n'escape pas.
+// marked.js (chargé dans index.html) fait tout le boulot ; fallback
+// léger si non disponible.
+function renderMarkdownJarvis(s) {
+  s = s || '';
+  if (typeof window !== 'undefined' && window.marked) {
+    try {
+      window.marked.setOptions({ gfm: true, breaks: true });
+      return window.marked.parse(s);
+    } catch {}
+  }
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code style="font-family:var(--font-mono);background:var(--bg-elev);padding:1px 5px;border-radius:3px;font-size:0.9em;">$1</code>')
+    .replace(/\n/g, '<br/>');
+}
+
+// ─── parseFilePreview ─────────────────────────────────────────────
+// À partir du contenu textuel d'un .enrich / .err / .audit / .annot /
+// .stat, extrait une liste structurée d'items à afficher dans le
+// panneau de droite. Chaque item :
+//   { type: 'consolidated'|'flagged'|'signalement'|'annotation'|'meta'|'sens',
+//     subject, relation, target,    (canonique pipe-separated)
+//     category, verdict, jdm, llm,  (champs optionnels selon type)
+//     explanation,                  (justification / argument contre)
+//     raw }                         (la ligne brute pour fallback)
+//
+// Comprend les 4 formats :
+//   .enrich : term|rel|target|annotation < explanation >
+//   .err    : term|rel|target|catégorie_suspect|justification
+//   .annot  : sujet|rel|objet|annotation < justif >  +  section
+//             =====SIGNALEMENT===== : sujet|rel|objet|JDM:x|LLM:y < arg >
+//   .audit  : sections === SENS ===, === SIGNALEMENTS ===, === META ===
+//             la section SIGNALEMENTS contient term|rel|target|verdict|justif
+function parseFilePreview(text, flowId) {
+  text = (text || '').toString();
+  if (!text.trim()) return { items: [], counts: {} };
+  const lines = text.split(/\r?\n/);
+  const items = [];
+  let inSignalement = false;
+  let inAuditSignalements = false;
+  let inAuditMeta = false;
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    // Commentaires (# ...) sauvent comme meta light, on saute pour
+    // l'affichage principal mais on sait les détecter.
+    if (line.startsWith('#')) continue;
+
+    // Délimiteurs de sections
+    const upper = line.toUpperCase();
+    if (/^=====+SIGNALEMENT=====+/i.test(line) ||
+        upper.includes('SIGNALEMENT')) {
+      inSignalement = true;
+      inAuditSignalements = upper.includes('=== SIGNALEMENT') ||
+                            upper.includes('SIGNALEMENTS ===');
+      inAuditMeta = false;
+      continue;
+    }
+    if (/^===\s*META\s*===$/i.test(line)) {
+      inAuditMeta = true; inSignalement = false; inAuditSignalements = false;
+      continue;
+    }
+    if (/^===\s*SENS\s*===$/i.test(line)) {
+      inAuditMeta = false; inSignalement = false; inAuditSignalements = false;
+      // SENS dans audit → on les push comme type 'sens'
+      // (la 1re ligne après le délimiteur sera la suivante)
+      continue;
+    }
+    // Bloc META : prose, on peut le montrer dans une carte spéciale
+    if (inAuditMeta) {
+      items.push({ type: 'meta', raw: line });
+      continue;
+    }
+
+    // Format avec explication entre < > (commune à .enrich/.annot/.audit)
+    // Accepte les pipes avec OU sans espaces (\s*) et l'annotation entre
+    // crochets optionnels [...] (le nouveau format) — rétro-compat
+    // avec l'ancien format sans espaces/crochets.
+    const mWithExplain = line.match(/^([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)(?:\s+<\s*(.+?)\s*>\s*)?$/);
+    if (mWithExplain) {
+      const [, subject, relation, target, restRaw, explanation] = mWithExplain;
+      // Strip les crochets autour de l'annotation pour l'affichage
+      // (le nouveau format les ajoute, on les retire pour l'UI).
+      const stripBrackets = (s) => (s || '').trim().replace(/^\[(.*)\]$/, '$1').trim();
+      const rest = restRaw.trim();
+      // Section SIGNALEMENT du .annot : rest peut contenir
+      // "JDM:[x] | LLM:[y]" (nouveau) ou "JDM:<x>|LLM:<y>" (ancien) → extraction tolérante.
+      if (inSignalement && /JDM\s*:/i.test(rest) && /LLM\s*:/i.test(rest)) {
+        const jdmM = rest.match(/JDM\s*:\s*\[?([^|\]]+)\]?\s*\|\s*LLM\s*:\s*\[?(.+?)\]?\s*$/i);
+        if (jdmM) {
+          const jdmVal = jdmM[1].trim();
+          const llmVal = jdmM[2].trim();
+          // Filtrage anti-bug : si JDM == LLM (= pas un vrai désaccord),
+          // on REND quand même la ligne mais comme `consolidated` pour
+          // ne pas tromper le compteur de signalements et ne pas
+          // laisser ce faux désaccord en évidence.
+          if (jdmVal.toLowerCase() === llmVal.toLowerCase()) {
+            items.push({
+              type: 'consolidated',
+              subject: subject.trim(), relation: relation.trim(),
+              target: target.trim(),
+              category: llmVal,
+              explanation: (explanation || '').trim(),
+              raw: line,
+            });
+            continue;
+          }
+          items.push({
+            type: 'signalement',
+            subject: subject.trim(), relation: relation.trim(),
+            target: target.trim(),
+            jdm: jdmVal, llm: llmVal,
+            explanation: (explanation || '').trim(),
+            raw: line,
+          });
+          continue;
+        }
+      }
+      // .err format : rest = catégorie_suspect, explanation
+      if (flowId === 'signalement' || /suspect/i.test(rest)) {
+        items.push({
+          type: 'flagged',
+          subject: subject.trim(), relation: relation.trim(),
+          target: target.trim(),
+          category: stripBrackets(rest),
+          explanation: (explanation || '').trim(),
+          raw: line,
+        });
+        continue;
+      }
+      // .audit signalements section : rest = verdict
+      if (inAuditSignalements) {
+        items.push({
+          type: 'audit_signalement',
+          subject: subject.trim(), relation: relation.trim(),
+          target: target.trim(),
+          verdict: stripBrackets(rest),
+          explanation: (explanation || '').trim(),
+          raw: line,
+        });
+        continue;
+      }
+      // .enrich / .annot : rest = annotation (avec ou sans crochets)
+      items.push({
+        type: inSignalement ? 'signalement' : 'consolidated',
+        subject: subject.trim(), relation: relation.trim(),
+        target: target.trim(),
+        category: stripBrackets(rest),
+        explanation: (explanation || '').trim(),
+        raw: line,
+      });
+      continue;
+    }
+
+    // Lignes 'pure pipe' (.audit SENS, autres tableaux .stat)
+    const piped = line.match(/^([^|]+)\|([^|]+)\|([^|]+)$/);
+    if (piped) {
+      items.push({
+        type: 'sens',
+        subject: piped[1].trim(),
+        relation: piped[2].trim(),
+        target: piped[3].trim(),
+        raw: line,
+      });
+      continue;
+    }
+  }
+
+  // Compteurs par type — utiles pour le dashboard.
+  const counts = items.reduce((acc, it) => {
+    acc[it.type] = (acc[it.type] || 0) + 1;
+    return acc;
+  }, {});
+  return { items, counts };
+}
+
+// Libellé adaptatif du compteur "Consolidés" selon le flow.
+// (design-pass-2 : aligné sur le wording designer — Signalés/Analysés)
+function metricLabelFor(flowId) {
+  switch (flowId) {
+    case 'enrich':      return { label: 'Consolidés',  sub: 'triplets' };
+    case 'audit':       return { label: 'Verdicts',    sub: 'signalements' };
+    case 'signalement': return { label: 'Signalés',    sub: 'triplets flaggés' };
+    case 'annotation':  return { label: 'Annotations', sub: '+ signalements' };
+    case 'stats':       return { label: 'Analysés',    sub: 'Termes/Relations' };
+    case 'gap':         return { label: 'Trous',       sub: 'détectés' };
+    default:            return { label: 'Items',       sub: 'produits' };
+  }
+}
+
+// Titre adaptatif du panneau de droite selon le flow.
+// (design-pass-2 : 'Triplets signalés' + 'Artefacts analysés')
+function panelTitleFor(flowId) {
+  switch (flowId) {
+    case 'enrich':      return 'Triplets consolidés';
+    case 'audit':       return 'Verdicts d\'audit (signalements)';
+    case 'signalement': return 'Triplets signalés';
+    case 'annotation':  return 'Annotations + signalements';
+    case 'stats':       return 'Artefacts analysés';
+    case 'gap':         return 'Trous détectés';
+    default:            return 'Résultats';
+  }
+}
+
+
+function parseSSEEventJarvis(raw) {
+  raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) {
+      const v = line.slice(5).replace(/^ /, '');
+      data += (data ? '\n' : '') + v;
+    }
+  }
+  if (!data) return null;
+  let parsed;
+  try { parsed = JSON.parse(data); } catch { parsed = { text: data }; }
+  return { event, data: parsed };
+}
+
+// Formatte un nombre de tokens : 1234 → "1.2k", 1234567 → "1.2M".
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0) + 'k';
+  return (n / 1_000_000).toFixed(1) + 'M';
+}
+
+function shortArgs(args) {
+  if (!args) return '';
+  return Object.entries(args)
+    .slice(0, 3)
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v.slice(0, 20)}"` : JSON.stringify(v).slice(0, 25)}`)
+    .join(', ');
+}
+
+function fmtElapsed(ms) {
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  const rem = sec - m * 60;
+  return `${m}m ${rem.toFixed(1)}s`;
+}
+
+const REL_OPTS_COMMON = [
+  { value: 'r_isa', label: 'r_isa — est un' },
+  { value: 'r_hypo', label: 'r_hypo — exemple de' },
+  { value: 'r_carac', label: 'r_carac — caractéristique' },
+  { value: 'r_has_part', label: 'r_has_part — parties' },
+  { value: 'r_has_color', label: 'r_has_color — couleur' },
+  { value: 'r_agent', label: 'r_agent — agent typique' },
+  { value: 'r_patient', label: 'r_patient — patient typique' },
+  { value: 'r_lieu', label: 'r_lieu — lieu typique' },
+  { value: 'r_telic_role', label: 'r_telic_role — à quoi sert' },
+];
+
+const BUDGET_OPTS = [
+  { value: '10', label: '10' },
+  { value: '25', label: '25' },
+  { value: '50', label: '50' },
+  { value: '100', label: '100' },
+  { value: 'illimité', label: 'illimité' },
+];
+
+function defaultParamsFor(flowId) {
+  // Defaults alignés sur la branche deploy-self / app.py :
+  // term vide partout (= tirage au hasard côté backend), budget illimité,
+  // thinking=false (Jarvis = robustesse > raisonnement), upload=false,
+  // auto_switch=false (= mode B : abort + bouton Continuer).
+  const common = {
+    model: 'gemini-3.1-flash-lite',
+    api_key: '', drops_key: '',
+    use_thinking: false,
+    budget_label: 'illimité',
+    auto_switch: false,
+  };
+  switch (flowId) {
+    case 'enrich':
+      return { ...common, term: '', relation: [],
+               target_count: 3, vary_relations: true, iterate: true, upload: false };
+    case 'audit':
+      return { ...common, term: '', relation: [], upload: false };
+    case 'gap':
+      return { ...common, term: '' };
+    case 'signalement':
+      return { ...common, term: '', relation: [], upload: false };
+    case 'stats':
+      return { ...common, term: '', relation: [], upload: false };
+    case 'annotation':
+      return { ...common, term: '', relation: [], top_k: 8,
+               target_count: 10, upload: false };
+  }
+  return common;
+}
+
+
+function ParamsForm({ flow, params, setParams, locked }) {
+  const set = (k, v) => setParams(p => ({ ...p, [k]: v }));
+  // Env-aware : la case « Soumettre à LLMDrops » n'est cochable que
+  // si une clé est dispo (champ saisi OU env serveur). Sinon disabled
+  // + tooltip explicatif.
+  const _envStatus = useEnvStatus();
+  const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
+  const _canSubmit = !!params.drops_key || _envHasDrops;
+  const submitLabel = (
+    <label style={{
+      display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+      color: _canSubmit ? 'var(--ink-2)' : 'var(--ink-3)',
+      cursor: _canSubmit ? 'pointer' : 'not-allowed',
+      opacity: _canSubmit ? 1 : 0.55,
+    }}
+    title={_canSubmit
+      ? (params.drops_key
+        ? 'Le fichier sera soumis automatiquement avec la clé saisie'
+        : 'Le fichier sera soumis automatiquement avec la clé serveur (.env)')
+      : 'Renseigne la clé LLMDrops (ou configure JDM_DROPS_API_KEY côté serveur) pour activer'}>
+      <input type="checkbox"
+        checked={!!params.upload && _canSubmit}
+        disabled={!_canSubmit}
+        onChange={(e) => set('upload', e.target.checked)}
+        style={{ accentColor: 'var(--accent)' }} />
+      Soumettre à LLMDrops
+    </label>
+  );
+  const wrap = (children) => (
+    <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
+      {children}
+    </div>
+  );
+
+  if (flow.id === 'enrich') {
+    return wrap(<>
+      <Field label="Terme à enrichir">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relations cibles (optionnel, multi)">
+        <MultiSelect value={params.relation || []}
+          onChange={(v) => set('relation', v)}
+          placeholder="— libre (toutes par défaut) —"
+          options={REL_OPTS_COMMON} />
+      </Field>
+      <Field label={`Nombre cible · ${params.target_count}`}>
+        <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
+      </Field>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginBottom: 8 }}>
+        <input type="checkbox" checked={!!params.vary_relations}
+          onChange={(e) => set('vary_relations', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Varier les relations
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginBottom: 8 }}>
+        <input type="checkbox" checked={!!params.iterate}
+          onChange={(e) => set('iterate', e.target.checked)}
+          style={{ accentColor: 'var(--accent)' }} />
+        Itérer jusqu'à la cible
+      </label>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      {submitLabel}
+    </>);
+  }
+
+  if (flow.id === 'audit' || flow.id === 'signalement' || flow.id === 'stats') {
+    return wrap(<>
+      <Field label="Terme">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relations (optionnel, multi)">
+        <MultiSelect value={params.relation || []}
+          onChange={(v) => set('relation', v)}
+          placeholder="— toutes —"
+          options={REL_OPTS_COMMON} />
+      </Field>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      {flow.id !== 'stats' && submitLabel}
+    </>);
+  }
+
+  if (flow.id === 'gap') {
+    return wrap(<>
+      <Field label="Terme">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+    </>);
+  }
+
+  if (flow.id === 'annotation') {
+    // Pas de Top-K exposé : le param top_k est laissé à sa valeur par
+    // défaut (8) en arrière-plan, il configure la profondeur de
+    // récup de triplets candidats par get_relations_of_type. Le seul
+    // levier utile pour l'utilisateur est la CIBLE d'annotations
+    // (= nombre d'annotations utiles à atteindre par itération).
+    return wrap(<>
+      <Field label="Terme (optionnel)">
+        <Input value={params.term} onChange={(v) => set('term', v)} mono />
+      </Field>
+      <Field label="Relations (optionnel, multi)">
+        <MultiSelect value={params.relation || []}
+          onChange={(v) => set('relation', v)}
+          placeholder="— toutes principales —"
+          options={REL_OPTS_COMMON} />
+      </Field>
+      <Field label={`Cible d'annotations utiles · ${params.target_count}`}>
+        <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
+      </Field>
+      <div style={{
+        fontSize: 11, color: 'var(--ink-3)', marginBottom: 8,
+        fontFamily: 'var(--font-mono)', lineHeight: 1.4,
+      }}>
+        taxonomie : constitutif / contrastif / non spécifique / exception ·
+        annotation qualifie le LIEN · sélectivité &gt; volume · itère
+        librement
+      </div>
+      <Field label="Budget d'outils">
+        <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+      </Field>
+      {submitLabel}
+    </>);
+  }
+
+  return null;
+}
+
 // Ring interaction CSS (hover spin + scale, soft pulsing halo). Injected once.
 const JRING_CSS = `
 @keyframes jorbGlow{0%,100%{opacity:.12}50%{opacity:.3}}
@@ -7318,6 +8275,10 @@ function ViewJarvis() {
   // Auto-hide the section nav while scrolling down through a panel's content
   // (so it never collides with what's underneath); reveal it at the top or on scroll-up.
   const [navHidden, setNavHidden] = useState(false);
+  // Au mount, reconnect aux runs serveur encore actifs apres un
+  // refresh / tab close pendant un run (JarvisStore + localStorage).
+  useEffect(() => { JarvisStore.bootReconcile().catch(() => {}); }, []);
+
   const lastScroll = useRef(0);
   useEffect(() => { lastScroll.current = 0; setNavHidden(false); }, [panelIndex]);
   useEffect(() => {
@@ -8122,109 +9083,139 @@ function JLibrary({ list, onPick, onLaunch }) {
 // Synthetic dashboard: every flux is shown "en cours", with a live preview of
 // what's happening inside (current step, growing metrics, streaming results).
 function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
-  const [tick, setTick] = useState(0);
-  const rootRef = useRef(null);
-  useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 1400);
-    return () => clearInterval(id);
-  }, []);
+  // Reelle supervision : on liste les runs serveur via GET /api/jarvis/runs
+  // + on rafraichit toutes les ~3s. Chaque run a un flow_id qu'on map
+  // au catalogue local pour afficher la carte avec le bon accent.
+  const [serverRuns, setServerRuns] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // On opening Supervision, smooth-scroll its panel back to the top (stats strip).
   useEffect(() => {
     if (!active) return;
-    const el = rootRef.current; if (!el) return;
-    let sc = el.parentElement;
-    while (sc && sc !== document.body) {
-      const oy = getComputedStyle(sc).overflowY;
-      if (oy === 'auto' || oy === 'scroll') break;
-      sc = sc.parentElement;
-    }
-    if (sc && sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await fetch('api/jarvis/runs');
+        if (r.ok) {
+          const d = await r.json();
+          if (alive) setServerRuns(d.runs || []);
+        }
+      } catch {}
+      if (alive) setLoading(false);
+    };
+    tick();
+    const h = setInterval(tick, 3000);
+    return () => { alive = false; clearInterval(h); };
   }, [active]);
 
-  const live = flows.map((f, i) => computeFlowLive(f, i, tick));
-  const agg = live.reduce((a, l) => ({
-    iter: a.iter + l.iter,
-    tools: a.tools + l.tools,
-    accepted: a.accepted + l.accepted,
-    rejected: a.rejected + l.rejected,
-  }), { iter: 0, tools: 0, accepted: 0, rejected: 0 });
+  const byFlow = {};
+  for (const r of serverRuns) {
+    if (!byFlow[r.flow_id]) byFlow[r.flow_id] = [];
+    byFlow[r.flow_id].push(r);
+  }
+  for (const k in byFlow) byFlow[k].sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+
+  const runningRuns = serverRuns.filter(r => r.status === 'running' || r.status === 'starting');
+  const totalRuns = serverRuns.length;
 
   return (
-    <div ref={rootRef} style={{ width: '100%', maxWidth: 1120 }}>
-      {/* ── Masthead ── */}
-      <div style={{
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-        gap: 24, flexWrap: 'wrap', marginBottom: 18,
-      }}>
-        <div>
-          <div className="mono" style={{
-            fontSize: 11, color: 'var(--ink-3)',
-            textTransform: 'uppercase', letterSpacing: '0.16em',
-            marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10,
-          }}>
-            <em style={{ fontStyle: 'italic', fontFamily: 'var(--font-display)', color: 'var(--accent)', fontSize: 13, textTransform: 'none', letterSpacing: 0 }}>Jarvis</em>
-            <span>· Supervision · {flows.length} flux</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--jdm-green)' }}>
-              <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} /> live
-            </span>
-          </div>
-          <h1 className="display" style={{
-            margin: 0,
-            fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(32px, 4.2vw, 52px)',
-            fontWeight: 500, letterSpacing: '-0.025em', lineHeight: 1,
-            color: 'var(--ink)',
-          }}>
-            Tableau de <span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>bord</span>
-          </h1>
-        </div>
-
-        <p style={{
-          margin: 0, maxWidth: '38ch',
-          fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-3)',
+    <div style={{ width: '100%', maxWidth: 1080 }}>
+      <div style={{ marginBottom: 18 }}>
+        <div className="mono" style={{
+          fontSize: 11, color: 'var(--ink-3)',
+          textTransform: 'uppercase', letterSpacing: '0.18em', marginBottom: 12,
         }}>
-          Cinq boucles d'agent en cours d'exécution. Chaque carte montre, en
-          direct, ce qui se passe à l'intérieur du flux.
-        </p>
+          <em style={{ fontStyle: 'italic', fontFamily: 'var(--font-display)', color: 'var(--accent)', fontSize: 13, textTransform: 'none', letterSpacing: 0 }}>Jarvis</em>
+          {' '}{'·'} Runs en cours
+        </div>
+        <h1 className="display" style={{
+          margin: 0, fontFamily: 'var(--font-display)',
+          fontSize: 'clamp(32px, 4.2vw, 52px)', fontWeight: 500,
+          letterSpacing: '-0.025em', lineHeight: 1, color: 'var(--ink)',
+        }}>
+          Super<span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>vision</span>
+        </h1>
+        <div style={{ display: 'flex', gap: 18, marginTop: 14, fontSize: 12.5, color: 'var(--ink-3)' }}>
+          <span><strong style={{ color: runningRuns.length > 0 ? 'var(--jdm-green)' : 'var(--ink)' }}>{runningRuns.length}</strong> en cours</span>
+          <span>{'·'}</span>
+          <span><strong style={{ color: 'var(--ink)' }}>{totalRuns}</strong> au total (TTL 24h)</span>
+        </div>
       </div>
 
-      {/* ── KPI strip ── */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1,
-        background: 'var(--line)', border: '1px solid var(--line)',
-        borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 18,
-      }}>
-        <JKpi label="Flux actifs"      value={flows.length} sub="en boucle"  dot />
-        <JKpi label="Itérations"       value={agg.iter}     sub="cumulées" />
-        <JKpi label="Outils appelés"   value={agg.tools}    sub="JDM" />
-        <JKpi label="Triplets validés" value={agg.accepted} sub="acceptés" color="var(--jdm-green)" />
-      </div>
+      {loading && serverRuns.length === 0 && (
+        <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+          Chargement.
+        </div>
+      )}
 
-      {/* ── Live flux grid ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))',
-        gap: 14,
-      }}>
-        {flows.map((f, i) => (
-          <JFlowDashCard key={f.id} flow={f} num={i + 1} live={live[i]}
-            onOpen={() => onPick(f.id)} onLaunch={() => onLaunch(f.id)} />
-        ))}
-      </div>
+      {!loading && serverRuns.length === 0 && (
+        <div style={{
+          padding: '48px 20px', textAlign: 'center',
+          border: '1px dashed var(--line)', borderRadius: 'var(--radius-lg)',
+        }}>
+          <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--ink-2)', marginBottom: 4 }}>Aucun run actif</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+            Lance un flux depuis Accueil pour le voir ici.
+          </div>
+        </div>
+      )}
 
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, marginTop: 16,
-        fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-3)', flexWrap: 'wrap',
-      }}>
-        <span style={{ display: 'inline-flex', width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />
-        Clic sur le <strong style={{ color: 'var(--ink-2)' }}>cercle</strong> = (re)lancer le flux
-        <span style={{ color: 'var(--line)' }}>|</span>
-        clic sur la <strong style={{ color: 'var(--ink-2)' }}>carte</strong> = ouvrir le détail
-      </div>
+      {serverRuns.length > 0 && (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {flows.map(f => {
+            const runs = byFlow[f.id] || [];
+            if (runs.length === 0) return null;
+            const isActive = runs.some(r => r.status === 'running' || r.status === 'starting');
+            return (
+              <Card key={f.id} padding={0} style={{ overflow: 'hidden', borderLeft: `3px solid ${f.accent}` }}>
+                <div style={{
+                  padding: '13px 18px',
+                  background: 'var(--bg-elev)',
+                  borderBottom: '1px solid var(--line-soft)',
+                  display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                    <span className="mono" style={{ fontSize: 11, color: f.accent, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>{f.kicker}</span>
+                    <span className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 600, color: 'var(--ink)' }}>{f.title}</span>
+                    {isActive && <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <Button size="sm" variant="ghost" onClick={() => onPick(f.id)}>Details</Button>
+                    <Button size="sm" onClick={() => onLaunch(f.id)}>Ouvrir</Button>
+                  </div>
+                </div>
+                <div style={{ padding: '6px 18px 10px' }}>
+                  {runs.map(r => (
+                    <div key={r.run_id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '7px 0', borderBottom: '1px solid var(--line-soft)',
+                      fontSize: 12,
+                    }}>
+                      <span className="mono" style={{
+                        color: r.status === 'running' ? 'var(--jdm-green)'
+                             : r.status === 'done' ? 'var(--ink-3)'
+                             : r.status === 'error' ? 'var(--jdm-magenta)'
+                             : 'var(--ink-3)',
+                        fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em',
+                        fontWeight: 600, minWidth: 70,
+                      }}>{r.status}</span>
+                      <span style={{ flex: 1, minWidth: 0, color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.headline || '-'}
+                      </span>
+                      <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)' }}>
+                        {r.started_at ? new Date(r.started_at * 1000).toLocaleTimeString() : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
+
 
 // KPI tile for the dashboard's top strip.
 function JKpi({ label, value, sub, color, dot }) {
@@ -8250,29 +9241,6 @@ function JKpi({ label, value, sub, color, dot }) {
 
 // Derive a flow's live snapshot from a shared heartbeat (tick). Pure + cyclic,
 // so each card looks like a pipeline endlessly looping through its candidates.
-function computeFlowLive(flow, i, tick) {
-  const fake = (typeof FLOW_FAKES !== 'undefined' && FLOW_FAKES[flow.id]) || { tools: [], candidatesPool: [] };
-  const pool = fake.candidatesPool.length ? fake.candidatesPool : [{ label: '—', s: 0, ok: true }];
-  const dp = (typeof defaultParamsFor === 'function' && defaultParamsFor(flow.id)) || {};
-  const maxIter = dp.maxIter || 30;
-  const span = Math.min(maxIter, pool.length + 4);
-  const iter = ((tick + i * 2) % span) + 1;
-
-  let accepted = 0, rejected = 0, tools = 0;
-  for (let k = 0; k < iter; k++) {
-    const c = pool[k % pool.length];
-    if (c.ok) accepted++; else rejected++;
-    tools += 2 + (k % 2);
-  }
-  const recent = [];
-  for (let k = Math.max(0, iter - 3); k < iter; k++) {
-    recent.push({ key: k, cand: pool[k % pool.length] });
-  }
-  const stepIdx = (iter - 1) % flow.steps.length;
-  const pct = Math.round((iter / span) * 100);
-  return { iter, span, maxIter, accepted, rejected, tools, recent, stepIdx, pct };
-}
-
 // One live "monitor" card for a flux — the heart of the dashboard.
 function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
   const [hover, setHover] = useState(false);
@@ -9554,144 +10522,100 @@ function LoopGlyph({ color }) {
 
 // ───── Run view — the auto-loop interface ─────
 function JarvisRun({ flow, onBack }) {
-  // Per-flow params
+  // Per-flow params (formulaire). Defaults reels alignes sur le backend
+  // via defaultParamsFor injecte depuis la legacy fastapi-self.
   const [params, setParams] = useState(defaultParamsFor(flow.id));
-  // Pipeline state
-  const [state, setState] = useState('idle'); // idle | running | paused | done
-  const [log, setLog] = useState([]);
-  const [metrics, setMetrics] = useState({
-    iterations: 0,
-    toolsCalled: 0,
-    candidates: 0,
-    accepted: 0,
-    rejected: 0,
-    elapsed: 0,
-  });
-  const [accepted, setAccepted] = useState([]);
+
+  // Etat du run = state pulse par JarvisStore (singleton qui survit aux
+  // unmount). useJarvisRunState s'abonne au store ; toute mutation
+  // re-rendre ce composant. Au mount, si un run etait deja en cours
+  // depuis ailleurs (Supervision, retour de tab), on retrouve son etat
+  // exact (log + metrics + accepted) sans coupure.
+  const run = useJarvisRunState(flow.id);
+  const state = run.status;  // 'idle' | 'running' | 'done' | 'error'
+  const log = run.log;
+  const metrics = run.metrics;
+  const accepted = run.accepted;
+  const filePath = run.filePath;
+  const filePreview = run.filePreview;
+  const headline = run.headline;
+
   const logRef = useRef(null);
-  const tickRef = useRef(null);
-
-  // Tick the loop
-  useEffect(() => {
-    if (state !== 'running') {
-      clearInterval(tickRef.current);
-      return;
-    }
-    tickRef.current = setInterval(() => {
-      step(flow.id, params, setLog, setMetrics, setAccepted, setState);
-    }, 650);
-    return () => clearInterval(tickRef.current);
-  }, [state, flow.id, params]);
-
-  // Auto-scroll log
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
+  }, [log.length]);
 
-  const reset = () => {
-    setLog([]); setAccepted([]);
-    setMetrics({ iterations: 0, toolsCalled: 0, candidates: 0, accepted: 0, rejected: 0, elapsed: 0 });
-    setState('idle');
+  const launch = () => {
+    JarvisStore.start(flow.id, { params, isResume: false, resumeState: null });
   };
+  const stop  = () => { JarvisStore.stop(flow.id);  };
+  const reset = () => { JarvisStore.reset(flow.id); };
 
   return (
     <PageShell>
       <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        marginBottom: 12,
+        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
       }}>
-        <Button variant="ghost" size="sm" onClick={onBack}>← Tous les flux</Button>
+        <Button variant="ghost" size="sm" onClick={onBack}>{'←'} Tous les flux</Button>
         <span style={{ color: 'var(--ink-3)' }}>/</span>
         <span className="mono" style={{ fontSize: 12, color: flow.accent, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{flow.kicker}</span>
       </div>
       <SectionTitle
         kicker={flow.kicker}
         title={flow.title}
-        desc={flow.desc}
+        desc={headline || flow.desc}
         right={<StatusBadge state={state} accent={flow.accent} />}
       />
 
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: '320px 1fr',
-        gap: 20,
-        alignItems: 'start',
+        display: 'grid', gridTemplateColumns: '320px 1fr',
+        gap: 20, alignItems: 'start',
       }}>
         {/* Left: params + controls */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 80 }}>
           <Card padding={16}>
             <div className="mono" style={{
               fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 12,
-            }}>Paramètres</div>
-            <ParamsForm flow={flow} params={params} setParams={setParams} locked={state === 'running' || state === 'paused'} />
+              textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12,
+            }}>Parametres</div>
+            <ParamsForm flow={flow} params={params} setParams={setParams} locked={state === 'running'} />
           </Card>
 
           <Card padding={16}>
             <div className="mono" style={{
               fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 12,
-            }}>Contrôles</div>
+              textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12,
+            }}>Controles</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {state === 'idle' && <Button full onClick={() => setState('running')}>▶ Lancer la boucle</Button>}
-              {state === 'running' && <>
-                <Button variant="secondary" onClick={() => setState('paused')}>⏸ Pause</Button>
-                <Button variant="secondary" onClick={() => setState('done')}>⏹ Stop</Button>
-              </>}
-              {state === 'paused' && <>
-                <Button onClick={() => setState('running')}>▶ Reprendre</Button>
-                <Button variant="secondary" onClick={() => setState('done')}>⏹ Stop</Button>
-              </>}
-              {state === 'done' && <Button full variant="secondary" onClick={reset}>↻ Relancer</Button>}
+              {state === 'idle' && <Button full onClick={launch}>{'▶'} Lancer la boucle</Button>}
+              {state === 'running' && <Button full variant="secondary" onClick={stop}>{'⏹'} Stop</Button>}
+              {(state === 'done' || state === 'error') && <Button full variant="secondary" onClick={reset}>{'↻'} Relancer</Button>}
             </div>
-            {(state === 'running' || state === 'paused') && (
+            {state === 'running' && (
               <div style={{
-                marginTop: 10,
-                padding: '6px 10px',
-                background: 'var(--bg-elev)',
-                borderRadius: 'var(--radius)',
-                fontSize: 11,
-                color: 'var(--ink-3)',
-                fontFamily: 'var(--font-mono)',
+                marginTop: 10, padding: '6px 10px',
+                background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
+                fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)',
               }}>
-                Boucle auto · pas de validation manuelle
+                Boucle auto · stop fait abort cooperatif (~5-15s)
               </div>
             )}
-          </Card>
-
-          <Card padding={16}>
-            <div className="mono" style={{
-              fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              marginBottom: 12,
-            }}>Critères d'arrêt</div>
-            <StopCriteria flow={flow.id} params={params} setParams={setParams} locked={state === 'running'} />
           </Card>
         </div>
 
         {/* Right: live monitor */}
         <div>
-          {/* Metrics grid */}
+          {/* Metrics grid - metriques reelles du backend. */}
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
-            gap: 1,
-            background: 'var(--line)',
-            border: '1px solid var(--line)',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
-            marginBottom: 14,
+            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 1, background: 'var(--line)',
+            border: '1px solid var(--line)', borderRadius: 'var(--radius-lg)',
+            overflow: 'hidden', marginBottom: 14,
           }}>
-            <Metric label="Itération" value={metrics.iterations} max={params.maxIter ?? 100} accent={flow.accent} />
-            <Metric label="Outils" value={metrics.toolsCalled} sub="appels" />
-            <Metric label="Candidats" value={metrics.candidates} sub="générés" />
-            <Metric label="Acceptés" value={metrics.accepted} sub="validés" color="var(--jdm-green)" />
-            <Metric label="Rejetés" value={metrics.rejected} sub="filtrés" color="var(--jdm-magenta)" />
-            <Metric label="Temps" value={`${(metrics.elapsed / 1000).toFixed(1)}s`} sub="écoulé" mono />
+            <Metric label="Outils" value={metrics.toolsCalled || 0} sub="appels" />
+            <Metric label="Produits" value={metrics.accepted || 0} sub="items" color="var(--jdm-green)" />
+            <Metric label="Tokens" value={fmtTokens(metrics.tokens || 0)} sub="estimes" mono />
+            <Metric label="Temps" value={fmtElapsed(metrics.elapsed || 0)} sub="ecoule" mono />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
@@ -9699,28 +10623,23 @@ function JarvisRun({ flow, onBack }) {
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 display: 'flex', justifyContent: 'space-between',
-                padding: '10px 14px',
-                background: 'var(--bg-elev)',
+                padding: '10px 14px', background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>Log temps réel</div>
+                }}>Log temps reel</div>
                 {state === 'running' && <span className="pulse-dot" style={{ background: flow.accent }} />}
               </div>
               <div ref={logRef} style={{
-                height: 420,
-                overflowY: 'auto',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 11,
-                lineHeight: 1.55,
-                padding: 12,
-                background: 'var(--bg-card)',
+                height: 420, overflowY: 'auto',
+                fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
+                padding: 12, background: 'var(--bg-card)',
               }}>
                 {log.length === 0 && (
                   <div style={{ color: 'var(--ink-3)', textAlign: 'center', padding: '40px 0' }}>
-                    {state === 'idle' ? 'En attente du lancement…' : '—'}
+                    {state === 'idle' ? 'En attente du lancement.' : '-'}
                   </div>
                 )}
                 {log.map((l, i) => (
@@ -9731,8 +10650,7 @@ function JarvisRun({ flow, onBack }) {
                       color: l.kind === 'tool' ? 'var(--accent)' :
                              l.kind === 'accept' ? 'var(--jdm-green)' :
                              l.kind === 'reject' ? 'var(--jdm-magenta)' :
-                             l.kind === 'iter' ? flow.accent :
-                             'var(--ink-3)',
+                             l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
                       minWidth: 56,
                     }}>{l.tag}</span>
                     <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
@@ -9741,57 +10659,68 @@ function JarvisRun({ flow, onBack }) {
               </div>
             </Card>
 
-            {/* Accepted candidates accumulator */}
+            {/* Resultats accumules. Utilise ItemCard pour afficher chaque
+                triplet + son explication d'inference (enrich) ou son
+                annotation/verdict/categorie (autres flows). */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
-                padding: '10px 14px',
-                background: 'var(--bg-elev)',
+                padding: '10px 14px', background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>Résultats validés · {accepted.length}</div>
+                }}>{panelTitleFor(flow.id)} {'·'} <span style={{ color: 'var(--jdm-green)' }}>{(flow.id === 'enrich' ? accepted.length : (parseFilePreview(filePreview, flow.id).items || []).length)}</span></div>
               </div>
               <div style={{
-                height: 420,
-                overflowY: 'auto',
-                padding: 12,
+                height: 420, overflowY: 'auto', padding: 12,
                 background: 'var(--bg-card)',
               }}>
-                {accepted.length === 0 ? (
-                  <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
-                    Aucun résultat encore.
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    {accepted.map((a, i) => (
-                      <div key={i} className="fade-up" style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '6px 8px',
-                        background: 'var(--bg-elev)',
-                        border: '1px solid var(--line-soft)',
-                        borderRadius: 'var(--radius)',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: 11,
-                      }}>
-                        <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>✓</span>
-                        <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
-                        <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{a.score}</span>
+                {(() => {
+                  if (flow.id === 'enrich') {
+                    if (accepted.length === 0) {
+                      return (
+                        <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
+                          {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1er triplet consolide.'}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        {accepted.map((a, i) => (<ItemCard key={i} item={a} accent={flow.accent} />))}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    );
+                  }
+                  const parsed = parseFilePreview(filePreview, flow.id);
+                  if (!parsed.items.length) {
+                    return (
+                      <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
+                        {state === 'idle'
+                          ? 'Le panneau se remplira au fur et a mesure que le fichier est ecrit.'
+                          : 'En attente des premiers resultats.'}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {parsed.items.map((it, i) => (<ItemCard key={i} item={it} accent={flow.accent} />))}
+                    </div>
+                  );
+                })()}
               </div>
-              {accepted.length > 0 && state === 'done' && (
+              {filePath && (
                 <div style={{
-                  padding: 10,
-                  borderTop: '1px solid var(--line-soft)',
-                  background: 'var(--bg-elev)',
-                  display: 'flex', gap: 6,
+                  padding: 10, borderTop: '1px solid var(--line-soft)',
+                  background: 'var(--bg-elev)', display: 'flex', gap: 6,
                 }}>
-                  <Button size="sm" variant="secondary">Exporter CSV</Button>
-                  <Button size="sm" variant="ghost">JSON</Button>
+                  <Button size="sm" variant="secondary"
+                    onClick={() => {
+                      const name = filePath.split(/[\\/]/).slice(-1)[0];
+                      const url = `api/productions/download?name=${encodeURIComponent(name)}`;
+                      const a = document.createElement('a');
+                      a.href = url; a.download = name;
+                      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    }}>{'⬇'} Telecharger</Button>
                 </div>
               )}
             </Card>
@@ -9801,6 +10730,7 @@ function JarvisRun({ flow, onBack }) {
     </PageShell>
   );
 }
+
 
 // ───── Status badge ─────
 function StatusBadge({ state, accent }) {
@@ -9860,226 +10790,7 @@ function Metric({ label, value, sub, max, accent, color, mono }) {
 }
 
 // ───── Per-flow params ─────
-function defaultParamsFor(flowId) {
-  switch (flowId) {
-    case 'enrich': return { term: 'chat', relation: 'r_carac', maxIter: 30, minConf: 0.5 };
-    case 'audit':  return { term: 'chat', depth: 2, maxIter: 50 };
-    case 'expand': return { term: 'félin', depth: 3, maxIter: 25 };
-    case 'factcheck': return { text: 'Le chat est un mammifère. Il mange des croquettes et chasse des souris. Sa moustache lui sert à mesurer les ouvertures.', maxIter: 6 };
-    case 'synth': return { concept: 'chat', maxIter: 8 };
-  }
-}
-
-function ParamsForm({ flow, params, setParams, locked }) {
-  const set = (k, v) => setParams(p => ({ ...p, [k]: v }));
-  if (flow.id === 'enrich') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme à enrichir">
-          <Input value={params.term} onChange={(v) => set('term', v)} mono />
-        </Field>
-        <Field label="Type de relation">
-          <Select value={params.relation} onChange={(v) => set('relation', v)} options={[
-            { value: 'r_carac', label: 'r_carac — caractéristiques' },
-            { value: 'r_isa', label: 'r_isa — hyperonymes' },
-            { value: 'r_has_part', label: 'r_has_part — parties' },
-            { value: 'r_agent', label: 'r_agent — agents typiques' },
-            { value: 'r_lieu', label: 'r_lieu — lieux typiques' },
-          ]} />
-        </Field>
-        <Field label={`Confiance minimum · ${params.minConf}`}>
-          <Slider value={params.minConf * 100} onChange={(v) => set('minConf', v / 100)} min={0} max={100} step={5} suffix="%" />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'audit') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme racine"><Input value={params.term} onChange={(v) => set('term', v)} mono /></Field>
-        <Field label={`Profondeur · ${params.depth}`}>
-          <Slider value={params.depth} onChange={(v) => set('depth', v)} min={1} max={4} step={1} />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'expand') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Terme initial"><Input value={params.term} onChange={(v) => set('term', v)} mono /></Field>
-        <Field label={`Strates · ${params.depth}`}>
-          <Slider value={params.depth} onChange={(v) => set('depth', v)} min={1} max={5} step={1} />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'factcheck') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Texte à vérifier">
-          <textarea
-            value={params.text}
-            onChange={(e) => set('text', e.target.value)}
-            rows={6}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              background: 'var(--bg-card)',
-              border: '1px solid var(--line)',
-              borderRadius: 'var(--radius)',
-              color: 'var(--ink)',
-              fontFamily: 'inherit',
-              fontSize: 13,
-              outline: 'none',
-              resize: 'vertical',
-            }}
-          />
-        </Field>
-      </div>
-    );
-  }
-  if (flow.id === 'synth') {
-    return (
-      <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-        <Field label="Concept à définir"><Input value={params.concept} onChange={(v) => set('concept', v)} mono /></Field>
-      </div>
-    );
-  }
-}
-
-function StopCriteria({ flow, params, setParams, locked }) {
-  return (
-    <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
-      <Field label={`Itérations max · ${params.maxIter}`}>
-        <Slider value={params.maxIter} onChange={(v) => setParams(p => ({ ...p, maxIter: v }))} min={5} max={100} step={1} />
-      </Field>
-      <div style={{
-        fontSize: 11, color: 'var(--ink-3)',
-        lineHeight: 1.5, marginTop: 4,
-      }}>
-        La boucle s'arrête aussi si plus aucun candidat n'est généré pendant 5 itérations consécutives.
-      </div>
-    </div>
-  );
-}
-
 // ───── Simulated step — fake but realistic ─────
-const FLOW_FAKES = {
-  enrich: {
-    tools: ['relations_from', 'relations_to', 'analogies', 'common_ancestors', 'validate_candidate'],
-    candidatesPool: [
-      { label: 'chat | r_carac | curieux',    s: 0.92, ok: true },
-      { label: 'chat | r_carac | indépendant', s: 0.89, ok: true },
-      { label: 'chat | r_carac | propre',      s: 0.81, ok: true },
-      { label: 'chat | r_carac | nocturne',    s: 0.77, ok: true },
-      { label: 'chat | r_carac | silencieux',  s: 0.71, ok: true },
-      { label: 'chat | r_carac | hautain',     s: 0.54, ok: true },
-      { label: 'chat | r_carac | aboyeur',     s: 0.12, ok: false, reason: 'contradicted by r_agent(aboyer, chien)' },
-      { label: 'chat | r_carac | aquatique',   s: 0.18, ok: false, reason: 'no support in r_lieu' },
-      { label: 'chat | r_carac | énorme',      s: 0.22, ok: false, reason: 'contradicted by r_size' },
-      { label: 'chat | r_carac | gracieux',    s: 0.86, ok: true },
-      { label: 'chat | r_carac | affectueux',  s: 0.79, ok: true },
-      { label: 'chat | r_carac | chasseur',    s: 0.88, ok: true },
-    ],
-  },
-  audit: {
-    tools: ['relations_from', 'cross_check', 'detect_contradiction', 'flag_suspect'],
-    candidatesPool: [
-      { label: 'chat | r_isa | chien',         s: 0.04, ok: false, reason: 'contradicted by r_isa(chat, félin)' },
-      { label: 'chat | r_has_part | aile',     s: 0.02, ok: false, reason: 'no support in JDM' },
-      { label: 'chat | r_has_color | bleu',    s: 0.31, ok: false, reason: 'suspicious — low weight (w=3)' },
-      { label: 'chat | r_isa | félin',         s: 0.97, ok: true },
-      { label: 'chat | r_has_part | patte',    s: 0.95, ok: true },
-    ],
-  },
-  expand: {
-    tools: ['refinements_decoded', 'relations_from', 'common_ancestors'],
-    candidatesPool: [
-      { label: 'félin → chat',                 s: 0.95, ok: true },
-      { label: 'félin → lion',                 s: 0.91, ok: true },
-      { label: 'félin → tigre',                s: 0.88, ok: true },
-      { label: 'félin → léopard',              s: 0.82, ok: true },
-      { label: 'félin → panthère',             s: 0.79, ok: true },
-      { label: 'félin → guépard',              s: 0.76, ok: true },
-      { label: 'félin → lynx',                 s: 0.71, ok: true },
-      { label: 'félin → puma',                 s: 0.65, ok: true },
-      { label: 'félin → ocelot',               s: 0.42, ok: true },
-      { label: 'félin → serval',               s: 0.31, ok: true },
-    ],
-  },
-  factcheck: {
-    tools: ['extract_claims', 'verify_claim'],
-    candidatesPool: [
-      { label: '✓ chat | r_isa | mammifère',          s: 0.97, ok: true },
-      { label: '✓ chat | r_patient | manger croquette', s: 0.91, ok: true },
-      { label: '✓ chat | r_agent | chasser souris',    s: 0.88, ok: true },
-      { label: '✓ moustache | r_telic_role | mesurer', s: 0.74, ok: true },
-    ],
-  },
-  synth: {
-    tools: ['relations_from', 'refinements_decoded', 'common_ancestors'],
-    candidatesPool: [
-      { label: 'isa: mammifère, félin, animal',        s: 0.95, ok: true },
-      { label: 'parties: patte, queue, oreille',       s: 0.92, ok: true },
-      { label: 'agents typiques: ronronner, miauler',  s: 0.87, ok: true },
-      { label: 'but: chasser, garder compagnie',       s: 0.81, ok: true },
-      { label: 'caractéristiques: agile, curieux',     s: 0.85, ok: true },
-    ],
-  },
-};
-
-function step(flowId, params, setLog, setMetrics, setAccepted, setState) {
-  const fake = FLOW_FAKES[flowId];
-  if (!fake) return;
-  const t = new Date();
-  const tStr = t.toTimeString().slice(0, 8);
-  const minConf = params.minConf ?? 0.5;
-
-  setMetrics(m => {
-    const newIter = m.iterations + 1;
-    // Stop conditions
-    if (newIter > (params.maxIter ?? 30) || newIter > fake.candidatesPool.length + 2) {
-      setLog(l => [...l, { t: tStr, tag: '[stop]', kind: 'iter', msg: 'Critère d\'arrêt atteint — fin de boucle' }]);
-      setTimeout(() => setState('done'), 100);
-      return m;
-    }
-
-    const newLogs = [];
-    const idx = (newIter - 1) % fake.candidatesPool.length;
-    const cand = fake.candidatesPool[idx];
-
-    newLogs.push({ t: tStr, tag: `[iter ${newIter}]`, kind: 'iter', msg: 'Génération de candidats…' });
-
-    // Pick 1-2 tool calls
-    const nTools = 2 + (newIter % 2);
-    for (let i = 0; i < nTools; i++) {
-      const tool = fake.tools[(newIter + i) % fake.tools.length];
-      newLogs.push({ t: tStr, tag: '[tool]', kind: 'tool', msg: `${tool}(…) → ${20 + (newIter * 7) % 80}ms` });
-    }
-
-    // Decision
-    const passesConf = cand.s >= minConf;
-    if (cand.ok && passesConf) {
-      newLogs.push({ t: tStr, tag: '[accept]', kind: 'accept', msg: `${cand.label} · score=${cand.s.toFixed(2)}` });
-      setAccepted(a => [...a, { label: cand.label, score: cand.s.toFixed(2) }]);
-    } else {
-      const reason = cand.reason || `score ${cand.s.toFixed(2)} < ${minConf.toFixed(2)}`;
-      newLogs.push({ t: tStr, tag: '[reject]', kind: 'reject', msg: `${cand.label} · ${reason}` });
-    }
-
-    setLog(l => [...l, ...newLogs]);
-
-    return {
-      iterations: newIter,
-      toolsCalled: m.toolsCalled + nTools,
-      candidates: m.candidates + 1,
-      accepted: m.accepted + (cand.ok && passesConf ? 1 : 0),
-      rejected: m.rejected + (cand.ok && passesConf ? 0 : 1),
-      elapsed: m.elapsed + 650,
-    };
-  });
-}
-
 window.ViewJarvis = ViewJarvis;
 
 // === webapp/views-productions.jsx ===
