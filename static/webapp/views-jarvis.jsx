@@ -2022,16 +2022,24 @@ function JLibrary({ list, onPick, onLaunch }) {
 // Synthetic dashboard: every flux is shown "en cours", with a live preview of
 // what's happening inside (current step, growing metrics, streaming results).
 function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
-  // Reelle supervision : on liste les runs serveur via GET /api/jarvis/runs
-  // + on rafraichit toutes les ~3s. Chaque run a un flow_id qu'on map
-  // au catalogue local pour afficher la carte avec le bon accent.
-  const [serverRuns, setServerRuns] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Heartbeat tick (animation refresh) — anime stepIdx + petits effets visuels.
+  // Reste fictif (cosmetique) ; ne change pas les chiffres reels.
+  const [tick, setTick] = useState(0);
+  const rootRef = useRef(null);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 1400);
+    return () => clearInterval(id);
+  }, []);
 
+  // Donnees REELLES du backend : on poll /api/jarvis/runs toutes les 3s
+  // pour le statut, headlines, started_at. En parallele JarvisStore expose
+  // les metrics live (consolidated, toolsCalled, accepted items) pour chaque
+  // flow_id observe localement. On combine les deux.
+  const [serverRuns, setServerRuns] = useState([]);
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    const tick = async () => {
+    const t = async () => {
       try {
         const r = await fetch('api/jarvis/runs');
         if (r.ok) {
@@ -2039,122 +2047,116 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           if (alive) setServerRuns(d.runs || []);
         }
       } catch {}
-      if (alive) setLoading(false);
     };
-    tick();
-    const h = setInterval(tick, 3000);
+    t();
+    const h = setInterval(t, 3000);
     return () => { alive = false; clearInterval(h); };
   }, [active]);
 
-  const byFlow = {};
-  for (const r of serverRuns) {
-    if (!byFlow[r.flow_id]) byFlow[r.flow_id] = [];
-    byFlow[r.flow_id].push(r);
-  }
-  for (const k in byFlow) byFlow[k].sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+  // S'abonne aux changements de JarvisStore pour rerender quand une metrique
+  // bouge entre deux ticks (= reactivite immediate au lieu d'attendre 1.4s).
+  const localActiveSet = useJarvisActiveSet();
 
-  const runningRuns = serverRuns.filter(r => r.status === 'running' || r.status === 'starting');
-  const totalRuns = serverRuns.length;
+  // On opening Supervision, smooth-scroll its panel back to the top (stats strip).
+  useEffect(() => {
+    if (!active) return;
+    const el = rootRef.current; if (!el) return;
+    let sc = el.parentElement;
+    while (sc && sc !== document.body) {
+      const oy = getComputedStyle(sc).overflowY;
+      if (oy === 'auto' || oy === 'scroll') break;
+      sc = sc.parentElement;
+    }
+    if (sc && sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [active]);
+
+  const live = flows.map((f, i) => computeFlowLive(f, i, tick, serverRuns, localActiveSet));
+  const agg = live.reduce((a, l) => ({
+    iter: a.iter + l.iter,
+    tools: a.tools + l.tools,
+    accepted: a.accepted + l.accepted,
+    rejected: a.rejected + l.rejected,
+  }), { iter: 0, tools: 0, accepted: 0, rejected: 0 });
+
+  // Compteur "Flux actifs" base sur les runs serveur reellement running/starting.
+  const activeCount = serverRuns.filter(r => r.status === 'running' || r.status === 'starting').length;
 
   return (
-    <div style={{ width: '100%', maxWidth: 1080 }}>
-      <div style={{ marginBottom: 18 }}>
-        <div className="mono" style={{
-          fontSize: 11, color: 'var(--ink-3)',
-          textTransform: 'uppercase', letterSpacing: '0.18em', marginBottom: 12,
-        }}>
-          <em style={{ fontStyle: 'italic', fontFamily: 'var(--font-display)', color: 'var(--accent)', fontSize: 13, textTransform: 'none', letterSpacing: 0 }}>Jarvis</em>
-          {' '}{'·'} Runs en cours
+    <div ref={rootRef} style={{ width: '100%', maxWidth: 1120 }}>
+      {/* ── Masthead ── */}
+      <div style={{
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+        gap: 24, flexWrap: 'wrap', marginBottom: 18,
+      }}>
+        <div>
+          <div className="mono" style={{
+            fontSize: 11, color: 'var(--ink-3)',
+            textTransform: 'uppercase', letterSpacing: '0.16em',
+            marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <em style={{ fontStyle: 'italic', fontFamily: 'var(--font-display)', color: 'var(--accent)', fontSize: 13, textTransform: 'none', letterSpacing: 0 }}>Jarvis</em>
+            <span>{'·'} Supervision {'·'} {flows.length} flux</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: activeCount > 0 ? 'var(--jdm-green)' : 'var(--ink-3)' }}>
+              <span className="pulse-dot" style={{ background: activeCount > 0 ? 'var(--jdm-green)' : 'var(--ink-3)' }} /> live
+            </span>
+          </div>
+          <h1 className="display" style={{
+            margin: 0,
+            fontFamily: 'var(--font-display)',
+            fontSize: 'clamp(32px, 4.2vw, 52px)',
+            fontWeight: 500, letterSpacing: '-0.025em', lineHeight: 1,
+            color: 'var(--ink)',
+          }}>
+            Tableau de <span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>bord</span>
+          </h1>
         </div>
-        <h1 className="display" style={{
-          margin: 0, fontFamily: 'var(--font-display)',
-          fontSize: 'clamp(32px, 4.2vw, 52px)', fontWeight: 500,
-          letterSpacing: '-0.025em', lineHeight: 1, color: 'var(--ink)',
+
+        <p style={{
+          margin: 0, maxWidth: '38ch',
+          fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-3)',
         }}>
-          Super<span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>vision</span>
-        </h1>
-        <div style={{ display: 'flex', gap: 18, marginTop: 14, fontSize: 12.5, color: 'var(--ink-3)' }}>
-          <span><strong style={{ color: runningRuns.length > 0 ? 'var(--jdm-green)' : 'var(--ink)' }}>{runningRuns.length}</strong> en cours</span>
-          <span>{'·'}</span>
-          <span><strong style={{ color: 'var(--ink)' }}>{totalRuns}</strong> au total (TTL 24h)</span>
-        </div>
+          Six flux d'agent supervises. Chaque carte montre, en direct, ce qui
+          se passe a l'interieur du flux : etape active, metriques qui montent,
+          derniers triplets/items produits.
+        </p>
       </div>
 
-      {loading && serverRuns.length === 0 && (
-        <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
-          Chargement.
-        </div>
-      )}
+      {/* ── KPI strip — agreges sur tous les flux ── */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1,
+        background: 'var(--line)', border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 18,
+      }}>
+        <JKpi label="Flux actifs"      value={activeCount}   sub="en boucle"  dot />
+        <JKpi label="Iterations"       value={agg.iter}      sub="cumulees" />
+        <JKpi label="Outils appeles"   value={agg.tools}     sub="JDM" />
+        <JKpi label="Items produits"   value={agg.accepted}  sub="consolides/annotes" color="var(--jdm-green)" />
+      </div>
 
-      {!loading && serverRuns.length === 0 && (
-        <div style={{
-          padding: '48px 20px', textAlign: 'center',
-          border: '1px dashed var(--line)', borderRadius: 'var(--radius-lg)',
-        }}>
-          <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--ink-2)', marginBottom: 4 }}>Aucun run actif</div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
-            Lance un flux depuis Accueil pour le voir ici.
-          </div>
-        </div>
-      )}
+      {/* ── Live flux grid — une carte par flux ── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))',
+        gap: 14,
+      }}>
+        {flows.map((f, i) => (
+          <JFlowDashCard key={f.id} flow={f} num={i + 1} live={live[i]}
+            onOpen={() => onPick(f.id)} onLaunch={() => onLaunch(f.id)} />
+        ))}
+      </div>
 
-      {serverRuns.length > 0 && (
-        <div style={{ display: 'grid', gap: 10 }}>
-          {flows.map(f => {
-            const runs = byFlow[f.id] || [];
-            if (runs.length === 0) return null;
-            const isActive = runs.some(r => r.status === 'running' || r.status === 'starting');
-            return (
-              <Card key={f.id} padding={0} style={{ overflow: 'hidden', borderLeft: `3px solid ${f.accent}` }}>
-                <div style={{
-                  padding: '13px 18px',
-                  background: 'var(--bg-elev)',
-                  borderBottom: '1px solid var(--line-soft)',
-                  display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                    <span className="mono" style={{ fontSize: 11, color: f.accent, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>{f.kicker}</span>
-                    <span className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 600, color: 'var(--ink)' }}>{f.title}</span>
-                    {isActive && <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <Button size="sm" variant="ghost" onClick={() => onPick(f.id)}>Details</Button>
-                    <Button size="sm" onClick={() => onLaunch(f.id)}>Ouvrir</Button>
-                  </div>
-                </div>
-                <div style={{ padding: '6px 18px 10px' }}>
-                  {runs.map(r => (
-                    <div key={r.run_id} style={{
-                      display: 'flex', alignItems: 'center', gap: 10,
-                      padding: '7px 0', borderBottom: '1px solid var(--line-soft)',
-                      fontSize: 12,
-                    }}>
-                      <span className="mono" style={{
-                        color: r.status === 'running' ? 'var(--jdm-green)'
-                             : r.status === 'done' ? 'var(--ink-3)'
-                             : r.status === 'error' ? 'var(--jdm-magenta)'
-                             : 'var(--ink-3)',
-                        fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em',
-                        fontWeight: 600, minWidth: 70,
-                      }}>{r.status}</span>
-                      <span style={{ flex: 1, minWidth: 0, color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.headline || '-'}
-                      </span>
-                      <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)' }}>
-                        {r.started_at ? new Date(r.started_at * 1000).toLocaleTimeString() : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginTop: 16,
+        fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-3)', flexWrap: 'wrap',
+      }}>
+        <span style={{ display: 'inline-flex', width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />
+        Clic sur le <strong style={{ color: 'var(--ink-2)' }}>cercle</strong> = (re)lancer le flux
+        <span style={{ color: 'var(--line)' }}>{'|'}</span>
+        clic sur la <strong style={{ color: 'var(--ink-2)' }}>carte</strong> = ouvrir le detail
+      </div>
     </div>
   );
 }
-
 
 // KPI tile for the dashboard's top strip.
 function JKpi({ label, value, sub, color, dot }) {
@@ -2178,8 +2180,72 @@ function JKpi({ label, value, sub, color, dot }) {
   );
 }
 
-// Derive a flow's live snapshot from a shared heartbeat (tick). Pure + cyclic,
-// so each card looks like a pipeline endlessly looping through its candidates.
+// Source de live snapshots pour les cartes du dashboard — alimentee
+// par les VRAIES donnees backend :
+//   - JarvisStore.get(flow.id) : etat local du run observe (metrics,
+//     accepted items, log) ; survit aux unmount.
+//   - serverRuns[flow.id] : dernier run cote serveur (statut, headline)
+//     poll'e toutes les 3s via /api/jarvis/runs.
+//   - tick : heartbeat 1.4s utilise UNIQUEMENT pour animer stepIdx
+//     (= l'etape "active" qui clignote sur la pipeline) et donner du
+//     mouvement aux cartes meme quand les chiffres ne bougent pas.
+function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
+  const store = (typeof JarvisStore !== 'undefined') ? JarvisStore.get(flow.id) : null;
+  const runs = (serverRuns || []).filter(r => r.flow_id === flow.id);
+  const latest = runs.sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0] || null;
+  const isLocallyRunning = store && store.status === 'running';
+  const isServerRunning = latest && (latest.status === 'running' || latest.status === 'starting');
+  const isRunning = isLocallyRunning || isServerRunning;
+
+  // Metriques reelles : on prefere le store local (a jour live via SSE).
+  // Si pas de run local mais un run serveur existe, on s'appuie sur ce
+  // qu'on connait (counters a 0 par defaut, headline pour signaler la
+  // presence). Pour les flux non instancies, tout est 0.
+  const m = (store && store.metrics) || { toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0 };
+  const tools = m.toolsCalled || 0;
+  const accepted = m.accepted || 0;
+  // On ne dispose pas d'un compteur de rejets reel cote backend ; on l'estime
+  // a partir du log (entries kind='reject') si le store local le tient.
+  const rejected = store ? (store.log || []).filter(l => l.kind === 'reject').length : 0;
+
+  // Pseudo "iteration" — on n'a pas non plus de compteur dedie. On compose
+  // a partir de tools+accepted+rejected pour avoir un nombre qui monte
+  // visiblement quand l'agent bosse, et qui reste cumulatif.
+  const iter = tools + accepted + rejected;
+  const dp = (typeof defaultParamsFor === 'function' && defaultParamsFor(flow.id)) || {};
+  const span = Math.max(1, dp.target_count || dp.maxIter || Math.max(8, iter + 2));
+  const pct = Math.min(100, Math.round((accepted / span) * 100));
+
+  // Step actif : si en cours, on cycle ; sinon on fige sur la 1re etape.
+  const stepIdx = isRunning ? (tick + i) % Math.max(1, flow.steps.length) : 0;
+
+  // Recent = derniers items consolides/annotes/flagges, formates pour
+  // s'afficher dans la mini-list de la carte. On prend les 3 derniers
+  // accepted items du store, sinon parse depuis filePreview pour les
+  // flows redirect (annot/audit/err) qui n'utilisent pas accepted.
+  let recent = [];
+  if (store && Array.isArray(store.accepted) && store.accepted.length > 0) {
+    recent = store.accepted.slice(-3).map((a, k) => ({
+      key: 'a' + (iter - k),
+      cand: { label: a.label || `${a.subject || ''} | ${a.relation || ''} | ${a.target || ''}`,
+              s: 1.0, ok: true },
+    }));
+  } else if (store && store.filePreview) {
+    const parsed = parseFilePreview(store.filePreview, flow.id);
+    recent = parsed.items.slice(-3).map((it, k) => ({
+      key: 'p' + (iter - k),
+      cand: {
+        label: `${it.subject || ''} | ${it.relation || ''} | ${it.target || ''}`,
+        s: 1.0,
+        ok: it.type !== 'flagged' && it.type !== 'signalement',
+      },
+    }));
+  }
+
+  return { iter, span, accepted, rejected, tools, recent, stepIdx, pct,
+           isRunning, headline: (store && store.headline) || (latest && latest.headline) || '' };
+}
+
 // One live "monitor" card for a flux — the heart of the dashboard.
 function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
   const [hover, setHover] = useState(false);
@@ -2211,7 +2277,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '14px 15px 12px' }}>
         <button type="button" className="jring-btn"
           onClick={(e) => { e.stopPropagation(); onLaunch(); }}
-          title={`(Re)lancer « ${flow.title} »`} aria-label={`Lancer ${flow.title}`}
+          title={`(Re)lancer "${flow.title}"`} aria-label={`Lancer ${flow.title}`}
           style={{ flexShrink: 0 }}>
           <JLoopRing accent={a} num={num} steps={flow.steps.length} delay={num * 0.3} size={50} />
         </button>
@@ -2226,34 +2292,48 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>{flow.title}</div>
         </div>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
-          padding: '4px 9px', borderRadius: 999,
-          border: `1px solid ${tint(45)}`, background: tint(8), color: a,
-          fontFamily: 'var(--font-mono)', fontSize: 9.5,
-          textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600,
-        }}>
-          <span className="pulse-dot" style={{ background: a }} /> en cours
-        </span>
+        {/* badge "en cours" / "au repos" selon l'etat reel du run */}
+        {live.isRunning ? (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
+            padding: '4px 9px', borderRadius: 999,
+            border: `1px solid ${tint(45)}`, background: tint(8), color: a,
+            fontFamily: 'var(--font-mono)', fontSize: 9.5,
+            textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600,
+          }}>
+            <span className="pulse-dot" style={{ background: a }} /> en cours
+          </span>
+        ) : (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
+            padding: '4px 9px', borderRadius: 999,
+            border: '1px solid var(--line-soft)', background: 'var(--bg-elev)',
+            color: 'var(--ink-3)',
+            fontFamily: 'var(--font-mono)', fontSize: 9.5,
+            textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500,
+          }}>
+            au repos
+          </span>
+        )}
       </div>
 
       {/* step pipeline — active step highlighted */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 15px 12px', flexWrap: 'wrap' }}>
         {flow.steps.map((s, k) => {
-          const active = k === live.stepIdx;
+          const isActive = live.isRunning && k === live.stepIdx;
           return (
             <React.Fragment key={k}>
-              {k > 0 && <span style={{ color: 'var(--line)', fontSize: 11 }}>›</span>}
+              {k > 0 && <span style={{ color: 'var(--line)', fontSize: 11 }}>{'›'}</span>}
               <span className="mono" style={{
                 fontSize: 10, padding: '3px 8px', borderRadius: 999,
-                background: active ? tint(14) : 'var(--bg-elev)',
-                border: '1px solid ' + (active ? tint(50) : 'var(--line-soft)'),
-                color: active ? a : 'var(--ink-3)',
-                fontWeight: active ? 600 : 400,
+                background: isActive ? tint(14) : 'var(--bg-elev)',
+                border: '1px solid ' + (isActive ? tint(50) : 'var(--line-soft)'),
+                color: isActive ? a : 'var(--ink-3)',
+                fontWeight: isActive ? 600 : 400,
                 display: 'inline-flex', alignItems: 'center', gap: 5,
                 transition: 'all .25s',
               }}>
-                {active && <span className="pulse-dot" style={{ background: a, width: 5, height: 5 }} />}
+                {isActive && <span className="pulse-dot" style={{ background: a, width: 5, height: 5 }} />}
                 {s.n}
               </span>
             </React.Fragment>
@@ -2267,7 +2347,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
           display: 'flex', justifyContent: 'space-between',
           fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-3)', marginBottom: 5,
         }}>
-          <span>itér <strong style={{ color: 'var(--ink)' }}>{live.iter}</strong> / {live.span}</span>
+          <span>iter <strong style={{ color: 'var(--ink)' }}>{live.iter}</strong> / {live.span}</span>
           <span style={{ color: a }}>{flow.produces}</span>
         </div>
         <div style={{ height: 5, borderRadius: 999, background: 'var(--bg-elev)', overflow: 'hidden' }}>
@@ -2281,8 +2361,8 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
         background: 'var(--line-soft)',
         borderTop: '1px solid var(--line-soft)', borderBottom: '1px solid var(--line-soft)',
       }}>
-        <JMini label="acceptés" value={live.accepted} color="var(--jdm-green)" />
-        <JMini label="rejetés"  value={live.rejected} color="var(--jdm-magenta)" />
+        <JMini label="acceptes" value={live.accepted} color="var(--jdm-green)" />
+        <JMini label="rejetes"  value={live.rejected} color="var(--jdm-magenta)" />
         <JMini label="outils"   value={live.tools} />
       </div>
 
@@ -2296,7 +2376,14 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
           <span className="pulse-dot" style={{ background: a, width: 5, height: 5 }} /> flux en direct
         </div>
         <div style={{ display: 'grid', gap: 4, minHeight: 78 }}>
-          {live.recent.map(({ key, cand }) => (
+          {live.recent.length === 0 ? (
+            <div style={{
+              color: 'var(--ink-3)', fontSize: 11, fontStyle: 'italic',
+              padding: '10px 0', textAlign: 'center',
+            }}>
+              {live.isRunning ? 'En attente du 1er resultat…' : 'Aucun resultat encore.'}
+            </div>
+          ) : live.recent.map(({ key, cand }) => (
             <div key={key} className="fade-up" style={{
               display: 'flex', alignItems: 'center', gap: 7,
               padding: '5px 8px', borderRadius: 'var(--radius)',
@@ -2305,7 +2392,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
             }}>
               <span style={{ flexShrink: 0, color: cand.ok ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>{cand.ok ? '✓' : '✕'}</span>
               <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cand.label}</span>
-              <span style={{ flexShrink: 0, color: 'var(--ink-3)' }}>{cand.s.toFixed(2)}</span>
+              <span style={{ flexShrink: 0, color: 'var(--ink-3)' }}>{(cand.s || 0).toFixed(2)}</span>
             </div>
           ))}
         </div>
@@ -2316,13 +2403,13 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '9px 15px', borderTop: '1px solid var(--line-soft)', background: 'var(--bg-elev)',
       }}>
-        <span className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>boucle · {flow.steps.length} étapes</span>
+        <span className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>boucle {'·'} {flow.steps.length} etapes</span>
         <span className="mono" style={{
           fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
           color: hover ? a : 'var(--ink-3)',
           transition: 'color .16s, transform .16s',
           transform: hover ? 'translateX(3px)' : 'none',
-        }}>détail →</span>
+        }}>detail {'→'}</span>
       </div>
     </div>
   );
@@ -2341,6 +2428,13 @@ function JMini({ label, value, color }) {
   );
 }
 
+
+
+// KPI tile for the dashboard's top strip.
+// Derive a flow's live snapshot from a shared heartbeat (tick). Pure + cyclic,
+// so each card looks like a pipeline endlessly looping through its candidates.
+// One live "monitor" card for a flux — the heart of the dashboard.
+// Compact metric cell inside a dashboard card.
 // Loop schematic in two refined, low-saturation styles (Tweaks → Cercles Jarvis):
 //   'boucle' — a single repeat/refresh arrow wrapping the number (calm, default).
 //   'cycle'  — step nodes joined by directional arcs (the original).
@@ -3355,215 +3449,708 @@ function LoopGlyph({ color }) {
 }
 
 // ───── Run view — the auto-loop interface ─────
-function JarvisRun({ flow, onBack }) {
-  // Per-flow params (formulaire). Defaults reels alignes sur le backend
-  // via defaultParamsFor injecte depuis la legacy fastapi-self.
-  const [params, setParams] = useState(defaultParamsFor(flow.id));
-
-  // Etat du run = state pulse par JarvisStore (singleton qui survit aux
-  // unmount). useJarvisRunState s'abonne au store ; toute mutation
-  // re-rendre ce composant. Au mount, si un run etait deja en cours
-  // depuis ailleurs (Supervision, retour de tab), on retrouve son etat
-  // exact (log + metrics + accepted) sans coupure.
+function JarvisRun({ flow, nextFlow, onBack, onNext }) {
+  // Pré-remplissage du `term` depuis Projet › Quick try (si présent).
+  // Consommation et nettoyage du payload au mount. PAS de lancement
+  // automatique — l'utilisateur clique « Lancer » lui-même.
+  const _pending = (typeof window !== 'undefined'
+                    && window.__jdmPendingPayload?.jarvis) || null;
+  if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
+    delete window.__jdmPendingPayload.jarvis;
+  }
+  const [params, setParams] = useState(() => {
+    const base = defaultParamsFor(flow.id);
+    if (_pending?.term && typeof base === 'object') {
+      return { ...base, term: _pending.term };
+    }
+    return base;
+  });
+  // ── Run state hoisted in JarvisStore ───────────────────────────
+  // Survit aux unmounts → switch d'onglet pendant un run ne tue plus
+  // le flow ni la progression affichée. Le composant ne fait que lire
+  // et déclencher des actions sur le store.
   const run = useJarvisRunState(flow.id);
-  const state = run.status;  // 'idle' | 'running' | 'done' | 'error'
+  const state = run.status;
   const log = run.log;
   const metrics = run.metrics;
   const accepted = run.accepted;
-  const filePath = run.filePath;
+  const narrationHTML = run.narrationHTML;
   const filePreview = run.filePreview;
+  const filePath = run.filePath;
   const headline = run.headline;
+  const resumeState = run.resumeState;
+  const setResumeState = (v) => JarvisStore.patch(flow.id, { resumeState: v });
+  const [poolStatus, setPoolStatus] = useState(null);
+  // État des secrets en env serveur. Permet d'autoriser
+  // soumission / auto-upload même si l'utilisateur n'a pas tapé la clé
+  // (elle sera prise depuis l'env par le backend).
+  const _envStatus = useEnvStatus();
+  const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
+  const _canSubmit = !!params.drops_key || _envHasDrops;
+  // État du bouton « 📤 Soumettre » post-hoc à côté de Télécharger.
+  // submitState ∈ {idle, sending, done, error}. submitMsg = retour serveur
+  // affiché en pastille discrète sous l'en-tête du panneau pour ~6s.
+  const [submitState, setSubmitState] = useState('idle');
+  const [submitMsg, setSubmitMsg] = useState('');
 
+  // Vue alternative du panneau droit : 'cards' (défaut, ItemCard avec
+  // explications) ↔ 'log' (timeline mono-fontée avec timestamps + tags
+  // colorés). Le toggle apparaît dans l'en-tête du panneau, à côté de
+  // « Télécharger ».
+  const [rightView, setRightView] = useState('cards');
+
+  // Pool status pour griser les Gemini blown dans le dropdown modèle.
+  React.useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('api/pool/status');
+        if (r.ok && alive) setPoolStatus(await r.json());
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
   const logRef = useRef(null);
+
+  // Auto-scroll log + narration : suit le flux de génération en bas
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log.length]);
+  }, [log, narrationHTML]);
 
-  const launch = () => {
-    JarvisStore.start(flow.id, { params, isResume: false, resumeState: null });
+  // Parse le file_preview pour extraire les items à afficher dans le
+  // panneau de droite. Mémoïsé sur (filePreview, flow.id) — la parse
+  // est cheap mais évite de re-allouer N fois par seconde pendant
+  // que le fichier grandit.
+  const parsed = React.useMemo(
+    () => parseFilePreview(filePreview, flow.id),
+    [filePreview, flow.id]
+  );
+
+  // Synchronise le compteur "produced" du dashboard avec les items
+  // parsés. Pour enrich, on garde la source registry (`accepted`) qui
+  // est canonique. Push direct dans le store via patch — pas de setX
+  // local (le state vit là-bas).
+  React.useEffect(() => {
+    if (flow.id === 'enrich') {
+      JarvisStore.patch(flow.id, { metrics: { ...metrics, produced: metrics.accepted } });
+    } else {
+      const n = parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
+      JarvisStore.patch(flow.id, { metrics: { ...metrics, produced: n } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsed.items.length, metrics.accepted, flow.id]);
+
+  // launch/stop/reset délèguent au store. Le reader SSE + l'horloge
+  // elapsed + le state du run vivent là-bas, donc unmount du composant
+  // (= switch d'onglet) ne tue plus le flow.
+  const launch = (continueFromResume) => {
+    JarvisStore.start(flow.id, {
+      params,
+      isResume: !!continueFromResume,
+      resumeState: continueFromResume ? resumeState : null,
+    });
+    if (continueFromResume) setResumeState(null);
   };
-  const stop  = () => { JarvisStore.stop(flow.id);  };
-  const reset = () => { JarvisStore.reset(flow.id); };
+  const stop = () => JarvisStore.stop(flow.id);
+  const reset = () => JarvisStore.reset(flow.id);
+
+  // Smooth scroll animé garanti : tween rAF custom (behavior:'smooth'
+  // est respecté par les browsers mais peut être éteint par
+  // prefers-reduced-motion ; le rAF tween garantit l'animation visible).
+  //
+  // Fire dans 3 cas :
+  //   1. À l'ouverture d'un flow (mount, quel que soit le status)
+  //   2. Au lancement d'un flow (state idle → running)
+  //   3. Une fois que le contenu est chargé suffisamment pour que le
+  //      bas existe (déclenché 350ms après mount pour laisser le
+  //      layout calculer les hauteurs des Card narration/triplets).
+  const _scrollSmoothToBottom = React.useCallback(() => {
+    const targetY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const startY = window.scrollY || window.pageYOffset || 0;
+    const dist = targetY - startY;
+    if (Math.abs(dist) < 4) return;  // déjà au bon endroit
+    const dur = 520;
+    const t0 = performance.now();
+    const ease = (t) => (t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / dur);
+      window.scrollTo(0, startY + dist * ease(t));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, []);
+  // Tirage au mount + à chaque changement de flow.
+  React.useEffect(() => {
+    const tid = setTimeout(_scrollSmoothToBottom, 350);
+    return () => clearTimeout(tid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow.id]);
+  // Tirage au passage idle → running (clic Lancer).
+  const _prevStateRef = useRef(state);
+  React.useEffect(() => {
+    if (_prevStateRef.current === 'idle' && state === 'running') {
+      setTimeout(_scrollSmoothToBottom, 200);
+    }
+    _prevStateRef.current = state;
+  }, [state, _scrollSmoothToBottom]);
 
   return (
     <PageShell>
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 12,
       }}>
-        <Button variant="ghost" size="sm" onClick={onBack}>{'←'} Tous les flux</Button>
+        <Button variant="ghost" size="sm" onClick={onBack}>← Tous les flux</Button>
         <span style={{ color: 'var(--ink-3)' }}>/</span>
         <span className="mono" style={{ fontSize: 12, color: flow.accent, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{flow.kicker}</span>
+        {/* Symétrique : à droite, le flux suivant si pas en bout. */}
+        {onNext && nextFlow && (
+          <Button variant="ghost" size="sm" onClick={onNext}
+            style={{ marginLeft: 'auto' }}>
+            {nextFlow.title} →
+          </Button>
+        )}
       </div>
       <SectionTitle
         kicker={flow.kicker}
         title={flow.title}
-        desc={headline || flow.desc}
+        desc={flow.desc}
         right={<StatusBadge state={state} accent={flow.accent} />}
       />
 
       <div style={{
-        display: 'grid', gridTemplateColumns: '320px 1fr',
-        gap: 20, alignItems: 'start',
+        display: 'grid',
+        gridTemplateColumns: '320px 1fr',
+        gap: 20,
+        alignItems: 'start',
       }}>
         {/* Left: params + controls */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 80 }}>
           <Card padding={16}>
             <div className="mono" style={{
               fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12,
-            }}>Parametres</div>
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+              marginBottom: 12,
+            }}>Paramètres</div>
             <ParamsForm flow={flow} params={params} setParams={setParams} locked={state === 'running'} />
           </Card>
 
           <Card padding={16}>
             <div className="mono" style={{
               fontSize: 11, color: 'var(--ink-3)',
-              textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12,
-            }}>Controles</div>
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+              marginBottom: 12,
+            }}>Contrôles</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {state === 'idle' && <Button full onClick={launch}>{'▶'} Lancer la boucle</Button>}
-              {state === 'running' && <Button full variant="secondary" onClick={stop}>{'⏹'} Stop</Button>}
-              {(state === 'done' || state === 'error') && <Button full variant="secondary" onClick={reset}>{'↻'} Relancer</Button>}
+              {(state === 'idle' || state === 'done' || state === 'error') && (
+                <Button full onClick={() => launch(false)}>
+                  {state === 'idle' ? '▶ Lancer' : '↻ Relancer'}
+                </Button>
+              )}
+              {state === 'running' && (
+                <Button variant="secondary" full onClick={stop}>⏹ Stop</Button>
+              )}
             </div>
-            {state === 'running' && (
-              <div style={{
-                marginTop: 10, padding: '6px 10px',
-                background: 'var(--bg-elev)', borderRadius: 'var(--radius)',
-                fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)',
-              }}>
-                Boucle auto · stop fait abort cooperatif (~5-15s)
+
+            {/* Bouton Continuer — apparaît si l'agent a abort (mode B) */}
+            {resumeState && state !== 'running' && (
+              <div style={{ marginTop: 10 }}>
+                <Button full onClick={() => launch(true)}>
+                  ▶ Continuer avec 3.1
+                </Button>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--ink-3)' }}>
+                  L'agent a saturé son quota — reprends sur Gemini 3.1 Flash Lite
+                  (pool partagé, 500 req/jour) en gardant l'historique.
+                </div>
               </div>
             )}
+
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginTop: 12, fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer',
+            }}>
+              <input type="checkbox"
+                checked={!!params.auto_switch}
+                onChange={(e) => setParams(p => ({ ...p, auto_switch: e.target.checked }))}
+                style={{ accentColor: 'var(--accent)' }}
+                disabled={state === 'running'} />
+              Auto-bascule sur 3.1 si quota épuisé
+            </label>
+            <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 4, lineHeight: 1.45 }}>
+              Décoché (défaut) : abort propre + bouton « Continuer » apparaît.
+              Coché : retry silencieux sans intervention.
+            </div>
+
+            {state === 'running' && (
+              <div style={{
+                marginTop: 10,
+                padding: '6px 10px',
+                background: 'var(--bg-elev)',
+                borderRadius: 'var(--radius)',
+                fontSize: 11,
+                color: 'var(--ink-3)',
+                fontFamily: 'var(--font-mono)',
+              }}>
+                Streaming SSE · arrêt manuel possible
+              </div>
+            )}
+          </Card>
+
+          <Card padding={16}>
+            <div className="mono" style={{
+              fontSize: 11, color: 'var(--ink-3)',
+              textTransform: 'uppercase', letterSpacing: '0.1em',
+              marginBottom: 8,
+            }}>Note</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+              Modèle, budget et clés sont configurés dans la barre horizontale
+              en bas de l'écran (sous la vue temps réel).
+            </div>
           </Card>
         </div>
 
         {/* Right: live monitor */}
         <div>
-          {/* Metrics grid - metriques reelles du backend. */}
+          {/* Headline (résumé) */}
+          {headline && (
+            <div style={{
+              padding: '8px 14px',
+              marginBottom: 12,
+              background: 'var(--bg-elev)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--radius)',
+              fontSize: 13,
+              color: 'var(--ink-2)',
+            }}>
+              {headline}
+            </div>
+          )}
+
+          {/* ── Barre horizontale Modèle / Budget / Clé LLMDrops :
+              Modèle / Budget / Clé LLMDrops (et clé BYOK si applicable).
+              Positionnée AU-DESSUS des compteurs (remontée depuis sidebar). */}
+          <Card padding={14} style={{ marginBottom: 14 }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: (params.model || '').match(/^(claude|gpt)-/)
+                ? 'minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr)'
+                : 'minmax(220px, 1.6fr) minmax(160px, 1fr) minmax(200px, 1.2fr)',
+              gap: 12,
+              alignItems: 'end',
+            }}>
+              <Field label="Modèle">
+                <Select value={params.model || 'gemini-3.1-flash-lite'}
+                  onChange={(v) => setParams(p => ({ ...p, model: v }))}
+                  options={[
+                    { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+                    { value: 'gemini-3.5-flash',      label: 'Gemini 3.5 Flash' },
+                    { value: 'claude-haiku-4-5',      label: 'Claude Haiku 4.5 (BYOK)' },
+                    { value: 'gpt-4o-mini',           label: 'GPT-4o mini (BYOK)' },
+                  ].map(m => {
+                    if (poolStatus && m.value.startsWith('gemini-')) {
+                      const allBlown = (poolStatus.keys || []).every(
+                        k => k.invalid || (k.blown_by_model && k.blown_by_model[m.value])
+                      );
+                      if (allBlown && poolStatus.keys && poolStatus.keys.length > 0) {
+                        return { ...m, label: `❌ ${m.label} — épuisé`,
+                                 sub: 'pool entièrement consommé aujourd\'hui' };
+                      }
+                    }
+                    return m;
+                  })} />
+              </Field>
+              <Field label="Budget outils">
+                <Select value={params.budget_label || 'illimité'}
+                  onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
+                  options={BUDGET_OPTS} />
+              </Field>
+              <Field label={
+                _envHasDrops
+                  ? 'Clé LLMDrops (override .env)'
+                  : 'Clé LLMDrops'
+              }>
+                <Input type="password"
+                  value={params.drops_key || ''}
+                  onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
+                  placeholder={_envHasDrops ? '— configurée côté serveur —' : 'vide = pas de clé'}
+                  mono />
+              </Field>
+              {(params.model || '').match(/^(claude|gpt)-/) && (() => {
+                const envKey = (params.model || '').startsWith('claude-') ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+                const envHas = !!(_envStatus[envKey] && _envStatus[envKey].set);
+                return (
+                  <Field label={envHas ? 'Clé API LLM (override .env)' : 'Clé API LLM'}>
+                    <Input type="password"
+                      value={params.api_key || ''}
+                      onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
+                      placeholder={envHas
+                        ? '— configurée côté serveur —'
+                        : ((params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…')}
+                      mono />
+                  </Field>
+                );
+              })()}
+            </div>
+            {/* Checkbox raisonnement (chain-of-thought) — pareil que dans
+                l'onglet Chatbot LLM. Toggle params.use_thinking, dispo
+                quel que soit le modèle (Gemini, Claude, GPT). Pour les
+                flows Jarvis le défaut est false (robustesse > raisonnement
+                long) mais l'utilisateur peut l'activer ad hoc. */}
+            <label
+              title="Active la trace de raisonnement (« thinking » Anthropic / Google) — coûte plus de tokens mais peut améliorer les choix d'outils."
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer',
+                marginTop: 10,
+                paddingTop: 10,
+                borderTop: '1px solid var(--line-soft)',
+              }}>
+              <input type="checkbox"
+                checked={!!params.use_thinking}
+                onChange={(e) => setParams(p => ({ ...p, use_thinking: e.target.checked }))}
+                style={{ accentColor: 'var(--accent)' }} />
+              Raisonnement (chain-of-thought)
+            </label>
+          </Card>
+
+          {/* Metrics grid */}
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 1, background: 'var(--line)',
-            border: '1px solid var(--line)', borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden', marginBottom: 14,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 1,
+            background: 'var(--line)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--radius-lg)',
+            overflow: 'hidden',
+            marginBottom: 14,
           }}>
-            <Metric label="Outils" value={metrics.toolsCalled || 0} sub="appels" />
-            <Metric label="Produits" value={metrics.accepted || 0} sub="items" color="var(--jdm-green)" />
-            <Metric label="Tokens" value={fmtTokens(metrics.tokens || 0)} sub="estimes" mono />
-            <Metric label="Temps" value={fmtElapsed(metrics.elapsed || 0)} sub="ecoule" mono />
+            <Metric label="Outils" value={metrics.toolsCalled} sub="appels" accent={flow.accent} />
+            <Metric label="Tokens" value={fmtTokens(metrics.tokens)} sub="estimés" mono />
+            {/* Compteur "produits" dynamique selon le flow : pour enrich
+                = consolidés depuis le registry ; pour audit/err/annot/stats
+                = items extraits du file_preview (signalements + verdicts +
+                annotations + lignes). Le label s'adapte. */}
+            <Metric label={metricLabelFor(flow.id).label}
+                    value={metrics.produced}
+                    sub={metricLabelFor(flow.id).sub}
+                    color="var(--jdm-green)" />
+            <Metric label="Temps" value={fmtElapsed(metrics.elapsed)} sub="écoulé" mono />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
-            {/* Log stream */}
+            {/* Narration (markdown HTML interprété — narrations LLM,
+                tools, consolidations) — c'est notre VRAI log temps réel. */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
                 display: 'flex', justifyContent: 'space-between',
-                padding: '10px 14px', background: 'var(--bg-elev)',
+                padding: '10px 14px',
+                background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>Log temps reel</div>
+                }}>Narration LLM</div>
                 {state === 'running' && <span className="pulse-dot" style={{ background: flow.accent }} />}
               </div>
-              <div ref={logRef} style={{
-                height: 420, overflowY: 'auto',
-                fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
-                padding: 12, background: 'var(--bg-card)',
+              <div ref={logRef} className="jdm-narration-pane" style={{
+                height: 420,
+                overflowY: 'auto',
+                padding: 14,
+                background: 'var(--bg-card)',
+                fontSize: 13,
+                lineHeight: 1.55,
+                color: 'var(--ink)',
               }}>
-                {log.length === 0 && (
+                {!narrationHTML && log.length === 0 && (
                   <div style={{ color: 'var(--ink-3)', textAlign: 'center', padding: '40px 0' }}>
-                    {state === 'idle' ? 'En attente du lancement.' : '-'}
+                    {state === 'idle' ? 'En attente du lancement…' : '—'}
                   </div>
                 )}
-                {log.map((l, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
-                    <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
-                    <span style={{
-                      flexShrink: 0,
-                      color: l.kind === 'tool' ? 'var(--accent)' :
-                             l.kind === 'accept' ? 'var(--jdm-green)' :
-                             l.kind === 'reject' ? 'var(--jdm-magenta)' :
-                             l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
-                      minWidth: 56,
-                    }}>{l.tag}</span>
-                    <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
-                  </div>
-                ))}
+                {narrationHTML ? (
+                  // Le contenu sortant du LLM est markdown + parfois
+                  // des divs HTML <jdm-narration> embeddés (trace
+                  // d'outils). marked.js préserve les blocs HTML
+                  // inline → la trace reste structurée, mais les
+                  // titres / listes / **gras** / `code` se rendent
+                  // correctement (cf. chatbot et enrich qui font pareil).
+                  <div className="jdm-prose"
+                       dangerouslySetInnerHTML={{ __html: renderMarkdownJarvis(narrationHTML) }} />
+                ) : (
+                  // Fallback : entrées tag/temps des events headline/file/etc.
+                  log.map((l, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 4, alignItems: 'baseline', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                      <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                      <span style={{
+                        flexShrink: 0, minWidth: 64,
+                        color: l.kind === 'accept' ? 'var(--jdm-green)'
+                              : l.kind === 'reject' ? 'var(--jdm-magenta)'
+                              : l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
+                      }}>{l.tag}</span>
+                      <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </Card>
 
-            {/* Resultats accumules. Utilise ItemCard pour afficher chaque
-                triplet + son explication d'inference (enrich) ou son
-                annotation/verdict/categorie (autres flows). */}
+            {/* Triplets consolidés = liste qui croît avec le fichier en
+                construction. Bouton "Télécharger" en haut à droite pour
+                récupérer le fichier brut. */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
-                padding: '10px 14px', background: 'var(--bg-elev)',
+                padding: '10px 14px',
+                background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                gap: 8,
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>{panelTitleFor(flow.id)} {'·'} <span style={{ color: 'var(--jdm-green)' }}>{(flow.id === 'enrich' ? accepted.length : (parseFilePreview(filePreview, flow.id).items || []).length)}</span></div>
+                  flex: 1, minWidth: 0,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {panelTitleFor(flow.id)} · <span style={{ color: 'var(--jdm-green)' }}>{metrics.produced}</span>
+                  {filePath && (
+                    <span style={{ color: 'var(--ink-2)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
+                      · {filePath.split(/[\\/]/).slice(-1)[0]}
+                    </span>
+                  )}
+                </div>
+                {/* Toggle Cards / Log — bascule l'affichage du panneau
+                    droit entre cartes ItemCard (défaut, riche : triplet
+                    + explication d'inférence) et timeline mono-fontée
+                    style « log temps réel » (timestamps + tags colorés
+                    par type d'event). Le contenu est le MÊME, seule la
+                    présentation change. */}
+                <div style={{
+                  display: 'inline-flex', flexShrink: 0,
+                  background: 'var(--bg-card)', border: '1px solid var(--line)',
+                  borderRadius: 999, padding: 2, marginRight: 6,
+                }}>
+                  {[
+                    { id: 'cards', label: 'Cards' },
+                    { id: 'log',   label: 'Log' },
+                  ].map(t => {
+                    const active = rightView === t.id;
+                    return (
+                      <button key={t.id} type="button"
+                        onClick={() => setRightView(t.id)}
+                        className="focus-ring"
+                        style={{
+                          padding: '3px 10px', borderRadius: 999,
+                          border: 'none', cursor: 'pointer',
+                          background: active ? flow.accent : 'transparent',
+                          color: active ? 'var(--bg)' : 'var(--ink-3)',
+                          fontFamily: 'var(--font-mono)', fontSize: 10,
+                          textTransform: 'uppercase', letterSpacing: '0.06em',
+                          fontWeight: active ? 600 : 500,
+                          transition: 'background .18s, color .18s',
+                        }}>{t.label}</button>
+                    );
+                  })}
+                </div>
+                {/* Télécharger le fichier brut — appelle l'API
+                    /api/productions/download avec le basename. */}
+                {filePath && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {/* Bouton « 📤 Soumettre à JDM » post-hoc. Disponible
+                        uniquement pour les flows qui produisent un fichier
+                        soumissible (.enrich/.audit/.err/.stat/.annot) ET
+                        si la clé LLMDrops est saisie (sinon disabled +
+                        tooltip explicatif). Appelle /api/productions/submit
+                        avec le basename + api_key + model_name pour
+                        renommer correctement côté serveur. */}
+                    {SUBMITTABLE_FLOWS.has(flow.id) && (
+                      <Button size="sm" variant="ghost"
+                        // Disabled UNIQUEMENT si pas de clé OU upload en cours.
+                        // Si le flow tourne encore mais qu'on a la clé, on
+                        // laisse cliquer (avec grisage visuel + confirm).
+                        disabled={!_canSubmit || submitState === 'sending'}
+                        style={state === 'running' && _canSubmit
+                          ? { opacity: 0.55 }
+                          : undefined}
+                        title={!_canSubmit
+                          ? 'Renseigne la clé LLMDrops (ou configure JDM_DROPS_API_KEY côté serveur) pour activer la soumission'
+                          : state === 'running'
+                            ? 'Soumission anticipée — le flow tourne encore (clic pour confirmer)'
+                            : (params.drops_key
+                              ? 'Soumettre ce fichier au LLMDrops JDM (clé saisie)'
+                              : 'Soumettre ce fichier au LLMDrops JDM (clé serveur)')}
+                        onClick={async () => {
+                          // Confirmation si le flow tourne encore — soumettre
+                          // un fichier incomplet est légitime mais inhabituel.
+                          if (state === 'running') {
+                            const ok = window.confirm(
+                              'Le flow n\'est pas encore terminé — le fichier .' +
+                              (flow.id === 'enrich' ? 'enrich' : flow.id === 'audit' ? 'audit'
+                                : flow.id === 'signalement' ? 'err' : flow.id === 'stats' ? 'stat'
+                                : flow.id === 'annotation' ? 'annot' : 'txt') +
+                              ' contient seulement les triplets produits jusqu\'à maintenant. ' +
+                              '\n\nSoumettre maintenant quand même ?'
+                            );
+                            if (!ok) return;
+                          }
+                          const name = filePath.split(/[\\/]/).slice(-1)[0];
+                          setSubmitState('sending');
+                          setSubmitMsg('');
+                          try {
+                            const r = await fetch('api/productions/submit', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                names: [name],
+                                archived: false,
+                                api_key: params.drops_key || '',
+                                model_name: params.model || '',
+                              }),
+                            });
+                            const data = await r.json();
+                            const res = (data.results || [])[0] || {};
+                            if (res.ok) {
+                              setSubmitState('done');
+                              setSubmitMsg(`✓ uploadé sous ${res.uploaded_as || name} (HTTP ${res.status_code || '?'})`);
+                            } else {
+                              setSubmitState('error');
+                              setSubmitMsg(`✗ ${res.error || 'échec inconnu'}`);
+                            }
+                          } catch (e) {
+                            setSubmitState('error');
+                            setSubmitMsg(`✗ ${e.message || e}`);
+                          }
+                          // Auto-clear le message après 8s pour ne pas
+                          // bloquer l'UI si l'user veut retenter.
+                          setTimeout(() => {
+                            setSubmitState('idle'); setSubmitMsg('');
+                          }, 8000);
+                        }}>
+                        {submitState === 'sending' ? '⏳ Envoi…' : '📤 Soumettre'}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost"
+                      onClick={() => {
+                        const name = filePath.split(/[\\/]/).slice(-1)[0];
+                        const url = `api/productions/download?name=${encodeURIComponent(name)}`;
+                        const a = document.createElement('a');
+                        a.href = url; a.download = name;
+                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                      }}>
+                      ⬇ Télécharger
+                    </Button>
+                  </div>
+                )}
               </div>
+              {/* Toast discret du verdict de soumission post-hoc.
+                  Vert si succès, rose si erreur. Apparaît ~8s. */}
+              {submitMsg && (
+                <div className="fade-up" style={{
+                  padding: '6px 14px',
+                  fontFamily: 'var(--font-mono)', fontSize: 11,
+                  color: submitState === 'error' ? 'var(--jdm-magenta)' : 'var(--jdm-green)',
+                  borderBottom: '1px solid var(--line-soft)',
+                  background: 'var(--bg-elev)',
+                }}>{submitMsg}</div>
+              )}
               <div style={{
-                height: 420, overflowY: 'auto', padding: 12,
+                height: 420,
+                overflowY: 'auto',
+                padding: 0,
                 background: 'var(--bg-card)',
               }}>
-                {(() => {
+              {rightView === 'log' ? (
+                /* Vue Log : timeline mono-fontée avec timestamps + tags
+                   colorés par type d'event (start / file / accept / iter /
+                   reject / done / error). Source = `log` venant de
+                   JarvisStore (run.log) — strictement le même flux que la
+                   vue Cards, juste présenté autrement. */
+                <div ref={logRef} style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
+                  padding: 12, height: '100%', overflowY: 'auto',
+                }}>
+                  {(!log || log.length === 0) ? (
+                    <div style={{ color: 'var(--ink-3)', textAlign: 'center', padding: '40px 0' }}>
+                      {state === 'idle' ? 'En attente du lancement…' : '—'}
+                    </div>
+                  ) : log.map((l, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
+                      <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                      <span style={{
+                        flexShrink: 0,
+                        color: l.kind === 'tool' ? 'var(--accent)' :
+                               l.kind === 'accept' ? 'var(--jdm-green)' :
+                               l.kind === 'reject' ? 'var(--jdm-magenta)' :
+                               l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
+                        minWidth: 56,
+                      }}>{l.tag}</span>
+                      <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* Rendu unifié : on utilise ItemCard pour tous les flows.
+                    Enrich = items issus du registry de consolidation
+                    (subject/relation/target + explanation d'inférence) ;
+                    le rendu inclut l'explication en italique sous le
+                    triplet — comme pour annot/audit/err.
+                    Autres flows = items parsés depuis le file_preview. */
+                (() => {
+                  // Enrich : source registry (`accepted`) — déjà au format
+                  // ItemCard (cf. mapping SSE plus haut qui pose
+                  // type='consolidated' + explanation).
                   if (flow.id === 'enrich') {
                     if (accepted.length === 0) {
                       return (
-                        <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
-                          {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1er triplet consolide.'}
+                        <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
+                          {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
                         </div>
                       );
                     }
                     return (
-                      <div style={{ display: 'grid', gap: 8 }}>
-                        {accepted.map((a, i) => (<ItemCard key={i} item={a} accent={flow.accent} />))}
+                      <div style={{ display: 'grid', gap: 8, padding: 12 }}>
+                        {accepted.map((a, i) => (
+                          <ItemCard key={i} item={a} accent={flow.accent} />
+                        ))}
                       </div>
                     );
                   }
-                  const parsed = parseFilePreview(filePreview, flow.id);
-                  if (!parsed.items.length) {
+
+                  // Autres flows : on parse le file_preview.
+                  if (parsed.items.length === 0) {
                     return (
-                      <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '40px 0' }}>
+                      <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
                         {state === 'idle'
-                          ? 'Le panneau se remplira au fur et a mesure que le fichier est ecrit.'
-                          : 'En attente des premiers resultats.'}
+                          ? 'Le panneau se remplira au fur et à mesure que le fichier est écrit.'
+                          : 'En attente des premiers résultats…'}
                       </div>
                     );
                   }
                   return (
-                    <div style={{ display: 'grid', gap: 8 }}>
-                      {parsed.items.map((it, i) => (<ItemCard key={i} item={it} accent={flow.accent} />))}
+                    <div style={{ display: 'grid', gap: 8, padding: 12 }}>
+                      {parsed.items.map((it, i) => (
+                        <ItemCard key={i} item={it} accent={flow.accent} />
+                      ))}
                     </div>
                   );
-                })()}
-              </div>
-              {filePath && (
-                <div style={{
-                  padding: 10, borderTop: '1px solid var(--line-soft)',
-                  background: 'var(--bg-elev)', display: 'flex', gap: 6,
-                }}>
-                  <Button size="sm" variant="secondary"
-                    onClick={() => {
-                      const name = filePath.split(/[\\/]/).slice(-1)[0];
-                      const url = `api/productions/download?name=${encodeURIComponent(name)}`;
-                      const a = document.createElement('a');
-                      a.href = url; a.download = name;
-                      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                    }}>{'⬇'} Telecharger</Button>
-                </div>
+                })()
               )}
+              </div>
             </Card>
           </div>
+
         </div>
       </div>
     </PageShell>
   );
 }
+
+
 
 
 // ───── Status badge ─────
