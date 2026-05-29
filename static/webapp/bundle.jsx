@@ -8860,6 +8860,10 @@ function ProductionsSection({ title, files, archived, selected, setSelected,
     <div>
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 10,
+        // paddingLeft = padding gauche d'une ProductionsRow (10px 14px) →
+        // la checkbox « tout » s'aligne pile sur la colonne des checkboxes
+        // individuelles de chaque ligne en dessous.
+        paddingLeft: 14,
       }}>
         {/* Select-all subtile : checkbox + petit label "tout", devant le titre.
             Caché si pas de fichiers (rien à sélectionner). */}
