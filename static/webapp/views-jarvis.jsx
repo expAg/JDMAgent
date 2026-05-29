@@ -4172,8 +4172,35 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   // header « Tentative N ». Les events SSE brut (log)
                   // restent en pied de page pour les meta-evenements
                   // (start/done/error/cancelled/file).
+                  //
+                  // Triplet VALIDE = present dans store.accepted (registry
+                  // consolidation pour enrich) ou dans les items
+                  // parseFilePreview type=consolidated/audit_signalement.
+                  // On construit un Set de cles "term|rel|target" normalisees
+                  // pour pouvoir teinter chaque ligne tentative.
                   (() => {
                     const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+                    const _norm = (s) => (s == null ? '' : String(s)).trim().toLowerCase();
+                    const validatedSet = new Set();
+                    if (Array.isArray(accepted)) {
+                      for (const a of accepted) {
+                        const t = _norm(a.subject || a.term);
+                        const r = _norm(a.relation);
+                        const tg = _norm(a.target);
+                        if (t && r && tg) validatedSet.add(`${t}|${r}|${tg}`);
+                      }
+                    }
+                    // file_preview consolidated/audit_signalement items
+                    if (parsed && Array.isArray(parsed.items)) {
+                      for (const it of parsed.items) {
+                        if (it.type === 'consolidated' || it.type === 'audit_signalement') {
+                          const t = _norm(it.subject);
+                          const r = _norm(it.relation);
+                          const tg = _norm(it.target);
+                          if (t && r && tg) validatedSet.add(`${t}|${r}|${tg}`);
+                        }
+                      }
+                    }
                     // Parse les tool calls — on extrait data-tool, data-triplet
                     // (pose cote backend depuis tc.args.term/relation/target) et
                     // data-result. La vue Log affiche les TRIPLETS tentes, pas
@@ -4237,12 +4264,38 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                               // sans triplet (workflow init, write_submission_file).
                               const parts = it.triplet.split('|');
                               const [term, rel, target] = parts;
+                              // Check si ce triplet a fini par etre VALIDE (= present
+                              // dans le registry de consolidation enrich ou les items
+                              // consolidated du file_preview). Sans target on ne peut
+                              // pas valider strictement, on laisse neutre.
+                              const _key = (term && rel && target)
+                                ? `${term.trim().toLowerCase()}|${rel.trim().toLowerCase()}|${target.trim().toLowerCase()}`
+                                : null;
+                              const isValidated = _key && validatedSet.has(_key);
                               return (
                                 <div key={k} style={{
                                   display: 'flex', gap: 8, marginBottom: 3, alignItems: 'baseline',
                                   paddingLeft: 8, paddingRight: 8,
-                                }}>
-                                  <span style={{ flexShrink: 0, color: 'var(--accent)', fontSize: 10 }}>→</span>
+                                  // Teinte verte douce + liseré gauche quand valide.
+                                  // L'absence de fond et de bordure pour les non valides
+                                  // garde le visuel sobre par défaut.
+                                  background: isValidated
+                                    ? 'color-mix(in srgb, var(--jdm-green) 9%, transparent)'
+                                    : 'transparent',
+                                  borderLeft: isValidated
+                                    ? '2px solid var(--jdm-green)'
+                                    : '2px solid transparent',
+                                  borderRadius: '0 3px 3px 0',
+                                  paddingTop: 2, paddingBottom: 2,
+                                  transition: 'background .25s, border-color .25s',
+                                }} title={isValidated ? 'Triplet validé : passé en consolidation' : 'Triplet tenté'}>
+                                  <span style={{
+                                    flexShrink: 0, fontSize: 10,
+                                    color: isValidated ? 'var(--jdm-green)' : 'var(--accent)',
+                                    fontWeight: isValidated ? 700 : 400,
+                                  }}>
+                                    {isValidated ? '✓' : '→'}
+                                  </span>
                                   <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', wordBreak: 'break-word' }}>
                                     <span style={{ fontWeight: 600 }}>{term}</span>
                                     {rel && (<>
@@ -4254,6 +4307,14 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                                       <span style={{ fontWeight: 600 }}>{target}</span>
                                     </>)}
                                   </span>
+                                  {isValidated && (
+                                    <span className="mono" style={{
+                                      flexShrink: 0, fontSize: 8.5, fontWeight: 600,
+                                      padding: '1px 5px', borderRadius: 3,
+                                      background: 'var(--jdm-green)', color: 'var(--bg)',
+                                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                                    }}>validé</span>
+                                  )}
                                   <span style={{ flexShrink: 0, color: 'var(--ink-3)', fontSize: 9.5 }}>{it.tool}</span>
                                 </div>
                               );
