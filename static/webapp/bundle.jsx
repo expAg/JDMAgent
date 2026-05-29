@@ -8707,7 +8707,7 @@ function ViewProductions() {
       <ProductionsSection
         title={`Récents · ${recent.length}`}
         files={recent} archived={false}
-        selected={selectedRecent}
+        selected={selectedRecent} setSelected={setSelectedRecent}
         onToggle={toggle(selectedRecent, setSelectedRecent)}
         onPreview={openPreview}
         onDownload={downloadOne}
@@ -8742,7 +8742,7 @@ function ViewProductions() {
             <ProductionsSection
               title=""  /* le titre est déjà dans le summary */
               files={oldies} archived={true}
-              selected={selectedOldies}
+              selected={selectedOldies} setSelected={setSelectedOldies}
               onToggle={toggle(selectedOldies, setSelectedOldies)}
               onPreview={openPreview}
               onDownload={downloadOne}
@@ -8838,14 +8838,55 @@ function ViewProductions() {
   );
 }
 
-function ProductionsSection({ title, files, archived, selected, onToggle,
-                              onPreview, onDownload, onSubmit, onDelete,
-                              busy, isAdmin }) {
+function ProductionsSection({ title, files, archived, selected, setSelected,
+                              onToggle, onPreview, onDownload, onSubmit,
+                              onDelete, busy, isAdmin }) {
+  // Select-all : si tous sont sélectionnés → clear, sinon → tout sélectionner.
+  // Tri-état visuel : empty / indeterminate / checked.
+  const allSelected = files.length > 0 && selected.size === files.length;
+  const someSelected = selected.size > 0 && !allSelected;
+  const toggleAll = () => {
+    if (!setSelected) return;
+    setSelected(allSelected ? new Set() : new Set(files.map(f => f.name)));
+  };
+  // Pour l'état indeterminate, React n'a pas de prop checked='indeterminate'
+  // → on pose via ref + useEffect.
+  const allCbRef = useRef(null);
+  React.useEffect(() => {
+    if (allCbRef.current) allCbRef.current.indeterminate = someSelected;
+  }, [someSelected]);
+
   return (
     <div>
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 10,
       }}>
+        {/* Select-all subtile : checkbox + petit label "tout", devant le titre.
+            Caché si pas de fichiers (rien à sélectionner). */}
+        {files.length > 0 && setSelected && (
+          <label
+            title={allSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              cursor: 'pointer',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--ink-3)',
+              userSelect: 'none',
+            }}>
+            <input ref={allCbRef} type="checkbox"
+              checked={allSelected}
+              onChange={toggleAll}
+              style={{
+                accentColor: 'var(--accent)',
+                margin: 0,
+                cursor: 'pointer',
+              }} />
+            <span>tout</span>
+          </label>
+        )}
         {title && (
           <h2 className="display" style={{
             fontFamily: 'var(--font-display)',
@@ -8928,11 +8969,24 @@ function ProductionsRow({ file, archived, selected, onToggle, onPreview, onDownl
         textTransform: 'uppercase',
         flexShrink: 0,
       }}>{file.ext}</span>
-      <span className="mono" style={{
-        flex: 1, minWidth: 0,
-        fontSize: 13, color: 'var(--ink)',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>{file.name}</span>
+      {/* Cliquer sur le nom = toggle selection. cursor pointer + léger
+          hover underline pour l'affordance. Empêche d'avoir à viser la
+          petite checkbox quand on parcourt rapidement la liste. */}
+      <span
+        className="mono"
+        onClick={onToggle}
+        title={selected ? 'Désélectionner' : 'Sélectionner'}
+        style={{
+          flex: 1, minWidth: 0,
+          fontSize: 13, color: 'var(--ink)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          cursor: 'pointer',
+          userSelect: 'none',
+          transition: 'color 0.12s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+      >{file.name}</span>
       <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', flexShrink: 0 }}>
         {sizeKB}KB · {age}
       </span>
