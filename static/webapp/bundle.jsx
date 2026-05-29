@@ -5172,6 +5172,12 @@ function ViewSubgraph() {
   const [activeRelsD2, setActiveRelsD2] = useState(SUBGRAPH_DEFAULT_D2);
   const [activeRelsD3, setActiveRelsD3] = useState(SUBGRAPH_DEFAULT_D3);
   const [activeRelsD4, setActiveRelsD4] = useState(SUBGRAPH_DEFAULT_D4);
+  // design-pass-2 : les NiveauFilterCards passent de la sidebar à la
+  // colonne droite (grid horizontal au-dessus du viz). Un bouton
+  // global plier/déplier dans le header replie/déplie tous d'un coup,
+  // et le clic « Construire » auto-collapse + scroll au viz.
+  const vizRef = useRef(null);
+  const [levelsCollapsed, setLevelsCollapsed] = useState(false);
   // Rang max par relation : pour chaque type de relation distinct,
   // garde les N arêtes de plus fort poids. 0 = aucune relation
   // (le plus restrictif), 20 = très permissif. Négations toujours
@@ -5497,7 +5503,18 @@ function ViewSubgraph() {
               </Field>
             )}
             <div style={{ marginTop: 12 }}>
-              <Button full onClick={() => setRunVersion(v => v + 1)} disabled={loading}>
+              <Button full disabled={loading} onClick={() => {
+                setRunVersion(v => v + 1);
+                // design-pass-2 : auto-collapse les niveau filters
+                // pour libérer la vue, puis scroll au viz une fois
+                // le layout reflowé (~80ms).
+                setLevelsCollapsed(true);
+                setTimeout(() => {
+                  if (typeof scrollGroupIntoView === 'function' && vizRef.current) {
+                    try { scrollGroupIntoView(vizRef.current, vizRef.current); } catch {}
+                  }
+                }, 80);
+              }}>
                 {loading ? 'Construction…' : 'Reconstruire'}
               </Button>
               <div className="mono" style={{
@@ -5509,37 +5526,98 @@ function ViewSubgraph() {
             </div>
           </Card>
 
-          {/* Niveau 1 */}
-          <RelationFilterCard
-            label={`Niveau 1 — voisins (top-K ${topK})`}
-            topK={topK} setTopK={setTopK}
-            active={activeRels} setActive={setActiveRels}
-          />
-          {depth >= 2 && (
-            <RelationFilterCard
-              label={`Niveau 2 (top-K ${topKd2})`}
-              topK={topKd2} setTopK={setTopKd2}
-              active={activeRelsD2} setActive={setActiveRelsD2}
-            />
-          )}
-          {depth >= 3 && (
-            <RelationFilterCard
-              label={`Niveau 3 (top-K ${topKd3})`}
-              topK={topKd3} setTopK={setTopKd3}
-              active={activeRelsD3} setActive={setActiveRelsD3}
-            />
-          )}
-          {depth >= 4 && (
-            <RelationFilterCard
-              label={`Niveau 4 (top-K ${topKd4})`}
-              topK={topKd4} setTopK={setTopKd4}
-              active={activeRelsD4} setActive={setActiveRelsD4}
-            />
-          )}
+          {/* design-pass-2 : NiveauFilterCards ont migré dans la
+              colonne droite au-dessus du viz (cf. juste ci-dessous).
+              On laisse cette zone de sidebar dédiée à ConfigCard
+              uniquement → plus court, plus aéré. */}
         </div>
 
-        {/* Right: viz */}
-        <div>
+        {/* Right: niveau filters (header global plier/déplier) + viz */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+          {/* Niveau filter cards — grid horizontal, 1 par profondeur active.
+              Bouton global plier/déplier à droite du header. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '0 2px',
+            }}>
+              <div className="mono" style={{
+                fontSize: 11, color: 'var(--ink-3)',
+                textTransform: 'uppercase', letterSpacing: '0.1em',
+              }}>Filtres par niveau ({depth})</div>
+              <button
+                type="button"
+                onClick={() => setLevelsCollapsed(c => !c)}
+                className="focus-ring"
+                title={levelsCollapsed ? 'Déplier' : 'Plier'}
+                aria-label={levelsCollapsed ? 'Déplier tous les niveaux' : 'Plier tous les niveaux'}
+                aria-expanded={!levelsCollapsed}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '3px 8px',
+                  background: 'transparent',
+                  border: '1px solid var(--line)',
+                  borderRadius: 'var(--radius)',
+                  color: 'var(--ink-3)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10,
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                  transition: 'color 0.12s, border-color 0.12s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--ink)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; }}
+              >
+                {levelsCollapsed ? 'déplier' : 'plier'}
+                <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"
+                  style={{
+                    transform: levelsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.18s',
+                  }}>
+                  <path d="M2 4 L6 8 L10 4" stroke="currentColor" strokeWidth="1.4"
+                    fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${depth}, minmax(0, 1fr))`,
+              gap: 12,
+            }}>
+              <RelationFilterCard
+                label={`Niveau 1 — voisins (top-K ${topK})`}
+                topK={topK} setTopK={setTopK}
+                active={activeRels} setActive={setActiveRels}
+                collapsed={levelsCollapsed}
+              />
+              {depth >= 2 && (
+                <RelationFilterCard
+                  label={`Niveau 2 (top-K ${topKd2})`}
+                  topK={topKd2} setTopK={setTopKd2}
+                  active={activeRelsD2} setActive={setActiveRelsD2}
+                  collapsed={levelsCollapsed}
+                />
+              )}
+              {depth >= 3 && (
+                <RelationFilterCard
+                  label={`Niveau 3 (top-K ${topKd3})`}
+                  topK={topKd3} setTopK={setTopKd3}
+                  active={activeRelsD3} setActive={setActiveRelsD3}
+                  collapsed={levelsCollapsed}
+                />
+              )}
+              {depth >= 4 && (
+                <RelationFilterCard
+                  label={`Niveau 4 (top-K ${topKd4})`}
+                  topK={topKd4} setTopK={setTopKd4}
+                  active={activeRelsD4} setActive={setActiveRelsD4}
+                  collapsed={levelsCollapsed}
+                />
+              )}
+            </div>
+          </div>
+
           {error && (
             <div style={{
               padding: 16, marginBottom: 12,
@@ -5559,6 +5637,7 @@ function ViewSubgraph() {
             }}>{message}</div>
           )}
 
+          <div ref={vizRef}>
           <Card padding={0} style={{ overflow: 'hidden' }}>
             <div style={{
               display: 'flex', justifyContent: 'space-between',
@@ -5655,6 +5734,7 @@ function ViewSubgraph() {
               )}
             </div>
           </Card>
+          </div>
 
           {/* Stats below */}
           <div style={{
@@ -5685,7 +5765,7 @@ function ViewSubgraph() {
   );
 }
 
-function RelationFilterCard({ label, topK, setTopK, active, setActive }) {
+function RelationFilterCard({ label, topK, setTopK, active, setActive, collapsed = false }) {
   const toggle = (r) =>
     setActive((a) => a.includes(r) ? a.filter(x => x !== r) : [...a, r]);
   return (
@@ -5693,8 +5773,10 @@ function RelationFilterCard({ label, topK, setTopK, active, setActive }) {
       <div className="mono" style={{
         fontSize: 11, color: 'var(--ink-3)',
         textTransform: 'uppercase', letterSpacing: '0.1em',
-        marginBottom: 10,
+        marginBottom: collapsed ? 0 : 10,
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>{label}</div>
+      {!collapsed && (<>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px', gap: 8, marginBottom: 10 }}>
         <Slider value={topK} onChange={setTopK} min={1} max={15} step={1} />
       </div>
@@ -5718,6 +5800,7 @@ function RelationFilterCard({ label, topK, setTopK, active, setActive }) {
           );
         })}
       </div>
+      </>)}
     </Card>
   );
 }
