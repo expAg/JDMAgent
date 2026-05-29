@@ -190,7 +190,9 @@ def strip_thinking_blocks(messages: list, keep_last: bool = True) -> list:
 def build_relance_summary(messages: list, n_done: int, target: int,
                           relance_num: int,
                           max_relances: Optional[int] = None,
-                          unit: str = "triplet consolidé") -> str:
+                          unit: str = "triplet consolidé",
+                          canonical_path: Optional[str] = None,
+                          canonical_mode: Optional[str] = None) -> str:
     """Construit un résumé condensé pour le HumanMessage de relance.
 
     Au lieu de ré-injecter `accumulated_messages` complet (50-200 messages,
@@ -202,10 +204,23 @@ def build_relance_summary(messages: list, n_done: int, target: int,
     avec un brief propre, sans bagage cognitif.
 
     `unit` adapte le vocabulaire au flow courant (triplet consolidé /
-    annotation / verdict / suspect / …). Le repérage des triplets
-    « produits » via validate_candidate ne marche que pour le flow
-    enrich ; pour les autres flows ces listes restent vides mais les
-    messages STOP/RECOMMENCE sont corrects.
+    annotation / verdict / suspect / …).
+
+    `canonical_path` + `canonical_mode` (flow-aware) :
+      - mode "redirect" (annot/audit/err/stat) : `write_submission_file`
+        OVERWRITE le canonical à chaque appel. Si la relance wipe
+        l'historique LLM, le prochain appel du tool n'aura plus que
+        les items NOUVEAUX → écrasement des anciens sur disque. Pour
+        empêcher ça, on LIT le canonical depuis disque et on injecte
+        son contenu dans la section « Déjà produits », avec une
+        instruction EXPLICITE au LLM de RE-PASSER ces items aux côtés
+        des nouveaux lors du prochain `write_submission_file`.
+      - mode "auto_append" (enrich) : le canonical accumule en append
+        side-écriture, immune au wipe d'historique. On le lit quand
+        même pour fournir la liste exacte des triplets sur disque
+        (en supplément de ce que les tool calls disent).
+      - None : pas de fichier disponible, fallback ancien comportement
+        (consolidated extrait des validate_candidate uniquement).
     """
     consolidated: list[str] = []
     failed: list[str] = []
@@ -232,12 +247,63 @@ def build_relance_summary(messages: list, n_done: int, target: int,
             if t and r:
                 prefetched.add(f"{t} | {r}")
 
+    # FLOW-AWARE FIX : lire le canonical depuis disque et injecter ses
+    # lignes data dans la section « Déjà produits » — couvre les flows
+    # redirect (annot/audit/err/stat) où le LLM n'appelle pas
+    # validate_candidate et où l'overwrite à la prochaine écriture
+    # écraserait tout silencieusement.
+    canonical_lines: list[str] = []
+    if canonical_path:
+        try:
+            from pathlib import Path as _Path
+            _txt = _Path(canonical_path).read_text(encoding="utf-8")
+            for raw in _txt.splitlines():
+                s = raw.strip()
+                if not s or s.startswith("#") or s.startswith("="):
+                    continue
+                # On garde la ligne pipe brute — c'est le format que le LLM
+                # doit pouvoir re-passer textuellement.
+                if "|" in s:
+                    canonical_lines.append(s)
+        except (FileNotFoundError, OSError, UnicodeDecodeError):
+            pass
+
     missing = max(0, target - n_done)
     lines = [
         f"⛔ STOP. Tu as produit **{n_done}/{target} {unit}(s)** — il en manque "
         f"{missing}.",
     ]
-    if consolidated:
+    # Section « Déjà produits » : priorité au canonical sur disque (source
+    # de vérité, surtout en mode redirect où le LLM perd l'historique de
+    # ses appels write_submission_file après la condense de l'historique).
+    if canonical_lines:
+        lines.append("")
+        if canonical_mode == "redirect":
+            lines.append(
+                f"**Déjà écrits dans le fichier (PRÉSERVE-les ABSOLUMENT)** — "
+                f"{len(canonical_lines)} item(s) :"
+            )
+        else:
+            lines.append(
+                f"**Déjà produits (PRÉSERVE-les dans le fichier final)** — "
+                f"{len(canonical_lines)} item(s) :"
+            )
+        cap = 50
+        for ln in canonical_lines[:cap]:
+            lines.append(f"  ✅ {ln}")
+        if len(canonical_lines) > cap:
+            lines.append(f"  … (+ {len(canonical_lines) - cap} autres déjà sur disque)")
+        if canonical_mode == "redirect":
+            lines.append("")
+            lines.append(
+                "⚠️ **CRITIQUE pour la prochaine écriture** : `write_submission_file` "
+                "OVERWRITE le fichier à chaque appel dans ce flow. Quand tu "
+                "rappelles ce tool, tu DOIS lui passer la liste COMPLÈTE = ces "
+                f"{len(canonical_lines)} items ci-dessus + les nouveaux. Si tu ne "
+                "passes que les nouveaux, tu ÉCRASES les anciens."
+            )
+    elif consolidated:
+        # Fallback (pas de canonical, mais des validate_candidate dans l'historique)
         lines.append("")
         lines.append(f"**Déjà produits (PRÉSERVE-les dans le fichier final)** :")
         for c in consolidated:
@@ -314,6 +380,8 @@ def condense_history_with_nudge(
     count_fn: Optional[Any] = None,
     unit: str = "triplet consolidé",
     attempt: int = 0,
+    canonical_path: Optional[str] = None,
+    canonical_mode: Optional[str] = None,
 ) -> Optional[list]:
     """Condense `messages` en `[HumanMessage initial, HumanMessage(summary
     + nudge aléatoire)]` SI son poids dépasse `HISTORY_CONDENSE_THRESHOLD_CHARS`.
@@ -347,6 +415,7 @@ def condense_history_with_nudge(
             effective_target = consolidation_target or (n_so_far + 1)
         summary = build_relance_summary(
             messages, n_so_far, effective_target, attempt, None, unit=unit,
+            canonical_path=canonical_path, canonical_mode=canonical_mode,
         )
         nudge = _random.choice(_CONDENSE_NUDGE_VARIANTS)
         return [
@@ -1883,6 +1952,8 @@ def run_jarvis_flow(
                                     target=_tgt2, count_fn=_ctr2,
                                     unit=_u2 or "triplet consolidé",
                                     attempt=proactive_condense_count,
+                                    canonical_path=canonical_path,
+                                    canonical_mode=_canon_mode,
                                 )
                                 if condensed is not None:
                                     proactive_condense_count += 1
@@ -2272,6 +2343,8 @@ def run_jarvis_flow(
                                 target=_tgt3, count_fn=_ctr3,
                                 unit=_u3 or "triplet consolidé",
                                 attempt=rate_limit_attempts,
+                                canonical_path=canonical_path,
+                                canonical_mode=_canon_mode,
                             )
                             if condensed is not None:
                                 accumulated_messages = condensed
@@ -2353,6 +2426,8 @@ def run_jarvis_flow(
                 accumulated_messages, n_done, _tgt,
                 persistence_relances, max_persistence_relances,
                 unit=_unit or "triplet consolidé",
+                canonical_path=canonical_path,
+                canonical_mode=_canon_mode,
             )
             initial_human = accumulated_messages[0]  # HumanMessage(prompt)
             accumulated_messages = [
