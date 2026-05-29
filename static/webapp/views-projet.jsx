@@ -1520,7 +1520,7 @@ function FeatureDetailPanel({ f, goto, onClose }) {
 // (le bouton ▶ play). Le bouton du QT lui-même ne fait plus de fetch —
 // il navigue vers la vue du module (event jdm:goto) et laisse l'API
 // call au play ▶ de la CliTerminalBlock juste en-dessous.
-function ModuleQuickTry({ config, form, setForm, onNavigate }) {
+function ModuleQuickTry({ config, form, setForm, onNavigate, onRunInline }) {
   if (!config) return null;
   switch (config.kind) {
     case 'select-and-term':
@@ -1530,7 +1530,9 @@ function ModuleQuickTry({ config, form, setForm, onNavigate }) {
     case 'term-and-depth':
       return <QTTermAndDepth config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
     case 'triplet':
-      return <QTTriplet config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
+      // Cas spécial INLINE — pas de navigation, on appelle l'API sur place
+      // et on affiche la verdict dans le panneau du form.
+      return <QTTriplet config={config} form={form} setForm={setForm} onRunInline={onRunInline} />;
     case 'term-and-relation':
       return <QTTermAndRelation config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
     default:
@@ -1601,15 +1603,33 @@ function ModuleQuickTryAndCli({ moduleId, config }) {
   // est posé sur window.__jdmPendingTerm pour les vues qui le lisent
   // (subgraph). Le `payload` complet va dans window.__jdmPendingPayload
   // pour les vues qui l'utilisent à terme.
+  // Note : pour les vues qui auto-trigger après la navigation (chat, jarvis),
+  // on veut PRÉ-REMPLIR mais PAS lancer — le user reste maître du moment.
+  // Les vues cibles lisent leur payload au mount et ne déclenchent rien
+  // automatiquement.
   const onNavigate = () => {
     const detail = { view: moduleId, payload: form };
     if (form.term) detail.term = form.term;
     window.dispatchEvent(new CustomEvent('jdm:goto', { detail }));
   };
 
+  // onRunInline (claim only) : déclenche config.mock SUR PLACE et renvoie
+  // la verdict, qui sera affichée dans le panneau QT lui-même (pas de
+  // navigation). Pour le claim checker — fact-check rapide et déterministe,
+  // ça n'a pas de sens de changer de page.
+  const onRunInline = config?.mock ? async () => {
+    const args = formToArgs(form, config.kind);
+    return await config.mock(...args);
+  } : null;
+
   return (
     <>
-      <ModuleQuickTry config={config} form={form} setForm={setForm} onNavigate={onNavigate} />
+      <ModuleQuickTry
+        config={config}
+        form={form}
+        setForm={setForm}
+        onNavigate={onNavigate}
+        onRunInline={onRunInline} />
       {(CLI_COMMANDS[moduleId] || REMOTE_COMMANDS[moduleId]) && (
         <div style={{ marginTop: 16 }}>
           <CliTerminalBlock
@@ -1785,7 +1805,10 @@ function QTSelectAndTerm({ config, form, setForm, onNavigate }) {
     <div style={QT_PANEL}>
       <Select value={form.flow} onChange={v => setForm(s => ({ ...s, flow: v }))} options={config.options} />
       <Input value={form.term} onChange={v => setForm(s => ({ ...s, term: v }))} placeholder="terme" />
-      <QTRunButton onClick={onNavigate} label="Lancer le flux" />
+      {/* Préparer = navigation + pré-remplissage, l'utilisateur lance
+          lui-même depuis l'onglet Jarvis (un flux est long, on évite
+          le clic involontaire). */}
+      <QTRunButton onClick={onNavigate} label="Préparer dans Jarvis" />
     </div>
   );
 }
@@ -1797,7 +1820,10 @@ function QTPrompt({ config, form, setForm, onNavigate }) {
         <Select value={form.model} onChange={v => setForm(s => ({ ...s, model: v }))} options={config.models} />
       )}
       <Input value={form.q} onChange={v => setForm(s => ({ ...s, q: v }))} placeholder={config.placeholder} />
-      <QTRunButton onClick={onNavigate} label="Envoyer" />
+      {/* Pas "Envoyer" — on ouvre le chat avec le message pré-rempli
+          mais on ne l'envoie PAS. L'utilisateur clique Envoyer côté
+          chatbot quand il veut. */}
+      <QTRunButton onClick={onNavigate} label="Ouvrir le chat" />
     </div>
   );
 }
@@ -1817,15 +1843,61 @@ function QTTermAndDepth({ config, form, setForm, onNavigate }) {
   );
 }
 
-function QTTriplet({ config, form, setForm, onNavigate }) {
+function QTTriplet({ config, form, setForm, onRunInline }) {
+  const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const isVerdict = out && typeof out === 'object';
+  const rootRef = useRef(null);
+  const tailRef = useRef(null);
+
+  const onVerify = async () => {
+    if (!onRunInline || loading) return;
+    setLoading(true);
+    try {
+      const r = await onRunInline();
+      setOut(r);
+      // Smooth-scroll pour amener la verdict + chaîne d'inférence dans
+      // la viewport (le panneau s'agrandit en bas).
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (rootRef.current && typeof scrollGroupIntoView === 'function') {
+            try { scrollGroupIntoView(rootRef.current, tailRef.current || rootRef.current); } catch {}
+          }
+        }, 30);
+      });
+    } catch (e) {
+      setOut(`⚠️ ${e.message || e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div style={QT_PANEL}>
+    <div ref={rootRef} style={QT_PANEL}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
         <Input value={form.s} onChange={v => setForm(st => ({ ...st, s: v }))} placeholder="sujet" />
         <Input value={form.r} onChange={v => setForm(st => ({ ...st, r: v }))} placeholder="relation" />
         <Input value={form.o} onChange={v => setForm(st => ({ ...st, o: v }))} placeholder="objet" />
       </div>
-      <QTRunButton onClick={onNavigate} label="Vérifier" />
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <div style={{ alignSelf: 'flex-start' }}>
+          <Button size="sm" onClick={onVerify} disabled={loading}>
+            {loading ? '⏳ vérification…' : 'Vérifier'}
+          </Button>
+        </div>
+        {out && (
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {isVerdict
+              ? <QTPreview node={<ClaimVerdictHeader result={out} />} onClose={() => setOut(null)} />
+              : <QTPreview text={out} onClose={() => setOut(null)} />}
+          </div>
+        )}
+      </div>
+      {isVerdict && (out.chain?.length > 0 || out.note || out.confidence != null) && (
+        <div ref={tailRef} data-detail-content>
+          <QTPreview node={<ClaimVerdictChain result={out} />} />
+        </div>
+      )}
     </div>
   );
 }

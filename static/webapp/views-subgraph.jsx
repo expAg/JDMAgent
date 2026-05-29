@@ -478,14 +478,20 @@ function LiveAnimWrapper({ term, nodes, edges, layout, onRecenter }) {
 }
 
 function ViewSubgraph() {
-  // Si Explorer a navigué vers nous via jdm:goto, on récupère son terme.
-  const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || 'plat asiatique';
+  // Si Explorer ou Projet a navigué vers nous via jdm:goto, on récupère
+  // son terme et (depuis Projet) sa profondeur. Lu une fois au mount.
+  const _pending = (typeof window !== 'undefined'
+                    && window.__jdmPendingPayload?.subgraph) || null;
+  if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
+    delete window.__jdmPendingPayload.subgraph;
+  }
+  const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || _pending?.term || 'plat asiatique';
   if (typeof window !== 'undefined') window.__jdmPendingTerm = null;
   const [term, setTerm] = useState(initialTerm);
   // Défauts choisis pour le mode LIVE : profondeur 2 + Niveau 1 top-K=1
   // (= un voisin par type de relation, garde l'arbre lisible) + Niveau 2
   // top-K=3 (un peu plus de matière à explorer en profondeur).
-  const [depth, setDepth] = useState(2);
+  const [depth, setDepth] = useState(_pending?.depth || 2);
   const [topK, setTopK] = useState(1);
   const [topKd2, setTopKd2] = useState(3);
   const [topKd3, setTopKd3] = useState(3);

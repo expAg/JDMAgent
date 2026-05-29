@@ -21,9 +21,16 @@ const EXPLORE_RELATIONS = [
 ];
 
 function ViewExplorer() {
+  // Pré-remplissage depuis Projet › Quick try (term, rel). Lu une fois
+  // au mount puis nettoyé. Pas d'auto-fetch ici — le user clique « Lister ».
+  const _pending = (typeof window !== 'undefined'
+                    && window.__jdmPendingPayload?.explorer) || null;
+  if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
+    delete window.__jdmPendingPayload.explorer;
+  }
   // Defaults alignés sur la branche deploy-self : chat / r_isa / 25 / 20 / true.
-  const [term, setTerm] = useState('chat');
-  const [rel, setRel] = useState('r_isa');
+  const [term, setTerm] = useState(_pending?.term || 'chat');
+  const [rel, setRel] = useState(_pending?.rel || 'r_isa');
   const [minWeight, setMinWeight] = useState(25);
   const [limit, setLimit] = useState(20);
   const [annotations, setAnnotations] = useState(true);

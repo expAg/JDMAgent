@@ -64,7 +64,13 @@ const SUBMITTABLE_FLOWS = new Set(['enrich', 'audit', 'signalement',
                                     'stats', 'annotation']);
 
 function ViewJarvis() {
-  const [active, setActive] = useState(null);
+  // Pré-remplissage depuis Projet › Quick try : si l'utilisateur a cliqué
+  // « Préparer dans Jarvis » avec un flow + terme, on bascule directement
+  // sur ce flow (le terme est consommé par JarvisRun via une seconde lecture
+  // du payload — gardé sur window jusqu'au mount de JarvisRun).
+  const _pending = (typeof window !== 'undefined'
+                    && window.__jdmPendingPayload?.jarvis) || null;
+  const [active, setActive] = useState(_pending?.flow || null);
   if (active) {
     const idx = JARVIS_FLOWS.findIndex(f => f.id === active);
     const flow = JARVIS_FLOWS[idx];
@@ -173,7 +179,21 @@ function LoopGlyph({ color }) {
 
 // ───── Run view — Sse-driven ─────
 function JarvisRun({ flow, nextFlow, onBack, onNext }) {
-  const [params, setParams] = useState(defaultParamsFor(flow.id));
+  // Pré-remplissage du `term` depuis Projet › Quick try (si présent).
+  // Consommation et nettoyage du payload au mount. PAS de lancement
+  // automatique — l'utilisateur clique « Lancer » lui-même.
+  const _pending = (typeof window !== 'undefined'
+                    && window.__jdmPendingPayload?.jarvis) || null;
+  if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
+    delete window.__jdmPendingPayload.jarvis;
+  }
+  const [params, setParams] = useState(() => {
+    const base = defaultParamsFor(flow.id);
+    if (_pending?.term && typeof base === 'object') {
+      return { ...base, term: _pending.term };
+    }
+    return base;
+  });
   const [state, setState] = useState('idle'); // idle | running | done | error
   const [log, setLog] = useState([]);
   const [metrics, setMetrics] = useState({

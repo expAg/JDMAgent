@@ -11,11 +11,20 @@ const AGENT_MODELS = [
 ];
 
 function ViewAgent() {
-  const [model, setModel] = useState('gemini-3.1-flash-lite');
+  // Pré-remplissage depuis Projet › Quick try : si l'utilisateur a cliqué
+  // « Ouvrir le chat » avec un prompt et un modèle, on les charge ici
+  // SANS envoyer (le user clique Envoyer lui-même). Lu une seule fois
+  // au mount, puis le payload est nettoyé.
+  const _pending = (typeof window !== 'undefined'
+                    && window.__jdmPendingPayload?.agent) || null;
+  if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
+    delete window.__jdmPendingPayload.agent;
+  }
+  const [model, setModel] = useState(_pending?.model || 'gemini-3.1-flash-lite');
   const [thinking, setThinking] = useState(true);
   const [apiKey, setApiKey] = useState('');
   const [convo, setConvo] = useState([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(_pending?.q || '');
   const [streaming, setStreaming] = useState(false);
   const [poolStatus, setPoolStatus] = useState(null);
   const chatScrollRef = useRef(null);
