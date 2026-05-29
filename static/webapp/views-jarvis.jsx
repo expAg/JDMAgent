@@ -2071,12 +2071,13 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   }, [active]);
 
   const live = flows.map((f, i) => computeFlowLive(f, i, tick, serverRuns, localActiveSet));
+  // Aggregats reels : iter cumule (sum des iter detectes par flux),
+  // tools cumule, accepted cumule. Aucune valeur fabriquee.
   const agg = live.reduce((a, l) => ({
-    iter: a.iter + l.iter,
-    tools: a.tools + l.tools,
-    accepted: a.accepted + l.accepted,
-    rejected: a.rejected + l.rejected,
-  }), { iter: 0, tools: 0, accepted: 0, rejected: 0 });
+    iter:     a.iter + (l.iter || 0),
+    tools:    a.tools + (l.tools || 0),
+    accepted: a.accepted + (l.accepted || 0),
+  }), { iter: 0, tools: 0, accepted: 0 });
 
   // Compteur "Flux actifs" base sur les runs serveur reellement running/starting.
   const activeCount = serverRuns.filter(r => r.status === 'running' || r.status === 'starting').length;
@@ -2197,52 +2198,107 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
   const isServerRunning = latest && (latest.status === 'running' || latest.status === 'starting');
   const isRunning = isLocallyRunning || isServerRunning;
 
-  // Metriques reelles : on prefere le store local (a jour live via SSE).
-  // Si pas de run local mais un run serveur existe, on s'appuie sur ce
-  // qu'on connait (counters a 0 par defaut, headline pour signaler la
-  // presence). Pour les flux non instancies, tout est 0.
   const m = (store && store.metrics) || { toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0 };
   const tools = m.toolsCalled || 0;
-  const accepted = m.accepted || 0;
-  // On ne dispose pas d'un compteur de rejets reel cote backend ; on l'estime
-  // a partir du log (entries kind='reject') si le store local le tient.
-  const rejected = store ? (store.log || []).filter(l => l.kind === 'reject').length : 0;
+  const narration = (store && store.narrationHTML) || '';
 
-  // Pseudo "iteration" — on n'a pas non plus de compteur dedie. On compose
-  // a partir de tools+accepted+rejected pour avoir un nombre qui monte
-  // visiblement quand l'agent bosse, et qui reste cumulatif.
-  const iter = tools + accepted + rejected;
+  // iter REEL : 1 (run initial) + nombre de relances de persistance
+  // detectees dans la narration. Le backend pousse "🔁 Relance automatique
+  // N" via _add_line lors de chaque persistance_relances++. On compte ces
+  // markers — c'est la vraie metrique d'iteration de l'agent.
+  const relances = (narration.match(/🔁 Relance automatique/g) || []).length;
+  const iter = Math.max(1, 1 + relances);
+
+  // Y reel : si l'utilisateur a fixe un budget numerique, c'est Y. Sinon
+  // pas de Y montre (juste "iter X").
   const dp = (typeof defaultParamsFor === 'function' && defaultParamsFor(flow.id)) || {};
-  const span = Math.max(1, dp.target_count || dp.maxIter || Math.max(8, iter + 2));
-  const pct = Math.min(100, Math.round((accepted / span) * 100));
+  const budgetCap = dp.budget_label && /^\d+$/.test(String(dp.budget_label)) ? parseInt(dp.budget_label, 10) : null;
+  const target = dp.target_count || null;
+  // span = ce qui sert au "X / Y" du label iter X/Y. On prefere
+  // target_count (le user a dit "je veux N items") sur budgetCap.
+  const span = target || budgetCap || null;
 
-  // Step actif : si en cours, on cycle ; sinon on fige sur la 1re etape.
-  const stepIdx = isRunning ? (tick + i) % Math.max(1, flow.steps.length) : 0;
+  // accepted / rejected REELS via parseFilePreview du file_preview qui
+  // contient le contenu reellement ecrit cote backend. Pour enrich on
+  // s'appuie sur store.accepted (= registry de consolidation, source
+  // canonique). Pour les autres flows on classe les items parses :
+  //   ok types (consolidated, sens) → accepted
+  //   not-ok types (flagged, signalement, audit_signalement) → rejected
+  let accepted = 0, rejected = 0, items = [];
+  if (flow.id === 'enrich' && Array.isArray(store && store.accepted)) {
+    accepted = store.accepted.length;
+    items = store.accepted;
+  }
+  if (store && store.filePreview) {
+    const parsed = parseFilePreview(store.filePreview, flow.id);
+    if (flow.id !== 'enrich') {
+      for (const it of parsed.items) {
+        if (it.type === 'flagged' || it.type === 'signalement' || it.type === 'audit_signalement') rejected++;
+        else accepted++;
+      }
+      items = parsed.items;
+    } else {
+      // pour enrich on ajoute juste le compte de signalements eventuels
+      // (rare : enrich ne signale pas, mais defense en profondeur)
+      for (const it of parsed.items) {
+        if (it.type === 'flagged' || it.type === 'signalement') rejected++;
+      }
+    }
+  }
+  const produced = accepted;
+  const pct = span ? Math.min(100, Math.round((produced / span) * 100)) : null;
 
-  // Recent = derniers items consolides/annotes/flagges, formates pour
-  // s'afficher dans la mini-list de la carte. On prend les 3 derniers
-  // accepted items du store, sinon parse depuis filePreview pour les
-  // flows redirect (annot/audit/err) qui n'utilisent pas accepted.
+  // Step ACTIF REEL : on inspecte la narration pour le DERNIER tool
+  // mentionne et on lookup son etape via FLOW_TOOL_STEPS. Pattern de
+  // narration : `🔧 \`tool_name(...)\`` ou `🔗 ...` ou `📖 ...` selon
+  // _narrate_tool_call cote jarvis.py. On extrait le nom de tool avec
+  // une regex sur \`(\w+)\(.
+  let stepIdx = -1;
+  if (isRunning && narration) {
+    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+    const re = /`(\w+)\(/g;
+    let mm, lastIdx = -1;
+    while ((mm = re.exec(narration)) !== null) {
+      if (fts[mm[1]] !== undefined) lastIdx = fts[mm[1]];
+    }
+    if (lastIdx >= 0) stepIdx = lastIdx;
+  }
+
+  // Recent items : 3 derniers items avec leur LABEL reel ET un TAG
+  // contextuel (= remplace l'ancien score "1.00" fictif). Le tag est
+  // derive du type d'item :
+  //   enrich consolidated → schema (isa-trans, trans, …) ou "✓"
+  //   annot consolidated → category (constitutif, contrastif, …)
+  //   annot signalement → JDM≠LLM
+  //   audit verdict → verdict (LEGITIME, CONTRASTIF, …)
+  //   err flagged → category (semantique, polarite, …)
   let recent = [];
-  if (store && Array.isArray(store.accepted) && store.accepted.length > 0) {
-    recent = store.accepted.slice(-3).map((a, k) => ({
-      key: 'a' + (iter - k),
-      cand: { label: a.label || `${a.subject || ''} | ${a.relation || ''} | ${a.target || ''}`,
-              s: 1.0, ok: true },
+  if (flow.id === 'enrich' && Array.isArray(items) && items.length > 0) {
+    recent = items.slice(-3).map((a, k) => ({
+      key: 'a' + k,
+      label: a.label || `${a.subject || ''} | ${a.relation || ''} | ${a.target || ''}`,
+      tag: (a.schema || '').replace(/^isa_?/, 'isa-') || 'consolidé',
+      ok: true,
     }));
   } else if (store && store.filePreview) {
     const parsed = parseFilePreview(store.filePreview, flow.id);
-    recent = parsed.items.slice(-3).map((it, k) => ({
-      key: 'p' + (iter - k),
-      cand: {
+    recent = parsed.items.slice(-3).map((it, k) => {
+      const tag = it.type === 'flagged'           ? (it.category || 'suspect')
+                : it.type === 'signalement'        ? 'JDM≠LLM'
+                : it.type === 'audit_signalement'  ? (it.verdict || 'verdict')
+                : it.type === 'consolidated'       ? (it.category || 'ok')
+                : it.type === 'sens'               ? 'sens'
+                : it.type;
+      return {
+        key: 'p' + k,
         label: `${it.subject || ''} | ${it.relation || ''} | ${it.target || ''}`,
-        s: 1.0,
-        ok: it.type !== 'flagged' && it.type !== 'signalement',
-      },
-    }));
+        tag,
+        ok: it.type !== 'flagged' && it.type !== 'signalement' && it.type !== 'audit_signalement',
+      };
+    });
   }
 
-  return { iter, span, accepted, rejected, tools, recent, stepIdx, pct,
+  return { iter, span, tools, accepted, rejected, produced, pct, recent, stepIdx,
            isRunning, headline: (store && store.headline) || (latest && latest.headline) || '' };
 }
 
@@ -2317,7 +2373,10 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
         )}
       </div>
 
-      {/* step pipeline — active step highlighted */}
+      {/* Step pipeline — etape active highlightee. Detection REELLE :
+          on lookup le dernier tool mentionne dans la narration LLM via
+          FLOW_TOOL_STEPS pour savoir a quelle etape on en est. -1 = aucun
+          tool reconnu encore, ou flow au repos. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 15px 12px', flexWrap: 'wrap' }}>
         {flow.steps.map((s, k) => {
           const isActive = live.isRunning && k === live.stepIdx;
@@ -2341,21 +2400,32 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
         })}
       </div>
 
-      {/* progress toward the stop criterion */}
+      {/* iter X / Y : X = 1 + relances de persistance (parses depuis la
+          narration LLM, "🔁 Relance automatique" markers). Y =
+          target_count s'il est defini, sinon budget cap, sinon rien. */}
       <div style={{ padding: '0 15px 12px' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between',
           fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-3)', marginBottom: 5,
         }}>
-          <span>iter <strong style={{ color: 'var(--ink)' }}>{live.iter}</strong> / {live.span}</span>
+          <span>
+            iter <strong style={{ color: 'var(--ink)' }}>{live.iter}</strong>
+            {live.span && <> / {live.span}</>}
+          </span>
           <span style={{ color: a }}>{flow.produces}</span>
         </div>
         <div style={{ height: 5, borderRadius: 999, background: 'var(--bg-elev)', overflow: 'hidden' }}>
-          <div style={{ width: `${live.pct}%`, height: '100%', background: a, borderRadius: 999, transition: 'width .6s cubic-bezier(.4,0,.2,1)' }} />
+          <div style={{
+            width: `${live.pct != null ? live.pct : Math.min(100, live.iter * 8)}%`,
+            height: '100%', background: a, borderRadius: 999,
+            transition: 'width .6s cubic-bezier(.4,0,.2,1)',
+          }} />
         </div>
       </div>
 
-      {/* mini metrics */}
+      {/* 3 mini-metriques : acceptés (vert), rejetés (magenta), outils.
+          - enrich : acceptes = consolidation registry, rejetes = signalements (rare).
+          - autres : acceptes = items "ok", rejetes = items "flagged/signalement". */}
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1,
         background: 'var(--line-soft)',
@@ -2366,14 +2436,18 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
         <JMini label="outils"   value={live.tools} />
       </div>
 
-      {/* live result stream */}
+      {/* Stream live des derniers items. Le chip a droite (la place du
+          "1.00" du design) montre un TAG CONTEXTUEL REEL : schema pour
+          enrich, category pour annot, verdict pour audit, JDM≠LLM pour
+          signalement, etc. — pas un score fabrique. */}
       <div style={{ padding: '10px 15px 6px', flex: 1 }}>
         <div className="mono" style={{
           fontSize: 9.5, color: 'var(--ink-3)',
           textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 7,
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
-          <span className="pulse-dot" style={{ background: a, width: 5, height: 5 }} /> flux en direct
+          {live.isRunning && <span className="pulse-dot" style={{ background: a, width: 5, height: 5 }} />}
+          {live.isRunning ? 'flux en direct' : 'derniers items'}
         </div>
         <div style={{ display: 'grid', gap: 4, minHeight: 78 }}>
           {live.recent.length === 0 ? (
@@ -2383,16 +2457,23 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
             }}>
               {live.isRunning ? 'En attente du 1er resultat…' : 'Aucun resultat encore.'}
             </div>
-          ) : live.recent.map(({ key, cand }) => (
+          ) : live.recent.map(({ key, label, tag, ok }) => (
             <div key={key} className="fade-up" style={{
               display: 'flex', alignItems: 'center', gap: 7,
               padding: '5px 8px', borderRadius: 'var(--radius)',
               background: 'var(--bg-elev)', border: '1px solid var(--line-soft)',
               fontFamily: 'var(--font-mono)', fontSize: 10.5,
             }}>
-              <span style={{ flexShrink: 0, color: cand.ok ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>{cand.ok ? '✓' : '✕'}</span>
-              <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cand.label}</span>
-              <span style={{ flexShrink: 0, color: 'var(--ink-3)' }}>{(cand.s || 0).toFixed(2)}</span>
+              <span style={{ flexShrink: 0, color: ok ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>{ok ? '✓' : '!'}</span>
+              <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+              {tag && (
+                <span style={{
+                  flexShrink: 0, color: 'var(--ink-3)', fontSize: 9.5,
+                  padding: '1px 6px', borderRadius: 4,
+                  background: 'var(--bg-card)', border: '1px solid var(--line-soft)',
+                  maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }} title={String(tag)}>{tag}</span>
+              )}
             </div>
           ))}
         </div>
@@ -3493,11 +3574,12 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const [submitState, setSubmitState] = useState('idle');
   const [submitMsg, setSubmitMsg] = useState('');
 
-  // Vue alternative du panneau droit : 'cards' (défaut, ItemCard avec
-  // explications) ↔ 'log' (timeline mono-fontée avec timestamps + tags
-  // colorés). Le toggle apparaît dans l'en-tête du panneau, à côté de
-  // « Télécharger ».
-  const [rightView, setRightView] = useState('cards');
+  // Vue alternative du panneau GAUCHE (Narration LLM) :
+  //   'narration' (défaut, markdown HTML rendu — pensées + tool calls
+  //   formatés par le backend) ↔ 'log' (timeline mono-fontée avec
+  //   timestamps + tags colorés). Le toggle apparaît dans le header
+  //   du panneau Narration. Le panneau droit (ItemCard) reste constant.
+  const [leftView, setLeftView] = useState('narration');
 
   // Pool status pour griser les Gemini blown dans le dropdown modèle.
   React.useEffect(() => {
@@ -3848,23 +3930,65 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                 tools, consolidations) — c'est notre VRAI log temps réel. */}
             <Card padding={0} style={{ overflow: 'hidden' }}>
               <div style={{
-                display: 'flex', justifyContent: 'space-between',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 padding: '10px 14px',
                 background: 'var(--bg-elev)',
                 borderBottom: '1px solid var(--line-soft)',
+                gap: 8,
               }}>
                 <div className="mono" style={{
                   fontSize: 11, color: 'var(--ink-3)',
                   textTransform: 'uppercase', letterSpacing: '0.1em',
-                }}>Narration LLM</div>
-                {state === 'running' && <span className="pulse-dot" style={{ background: flow.accent }} />}
+                }}>
+                  {leftView === 'log' ? 'Log temps réel' : 'Narration LLM'}
+                </div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  {state === 'running' && <span className="pulse-dot" style={{ background: flow.accent }} />}
+                  {/* Toggle Narration / Log — bascule l'affichage du panneau
+                      gauche entre :
+                      - Narration LLM (défaut) : markdown HTML rendu (pensées
+                        + tool calls formatés par le backend, c'est notre
+                        vrai « live » de l'agent)
+                      - Log temps réel : timeline mono-fontée avec timestamps
+                        + tags colorés par type d'event SSE (start/file/done/
+                        error/cancelled)
+                      Même flux de données ; seule la présentation change. */}
+                  <div style={{
+                    display: 'inline-flex',
+                    background: 'var(--bg-card)', border: '1px solid var(--line)',
+                    borderRadius: 999, padding: 2,
+                  }}>
+                    {[
+                      { id: 'narration', label: 'Narration' },
+                      { id: 'log',       label: 'Log' },
+                    ].map(t => {
+                      const active = leftView === t.id;
+                      return (
+                        <button key={t.id} type="button"
+                          onClick={() => setLeftView(t.id)}
+                          className="focus-ring"
+                          style={{
+                            padding: '3px 10px', borderRadius: 999,
+                            border: 'none', cursor: 'pointer',
+                            background: active ? flow.accent : 'transparent',
+                            color: active ? 'var(--bg)' : 'var(--ink-3)',
+                            fontFamily: 'var(--font-mono)', fontSize: 10,
+                            textTransform: 'uppercase', letterSpacing: '0.06em',
+                            fontWeight: active ? 600 : 500,
+                            transition: 'background .18s, color .18s',
+                          }}>{t.label}</button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
               <div ref={logRef} className="jdm-narration-pane" style={{
                 height: 420,
                 overflowY: 'auto',
-                padding: 14,
+                padding: leftView === 'log' ? 12 : 14,
                 background: 'var(--bg-card)',
-                fontSize: 13,
+                fontFamily: leftView === 'log' ? 'var(--font-mono)' : 'inherit',
+                fontSize: leftView === 'log' ? 11 : 13,
                 lineHeight: 1.55,
                 color: 'var(--ink)',
               }}>
@@ -3873,13 +3997,26 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                     {state === 'idle' ? 'En attente du lancement…' : '—'}
                   </div>
                 )}
-                {narrationHTML ? (
-                  // Le contenu sortant du LLM est markdown + parfois
-                  // des divs HTML <jdm-narration> embeddés (trace
-                  // d'outils). marked.js préserve les blocs HTML
-                  // inline → la trace reste structurée, mais les
-                  // titres / listes / **gras** / `code` se rendent
-                  // correctement (cf. chatbot et enrich qui font pareil).
+                {leftView === 'log' ? (
+                  // Vue Log : timeline mono-fontée des events SSE bruts.
+                  (log || []).map((l, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
+                      <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                      <span style={{
+                        flexShrink: 0,
+                        color: l.kind === 'tool' ? 'var(--accent)' :
+                               l.kind === 'accept' ? 'var(--jdm-green)' :
+                               l.kind === 'reject' ? 'var(--jdm-magenta)' :
+                               l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
+                        minWidth: 56,
+                      }}>{l.tag}</span>
+                      <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                    </div>
+                  ))
+                ) : narrationHTML ? (
+                  // Vue Narration : markdown + HTML <jdm-narration> inline
+                  // rendus par marked.js (la trace d'outils reste structurée,
+                  // les **gras** / `code` / listes se rendent correctement).
                   <div className="jdm-prose"
                        dangerouslySetInnerHTML={{ __html: renderMarkdownJarvis(narrationHTML) }} />
                 ) : (
@@ -3923,39 +4060,6 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                       · {filePath.split(/[\\/]/).slice(-1)[0]}
                     </span>
                   )}
-                </div>
-                {/* Toggle Cards / Log — bascule l'affichage du panneau
-                    droit entre cartes ItemCard (défaut, riche : triplet
-                    + explication d'inférence) et timeline mono-fontée
-                    style « log temps réel » (timestamps + tags colorés
-                    par type d'event). Le contenu est le MÊME, seule la
-                    présentation change. */}
-                <div style={{
-                  display: 'inline-flex', flexShrink: 0,
-                  background: 'var(--bg-card)', border: '1px solid var(--line)',
-                  borderRadius: 999, padding: 2, marginRight: 6,
-                }}>
-                  {[
-                    { id: 'cards', label: 'Cards' },
-                    { id: 'log',   label: 'Log' },
-                  ].map(t => {
-                    const active = rightView === t.id;
-                    return (
-                      <button key={t.id} type="button"
-                        onClick={() => setRightView(t.id)}
-                        className="focus-ring"
-                        style={{
-                          padding: '3px 10px', borderRadius: 999,
-                          border: 'none', cursor: 'pointer',
-                          background: active ? flow.accent : 'transparent',
-                          color: active ? 'var(--bg)' : 'var(--ink-3)',
-                          fontFamily: 'var(--font-mono)', fontSize: 10,
-                          textTransform: 'uppercase', letterSpacing: '0.06em',
-                          fontWeight: active ? 600 : 500,
-                          transition: 'background .18s, color .18s',
-                        }}>{t.label}</button>
-                    );
-                  })}
                 </div>
                 {/* Télécharger le fichier brut — appelle l'API
                     /api/productions/download avec le basename. */}
@@ -4064,43 +4168,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                 padding: 0,
                 background: 'var(--bg-card)',
               }}>
-              {rightView === 'log' ? (
-                /* Vue Log : timeline mono-fontée avec timestamps + tags
-                   colorés par type d'event (start / file / accept / iter /
-                   reject / done / error). Source = `log` venant de
-                   JarvisStore (run.log) — strictement le même flux que la
-                   vue Cards, juste présenté autrement. */
-                <div ref={logRef} style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55,
-                  padding: 12, height: '100%', overflowY: 'auto',
-                }}>
-                  {(!log || log.length === 0) ? (
-                    <div style={{ color: 'var(--ink-3)', textAlign: 'center', padding: '40px 0' }}>
-                      {state === 'idle' ? 'En attente du lancement…' : '—'}
-                    </div>
-                  ) : log.map((l, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
-                      <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
-                      <span style={{
-                        flexShrink: 0,
-                        color: l.kind === 'tool' ? 'var(--accent)' :
-                               l.kind === 'accept' ? 'var(--jdm-green)' :
-                               l.kind === 'reject' ? 'var(--jdm-magenta)' :
-                               l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
-                        minWidth: 56,
-                      }}>{l.tag}</span>
-                      <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                /* Rendu unifié : on utilise ItemCard pour tous les flows.
-                    Enrich = items issus du registry de consolidation
-                    (subject/relation/target + explanation d'inférence) ;
-                    le rendu inclut l'explication en italique sous le
-                    triplet — comme pour annot/audit/err.
-                    Autres flows = items parsés depuis le file_preview. */
-                (() => {
+              {(() => {
                   // Enrich : source registry (`accepted`) — déjà au format
                   // ItemCard (cf. mapping SSE plus haut qui pose
                   // type='consolidated' + explanation).
@@ -4138,8 +4206,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                       ))}
                     </div>
                   );
-                })()
-              )}
+              })()}
               </div>
             </Card>
           </div>
