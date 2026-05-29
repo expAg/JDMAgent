@@ -738,48 +738,52 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
 // Hidden on the Projet view (where the whole product is presented, not a tool).
 // Click → popover with the command + copy button. Styled monospace,
 // dark on light themes and slate on dark themes.
+// CLI commands — vraies entrées `python -m jdm_agent.apps.*` du projet.
+// Chaque app vit dans src/jdm_agent/apps/ et fait l'objet de tests
+// unitaires + smoke réels (cf. tests/test_*).
 const CLI_COMMANDS = {
-  explorer:    { cmd: 'app.py explore --term "voiture" --relation r_isa --limit 50',
-                 hint: 'Liste les triplets autour d\'un terme.' },
-  claim:       { cmd: 'app.py claim --triplet "baleine | r_isa | poisson" --effort 0',
-                 hint: 'Vérifie un triplet : SUPPORTED / CONTRADICTED / UNKNOWN.' },
-  subgraph:    { cmd: 'app.py subgraph --term "voiture" --depth 3 --format html',
-                 hint: 'Construit le voisinage sémantique en HTML interactif.' },
-  agent:       { cmd: 'app.py chat --model gemini-3.1-flash-lite',
-                 hint: 'Lance le chat LLM avec accès aux outils JDM.' },
-  jarvis:      { cmd: 'app.py jarvis --flow enrich --term "voiture" --target 20',
-                 hint: 'Exécute un flux Jarvis (enrich, audit, gap, signalement, stats).' },
-  productions: { cmd: 'app.py productions --list --status pending',
-                 hint: 'Liste les fichiers de production prêts à soumettre.' },
-  aide:        { cmd: 'app.py --help',
-                 hint: 'Affiche l\'aide complète et la liste des commandes.' },
+  explorer:    { cmd: 'python -c "from jdm_agent.client import JDMClient; c=JDMClient(); print(c.relations_from(\'voiture\').relations[:5])"',
+                 hint: 'Inspect direct via JDMClient — pas de CLI dédiée (cache disque inclus).' },
+  claim:       { cmd: 'python -m jdm_agent.apps.factcheck --claim "baleine r_isa poisson" --effort 1',
+                 hint: 'Vérifie un triplet : SUPPORTED / CONTRADICTED / UNKNOWN avec chaîne d\'évidence.' },
+  subgraph:    { cmd: 'python -m jdm_agent.apps.viz_cli --term "voiture" --depth 2 --format html',
+                 hint: 'Construit le voisinage sémantique en HTML autonome (vis-network).' },
+  agent:       { cmd: 'python -m jdm_agent.apps.qa_cli --provider gemini --model gemini-3.1-flash-lite',
+                 hint: 'REPL chat LLM avec outils JDM. ANTHROPIC_API_KEY / GOOGLE_API_KEY dans l\'env.' },
+  jarvis:      { cmd: 'python -m jdm_agent.apps.enrich --terms voiture --consolidate --inference-effort 1',
+                 hint: 'Flux Enrichissement complet — proposer, valider, consolider, écrire le .enrich.' },
+  productions: { cmd: 'ls /tmp/jdm_outputs/ && cat /tmp/jdm_outputs/*.enrich | head -20',
+                 hint: 'Liste les fichiers produits (.enrich/.annot/.audit/.err/.stat).' },
+  aide:        { cmd: 'python -m jdm_agent.apps.enrich --help',
+                 hint: 'Affiche les flags de chacune des CLI (--help fonctionne sur tous les modules).' },
 };
 
-// Remote API equivalents — Gradio client snippets (Python) hitting the
-// hosted endpoint for each module. Shown when the user toggles the
-// remote pill in the Modules detail panel.
+// Remote API equivalents — vrais endpoints FastAPI du projet (depuis
+// la migration). Snippets Python via `httpx` (déjà dépendance) ou
+// curl en alternative. Pas de gradio_client — le backend est FastAPI
+// pur. Endpoint host = celui du déploiement (LIRMM, HF Space, etc.).
 const REMOTE_COMMANDS = {
   explorer:    { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("voiture", "r_isa", 50, api_name="/explore")',
-                 hint: 'Endpoint /explore — accès distant à JDM.' },
+                 cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/explore", json={\n    "term": "voiture",\n    "relation": "r_isa",\n    "limit": 50,\n    "min_weight": 25\n})\nprint(r.json())',
+                 hint: 'POST /api/explore — triplets bruts {nodes, edges, relations}.' },
   claim:       { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("baleine", "r_isa", "poisson", 0, api_name="/claim")',
-                 hint: 'Endpoint /claim — verdict déterministe distant.' },
+                 cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/factcheck", json={\n    "subject": "baleine",\n    "relation": "r_isa",\n    "object": "poisson",\n    "effort": 1\n})\nprint(r.json())',
+                 hint: 'POST /api/factcheck — verdict + chaîne d\'inférence.' },
   subgraph:    { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("voiture", depth=3, fmt="html", api_name="/subgraph")',
-                 hint: 'Endpoint /subgraph — renvoie l\'HTML autonome.' },
+                 cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/subgraph", json={\n    "term": "voiture",\n    "depth": 2,\n    "top_k": 3,\n    "format": "json"\n})\nprint(r.json())',
+                 hint: 'POST /api/subgraph — nodes/edges JSON ou HTML (format="html").' },
   agent:       { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nfor chunk in client.submit("quels sens de \\"voiture\\" ?", api_name="/chat"):\n    print(chunk, end="")',
-                 hint: 'Endpoint /chat — agent LLM + outils JDM, streaming.' },
+                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/agent/stream",\n        json={"message": "quels sens de voiture ?",\n              "model": "gemini-3.1-flash-lite"}) as r:\n    for line in r.iter_lines():\n        if line.startswith("data:"): print(line[5:].strip())',
+                 hint: 'POST /api/agent/stream — SSE streaming (events: chunk, tool, done).' },
   jarvis:      { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict(flow="enrich", term="voiture", target=20, api_name="/jarvis")',
-                 hint: 'Endpoint /jarvis — lance un flux guidé sur le serveur.' },
+                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/jarvis/enrich/stream",\n        json={"params": {"term": "voiture", "target_count": 20,\n                          "iterate": True, "budget_label": "50"}}) as r:\n    for line in r.iter_lines():\n        if line.startswith("event:"): print(line)',
+                 hint: 'POST /api/jarvis/{enrich|audit|gap|annotation|stats}/stream — SSE.' },
   productions: { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict(status="pending", api_name="/productions")',
-                 hint: 'Endpoint /productions — liste les fichiers prêts.' },
+                 cmd: 'import httpx\n\nr = httpx.get("http://localhost:7860/api/productions")\nfor p in r.json().get("files", []):\n    print(p["name"], p["size"], p["mtime"])',
+                 hint: 'GET /api/productions — liste tous les fichiers produits.' },
   aide:        { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nprint(client.view_api())',
-                 hint: 'Imprime la liste de tous les endpoints exposés.' },
+                 cmd: 'import httpx\n\nr = httpx.get("http://localhost:7860/openapi.json")\nschema = r.json()\nfor path, methods in schema["paths"].items():\n    for method in methods:\n        print(f"{method.upper():6} {path}")',
+                 hint: 'GET /openapi.json — schéma OpenAPI complet (ou /docs pour UI Swagger).' },
 };
 
 // ───────── Reusable terminal block — same look as the CLI popover,
@@ -2152,7 +2156,39 @@ function ViewProjet({ goto }) {
           ],
           defaultValue: 'enrich',
           termDefault: 'voiture',
-          mock: (flow, term) => `→ Lancement ${flow} sur "${term}" — ETA ~45s · cible 20 triplets`,
+          // Quick-try Jarvis : hit /api/jarvis/{flow}/stream et capte
+          // les 1res messages SSE (~5s) pour montrer un vrai démarrage,
+          // sans laisser tourner le flow complet (budget min).
+          mock: async (flow, term) => {
+            const ctrl = new AbortController();
+            const timeoutId = setTimeout(() => ctrl.abort(), 8000);
+            try {
+              const r = await fetch(`api/jarvis/${flow}/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  params: { term, target_count: 5, budget_label: '10', model: 'gemini-3.1-flash-lite' }
+                }),
+                signal: ctrl.signal,
+              });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const reader = r.body.getReader();
+              const dec = new TextDecoder();
+              let received = '', events = 0;
+              while (events < 3) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                received += dec.decode(value);
+                events = (received.match(/event:/g) || []).length;
+              }
+              try { await reader.cancel(); } catch {}
+              const headlineMatch = received.match(/event: headline\s*\ndata: ({.*})/);
+              const headline = headlineMatch ? JSON.parse(headlineMatch[1]).text : '(en cours)';
+              return `→ Flow ${flow} démarré sur « ${term} »\n${headline}\n(${events} events SSE reçus, connexion fermée — ouvrir l'onglet Jarvis pour la suite)`;
+            } finally {
+              clearTimeout(timeoutId);
+            }
+          },
         },
       },
     },
@@ -2177,7 +2213,44 @@ function ViewProjet({ goto }) {
             { value: 'llama-4-70b',           label: 'Llama 4 70B · local' },
           ],
           defaultModel: 'gemini-3.1-flash-lite',
-          mock: (q, model) => `agent (${model}) → recherche dans JDM (r_agent-1, r_mange) → 4 triplets retournés · w_moyen=621`,
+          // Quick-try Chatbot : appel SSE /api/agent/stream, capture les
+          // premiers chunks de la réponse (~10s max) puis ferme.
+          mock: async (q, model) => {
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 12000);
+            try {
+              const r = await fetch('api/agent/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: q, model, use_thinking: false }),
+                signal: ctrl.signal,
+              });
+              if (!r.ok) throw new Error(`HTTP ${r.status} — vérifier la clé API du modèle`);
+              const reader = r.body.getReader();
+              const dec = new TextDecoder();
+              let buf = '', text = '', toolCalls = 0;
+              const t0 = Date.now();
+              while (Date.now() - t0 < 10000) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += dec.decode(value);
+                const re = /event:\s*(\w+)\s*\ndata:\s*({.*})/g;
+                let m;
+                while ((m = re.exec(buf)) !== null) {
+                  try {
+                    const d = JSON.parse(m[2]);
+                    if (m[1] === 'chunk' && d.text) text += d.text;
+                    else if (m[1] === 'tool') toolCalls++;
+                  } catch {}
+                }
+                if (text.length > 400) break;
+              }
+              try { await reader.cancel(); } catch {}
+              return `${model} (premiers ${text.length} chars, ${toolCalls} appels outils)\n\n${text.slice(0, 400)}${text.length > 400 ? '…' : ''}`;
+            } finally {
+              clearTimeout(tid);
+            }
+          },
         },
       },
     },
@@ -2194,7 +2267,22 @@ function ViewProjet({ goto }) {
           kind: 'term-and-depth',
           termDefault: 'voiture',
           depthDefault: 2,
-          mock: (term, depth) => `→ ${term} · depth=${depth} · ~${Math.floor(8 + depth * 12)} arcs estimés`,
+          // Quick-try Sous-graphe : appel /api/subgraph format=json,
+          // affiche les compteurs réels nodes/edges/negatives.
+          mock: async (term, depth) => {
+            const r = await fetch('api/subgraph', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ term, depth, top_k: 3, format: 'json' }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const d = await r.json();
+            const s = d.stats || {};
+            const n = s.n_nodes ?? (d.nodes?.length || 0);
+            const e = s.n_edges ?? (d.edges?.length || 0);
+            const neg = s.n_negative ?? 0;
+            return `→ ${term} · depth=${depth}\n${n} nœuds · ${e} arêtes · ${neg} négations\nOuvrir l'onglet Sous-graphe pour le rendu interactif.`;
+          },
         },
       },
     },
@@ -2210,35 +2298,36 @@ function ViewProjet({ goto }) {
         quickTry: {
           kind: 'triplet',
           defaults: { s: 'baleine', r: 'r_isa', o: 'mammifère' },
-          mock: (s, r, o) => {
-            const key = `${s}|${r}|${o}`.toLowerCase();
-            if (s === 'baleine' && o === 'mammifère') {
-              return {
-                verdict: 'SUPPORTED', confidence: 0.92,
-                triplet: { s, r, o },
-                chain: [
-                  { from: 'baleine', rel: 'r_isa', to: 'cétacé',    w: 2014 },
-                  { from: 'cétacé',  rel: 'r_isa', to: 'mammifère', w: 1421 },
-                ],
-                note: '2 hops · transitivité de r_isa',
-              };
-            }
-            if (s === 'baleine' && o === 'poisson') {
-              return {
-                verdict: 'CONTRADICTED', confidence: 0.88,
-                triplet: { s, r, o },
-                chain: [
-                  { from: 'baleine', rel: 'r_isa',       to: 'mammifère', w: 1421 },
-                  { from: 'baleine', rel: 'r_isa_not',   to: 'poisson',   w:  734, neg: true },
-                ],
-                note: 'négation explicite trouvée (r_isa_not)',
-              };
-            }
+          // Quick-try Claim checker : POST /api/factcheck avec effort=1
+          // (déduction par inférence). Renvoie {verdict, confidence,
+          // chain, note} comme attendu par ClaimVerdictHeader/Chain.
+          mock: async (s, r, o) => {
+            const resp = await fetch('api/factcheck', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                subject: s, relation: r, object: o, effort: 1,
+              }),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const d = await resp.json();
+            // Normalise le format pour les composants Verdict :
+            //   d.status ∈ {SUPPORTED, CONTRADICTED, UNKNOWN}
+            //   d.evidence: list[{subject, relation, target, weight, negative}]
+            const chain = (d.evidence || []).map(ev => ({
+              from: ev.subject || ev.source,
+              rel:  ev.relation,
+              to:   ev.target || ev.object,
+              w:    Math.round(Math.abs(ev.weight || 0)),
+              neg:  !!ev.negative,
+            }));
             return {
-              verdict: 'UNKNOWN', confidence: 0,
+              verdict: d.status || d.verdict || 'UNKNOWN',
+              confidence: d.confidence ?? 0,
               triplet: { s, r, o },
-              chain: [],
-              note: 'aucune chaîne d\'inférence (≤ k=2) ni triplet direct',
+              chain,
+              note: d.explanation || d.note ||
+                    (d.inference_schema ? `Inféré via schéma ${d.inference_schema}` : 'Contenance directe JDM'),
             };
           },
         },
@@ -2257,7 +2346,29 @@ function ViewProjet({ goto }) {
           kind: 'term-and-relation',
           termDefault: 'chat',
           relationDefault: 'r_has_part',
-          mock: (term, rel) => `→ ${term} | ${rel} → 12 triplets · 1ers : tête (w=1842) · patte (w=1721) · queue (w=1640)`,
+          // Quick-try Explorer : POST /api/explore et formate les 3
+          // premiers triplets par poids décroissant.
+          mock: async (term, rel) => {
+            const r = await fetch('api/explore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                term, relation: rel, limit: 20, min_weight: 25
+              }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const d = await r.json();
+            const triplets = d.triplets || d.relations || [];
+            if (triplets.length === 0) {
+              return `→ ${term} | ${rel} → aucun triplet (≥ poids 25). Essayer min_weight=0 ou un autre terme.`;
+            }
+            const top = triplets.slice(0, 3).map(t => {
+              const tgt = t.target || t.target_display || t.to || '?';
+              const w = t.w ?? t.weight ?? 0;
+              return `${tgt} (w=${Math.round(Math.abs(w))})`;
+            }).join(' · ');
+            return `→ ${term} | ${rel} → ${triplets.length} triplets\nTop 3 : ${top}`;
+          },
         },
       },
     },
@@ -3506,23 +3617,41 @@ function ClaimVerdictBlock({ result }) {
   );
 }
 
-function QTRunButton({ onClick, label = 'Tester' }) {
+function QTRunButton({ onClick, label = 'Tester', loading = false }) {
   return (
     <div style={{ alignSelf: 'flex-start' }}>
-      <Button size="sm" onClick={onClick}>{label}</Button>
+      <Button size="sm" onClick={onClick} disabled={loading}>
+        {loading ? '⏳ ' + label.replace(/^([A-ZÉ])/, m => m.toLowerCase()) + '…' : label}
+      </Button>
     </div>
   );
+}
+
+// Helper async — exécute config.mock (qui retourne maintenant une
+// Promise hits le vrai backend), gère loading + erreurs.
+async function _runQT(fn, args, setOut, setLoading) {
+  setLoading(true);
+  try {
+    const r = await fn(...args);
+    setOut(r);
+  } catch (e) {
+    setOut(`⚠️ ${e.message || e}`);
+  } finally {
+    setLoading(false);
+  }
 }
 
 function QTSelectAndTerm({ config }) {
   const [flow, setFlow] = useState(config.defaultValue);
   const [term, setTerm] = useState(config.termDefault);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       <Select value={flow} onChange={setFlow} options={config.options} />
       <Input value={term} onChange={setTerm} placeholder="terme" />
-      <QTRunButton onClick={() => setOut(config.mock(flow, term))} label="Simuler le flux" />
+      <QTRunButton onClick={() => _runQT(config.mock, [flow, term], setOut, setLoading)}
+                   loading={loading} label="Lancer le flux" />
       <QTPreview text={out} />
     </div>
   );
@@ -3532,17 +3661,15 @@ function QTPrompt({ config }) {
   const [q, setQ] = useState(config.defaultValue);
   const [model, setModel] = useState(config.defaultModel || (config.models?.[0]?.value));
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       {config.models && (
-        <Select
-          value={model}
-          onChange={setModel}
-          options={config.models}
-        />
+        <Select value={model} onChange={setModel} options={config.models} />
       )}
       <Input value={q} onChange={setQ} placeholder={config.placeholder} />
-      <QTRunButton onClick={() => setOut(config.mock(q, model))} label="Envoyer" />
+      <QTRunButton onClick={() => _runQT(config.mock, [q, model], setOut, setLoading)}
+                   loading={loading} label="Envoyer" />
       <QTPreview text={out} />
     </div>
   );
@@ -3552,6 +3679,7 @@ function QTTermAndDepth({ config }) {
   const [term, setTerm] = useState(config.termDefault);
   const [depth, setDepth] = useState(config.depthDefault);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       <Input value={term} onChange={setTerm} placeholder="terme" />
@@ -3561,7 +3689,8 @@ function QTTermAndDepth({ config }) {
           <Slider min={1} max={4} step={1} value={depth} onChange={setDepth} />
         </div>
       </div>
-      <QTRunButton onClick={() => setOut(config.mock(term, depth))} label="Construire" />
+      <QTRunButton onClick={() => _runQT(config.mock, [term, depth], setOut, setLoading)}
+                   loading={loading} label="Construire" />
       <QTPreview text={out} />
     </div>
   );
@@ -3572,20 +3701,28 @@ function QTTriplet({ config }) {
   const [r, setR] = useState(config.defaults.r);
   const [o, setO] = useState(config.defaults.o);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   const isVerdict = out && typeof out === 'object';
   const rootRef = useRef(null);
   const tailRef = useRef(null);
 
   // After clicking Vérifier, smooth-scroll so the whole result (header +
   // inference chain) is fully visible.
-  const onVerify = () => {
-    setOut(config.mock(s, r, o));
-    requestAnimationFrame(() => {
-      // Wait a beat so React renders the new chain block, then center.
-      setTimeout(() => {
-        if (rootRef.current) scrollGroupIntoView(rootRef.current, tailRef.current || rootRef.current);
-      }, 30);
-    });
+  const onVerify = async () => {
+    setLoading(true);
+    try {
+      const r2 = await config.mock(s, r, o);
+      setOut(r2);
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (rootRef.current) scrollGroupIntoView(rootRef.current, tailRef.current || rootRef.current);
+        }, 30);
+      });
+    } catch (e) {
+      setOut(`⚠️ ${e.message || e}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -3596,7 +3733,7 @@ function QTTriplet({ config }) {
         <Input value={o} onChange={setO} placeholder="objet" />
       </div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <QTRunButton onClick={onVerify} label="Vérifier" />
+        <QTRunButton onClick={onVerify} loading={loading} label="Vérifier" />
         {out && (
           <div style={{ flex: 1, minWidth: 0 }}>
             {isVerdict
@@ -3618,13 +3755,15 @@ function QTTermAndRelation({ config }) {
   const [term, setTerm] = useState(config.termDefault);
   const [rel, setRel] = useState(config.relationDefault);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <Input value={term} onChange={setTerm} placeholder="terme" />
         <Input value={rel} onChange={setRel} placeholder="relation" />
       </div>
-      <QTRunButton onClick={() => setOut(config.mock(term, rel))} label="Lister" />
+      <QTRunButton onClick={() => _runQT(config.mock, [term, rel], setOut, setLoading)}
+                   loading={loading} label="Lister" />
       <QTPreview text={out} />
     </div>
   );

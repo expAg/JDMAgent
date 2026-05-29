@@ -737,48 +737,52 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
 // Hidden on the Projet view (where the whole product is presented, not a tool).
 // Click → popover with the command + copy button. Styled monospace,
 // dark on light themes and slate on dark themes.
+// CLI commands — vraies entrées `python -m jdm_agent.apps.*` du projet.
+// Chaque app vit dans src/jdm_agent/apps/ et fait l'objet de tests
+// unitaires + smoke réels (cf. tests/test_*).
 const CLI_COMMANDS = {
-  explorer:    { cmd: 'app.py explore --term "voiture" --relation r_isa --limit 50',
-                 hint: 'Liste les triplets autour d\'un terme.' },
-  claim:       { cmd: 'app.py claim --triplet "baleine | r_isa | poisson" --effort 0',
-                 hint: 'Vérifie un triplet : SUPPORTED / CONTRADICTED / UNKNOWN.' },
-  subgraph:    { cmd: 'app.py subgraph --term "voiture" --depth 3 --format html',
-                 hint: 'Construit le voisinage sémantique en HTML interactif.' },
-  agent:       { cmd: 'app.py chat --model gemini-3.1-flash-lite',
-                 hint: 'Lance le chat LLM avec accès aux outils JDM.' },
-  jarvis:      { cmd: 'app.py jarvis --flow enrich --term "voiture" --target 20',
-                 hint: 'Exécute un flux Jarvis (enrich, audit, gap, signalement, stats).' },
-  productions: { cmd: 'app.py productions --list --status pending',
-                 hint: 'Liste les fichiers de production prêts à soumettre.' },
-  aide:        { cmd: 'app.py --help',
-                 hint: 'Affiche l\'aide complète et la liste des commandes.' },
+  explorer:    { cmd: 'python -c "from jdm_agent.client import JDMClient; c=JDMClient(); print(c.relations_from(\'voiture\').relations[:5])"',
+                 hint: 'Inspect direct via JDMClient — pas de CLI dédiée (cache disque inclus).' },
+  claim:       { cmd: 'python -m jdm_agent.apps.factcheck --claim "baleine r_isa poisson" --effort 1',
+                 hint: 'Vérifie un triplet : SUPPORTED / CONTRADICTED / UNKNOWN avec chaîne d\'évidence.' },
+  subgraph:    { cmd: 'python -m jdm_agent.apps.viz_cli --term "voiture" --depth 2 --format html',
+                 hint: 'Construit le voisinage sémantique en HTML autonome (vis-network).' },
+  agent:       { cmd: 'python -m jdm_agent.apps.qa_cli --provider gemini --model gemini-3.1-flash-lite',
+                 hint: 'REPL chat LLM avec outils JDM. ANTHROPIC_API_KEY / GOOGLE_API_KEY dans l\'env.' },
+  jarvis:      { cmd: 'python -m jdm_agent.apps.enrich --terms voiture --consolidate --inference-effort 1',
+                 hint: 'Flux Enrichissement complet — proposer, valider, consolider, écrire le .enrich.' },
+  productions: { cmd: 'ls /tmp/jdm_outputs/ && cat /tmp/jdm_outputs/*.enrich | head -20',
+                 hint: 'Liste les fichiers produits (.enrich/.annot/.audit/.err/.stat).' },
+  aide:        { cmd: 'python -m jdm_agent.apps.enrich --help',
+                 hint: 'Affiche les flags de chacune des CLI (--help fonctionne sur tous les modules).' },
 };
 
-// Remote API equivalents — Gradio client snippets (Python) hitting the
-// hosted endpoint for each module. Shown when the user toggles the
-// remote pill in the Modules detail panel.
+// Remote API equivalents — vrais endpoints FastAPI du projet (depuis
+// la migration). Snippets Python via `httpx` (déjà dépendance) ou
+// curl en alternative. Pas de gradio_client — le backend est FastAPI
+// pur. Endpoint host = celui du déploiement (LIRMM, HF Space, etc.).
 const REMOTE_COMMANDS = {
   explorer:    { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("voiture", "r_isa", 50, api_name="/explore")',
-                 hint: 'Endpoint /explore — accès distant à JDM.' },
+                 cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/explore", json={\n    "term": "voiture",\n    "relation": "r_isa",\n    "limit": 50,\n    "min_weight": 25\n})\nprint(r.json())',
+                 hint: 'POST /api/explore — triplets bruts {nodes, edges, relations}.' },
   claim:       { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("baleine", "r_isa", "poisson", 0, api_name="/claim")',
-                 hint: 'Endpoint /claim — verdict déterministe distant.' },
+                 cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/factcheck", json={\n    "subject": "baleine",\n    "relation": "r_isa",\n    "object": "poisson",\n    "effort": 1\n})\nprint(r.json())',
+                 hint: 'POST /api/factcheck — verdict + chaîne d\'inférence.' },
   subgraph:    { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("voiture", depth=3, fmt="html", api_name="/subgraph")',
-                 hint: 'Endpoint /subgraph — renvoie l\'HTML autonome.' },
+                 cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/subgraph", json={\n    "term": "voiture",\n    "depth": 2,\n    "top_k": 3,\n    "format": "json"\n})\nprint(r.json())',
+                 hint: 'POST /api/subgraph — nodes/edges JSON ou HTML (format="html").' },
   agent:       { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nfor chunk in client.submit("quels sens de \\"voiture\\" ?", api_name="/chat"):\n    print(chunk, end="")',
-                 hint: 'Endpoint /chat — agent LLM + outils JDM, streaming.' },
+                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/agent/stream",\n        json={"message": "quels sens de voiture ?",\n              "model": "gemini-3.1-flash-lite"}) as r:\n    for line in r.iter_lines():\n        if line.startswith("data:"): print(line[5:].strip())',
+                 hint: 'POST /api/agent/stream — SSE streaming (events: chunk, tool, done).' },
   jarvis:      { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict(flow="enrich", term="voiture", target=20, api_name="/jarvis")',
-                 hint: 'Endpoint /jarvis — lance un flux guidé sur le serveur.' },
+                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/jarvis/enrich/stream",\n        json={"params": {"term": "voiture", "target_count": 20,\n                          "iterate": True, "budget_label": "50"}}) as r:\n    for line in r.iter_lines():\n        if line.startswith("event:"): print(line)',
+                 hint: 'POST /api/jarvis/{enrich|audit|gap|annotation|stats}/stream — SSE.' },
   productions: { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict(status="pending", api_name="/productions")',
-                 hint: 'Endpoint /productions — liste les fichiers prêts.' },
+                 cmd: 'import httpx\n\nr = httpx.get("http://localhost:7860/api/productions")\nfor p in r.json().get("files", []):\n    print(p["name"], p["size"], p["mtime"])',
+                 hint: 'GET /api/productions — liste tous les fichiers produits.' },
   aide:        { lang: 'python',
-                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nprint(client.view_api())',
-                 hint: 'Imprime la liste de tous les endpoints exposés.' },
+                 cmd: 'import httpx\n\nr = httpx.get("http://localhost:7860/openapi.json")\nschema = r.json()\nfor path, methods in schema["paths"].items():\n    for method in methods:\n        print(f"{method.upper():6} {path}")',
+                 hint: 'GET /openapi.json — schéma OpenAPI complet (ou /docs pour UI Swagger).' },
 };
 
 // ───────── Reusable terminal block — same look as the CLI popover,

@@ -207,7 +207,39 @@ function ViewProjet({ goto }) {
           ],
           defaultValue: 'enrich',
           termDefault: 'voiture',
-          mock: (flow, term) => `→ Lancement ${flow} sur "${term}" — ETA ~45s · cible 20 triplets`,
+          // Quick-try Jarvis : hit /api/jarvis/{flow}/stream et capte
+          // les 1res messages SSE (~5s) pour montrer un vrai démarrage,
+          // sans laisser tourner le flow complet (budget min).
+          mock: async (flow, term) => {
+            const ctrl = new AbortController();
+            const timeoutId = setTimeout(() => ctrl.abort(), 8000);
+            try {
+              const r = await fetch(`api/jarvis/${flow}/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  params: { term, target_count: 5, budget_label: '10', model: 'gemini-3.1-flash-lite' }
+                }),
+                signal: ctrl.signal,
+              });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const reader = r.body.getReader();
+              const dec = new TextDecoder();
+              let received = '', events = 0;
+              while (events < 3) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                received += dec.decode(value);
+                events = (received.match(/event:/g) || []).length;
+              }
+              try { await reader.cancel(); } catch {}
+              const headlineMatch = received.match(/event: headline\s*\ndata: ({.*})/);
+              const headline = headlineMatch ? JSON.parse(headlineMatch[1]).text : '(en cours)';
+              return `→ Flow ${flow} démarré sur « ${term} »\n${headline}\n(${events} events SSE reçus, connexion fermée — ouvrir l'onglet Jarvis pour la suite)`;
+            } finally {
+              clearTimeout(timeoutId);
+            }
+          },
         },
       },
     },
@@ -232,7 +264,44 @@ function ViewProjet({ goto }) {
             { value: 'llama-4-70b',           label: 'Llama 4 70B · local' },
           ],
           defaultModel: 'gemini-3.1-flash-lite',
-          mock: (q, model) => `agent (${model}) → recherche dans JDM (r_agent-1, r_mange) → 4 triplets retournés · w_moyen=621`,
+          // Quick-try Chatbot : appel SSE /api/agent/stream, capture les
+          // premiers chunks de la réponse (~10s max) puis ferme.
+          mock: async (q, model) => {
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 12000);
+            try {
+              const r = await fetch('api/agent/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: q, model, use_thinking: false }),
+                signal: ctrl.signal,
+              });
+              if (!r.ok) throw new Error(`HTTP ${r.status} — vérifier la clé API du modèle`);
+              const reader = r.body.getReader();
+              const dec = new TextDecoder();
+              let buf = '', text = '', toolCalls = 0;
+              const t0 = Date.now();
+              while (Date.now() - t0 < 10000) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += dec.decode(value);
+                const re = /event:\s*(\w+)\s*\ndata:\s*({.*})/g;
+                let m;
+                while ((m = re.exec(buf)) !== null) {
+                  try {
+                    const d = JSON.parse(m[2]);
+                    if (m[1] === 'chunk' && d.text) text += d.text;
+                    else if (m[1] === 'tool') toolCalls++;
+                  } catch {}
+                }
+                if (text.length > 400) break;
+              }
+              try { await reader.cancel(); } catch {}
+              return `${model} (premiers ${text.length} chars, ${toolCalls} appels outils)\n\n${text.slice(0, 400)}${text.length > 400 ? '…' : ''}`;
+            } finally {
+              clearTimeout(tid);
+            }
+          },
         },
       },
     },
@@ -249,7 +318,22 @@ function ViewProjet({ goto }) {
           kind: 'term-and-depth',
           termDefault: 'voiture',
           depthDefault: 2,
-          mock: (term, depth) => `→ ${term} · depth=${depth} · ~${Math.floor(8 + depth * 12)} arcs estimés`,
+          // Quick-try Sous-graphe : appel /api/subgraph format=json,
+          // affiche les compteurs réels nodes/edges/negatives.
+          mock: async (term, depth) => {
+            const r = await fetch('api/subgraph', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ term, depth, top_k: 3, format: 'json' }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const d = await r.json();
+            const s = d.stats || {};
+            const n = s.n_nodes ?? (d.nodes?.length || 0);
+            const e = s.n_edges ?? (d.edges?.length || 0);
+            const neg = s.n_negative ?? 0;
+            return `→ ${term} · depth=${depth}\n${n} nœuds · ${e} arêtes · ${neg} négations\nOuvrir l'onglet Sous-graphe pour le rendu interactif.`;
+          },
         },
       },
     },
@@ -265,35 +349,36 @@ function ViewProjet({ goto }) {
         quickTry: {
           kind: 'triplet',
           defaults: { s: 'baleine', r: 'r_isa', o: 'mammifère' },
-          mock: (s, r, o) => {
-            const key = `${s}|${r}|${o}`.toLowerCase();
-            if (s === 'baleine' && o === 'mammifère') {
-              return {
-                verdict: 'SUPPORTED', confidence: 0.92,
-                triplet: { s, r, o },
-                chain: [
-                  { from: 'baleine', rel: 'r_isa', to: 'cétacé',    w: 2014 },
-                  { from: 'cétacé',  rel: 'r_isa', to: 'mammifère', w: 1421 },
-                ],
-                note: '2 hops · transitivité de r_isa',
-              };
-            }
-            if (s === 'baleine' && o === 'poisson') {
-              return {
-                verdict: 'CONTRADICTED', confidence: 0.88,
-                triplet: { s, r, o },
-                chain: [
-                  { from: 'baleine', rel: 'r_isa',       to: 'mammifère', w: 1421 },
-                  { from: 'baleine', rel: 'r_isa_not',   to: 'poisson',   w:  734, neg: true },
-                ],
-                note: 'négation explicite trouvée (r_isa_not)',
-              };
-            }
+          // Quick-try Claim checker : POST /api/factcheck avec effort=1
+          // (déduction par inférence). Renvoie {verdict, confidence,
+          // chain, note} comme attendu par ClaimVerdictHeader/Chain.
+          mock: async (s, r, o) => {
+            const resp = await fetch('api/factcheck', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                subject: s, relation: r, object: o, effort: 1,
+              }),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const d = await resp.json();
+            // Normalise le format pour les composants Verdict :
+            //   d.status ∈ {SUPPORTED, CONTRADICTED, UNKNOWN}
+            //   d.evidence: list[{subject, relation, target, weight, negative}]
+            const chain = (d.evidence || []).map(ev => ({
+              from: ev.subject || ev.source,
+              rel:  ev.relation,
+              to:   ev.target || ev.object,
+              w:    Math.round(Math.abs(ev.weight || 0)),
+              neg:  !!ev.negative,
+            }));
             return {
-              verdict: 'UNKNOWN', confidence: 0,
+              verdict: d.status || d.verdict || 'UNKNOWN',
+              confidence: d.confidence ?? 0,
               triplet: { s, r, o },
-              chain: [],
-              note: 'aucune chaîne d\'inférence (≤ k=2) ni triplet direct',
+              chain,
+              note: d.explanation || d.note ||
+                    (d.inference_schema ? `Inféré via schéma ${d.inference_schema}` : 'Contenance directe JDM'),
             };
           },
         },
@@ -312,7 +397,29 @@ function ViewProjet({ goto }) {
           kind: 'term-and-relation',
           termDefault: 'chat',
           relationDefault: 'r_has_part',
-          mock: (term, rel) => `→ ${term} | ${rel} → 12 triplets · 1ers : tête (w=1842) · patte (w=1721) · queue (w=1640)`,
+          // Quick-try Explorer : POST /api/explore et formate les 3
+          // premiers triplets par poids décroissant.
+          mock: async (term, rel) => {
+            const r = await fetch('api/explore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                term, relation: rel, limit: 20, min_weight: 25
+              }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const d = await r.json();
+            const triplets = d.triplets || d.relations || [];
+            if (triplets.length === 0) {
+              return `→ ${term} | ${rel} → aucun triplet (≥ poids 25). Essayer min_weight=0 ou un autre terme.`;
+            }
+            const top = triplets.slice(0, 3).map(t => {
+              const tgt = t.target || t.target_display || t.to || '?';
+              const w = t.w ?? t.weight ?? 0;
+              return `${tgt} (w=${Math.round(Math.abs(w))})`;
+            }).join(' · ');
+            return `→ ${term} | ${rel} → ${triplets.length} triplets\nTop 3 : ${top}`;
+          },
         },
       },
     },
@@ -1561,23 +1668,41 @@ function ClaimVerdictBlock({ result }) {
   );
 }
 
-function QTRunButton({ onClick, label = 'Tester' }) {
+function QTRunButton({ onClick, label = 'Tester', loading = false }) {
   return (
     <div style={{ alignSelf: 'flex-start' }}>
-      <Button size="sm" onClick={onClick}>{label}</Button>
+      <Button size="sm" onClick={onClick} disabled={loading}>
+        {loading ? '⏳ ' + label.replace(/^([A-ZÉ])/, m => m.toLowerCase()) + '…' : label}
+      </Button>
     </div>
   );
+}
+
+// Helper async — exécute config.mock (qui retourne maintenant une
+// Promise hits le vrai backend), gère loading + erreurs.
+async function _runQT(fn, args, setOut, setLoading) {
+  setLoading(true);
+  try {
+    const r = await fn(...args);
+    setOut(r);
+  } catch (e) {
+    setOut(`⚠️ ${e.message || e}`);
+  } finally {
+    setLoading(false);
+  }
 }
 
 function QTSelectAndTerm({ config }) {
   const [flow, setFlow] = useState(config.defaultValue);
   const [term, setTerm] = useState(config.termDefault);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       <Select value={flow} onChange={setFlow} options={config.options} />
       <Input value={term} onChange={setTerm} placeholder="terme" />
-      <QTRunButton onClick={() => setOut(config.mock(flow, term))} label="Simuler le flux" />
+      <QTRunButton onClick={() => _runQT(config.mock, [flow, term], setOut, setLoading)}
+                   loading={loading} label="Lancer le flux" />
       <QTPreview text={out} />
     </div>
   );
@@ -1587,17 +1712,15 @@ function QTPrompt({ config }) {
   const [q, setQ] = useState(config.defaultValue);
   const [model, setModel] = useState(config.defaultModel || (config.models?.[0]?.value));
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       {config.models && (
-        <Select
-          value={model}
-          onChange={setModel}
-          options={config.models}
-        />
+        <Select value={model} onChange={setModel} options={config.models} />
       )}
       <Input value={q} onChange={setQ} placeholder={config.placeholder} />
-      <QTRunButton onClick={() => setOut(config.mock(q, model))} label="Envoyer" />
+      <QTRunButton onClick={() => _runQT(config.mock, [q, model], setOut, setLoading)}
+                   loading={loading} label="Envoyer" />
       <QTPreview text={out} />
     </div>
   );
@@ -1607,6 +1730,7 @@ function QTTermAndDepth({ config }) {
   const [term, setTerm] = useState(config.termDefault);
   const [depth, setDepth] = useState(config.depthDefault);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       <Input value={term} onChange={setTerm} placeholder="terme" />
@@ -1616,7 +1740,8 @@ function QTTermAndDepth({ config }) {
           <Slider min={1} max={4} step={1} value={depth} onChange={setDepth} />
         </div>
       </div>
-      <QTRunButton onClick={() => setOut(config.mock(term, depth))} label="Construire" />
+      <QTRunButton onClick={() => _runQT(config.mock, [term, depth], setOut, setLoading)}
+                   loading={loading} label="Construire" />
       <QTPreview text={out} />
     </div>
   );
@@ -1627,20 +1752,28 @@ function QTTriplet({ config }) {
   const [r, setR] = useState(config.defaults.r);
   const [o, setO] = useState(config.defaults.o);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   const isVerdict = out && typeof out === 'object';
   const rootRef = useRef(null);
   const tailRef = useRef(null);
 
   // After clicking Vérifier, smooth-scroll so the whole result (header +
   // inference chain) is fully visible.
-  const onVerify = () => {
-    setOut(config.mock(s, r, o));
-    requestAnimationFrame(() => {
-      // Wait a beat so React renders the new chain block, then center.
-      setTimeout(() => {
-        if (rootRef.current) scrollGroupIntoView(rootRef.current, tailRef.current || rootRef.current);
-      }, 30);
-    });
+  const onVerify = async () => {
+    setLoading(true);
+    try {
+      const r2 = await config.mock(s, r, o);
+      setOut(r2);
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (rootRef.current) scrollGroupIntoView(rootRef.current, tailRef.current || rootRef.current);
+        }, 30);
+      });
+    } catch (e) {
+      setOut(`⚠️ ${e.message || e}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -1651,7 +1784,7 @@ function QTTriplet({ config }) {
         <Input value={o} onChange={setO} placeholder="objet" />
       </div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <QTRunButton onClick={onVerify} label="Vérifier" />
+        <QTRunButton onClick={onVerify} loading={loading} label="Vérifier" />
         {out && (
           <div style={{ flex: 1, minWidth: 0 }}>
             {isVerdict
@@ -1673,13 +1806,15 @@ function QTTermAndRelation({ config }) {
   const [term, setTerm] = useState(config.termDefault);
   const [rel, setRel] = useState(config.relationDefault);
   const [out, setOut] = useState(null);
+  const [loading, setLoading] = useState(false);
   return (
     <div style={QT_PANEL}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <Input value={term} onChange={setTerm} placeholder="terme" />
         <Input value={rel} onChange={setRel} placeholder="relation" />
       </div>
-      <QTRunButton onClick={() => setOut(config.mock(term, rel))} label="Lister" />
+      <QTRunButton onClick={() => _runQT(config.mock, [term, rel], setOut, setLoading)}
+                   loading={loading} label="Lister" />
       <QTPreview text={out} />
     </div>
   );
