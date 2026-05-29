@@ -7859,32 +7859,47 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const stop = () => JarvisStore.stop(flow.id);
   const reset = () => JarvisStore.reset(flow.id);
 
-  // Smooth scroll à l'ouverture : si le flow a déjà du contenu (run en
-  // cours ou terminé avec données), on amène le bas des panneaux dans
-  // la viewport — l'utilisateur voit l'état courant (dernières lignes
-  // de narration, derniers triplets) sans scroller manuellement.
+  // Smooth scroll animé garanti : tween rAF custom (behavior:'smooth'
+  // est respecté par les browsers mais peut être éteint par
+  // prefers-reduced-motion ; le rAF tween garantit l'animation visible).
   //
-  // Robustesse : on lit le state DEPUIS LE STORE au moment du setTimeout
-  // (pas une closure stale), on attend que le layout se pose (300ms
-  // pour laisser le temps aux panneaux narration/triplets de calculer
-  // leur hauteur), et on scroll via window.scrollTo + scrollHeight
-  // plutôt que scrollIntoView qui se comporte erratiquement quand le
-  // contenu grandit pendant l'animation.
+  // Fire dans 3 cas :
+  //   1. À l'ouverture d'un flow (mount, quel que soit le status)
+  //   2. Au lancement d'un flow (state idle → running)
+  //   3. Une fois que le contenu est chargé suffisamment pour que le
+  //      bas existe (déclenché 350ms après mount pour laisser le
+  //      layout calculer les hauteurs des Card narration/triplets).
+  const _scrollSmoothToBottom = React.useCallback(() => {
+    const targetY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const startY = window.scrollY || window.pageYOffset || 0;
+    const dist = targetY - startY;
+    if (Math.abs(dist) < 4) return;  // déjà au bon endroit
+    const dur = 520;
+    const t0 = performance.now();
+    const ease = (t) => (t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / dur);
+      window.scrollTo(0, startY + dist * ease(t));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, []);
+  // Tirage au mount + à chaque changement de flow.
   React.useEffect(() => {
-    const tid = setTimeout(() => {
-      const fresh = JarvisStore.get(flow.id);
-      const hasContent = fresh.status === 'running' || fresh.status === 'done' || fresh.status === 'error'
-                      || (fresh.narrationHTML && fresh.narrationHTML.length > 0)
-                      || (fresh.filePreview && fresh.filePreview.length > 0);
-      if (!hasContent) return;
-      try {
-        const targetY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-        window.scrollTo({ top: targetY, behavior: 'smooth' });
-      } catch {}
-    }, 300);
+    const tid = setTimeout(_scrollSmoothToBottom, 350);
     return () => clearTimeout(tid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow.id]);
+  // Tirage au passage idle → running (clic Lancer).
+  const _prevStateRef = useRef(state);
+  React.useEffect(() => {
+    if (_prevStateRef.current === 'idle' && state === 'running') {
+      setTimeout(_scrollSmoothToBottom, 200);
+    }
+    _prevStateRef.current = state;
+  }, [state, _scrollSmoothToBottom]);
 
   return (
     <PageShell>

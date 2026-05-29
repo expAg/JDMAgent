@@ -1195,6 +1195,15 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
             count_consolidations = lambda: 0
             list_consolidations = lambda: []
         cancelled = False
+        # Cache le dernier filePath non-null vu — beaucoup de yields
+        # dans jarvis.py utilisent `last_file_path` (None tant que le LLM
+        # n'a pas appelé write_submission_file). Pour ENRICH auto_append
+        # le LLM ne l'appelle jamais → fpath toujours None dans certains
+        # chunks. On garde la dernière valeur connue pour que le
+        # frontend voit le canonical_path dès qu'au moins UN chunk l'a
+        # exposé (typiquement via _current_file_path() qui le retourne
+        # une fois le file matérialisé sur disque).
+        last_known_fpath = None
         for chunk in sync_gen:
             # Cooperative cancellation : check le flag entre chaque chunk.
             # Le chunk LLM en cours s'est déjà terminé (on l'a payé), mais
@@ -1215,6 +1224,8 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
                 continue
             messages = chunk[0] if len(chunk) >= 1 else None
             fpath = chunk[1] if len(chunk) >= 2 else None
+            if fpath:
+                last_known_fpath = str(fpath)
             fpreview = chunk[2] if len(chunk) >= 3 else None
             state = chunk[3] if len(chunk) >= 4 else None
             msgs_clean = []
@@ -1235,7 +1246,9 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
             tokens_estimate = text_chars // 4
             _push_event(run, "jarvis", {
                 "messages": msgs_clean,
-                "file_path": str(fpath) if fpath else None,
+                # Sticky : envoie la dernière valeur connue (cf. note plus
+                # haut sur la non-uniformité des yields dans jarvis.py).
+                "file_path": last_known_fpath,
                 "file_preview": fpreview if isinstance(fpreview, str) else "",
                 "state": state if isinstance(state, dict) else None,
                 "consolidated_count": cc,
