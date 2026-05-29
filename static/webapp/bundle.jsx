@@ -8634,12 +8634,48 @@ function ViewProductions() {
     }
   };
 
+  // Compteur soumissions — agrège récents + oldies. La marque ✅ vient
+  // du flag `submitted` côté backend (cf. ProductionFileCard ligne 395),
+  // donc le compte ici est cohérent avec le badge sur chaque carte.
+  const _submittedCount = recent.filter(f => f.submitted).length
+                        + oldies.filter(f => f.submitted).length;
+  const _totalCount = recent.length + oldies.length;
+
   return (
     <PageShell>
       <SectionTitle
         kicker="Sorties Jarvis"
         title="Productions"
         desc="Fichiers .enrich / .audit / .err / .stat / visualisations produits par les flux Jarvis. Liste, prévisualisation, téléchargement, soumission LLMDrops."
+        right={
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 12px',
+            background: _submittedCount > 0
+              ? 'rgba(78,166,60,0.10)'
+              : 'var(--bg-elev)',
+            border: '1px solid ' + (_submittedCount > 0
+              ? 'rgba(78,166,60,0.40)'
+              : 'var(--line-soft)'),
+            borderRadius: 'var(--radius)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            color: _submittedCount > 0 ? 'var(--jdm-green)' : 'var(--ink-2)',
+            letterSpacing: '0.02em',
+            whiteSpace: 'nowrap',
+          }}>
+            {_submittedCount > 0 && <span aria-hidden="true">✅</span>}
+            <span>
+              <strong style={{ fontWeight: 600 }}>{_submittedCount}</strong>
+              {' / '}
+              <span style={{ color: 'var(--ink-3)' }}>{_totalCount}</span>
+              {' '}
+              production{_totalCount > 1 ? 's' : ''} soumise{_submittedCount > 1 ? 's' : ''}
+            </span>
+          </div>
+        }
       />
 
       {/* Bandeau actions */}
