@@ -228,6 +228,26 @@ app.add_middleware(
 
 # Disable buffering for SSE on HF Spaces (Nginx-style header)
 @app.middleware("http")
+async def strip_subpath(request: Request, call_next):
+    """Strippe APP_SUBPATH (ex. /jdm-agent) du path entrant pour que le
+    routing FastAPI matche les routes déclarées sans préfixe. Permet à
+    une config Apache symétrique (`/jdm-agent → /jdm-agent$1`) de marcher
+    sans toucher la déclaration des routes (/api/explore, etc.).
+
+    No-op si APP_SUBPATH vide (mode racine : HF Spaces, dev local)."""
+    if APP_SUBPATH:
+        path = request.scope.get("path", "")
+        if path.startswith(APP_SUBPATH):
+            request.scope["path"] = path[len(APP_SUBPATH):] or "/"
+            # raw_path est utilisé par certains middlewares + log access
+            raw = request.scope.get("raw_path") or b""
+            prefix_b = APP_SUBPATH.encode("utf-8")
+            if raw.startswith(prefix_b):
+                request.scope["raw_path"] = raw[len(prefix_b):] or b"/"
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def disable_buffering(request: Request, call_next):
     response = await call_next(request)
     if "/stream" in request.url.path:
@@ -1707,10 +1727,36 @@ if STATIC_DIR.exists():
         from fastapi.responses import HTMLResponse
         return HTMLResponse(_serve_index_html())
 
-    # Sert tout le RESTE de static/ (webapp/*.jsx, etc.) sous /.
-    # html=False désactive le catch-all index automatique : seul notre
-    # route GET / sert index.html (avec <base href> injecté).
-    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=False), name="static")
+    # Catch-all SPA + static : pour toute requête GET non encore matchée
+    # par une route API (déclarées plus haut), on sert :
+    #   1. le fichier statique s'il existe dans static/ (webapp/*.jsx, css, etc.)
+    #   2. sinon `index.html` avec <base href> injecté — c'est ça qui rend
+    #      les deep links genre /jarvis/enrich utilisables côté SPA.
+    # Remplace `app.mount("/", StaticFiles(...))` parce qu'un mount intercepte
+    # tout indistinctement et 404 sur les URLs SPA inconnues du dossier.
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_or_static(full_path: str):
+        from fastapi.responses import HTMLResponse
+        # Garde-fou : les vraies routes /api/* sont déclarées avant et
+        # matchent en priorité ; si on tombe ici sur /api/quelque-chose
+        # c'est que la route n'existe pas → 404 explicite (pas index.html).
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail="Not Found")
+        # Fichier static existant → on le sert (assets, JS, CSS).
+        # Garde-fou path traversal : on vérifie que le résolu est sous STATIC_DIR.
+        if full_path:
+            candidate = STATIC_DIR / full_path
+            try:
+                resolved = candidate.resolve()
+                static_root = STATIC_DIR.resolve()
+                if (candidate.is_file()
+                    and str(resolved).startswith(str(static_root) + os.sep)):
+                    return FileResponse(str(candidate))
+            except (OSError, ValueError):
+                pass
+        # Sinon → SPA deep link, on renvoie index.html. Le router client
+        # lira location.pathname et ouvrira la bonne vue.
+        return HTMLResponse(_serve_index_html())
 else:
     @app.get("/")
     def root_missing():

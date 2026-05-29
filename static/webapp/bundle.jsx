@@ -7092,14 +7092,252 @@ const JARVIS_FLOWS = [
 const SUBMITTABLE_FLOWS = new Set(['enrich', 'audit', 'signalement',
                                     'stats', 'annotation']);
 
+
+// ─────────────────────────────────────────────────────────────────────
+// JarvisStore — singleton qui survit aux unmounts de JarvisRun.
+//
+// Pourquoi : quand l'utilisateur quitte l'onglet Jarvis pendant un run,
+// sans ce store le composant unmount, son fetch SSE est aborted par GC,
+// sse-starlette détecte la déconnexion côté serveur, le générateur
+// Python lève CancelledError → flow tué, progrès perdu, tokens LLM
+// consommés pour rien.
+//
+// Avec : le reader SSE vit dans le store, indépendant du cycle React.
+// Le composant lit l'état et se réabonne au mount. Le serveur ne voit
+// pas de déconnexion, le flow continue, on retrouve tout en revenant.
+//
+// Bonus : permet l'affichage du badge « 🟢 en cours » sur la liste
+// des flows (activeFlowIds()) — y compris depuis ViewJarvis.
+// ─────────────────────────────────────────────────────────────────────
+const _JARVIS_RUNS = {};
+const _JARVIS_LISTENERS = {};
+
+function _emptyJarvisRun(flowId) {
+  return {
+    flowId,
+    status: 'idle',  // 'idle' | 'running' | 'done' | 'error'
+    headline: '',
+    log: [],
+    metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+    accepted: [],
+    narrationHTML: '',
+    filePreview: '',
+    filePath: null,
+    resumeState: null,
+    // internes — pas lus par le composant
+    _abortCtrl: null,
+    _startTime: null,
+    _elapsedTimer: null,
+    _prevConsolidatedCount: 0,
+  };
+}
+
+const JarvisStore = {
+  get(flowId) {
+    if (!_JARVIS_RUNS[flowId]) _JARVIS_RUNS[flowId] = _emptyJarvisRun(flowId);
+    return _JARVIS_RUNS[flowId];
+  },
+  patch(flowId, partial) {
+    Object.assign(this.get(flowId), partial);
+    this._emit(flowId);
+  },
+  _emit(flowId) {
+    const subs = _JARVIS_LISTENERS[flowId];
+    if (subs) for (const cb of subs) { try { cb(); } catch {} }
+    const glob = _JARVIS_LISTENERS['*'];
+    if (glob) for (const cb of glob) { try { cb(); } catch {} }
+  },
+  subscribe(flowId, cb) {
+    if (!_JARVIS_LISTENERS[flowId]) _JARVIS_LISTENERS[flowId] = new Set();
+    _JARVIS_LISTENERS[flowId].add(cb);
+    return () => { if (_JARVIS_LISTENERS[flowId]) _JARVIS_LISTENERS[flowId].delete(cb); };
+  },
+  activeFlowIds() {
+    return Object.entries(_JARVIS_RUNS)
+      .filter(([, s]) => s.status === 'running')
+      .map(([id]) => id);
+  },
+  stop(flowId) {
+    const cur = this.get(flowId);
+    if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
+  },
+  reset(flowId) {
+    const cur = this.get(flowId);
+    if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
+    if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
+    _JARVIS_RUNS[flowId] = _emptyJarvisRun(flowId);
+    this._emit(flowId);
+  },
+  async start(flowId, { params, isResume, resumeState }) {
+    const cur = this.get(flowId);
+    if (cur.status === 'running') return;
+    const ts = () => new Date().toTimeString().slice(0, 8);
+    if (!isResume) {
+      Object.assign(cur, {
+        status: 'running',
+        log: [],
+        accepted: [],
+        narrationHTML: '',
+        filePreview: '',
+        filePath: null,
+        headline: '',
+        metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+        _prevConsolidatedCount: 0,
+        _startTime: Date.now(),
+      });
+    } else {
+      cur.status = 'running';
+      cur.log = [...cur.log, { t: ts(), tag: '[resume]', kind: 'iter', msg: 'Reprise après abort PerDay…' }];
+    }
+    cur._abortCtrl = new AbortController();
+    if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
+    cur._elapsedTimer = setInterval(() => {
+      cur.metrics = { ...cur.metrics, elapsed: Date.now() - (cur._startTime || Date.now()) };
+      this._emit(flowId);
+    }, 250);
+    this._emit(flowId);
+
+    const flowParams = {
+      ...params,
+      ...(isResume && resumeState ? { resume_state: resumeState } : {}),
+    };
+    try {
+      const res = await fetch(`api/jarvis/${flowId}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_id: flowId, params: flowParams }),
+        signal: cur._abortCtrl.signal,
+      });
+      if (!res.ok || !res.body) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      const dispatchEv = (ev) => {
+        const d = ev.data || {};
+        switch (ev.event) {
+          case 'headline':
+            cur.headline = d.text || '';
+            cur.log = [...cur.log, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }];
+            break;
+          case 'jarvis': {
+            const msgs = d.messages || [];
+            const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            if (d.state) cur.resumeState = d.state;
+            if (assistant && assistant.content) cur.narrationHTML = assistant.content;
+            const cc = Number(d.consolidated_count || 0);
+            if (cc !== cur._prevConsolidatedCount) {
+              cur.metrics = { ...cur.metrics, accepted: cc };
+              cur._prevConsolidatedCount = cc;
+            }
+            if (assistant && assistant.content) {
+              const toolMatches = assistant.content.match(/class="jdm-narration"/g) || [];
+              cur.metrics = { ...cur.metrics, toolsCalled: toolMatches.length };
+            }
+            if (typeof d.tokens_estimate === 'number') {
+              cur.metrics = { ...cur.metrics, tokens: d.tokens_estimate };
+            }
+            if (Array.isArray(d.consolidated)) {
+              cur.accepted = d.consolidated.map(c => ({
+                label: `${c.term} | ${c.relation} | ${c.target}`,
+                score: '✓',
+              }));
+            }
+            if (typeof d.file_preview === 'string') cur.filePreview = d.file_preview;
+            if (d.file_path && d.file_path !== cur.filePath) {
+              cur.filePath = d.file_path;
+              cur.log = [...cur.log, {
+                t: ts(), tag: '[file]', kind: 'accept',
+                msg: `Fichier : ${d.file_path}`,
+              }];
+            }
+            break;
+          }
+          case 'done':
+            cur.log = [...cur.log, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }];
+            cur.status = 'done';
+            break;
+          case 'error':
+            cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }];
+            cur.status = 'error';
+            break;
+        }
+        this._emit(flowId);
+      };
+      const flush = () => {
+        const re = /\r\n\r\n|\n\n|\r\r/;
+        let m;
+        while ((m = re.exec(buf)) !== null) {
+          const raw = buf.slice(0, m.index);
+          buf = buf.slice(m.index + m[0].length);
+          const ev = parseSSEEventJarvis(raw);
+          if (ev) dispatchEv(ev);
+        }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        flush();
+      }
+      if (buf.trim()) {
+        const ev = parseSSEEventJarvis(buf);
+        if (ev) dispatchEv(ev);
+      }
+      if (cur.status === 'running') cur.status = 'done';
+    } catch (e) {
+      if (cur._abortCtrl && cur._abortCtrl.signal.aborted) {
+        cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: 'Annulé par l\'utilisateur.' }];
+        cur.status = 'done';
+      } else {
+        cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }];
+        cur.status = 'error';
+      }
+    } finally {
+      if (cur._elapsedTimer) { clearInterval(cur._elapsedTimer); cur._elapsedTimer = null; }
+      this._emit(flowId);
+    }
+  },
+};
+if (typeof window !== 'undefined') window.__jdmJarvisStore = JarvisStore;
+
+function useJarvisRunState(flowId) {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => JarvisStore.subscribe(flowId, force), [flowId]);
+  return JarvisStore.get(flowId);
+}
+
+function useJarvisActiveSet() {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => JarvisStore.subscribe('*', force), []);
+  return new Set(JarvisStore.activeFlowIds());
+}
+
 function ViewJarvis() {
-  // Pré-remplissage depuis Projet › Quick try : si l'utilisateur a cliqué
-  // « Préparer dans Jarvis » avec un flow + terme, on bascule directement
-  // sur ce flow (le terme est consommé par JarvisRun via une seconde lecture
-  // du payload — gardé sur window jusqu'au mount de JarvisRun).
+  // Pré-remplissage depuis Projet › Quick try OU deep link URL
+  // /jarvis/<flow> : si l'utilisateur a cliqué « Préparer dans Jarvis »
+  // ou ouvert un lien deep, on bascule directement sur ce flow (le terme
+  // est consommé par JarvisRun via une seconde lecture du payload —
+  // gardé sur window jusqu'au mount de JarvisRun).
   const _pending = (typeof window !== 'undefined'
                     && window.__jdmPendingPayload?.jarvis) || null;
   const [active, setActive] = useState(_pending?.flow || null);
+
+  // Set des flows actuellement en cours (resync à chaque changement
+  // d'état du store). Sert à dégrader le badge "🟢 en cours" sur les
+  // cartes de la liste — un run survit au unmount donc on peut quitter
+  // la vue et revenir : le badge reste, le run aussi.
+  const activeRunSet = useJarvisActiveSet();
+
+  // Synchronise l'URL avec le flow actif. /jarvis (liste) ↔ /jarvis/<id>
+  // (run). Permet bookmark/share + back/forward navigateur cohérents.
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !window.__jdmRoute) return;
+    window.__jdmRoute.replace('jarvis', active || null);
+  }, [active]);
+
   if (active) {
     const idx = JARVIS_FLOWS.findIndex(f => f.id === active);
     const flow = JARVIS_FLOWS[idx];
@@ -7155,6 +7393,35 @@ function ViewJarvis() {
               width: 4,
               background: f.accent,
             }} />
+            {/* Badge "en cours" — visible si le store dit que ce flow
+                tourne. Tient toujours même si l'utilisateur a quitté
+                l'onglet pendant le run grâce au JarvisStore. */}
+            {activeRunSet.has(f.id) && (
+              <div style={{
+                position: 'absolute',
+                top: 14, right: 14,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '2px 8px',
+                background: 'rgba(78,166,60,0.12)',
+                border: '1px solid rgba(78,166,60,0.40)',
+                borderRadius: 999,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                fontWeight: 600,
+                color: 'var(--jdm-green)',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: 'var(--jdm-green)',
+                  animation: 'pulse-dot 1.2s ease-in-out infinite',
+                }} />
+                <span>en cours</span>
+              </div>
+            )}
             <div className="mono" style={{
               fontSize: 11, color: f.accent,
               textTransform: 'uppercase', letterSpacing: '0.12em',
@@ -7223,24 +7490,21 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
     }
     return base;
   });
-  const [state, setState] = useState('idle'); // idle | running | done | error
-  const [log, setLog] = useState([]);
-  const [metrics, setMetrics] = useState({
-    toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0,
-  });
-  const [accepted, setAccepted] = useState([]);
-  // narrationHTML = trace markdown/HTML cumulative du LLM (left panel)
-  // filePreview = contenu du fichier .enrich/.audit/.err qui se construit
-  //              (right panel — c'est CE qu'on appelle « réponse finale »)
-  const [narrationHTML, setNarrationHTML] = useState('');
-  const [filePreview, setFilePreview] = useState('');
-  const [filePath, setFilePath] = useState(null);
-  const [headline, setHeadline] = useState('');
-  // Etat de reprise après PerDay sur modèle non-3.1 — run_jarvis_flow
-  // yield un 5-tuple avec state quand l'agent abort. Le state contient
-  // accumulated_messages + canonical_path + budget courant → re-passe
-  // à un nouveau call pour reprendre exactement où on s'est arrêté.
-  const [resumeState, setResumeState] = useState(null);
+  // ── Run state hoisted in JarvisStore ───────────────────────────
+  // Survit aux unmounts → switch d'onglet pendant un run ne tue plus
+  // le flow ni la progression affichée. Le composant ne fait que lire
+  // et déclencher des actions sur le store.
+  const run = useJarvisRunState(flow.id);
+  const state = run.status;
+  const log = run.log;
+  const metrics = run.metrics;
+  const accepted = run.accepted;
+  const narrationHTML = run.narrationHTML;
+  const filePreview = run.filePreview;
+  const filePath = run.filePath;
+  const headline = run.headline;
+  const resumeState = run.resumeState;
+  const setResumeState = (v) => JarvisStore.patch(flow.id, { resumeState: v });
   const [poolStatus, setPoolStatus] = useState(null);
   // État du bouton « 📤 Soumettre » post-hoc à côté de Télécharger.
   // submitState ∈ {idle, sending, done, error}. submitMsg = retour serveur
@@ -7262,29 +7526,11 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
     return () => { alive = false; clearInterval(id); };
   }, []);
   const logRef = useRef(null);
-  const abortRef = useRef(null);
-  const startTimeRef = useRef(null);
 
   // Auto-scroll log + narration : suit le flux de génération en bas
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log, narrationHTML]);
-
-  // Tick elapsed time
-  useEffect(() => {
-    if (state !== 'running') return;
-    const id = setInterval(() => {
-      setMetrics(m => ({ ...m, elapsed: Date.now() - (startTimeRef.current || Date.now()) }));
-    }, 250);
-    return () => clearInterval(id);
-  }, [state]);
-
-  const reset = () => {
-    setLog([]); setAccepted([]); setNarrationHTML(''); setFilePreview('');
-    setFilePath(null); setHeadline('');
-    setMetrics({ toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 });
-    setState('idle');
-  };
 
   // Parse le file_preview pour extraire les items à afficher dans le
   // panneau de droite. Mémoïsé sur (filePreview, flow.id) — la parse
@@ -7296,165 +7542,32 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   );
 
   // Synchronise le compteur "produced" du dashboard avec les items
-  // parsés (signalements + verdicts + annotations). Pour enrich, on
-  // garde la source registry (`accepted`) qui est canonique.
+  // parsés. Pour enrich, on garde la source registry (`accepted`) qui
+  // est canonique. Push direct dans le store via patch — pas de setX
+  // local (le state vit là-bas).
   React.useEffect(() => {
     if (flow.id === 'enrich') {
-      setMetrics(m => ({ ...m, produced: m.accepted }));
+      JarvisStore.patch(flow.id, { metrics: { ...metrics, produced: metrics.accepted } });
     } else {
-      // Compteur unifié : on additionne tous les items hors méta-prose.
       const n = parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
-      setMetrics(m => ({ ...m, produced: n }));
+      JarvisStore.patch(flow.id, { metrics: { ...metrics, produced: n } });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsed.items.length, metrics.accepted, flow.id]);
 
-  const launch = async (continueFromResume) => {
-    const isResume = !!continueFromResume;
-    if (!isResume) {
-      reset();
-    } else {
-      // Pour Continuer : on garde le log, narration, fichier en cours,
-      // metrics — on ajoute juste une ligne de reprise.
-      setLog(l => [...l, { t: ts(), tag: '[resume]', kind: 'iter', msg: 'Reprise après abort PerDay…' }]);
-    }
-    setState('running');
-    if (!isResume) startTimeRef.current = Date.now();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-
-    const flowParams = {
-      ...params,
-      ...(isResume && resumeState ? { resume_state: resumeState } : {}),
-    };
-    if (isResume) setResumeState(null);  // clear pour ne pas reprendre 2x
-    const ts = () => new Date().toTimeString().slice(0, 8);
-
-    try {
-      const res = await fetch(`api/jarvis/${flow.id}/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flow_id: flow.id, params: flowParams }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok || !res.body) {
-        const txt = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buf = '';
-      // Backend yield des events { type: jarvis } portant :
-      //   messages          [{role, content}]
-      //   file_path         chemin du fichier .enrich/.audit/.err
-      //   file_preview      contenu courant du fichier (gradually appended)
-      //   consolidated_count int — VRAI compteur depuis count_consolidations()
-      //   consolidated      list[{term, relation, target, ...}]
-      // Le narration HTML (avec divs .jdm-narration et spans .jarvis-term)
-      // est dans le dernier message assistant — on l'injecte tel quel dans
-      // le panneau LOG (HTML interprété via dangerouslySetInnerHTML).
-      // file_preview va dans le panneau « RÉPONSE FINALE » (= état du
-      // fichier en construction).
-      let prevConsolidatedCount = 0;
-      const dispatchEvent = (ev) => {
-        const d = ev.data || {};
-        switch (ev.event) {
-          case 'headline':
-            setHeadline(d.text || '');
-            setLog(l => [...l, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }]);
-            break;
-          case 'jarvis': {
-            const msgs = d.messages || [];
-            const assistant = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
-            // Stocke le state de reprise s'il est fourni (= l'agent a
-            // abort sur PerDay sans auto-bascule → on offre Continuer).
-            if (d.state) setResumeState(d.state);
-            // Met à jour la narration HTML pour le panneau LOG
-            if (assistant && assistant.content) {
-              setNarrationHTML(assistant.content);
-            }
-            // Compteur consolidés depuis le registry (source de vérité)
-            const cc = Number(d.consolidated_count || 0);
-            if (cc !== prevConsolidatedCount) {
-              setMetrics(m => ({ ...m, accepted: cc }));
-              prevConsolidatedCount = cc;
-            }
-            // Compteur outils via marqueurs de narration HTML
-            if (assistant && assistant.content) {
-              const toolMatches = assistant.content.match(/class="jdm-narration"/g) || [];
-              setMetrics(m => ({ ...m, toolsCalled: toolMatches.length }));
-            }
-            // Tokens estimés (sert à voir le gain après truncate/relance)
-            if (typeof d.tokens_estimate === 'number') {
-              setMetrics(m => ({ ...m, tokens: d.tokens_estimate }));
-            }
-            // Triplets consolidés depuis le registry (pas du parsing)
-            if (Array.isArray(d.consolidated)) {
-              setAccepted(d.consolidated.map(c => ({
-                label: `${c.term} | ${c.relation} | ${c.target}`,
-                score: '✓',
-              })));
-            }
-            // Aperçu du fichier qui se construit (gradually appended)
-            if (typeof d.file_preview === 'string') {
-              setFilePreview(d.file_preview);
-            }
-            // Path du fichier (téléchargement)
-            if (d.file_path && d.file_path !== filePath) {
-              setFilePath(d.file_path);
-              setLog(l => [...l, {
-                t: ts(), tag: '[file]', kind: 'accept',
-                msg: `Fichier : ${d.file_path}`,
-              }]);
-            }
-            break;
-          }
-          case 'done':
-            setLog(l => [...l, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]);
-            setState('done');
-            break;
-          case 'error':
-            setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }]);
-            setState('error');
-            break;
-          default: break;
-        }
-      };
-      const flushEvents = () => {
-        // Robuste : accepte CRLF (sse-starlette défaut) ET LF.
-        const re = /\r\n\r\n|\n\n|\r\r/;
-        let m;
-        while ((m = re.exec(buf)) !== null) {
-          const rawEv = buf.slice(0, m.index);
-          buf = buf.slice(m.index + m[0].length);
-          const ev = parseSSEEventJarvis(rawEv);
-          if (ev) dispatchEvent(ev);
-        }
-      };
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        flushEvents();
-      }
-      if (buf.trim()) {
-        const ev = parseSSEEventJarvis(buf);
-        if (ev) dispatchEvent(ev);
-      }
-      if (state === 'running') setState('done');
-    } catch (e) {
-      if (ctrl.signal.aborted) {
-        setLog(l => [...l, { t: ts(), tag: '[stop]', kind: 'iter', msg: 'Annulé par l\'utilisateur.' }]);
-        setState('done');
-      } else {
-        setLog(l => [...l, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }]);
-        setState('error');
-      }
-    }
+  // launch/stop/reset délèguent au store. Le reader SSE + l'horloge
+  // elapsed + le state du run vivent là-bas, donc unmount du composant
+  // (= switch d'onglet) ne tue plus le flow.
+  const launch = (continueFromResume) => {
+    JarvisStore.start(flow.id, {
+      params,
+      isResume: !!continueFromResume,
+      resumeState: continueFromResume ? resumeState : null,
+    });
+    if (continueFromResume) setResumeState(null);
   };
-
-  const stop = () => {
-    if (abortRef.current) abortRef.current.abort();
-  };
+  const stop = () => JarvisStore.stop(flow.id);
+  const reset = () => JarvisStore.reset(flow.id);
 
   return (
     <PageShell>
@@ -9884,9 +9997,79 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 // Accent swatches available for cycling via the JDMMark click in the topbar.
 const TWEAK_ACCENTS = ['#c0411a', '#1f97b1', '#c83a73', '#4ea63c', '#7a4fbe', '#d96810'];
 
+// ─────────── Router URL (history.pushState + popstate) ───────────
+//
+// Map view ↔ pathname. Le préfixe de déploiement est lu depuis le
+// <base href> injecté par FastAPI (`/jdm-agent/` en prod LIRMM, `/` en
+// dev). Ça strippe automatiquement quel que soit l'environnement.
+//
+// Vues supportées : 8 top-level (cf. VIEWS). Jarvis a en plus des
+// sous-routes /jarvis/<flow> qui pré-remplissent
+// window.__jdmPendingPayload.jarvis.flow (lu par ViewJarvis au mount).
+const _VALID_VIEWS = ['projet', 'explorer', 'claim', 'subgraph',
+                       'agent', 'jarvis', 'productions', 'aide'];
+
+function _appBase() {
+  if (typeof document === 'undefined') return '';
+  const b = document.querySelector('base');
+  const href = (b && b.getAttribute('href')) || '/';
+  // "/jdm-agent/" → "/jdm-agent" ; "/" → ""
+  return href.replace(/\/+$/, '');
+}
+
+function _parseRoute(pathname) {
+  const base = _appBase();
+  let p = pathname || '/';
+  if (base && p.startsWith(base)) p = p.slice(base.length);
+  if (!p.startsWith('/')) p = '/' + p;
+  const segs = p.split('/').filter(Boolean);
+  const view = (segs[0] || 'projet').toLowerCase();
+  const sub = segs[1] || null;
+  return _VALID_VIEWS.includes(view) ? { view, sub } : { view: 'projet', sub: null };
+}
+
+function _buildPath(view, sub) {
+  const base = _appBase();
+  if (!view || view === 'projet') return base + '/';
+  let p = base + '/' + view;
+  if (sub) p += '/' + sub;
+  return p;
+}
+
+// Exposé sur window pour que ViewJarvis (et autres) puissent pousser
+// leurs sous-routes sans drilling de props.
+if (typeof window !== 'undefined') {
+  window.__jdmRoute = {
+    push(view, sub) {
+      if (!window.history || !window.history.pushState) return;
+      const target = _buildPath(view, sub);
+      if (window.location.pathname === target) return;
+      window.history.pushState({ view, sub }, '', target);
+    },
+    replace(view, sub) {
+      if (!window.history || !window.history.replaceState) return;
+      const target = _buildPath(view, sub);
+      window.history.replaceState({ view, sub }, '', target);
+    },
+  };
+}
+
 function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [view, setView] = useState('projet');
+  // Vue initiale tirée de l'URL (deep linking : /jarvis/enrich → jarvis
+  // avec flow=enrich préchargé dans le pending payload).
+  const _initialRoute = (typeof window !== 'undefined')
+    ? _parseRoute(window.location.pathname)
+    : { view: 'projet', sub: null };
+  if (_initialRoute.view === 'jarvis' && _initialRoute.sub
+      && typeof window !== 'undefined') {
+    window.__jdmPendingPayload = window.__jdmPendingPayload || {};
+    window.__jdmPendingPayload.jarvis = Object.assign(
+      {}, window.__jdmPendingPayload.jarvis || {},
+      { flow: _initialRoute.sub }
+    );
+  }
+  const [view, setView] = useState(_initialRoute.view);
 
   // Apply theme to body — suit le système au boot, persisté ensuite.
   useEffect(() => {
@@ -9924,6 +10107,40 @@ function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [view]);
+
+  // ─── Router : push URL on view change + listen popstate ───
+  //
+  // Premier render : remplace l'entrée d'historique pour normaliser
+  // l'URL (utile si l'utilisateur a tapé /JDM-AGENT/ ou un truc capi
+  // inconsistant — on rentre dans l'app avec le path canonique).
+  const _viewMountedRef = useRef(false);
+  useEffect(() => {
+    if (!_viewMountedRef.current) {
+      _viewMountedRef.current = true;
+      if (window.__jdmRoute) window.__jdmRoute.replace(view, null);
+      return;
+    }
+    if (window.__jdmRoute) window.__jdmRoute.push(view, null);
+  }, [view]);
+
+  // popstate (back/forward navigateur) : on relit l'URL et on switche.
+  // Si la nouvelle URL contient une sous-route Jarvis, on injecte le
+  // pending payload AVANT setView pour que ViewJarvis ouvre le bon flow.
+  useEffect(() => {
+    const handler = (e) => {
+      const r = _parseRoute(window.location.pathname);
+      if (r.view === 'jarvis' && r.sub) {
+        window.__jdmPendingPayload = window.__jdmPendingPayload || {};
+        window.__jdmPendingPayload.jarvis = Object.assign(
+          {}, window.__jdmPendingPayload.jarvis || {},
+          { flow: r.sub }
+        );
+      }
+      setView(r.view);
+    };
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, []);
 
   // Routing inter-vues : permet à n'importe quel composant de naviguer
   // via window.dispatchEvent(new CustomEvent('jdm:goto', { detail: { view, term, ... } })).
