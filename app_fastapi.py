@@ -1073,20 +1073,275 @@ def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
     return prompt, headline
 
 
+# ────────────────────────────────────────────────────────────────────
+# Jarvis run registry — background execution decoupled from SSE
+#
+# Pourquoi : si le client (browser) ferme la tab pendant un run, sans
+# ce registre la connexion SSE se ferme, sse-starlette détecte la
+# déconnexion, le générateur Python lève CancelledError, le flow Jarvis
+# meurt (tokens LLM dépensés pour rien). Avec, le flow tourne dans un
+# thread d'arrière-plan indépendant ; le SSE n'est qu'un observateur
+# branché sur un buffer d'events. Tab fermée → SSE coupé MAIS le bg
+# thread continue. Reconnexion possible via GET /api/jarvis/runs/<id>/stream
+# qui replay le buffer + live.
+#
+# Limites assumées :
+#   - process restart uvicorn → tous les runs meurent (pas de persistance
+#     disque, c'est volontaire — overkill pour cet usage)
+#   - TTL des runs terminés : 24h, puis purge auto
+#   - "Stop" depuis le client = stoppe l'OBSERVATION SSE seulement, le
+#     bg thread continue jusqu'à fin naturelle ou exhaustion budget
+#     (interrompre un thread Python proprement n'est pas trivial)
+# ────────────────────────────────────────────────────────────────────
+import uuid as _uuid
+import threading as _threading
+import time as _time
+import asyncio as _asyncio
+
+_JARVIS_RUNS: dict[str, dict] = {}
+_JARVIS_RUNS_LOCK = _threading.Lock()
+_JARVIS_RUN_TTL = 24 * 3600  # 24h après terminaison (done / error)
+
+
+def _new_run(flow_id: str, params: dict, headline: str) -> dict:
+    run_id = _uuid.uuid4().hex[:12]
+    run = {
+        "run_id": run_id,
+        "flow_id": flow_id,
+        "params": params,
+        "headline": headline,
+        "status": "starting",    # starting | running | done | error
+        "events": [],            # list[{event, data}] append-only
+        "subscribers": set(),    # set[asyncio.Event] notified à chaque push
+        "started_at": _time.time(),
+        "finished_at": None,
+        "loop": _asyncio.get_event_loop(),
+        "error_text": None,
+    }
+    with _JARVIS_RUNS_LOCK:
+        _JARVIS_RUNS[run_id] = run
+    return run
+
+
+def _push_event(run: dict, event: str, data) -> None:
+    """Push un event dans le buffer du run et réveille tous les abonnés.
+    `data` peut être un dict (sera JSON-encodé) ou une string déjà sérialisée."""
+    if isinstance(data, (dict, list)):
+        data = json.dumps(data, ensure_ascii=False, default=str)
+    run["events"].append({"event": event, "data": data})
+    # Notify subscribers — call_soon_threadsafe pour traverser le boundary
+    # thread → event loop sans race.
+    loop = run["loop"]
+    for sub in list(run["subscribers"]):
+        try:
+            loop.call_soon_threadsafe(sub.set)
+        except Exception:
+            pass  # loop closed, subscriber stale — ignored
+
+
+def _drive_jarvis_flow_thread(run: dict) -> None:
+    """Exécute le flow Jarvis dans un thread, push les events dans le
+    buffer. Appelé via threading.Thread (pas await) pour que ce soit
+    INDÉPENDANT du cycle de vie HTTP."""
+    flow_id = run["flow_id"]
+    p = run["params"]
+    try:
+        # 1) Headline tout de suite
+        _push_event(run, "headline", {
+            "text": run["headline"], "flow_id": flow_id, "run_id": run["run_id"],
+        })
+        # 2) Build prompt
+        prompt, headline = _jarvis_dispatch(flow_id, p)
+        run["status"] = "running"
+        # 3) Drive run_jarvis_flow
+        sync_gen = _jarvis.run_jarvis_flow(
+            prompt=prompt,
+            headline=headline,
+            model=p.get("model", "gemini-3.1-flash-lite"),
+            api_key=p.get("api_key", ""),
+            budget_label=str(p.get("budget_label", "illimité")),
+            drops_key=p.get("drops_key", ""),
+            build_llm_fn=_app._build_llm,
+            build_agent_fn=_app.build_jdm_agent if hasattr(_app, "build_jdm_agent")
+                          else __import__("jdm_agent.tools.jdm_agent",
+                                          fromlist=["build_jdm_agent"]).build_jdm_agent,
+            get_client_fn=_app.get_client,
+            use_thinking=bool(p.get("use_thinking", False)),
+            consolidation_target=(
+                p.get("target_count") if flow_id == "enrich" else None
+            ),
+            production_target=(
+                p.get("target_count") if flow_id != "enrich" else None
+            ),
+            production_unit={
+                "enrich":      "consolidés",
+                "annotation":  "annotations",
+                "audit":       "verdicts",
+                "signalement": "suspects",
+                "gap":         "trous",
+                "stats":       "lignes",
+            }.get(flow_id, "items"),
+            auto_switch_on_perday=bool(p.get("auto_switch", False)),
+            resume_state=p.get("resume_state"),
+            flow_id=flow_id,
+        )
+        try:
+            from jdm_agent.enrich import count_consolidations, list_consolidations
+        except ImportError:
+            count_consolidations = lambda: 0
+            list_consolidations = lambda: []
+        for chunk in sync_gen:
+            if not isinstance(chunk, tuple):
+                continue
+            messages = chunk[0] if len(chunk) >= 1 else None
+            fpath = chunk[1] if len(chunk) >= 2 else None
+            fpreview = chunk[2] if len(chunk) >= 3 else None
+            state = chunk[3] if len(chunk) >= 4 else None
+            msgs_clean = []
+            if isinstance(messages, list):
+                for m in messages:
+                    if isinstance(m, dict):
+                        msgs_clean.append({
+                            "role": m.get("role", ""),
+                            "content": m.get("content", ""),
+                        })
+            try:
+                cc = int(count_consolidations() or 0)
+                consolidated = list_consolidations() or []
+            except Exception:
+                cc = 0
+                consolidated = []
+            text_chars = sum(len(m.get("content", "") or "") for m in msgs_clean)
+            tokens_estimate = text_chars // 4
+            _push_event(run, "jarvis", {
+                "messages": msgs_clean,
+                "file_path": str(fpath) if fpath else None,
+                "file_preview": fpreview if isinstance(fpreview, str) else "",
+                "state": state if isinstance(state, dict) else None,
+                "consolidated_count": cc,
+                "consolidated": consolidated[-50:],
+                "tokens_estimate": tokens_estimate,
+            })
+        _push_event(run, "done", {})
+        run["status"] = "done"
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        _push_event(run, "error", {"text": msg})
+        run["status"] = "error"
+        run["error_text"] = msg
+    finally:
+        run["finished_at"] = _time.time()
+
+
+async def _stream_run_events(run: dict):
+    """Async generator qui yield les events d'un run, en mode catch-up
+    (replay du buffer existant) PUIS live (attente sur subscriber.set()).
+    Sort quand le run est terminé ET que le buffer a été drainé."""
+    cursor = 0
+    while True:
+        # Drain ce qui est nouveau dans le buffer
+        while cursor < len(run["events"]):
+            yield run["events"][cursor]
+            cursor += 1
+        # Terminé + buffer vidé → fin du stream
+        if run["status"] in ("done", "error") and cursor >= len(run["events"]):
+            break
+        # Attend une notification d'event nouveau (ou un timeout pour
+        # envoyer un keepalive et vérifier le statut).
+        evt = _asyncio.Event()
+        run["subscribers"].add(evt)
+        try:
+            await _asyncio.wait_for(evt.wait(), timeout=20)
+        except _asyncio.TimeoutError:
+            # Keepalive : commentaire SSE (pas un event nommé pour ne pas
+            # polluer le dispatch côté client)
+            yield {"event": "ping", "data": "{}"}
+        finally:
+            run["subscribers"].discard(evt)
+
+
+async def _cleanup_old_runs_loop():
+    """Tâche d'arrière-plan qui purge les runs terminés (done/error)
+    depuis plus de _JARVIS_RUN_TTL secondes. Tourne tous les 10 min."""
+    while True:
+        await _asyncio.sleep(600)
+        now = _time.time()
+        to_drop = []
+        with _JARVIS_RUNS_LOCK:
+            for rid, r in _JARVIS_RUNS.items():
+                if r["status"] in ("done", "error"):
+                    ft = r.get("finished_at") or now
+                    if (now - ft) > _JARVIS_RUN_TTL:
+                        to_drop.append(rid)
+            for rid in to_drop:
+                _JARVIS_RUNS.pop(rid, None)
+
+
+@app.on_event("startup")
+async def _start_jarvis_cleanup_task():
+    _asyncio.create_task(_cleanup_old_runs_loop())
+
+
+@app.get("/api/jarvis/runs")
+def api_jarvis_list_runs():
+    """Liste les runs connus (actifs + terminés < TTL). Sert au boot
+    client pour reconnecter aux runs encore vivants (filtre status==running)."""
+    with _JARVIS_RUNS_LOCK:
+        return {
+            "runs": [
+                {
+                    "run_id": r["run_id"],
+                    "flow_id": r["flow_id"],
+                    "status": r["status"],
+                    "headline": r["headline"],
+                    "started_at": r["started_at"],
+                    "finished_at": r.get("finished_at"),
+                }
+                for r in _JARVIS_RUNS.values()
+            ]
+        }
+
+
+@app.get("/api/jarvis/runs/{run_id}/stream")
+async def api_jarvis_stream_existing_run(run_id: str):
+    """Re-stream un run existant (catch-up depuis le début du buffer
+    + live). Utilisé après une reconnexion (tab refermée puis rouverte,
+    ou navigation interne).
+
+    Si le run n'existe pas (typo ou TTL dépassé), 404.
+    Si le run est déjà terminé, on yield tous les events bufferés puis
+    EOF — le client voit le résultat final."""
+    with _JARVIS_RUNS_LOCK:
+        run = _JARVIS_RUNS.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run_id inconnu : {run_id}")
+    return EventSourceResponse(_stream_run_events(run))
+
+
 @app.post("/api/jarvis/{flow_id}/stream")
 async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
-    """Lance un flux Jarvis via `jarvis.run_jarvis_flow` (réutilise toute
-    la mécanique : budget tool, append cumulatif vers canonical_path,
-    retry rate-limit, retry-à-la-fin, auto-bascule, exclusion_context).
+    """Lance un flux Jarvis EN ARRIÈRE-PLAN et retourne un SSE qui
+    observe son buffer d'events. Le flow est exécuté dans un thread
+    indépendant du cycle de vie HTTP : si le client ferme la tab,
+    l'observation s'arrête mais LE FLOW CONTINUE. Pour re-observer
+    ensuite, GET /api/jarvis/runs/{run_id}/stream avec le run_id
+    retourné dans le PREMIER event de cette stream :
+
+        event: run_id
+        data: {"run_id": "abc123"}
+
+    Le client le persiste en localStorage et peut s'y rebrancher
+    après refresh, navigation, tab close+rouverte, etc.
 
     Events SSE émis :
-      event: headline  data: {"text": "...", "flow_id": "..."}
-      event: jarvis    data: {"messages": [...], "file_path": "...",
-                              "file_preview": "...", "state": {...}|null}
+      event: run_id    data: {"run_id": "..."}       ← NOUVEAU
+      event: headline  data: {"text": "...", "flow_id": "...", "run_id": "..."}
+      event: jarvis    data: {"messages": [...], ...}
       event: done      data: {}
       event: error     data: {"text": "..."}
+      event: ping      data: {}                       ← keepalive idle 20s
     """
-    # 1) Build prompt + headline
+    # 1) Build prompt + headline (validation précoce, error inline)
     try:
         prompt, headline = _jarvis_dispatch(flow_id, req.params or {})
     except ValueError as e:
@@ -1095,122 +1350,27 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
         return EventSourceResponse(err_gen())
 
     p = req.params or {}
+    # 2) Crée le run + spawn le bg thread
+    run = _new_run(flow_id, p, headline)
+    _threading.Thread(
+        target=_drive_jarvis_flow_thread,
+        args=(run,),
+        daemon=True,
+        name=f"jarvis-run-{run['run_id']}",
+    ).start()
 
-    async def gen():
-        # 0) Headline tout de suite
+    # 3) Stream depuis le buffer du run. Insère un event run_id en tête
+    # pour que le client puisse le persister.
+    async def gen_with_runid():
         yield {
-            "event": "headline",
-            "data": json.dumps({"text": headline, "flow_id": flow_id},
-                              ensure_ascii=False),
+            "event": "run_id",
+            "data": json.dumps({"run_id": run["run_id"]}, ensure_ascii=False),
         }
-        try:
-            sync_gen = _jarvis.run_jarvis_flow(
-                prompt=prompt,
-                headline=headline,
-                model=p.get("model", "gemini-3.1-flash-lite"),
-                api_key=p.get("api_key", ""),
-                budget_label=str(p.get("budget_label", "illimité")),
-                drops_key=p.get("drops_key", ""),
-                # Injection — évite l'import circulaire avec app.py
-                build_llm_fn=_app._build_llm,
-                build_agent_fn=_app.build_jdm_agent if hasattr(_app, "build_jdm_agent")
-                              else __import__("jdm_agent.tools.jdm_agent",
-                                              fromlist=["build_jdm_agent"]).build_jdm_agent,
-                get_client_fn=_app.get_client,
-                use_thinking=bool(p.get("use_thinking", False)),
-                # Flow-aware target : enrich utilise le registry des
-                # consolidations (legacy), les autres flows utilisent
-                # production_target avec le compteur fichier par défaut
-                # (compte les triplets pipe-separated écrits dans le
-                # .annot / .err / .audit / etc.).
-                consolidation_target=(
-                    p.get("target_count") if flow_id == "enrich" else None
-                ),
-                production_target=(
-                    p.get("target_count") if flow_id != "enrich" else None
-                ),
-                production_unit={
-                    "enrich":      "consolidés",
-                    "annotation":  "annotations",
-                    "audit":       "verdicts",
-                    "signalement": "suspects",
-                    "gap":         "trous",
-                    "stats":       "lignes",
-                }.get(flow_id, "items"),
-                auto_switch_on_perday=bool(p.get("auto_switch", False)),
-                resume_state=p.get("resume_state"),
-                # Pilote la stratégie canonical_path : enrich → auto_append
-                # (streaming), annot/audit/err/stat → redirect (overwrite
-                # canonical, ignore le path passé par le LLM = anti-bribes
-                # structurel), gap → pas de canonical.
-                flow_id=flow_id,
-            )
-            # Importe le compteur consolidés du registre (mécanique
-            # battle-tested de jdm_agent.enrich) — fournit le VRAI nombre
-            # de triplets ayant passé l'inférence, pas un grep markdown.
-            try:
-                from jdm_agent.enrich import count_consolidations, list_consolidations
-            except ImportError:
-                count_consolidations = lambda: 0
-                list_consolidations = lambda: []
+        async for ev in _stream_run_events(run):
+            yield ev
+    return EventSourceResponse(gen_with_runid())
 
-            async for chunk in _to_async_gen(sync_gen):
-                # run_jarvis_flow yield :
-                #   3-tuple : (messages, fpath, fpreview)
-                #   5-tuple : (messages, fpath, fpreview, state, _continue_visible)
-                if not isinstance(chunk, tuple):
-                    continue
-                messages = chunk[0] if len(chunk) >= 1 else None
-                fpath = chunk[1] if len(chunk) >= 2 else None
-                fpreview = chunk[2] if len(chunk) >= 3 else None
-                state = chunk[3] if len(chunk) >= 4 else None
 
-                # Sérialise messages (peut contenir des objets Gradio
-                # gr.update — on filtre pour ne garder que les dict).
-                msgs_clean = []
-                if isinstance(messages, list):
-                    for m in messages:
-                        if isinstance(m, dict):
-                            msgs_clean.append({
-                                "role": m.get("role", ""),
-                                "content": m.get("content", ""),
-                            })
-
-                # Compteur consolidations depuis le registre (jamais via
-                # parsing du markdown). list_consolidations() renvoie
-                # aussi les triplets pour les afficher dans la sidebar.
-                try:
-                    cc = int(count_consolidations() or 0)
-                    consolidated = list_consolidations() or []
-                except Exception:
-                    cc = 0
-                    consolidated = []
-
-                # Estimation de tokens utilisés (somme des chars / 4) —
-                # utile pour voir le gain quand `build_relance_summary`
-                # truncate l'history pour relancer.
-                text_chars = sum(len(m.get("content", "") or "") for m in msgs_clean)
-                tokens_estimate = text_chars // 4
-
-                yield {
-                    "event": "jarvis",
-                    "data": json.dumps({
-                        "messages": msgs_clean,
-                        "file_path": str(fpath) if fpath else None,
-                        "file_preview": fpreview if isinstance(fpreview, str) else "",
-                        "state": state if isinstance(state, dict) else None,
-                        "consolidated_count": cc,
-                        "consolidated": consolidated[-50:],
-                        "tokens_estimate": tokens_estimate,
-                    }, ensure_ascii=False, default=str),
-                }
-            yield {"event": "done", "data": "{}"}
-        except Exception as e:
-            yield {"event": "error", "data": json.dumps({
-                "text": f"{type(e).__name__}: {e}"
-            }, ensure_ascii=False)}
-
-    return EventSourceResponse(gen())
 
 
 # ────────────────────────────────────────────────────────────────────
