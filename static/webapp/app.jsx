@@ -325,14 +325,23 @@ function App() {
             ].map(([id, label]) => (
               <button key={id}
                 onClick={() => {
-                  // Dispatch SYSTEMATIQUEMENT le reset event quand on clique
-                  // un onglet — qu'on soit deja dessus ou qu'on arrive depuis
-                  // une autre vue. Les vues l'ecoutent pour revenir a leur
-                  // etat initial (ex: ViewJarvis → panel Accueil + exit run).
+                  // Reset event SYSTEMATIQUE au clic d'un onglet — pour que
+                  // les vues remontent au panel d'entree. Dispatch DEUX
+                  // fois : avant setView (capte le cas « deja sur cette vue »
+                  // ou le listener est deja attache) ET dans un microtask
+                  // apres setView (capte le cas « on vient d'une autre vue »
+                  // ou la vue cible vient juste de monter — son listener
+                  // existe maintenant). Sans le double, le tout-premier
+                  // mount de la vue ne recoit pas le signal. Idempotent.
                   if (typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('jdm-nav-reset', { detail: { view: id } }));
                   }
                   setView(id);
+                  if (typeof window !== 'undefined') {
+                    setTimeout(() => window.dispatchEvent(
+                      new CustomEvent('jdm-nav-reset', { detail: { view: id } })
+                    ), 0);
+                  }
                 }}
                 style={{
                   padding: '6px 10px',

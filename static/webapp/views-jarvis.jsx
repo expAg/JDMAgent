@@ -113,10 +113,13 @@ const JARVIS_FLOWS = [
 ];
 
 // Three top-level sections shown in the horizontal "sommaire" nav.
+// Ordre = position dans le carrousel : Configuration (gauche) → Supervision
+// (CENTRE = entree par defaut) → Repertoire (droite, ex-« Accueil »).
+// Supervision est l'entree « tableau de bord live » de la console.
 const J_SECTIONS = [
   { id: 'config',      label: 'Configuration' },
-  { id: 'accueil',     label: 'Accueil' },
   { id: 'supervision', label: 'Supervision' },
+  { id: 'repertoire',  label: 'Répertoire' },
 ];
 // Carousel track = the 3 sections, then one detail panel per flow
 // (reachable from the Accueil / Supervision cards).
@@ -1147,15 +1150,23 @@ function ViewJarvis() {
   // refresh / tab close pendant un run (JarvisStore + localStorage).
   useEffect(() => { JarvisStore.bootReconcile().catch(() => {}); }, []);
 
-  // Reset au clic sur l'onglet Jarvis du TopNav (dispatched par App() quand
-  // l'utilisateur reclique sur l'onglet courant). On revient a Accueil
-  // (panelIndex=1) et on sort du mode run s'il y en avait un.
+  // Echappatoire : clic sur l'onglet Jarvis (qu'on soit deja dessus ou
+  // qu'on arrive d'ailleurs) ramene SYSTEMATIQUEMENT a l'entree de la
+  // console = panneau Supervision (centre). Sort aussi du mode Run
+  // s'il y en avait un. App.jsx dispatche le meme event deux fois
+  // (pre + post setView) pour couvrir le cas premier mount.
   useEffect(() => {
     const onReset = (e) => {
       if (!e.detail || e.detail.view !== 'jarvis') return;
       setRunning(null);
-      setPanelIndex(1);
+      const supIdx = J_SECTIONS.findIndex(s => s.id === 'supervision');
+      setPanelIndex(supIdx >= 0 ? supIdx : 1);
       setTransitioning(true);
+      // Purge aussi le pending payload eventuel (deep link /jarvis/X qui
+      // remettrait `running` au mount via _pending). Belt-and-suspenders.
+      if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
+        delete window.__jdmPendingPayload.jarvis;
+      }
     };
     window.addEventListener('jdm-nav-reset', onReset);
     return () => window.removeEventListener('jdm-nav-reset', onReset);
@@ -1283,9 +1294,9 @@ function ViewJarvis() {
             : 'none',
           willChange: 'transform',
         }}>
-          <JPanel><JConfigPanel onAccueil={() => goToId('accueil')} /></JPanel>
-          <JPanel><JAccueilPanel flows={JARVIS_FLOWS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
+          <JPanel><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
           <JPanel><JSupervisionPanel flows={JARVIS_FLOWS} onPick={goToId} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
+          <JPanel><JAccueilPanel flows={JARVIS_FLOWS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
 
           {JARVIS_FLOWS.map((f, i) => (
             <JPanel key={f.id}>
@@ -1687,16 +1698,19 @@ function JSumRow({ k, v, accent, mono }) {
   );
 }
 
-// ═══════════════════ Accueil — flux disponibles ═══════════════════
-// Two views: "Aperçus" (rich animated preview rows) and "Registre"
-// (dense library/explorer table). Search filters both; scales to hundreds.
+// ═══════════════════ Repertoire — flux disponibles (panneau droit) ═══
+// Anciennement « Accueil » (centre, vue Aperçus par defaut). Devenu
+// le panneau droit « Répertoire » avec la Bibliothèque (mode library)
+// par defaut — l'utilisateur peut basculer en « Aperçus » via le
+// toggle dans la toolbar.
 function JAccueilPanel({ flows, onPick, onLaunch }) {
   // Set des flows actuellement en cours (resync via JarvisStore — survit
   // aux unmount). Sert à dégrader chaque carte avec un badge « en cours »
   // pour que l'utilisateur retrouve d'un coup d'œil ses runs.
   const activeFlowSet = useJarvisActiveSet();
   const [q, setQ] = useState('');
-  const [view, setView] = useState('apercus'); // 'apercus' | 'registre'
+  // Defaut = library (Bibliothèque MediaBay) au lieu d'apercus.
+  const [view, setView] = useState('library'); // 'library' | 'apercus'
 
   const qq = q.trim().toLowerCase();
   const indexed = flows.map((f, i) => ({ f, num: i + 1 }));
@@ -1714,14 +1728,14 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
           textTransform: 'uppercase', letterSpacing: '0.18em', marginBottom: 12,
         }}>
           <em style={{ fontStyle: 'italic', fontFamily: 'var(--font-display)', color: 'var(--accent)', fontSize: 13, textTransform: 'none', letterSpacing: 0 }}>Jarvis</em>
-          &nbsp;· Pipelines autonomes
+          &nbsp;· Catalogue des flux disponibles
         </div>
         <h1 className="display" style={{
           margin: 0, fontFamily: 'var(--font-display)',
           fontSize: 'clamp(32px, 4.4vw, 52px)', fontWeight: 500,
           letterSpacing: '-0.025em', lineHeight: 1, color: 'var(--ink)',
         }}>
-          Flux <span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>disponibles</span>
+          Réper<span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>toire</span>
         </h1>
       </div>
 
@@ -1749,8 +1763,8 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
             }} />
         </div>
         <JSegmented value={view} onChange={setView} options={[
-          { value: 'apercus', label: 'Aperçus' },
           { value: 'library', label: 'Bibliothèque' },
+          { value: 'apercus', label: 'Aperçus' },
         ]} />
         <span className="mono" style={{
           fontSize: 11, color: 'var(--ink-3)', whiteSpace: 'nowrap',
@@ -1998,44 +2012,70 @@ function JLibrary({ list, onPick, onLaunch }) {
     })
   );
 
+  // Layout vertical : MediaBay en HAUT (panneau horizontal pleine largeur,
+  // 4 sections empilees l'une au dessus de l'autre) → puis liste des
+  // resultats en dessous. Chaque section MediaBay = un facette + ses
+  // checkboxes disposees en wrap horizontal (= chips qu'on peut cocher).
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '212px minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
-      {/* facet sidebar */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'stretch' }}>
+      {/* MediaBay : panneau facettes en haut, 4 sections empilees */}
       <aside style={{
         border: '1px solid var(--line)', borderRadius: 'var(--radius-lg)',
-        background: 'var(--bg-card)', overflow: 'hidden', position: 'sticky', top: 60,
+        background: 'var(--bg-card)', overflow: 'hidden',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--line-soft)', background: 'var(--bg-elev)' }}>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Filtres</span>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '10px 14px',
+          borderBottom: '1px solid var(--line-soft)', background: 'var(--bg-elev)',
+        }}>
+          <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+            Filtres MediaBay {activeCount > 0 && <>· <span style={{ color: 'var(--accent)' }}>{activeCount} actif{activeCount > 1 ? 's' : ''}</span></>}
+          </span>
           {activeCount > 0 && (
-            <button type="button" onClick={clear} className="focus-ring" style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Effacer ({activeCount})</button>
+            <button type="button" onClick={clear} className="focus-ring"
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)',
+                textTransform: 'uppercase', letterSpacing: '0.06em',
+              }}>Effacer ({activeCount})</button>
           )}
         </div>
-        <div className="jpanel-scroll" style={{ maxHeight: 'calc(100vh - 250px)', overflowY: 'auto' }}>
-          {groups.map(g => (
-            <div key={g.id} style={{ padding: '10px 12px', borderBottom: '1px solid var(--line-soft)' }}>
-              <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 7, paddingLeft: 2 }}>{g.label}</div>
-              <div style={{ display: 'grid', gap: 2 }}>
+        {/* 4 sections empilees verticalement, separees par un trait fin.
+            Chaque section : label a gauche + chips horizontales a droite
+            qui wrappent sur plusieurs lignes si necessaire. */}
+        <div>
+          {groups.map((g, gi) => (
+            <div key={g.id} style={{
+              display: 'grid', gridTemplateColumns: '128px minmax(0, 1fr)',
+              gap: 14, alignItems: 'start',
+              padding: '10px 14px',
+              borderBottom: gi < groups.length - 1 ? '1px solid var(--line-soft)' : 'none',
+            }}>
+              <div className="mono" style={{
+                fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase',
+                letterSpacing: '0.1em', paddingTop: 5,
+              }}>{g.label}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
                 {g.items.map(it => {
                   const on = !!(sel[g.id] && sel[g.id].has(it.value));
                   return (
                     <button key={it.value} type="button" onClick={() => toggle(g.id, it.value)} className="focus-ring"
                       style={{
-                        display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                        padding: '5px 8px', borderRadius: 'var(--radius)', cursor: 'pointer',
-                        border: '1px solid ' + (on ? 'color-mix(in srgb, var(--accent) 45%, transparent)' : 'transparent'),
-                        background: on ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
-                        textAlign: 'left', fontFamily: 'inherit',
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '4px 9px', borderRadius: 999, cursor: 'pointer',
+                        border: '1px solid ' + (on ? 'color-mix(in srgb, var(--accent) 45%, transparent)' : 'var(--line-soft)'),
+                        background: on ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'var(--bg-elev)',
+                        fontFamily: 'inherit',
                         transition: 'background .12s, border-color .12s',
                       }}>
                       <span style={{
-                        width: 13, height: 13, borderRadius: 3, flexShrink: 0,
+                        width: 12, height: 12, borderRadius: 2, flexShrink: 0,
                         border: '1px solid ' + (on ? 'var(--accent)' : 'var(--line)'),
                         background: on ? 'var(--accent)' : 'transparent',
                         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        color: 'var(--bg)', fontSize: 9, lineHeight: 1,
+                        color: 'var(--bg)', fontSize: 8.5, lineHeight: 1,
                       }}>{on ? '✓' : ''}</span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: on ? 'var(--ink)' : 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.value}</span>
+                      <span style={{ fontSize: 11.5, color: on ? 'var(--ink)' : 'var(--ink-2)', whiteSpace: 'nowrap' }}>{it.value}</span>
                       <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)' }}>{it.count}</span>
                     </button>
                   );
@@ -2046,14 +2086,14 @@ function JLibrary({ list, onPick, onLaunch }) {
         </div>
       </aside>
 
-      {/* results */}
+      {/* Liste des resultats — sous le MediaBay */}
       <div style={{ minWidth: 0 }}>
         {results.length > 0 ? (
           <JRegistry list={results} onPick={onPick} onLaunch={onLaunch} />
         ) : (
           <div style={{ padding: '40px 20px', textAlign: 'center', border: '1px dashed var(--line)', borderRadius: 'var(--radius-lg)' }}>
             <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--ink-2)', marginBottom: 4 }}>Aucun flux pour ces filtres</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Élargis ta sélection à gauche.</div>
+            <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Élargis ta sélection dans les facettes ci-dessus.</div>
           </div>
         )}
       </div>
