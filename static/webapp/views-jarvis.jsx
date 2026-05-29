@@ -547,6 +547,7 @@ function useJarvisActiveSet() {
   const [, force] = React.useReducer(x => x + 1, 0);
   React.useEffect(() => JarvisStore.subscribe('*', force), []);
   return new Set(JarvisStore.activeFlowIds());
+}
 
 function ItemCard({ item, accent }) {
   // Couleur de bord par type — signal visuel rapide.
