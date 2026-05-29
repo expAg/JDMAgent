@@ -8081,6 +8081,26 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                 );
               })()}
             </div>
+            {/* Checkbox raisonnement (chain-of-thought) — pareil que dans
+                l'onglet Chatbot LLM. Toggle params.use_thinking, dispo
+                quel que soit le modèle (Gemini, Claude, GPT). Pour les
+                flows Jarvis le défaut est false (robustesse > raisonnement
+                long) mais l'utilisateur peut l'activer ad hoc. */}
+            <label
+              title="Active la trace de raisonnement (« thinking » Anthropic / Google) — coûte plus de tokens mais peut améliorer les choix d'outils."
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer',
+                marginTop: 10,
+                paddingTop: 10,
+                borderTop: '1px solid var(--line-soft)',
+              }}>
+              <input type="checkbox"
+                checked={!!params.use_thinking}
+                onChange={(e) => setParams(p => ({ ...p, use_thinking: e.target.checked }))}
+                style={{ accentColor: 'var(--accent)' }} />
+              Raisonnement (chain-of-thought)
+            </label>
           </Card>
 
           {/* Metrics grid */}
