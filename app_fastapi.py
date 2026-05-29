@@ -1561,16 +1561,31 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
       event: error     data: {"text": "..."}
       event: ping      data: {}                       ← keepalive idle 20s
     """
-    # 1) Build prompt + headline (validation précoce, error inline)
+    p = req.params or {}
+    # 1) Pre-tire un terme aleatoire DEPUIS JDM si term est vide. Vrai
+    # uniform sampling sur la KB francaise reelle (random.randint sur
+    # l'espace ID, filtre type=1+level>=50, retry jusqu'a 25 fois).
+    # On evite ainsi le mode collapse du LLM qui retombe sur les memes
+    # mots populaires (« symphonie / serenite / telephotravail / etc »).
+    # Le LLM voit donc un terme deja resolu — il ne fait plus de tirage.
+    # Aucune wordlist artisanale : c'est JDM lui-meme qui est la source.
+    if not (p.get("term") or "").strip():
+        try:
+            n = _app.get_client().random_term()
+            if n and n.name:
+                p["term"] = n.name
+        except Exception:
+            pass  # echec silencieux : le LLM reprend son tirage si rien
+
+    # 2) Build prompt + headline (validation précoce, error inline)
     try:
-        prompt, headline = _jarvis_dispatch(flow_id, req.params or {})
+        prompt, headline = _jarvis_dispatch(flow_id, p)
     except ValueError as e:
         async def err_gen():
             yield {"event": "error", "data": json.dumps({"text": str(e)})}
         return EventSourceResponse(err_gen())
 
-    p = req.params or {}
-    # 2) Crée le run + spawn le bg thread
+    # 3) Crée le run + spawn le bg thread
     run = _new_run(flow_id, p, headline)
     _threading.Thread(
         target=_drive_jarvis_flow_thread,
