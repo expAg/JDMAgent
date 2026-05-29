@@ -11094,18 +11094,17 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const stop = () => JarvisStore.stop(flow.id);
   const reset = () => JarvisStore.reset(flow.id);
 
-  // Smooth scroll animé garanti : tween rAF custom (behavior:'smooth'
-  // est respecté par les browsers mais peut être éteint par
-  // prefers-reduced-motion ; le rAF tween garantit l'animation visible).
+  // Smooth scroll animé : tween rAF custom (behavior:'smooth' peut
+  // etre desactive par prefers-reduced-motion).
   //
-  // Fire dans 3 cas :
-  //   1. À l'ouverture d'un flow (mount, quel que soit le status)
-  //   2. Au lancement d'un flow (state idle → running)
-  //   3. Une fois que le contenu est chargé suffisamment pour que le
-  //      bas existe (déclenché 350ms après mount pour laisser le
-  //      layout calculer les hauteurs des Card narration/triplets).
-  const _scrollSmoothToBottom = React.useCallback(() => {
-    const targetY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  // Deux comportements :
+  //   - À l'ouverture (mount / changement de flow) : scroll vers le
+  //     TITRE (top + petite marge), pas vers le bas. L'utilisateur veut
+  //     voir le header « Audit sémantique » + description avant les
+  //     metrics/cards.
+  //   - Au lancement (idle → running) : scroll vers le bas pour suivre
+  //     le live (narration LLM + triplets en cours d'écriture).
+  const _scrollSmoothTo = React.useCallback((targetY) => {
     const startY = window.scrollY || window.pageYOffset || 0;
     const dist = targetY - startY;
     if (Math.abs(dist) < 4) return;  // déjà au bon endroit
@@ -11121,13 +11120,19 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
     };
     requestAnimationFrame(step);
   }, []);
-  // Tirage au mount + à chaque changement de flow.
+  const _scrollSmoothToBottom = React.useCallback(() => {
+    _scrollSmoothTo(Math.max(0, document.documentElement.scrollHeight - window.innerHeight));
+  }, [_scrollSmoothTo]);
+  // Au mount / changement de flow : scroll vers le HAUT (titre visible
+  // a quelques pixels du top). Pas vers le bas, l'utilisateur veut voir
+  // l'entete du run avant les metrics et le live.
   React.useEffect(() => {
-    const tid = setTimeout(_scrollSmoothToBottom, 350);
+    const tid = setTimeout(() => _scrollSmoothTo(0), 50);
     return () => clearTimeout(tid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow.id]);
-  // Tirage au passage idle → running (clic Lancer).
+  // Au passage idle → running (clic Lancer) : scroll vers le bas pour
+  // suivre la narration live + les triplets qui arrivent.
   const _prevStateRef = useRef(state);
   React.useEffect(() => {
     if (_prevStateRef.current === 'idle' && state === 'running') {
