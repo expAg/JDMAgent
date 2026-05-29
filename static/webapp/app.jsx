@@ -63,6 +63,12 @@ function App() {
     const handler = (e) => {
       const d = e.detail || {};
       if (d.term) window.__jdmPendingTerm = d.term;
+      // Payload générique : la vue cible le lira à son premier render via
+      // window.__jdmPendingPayload?.[view]. Ex : { jarvis: { flow, term } }.
+      if (d.payload && d.view) {
+        window.__jdmPendingPayload = window.__jdmPendingPayload || {};
+        window.__jdmPendingPayload[d.view] = d.payload;
+      }
       if (d.view && VIEWS[d.view]) setView(d.view);
     };
     window.addEventListener('jdm:goto', handler);

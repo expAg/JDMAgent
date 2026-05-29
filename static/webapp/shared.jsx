@@ -792,17 +792,53 @@ const REMOTE_COMMANDS = {
 // Pass `cliData` and optionally `remoteData`. If both are present the
 // title bar renders a small CLI/Remote toggle (the active variant is
 // lit; the inactive is dimmed). Mode persists per-instance.
-function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
+function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data, onRun }) {
   // Back-compat: callers that pass `data` directly are treated as cli-only.
   const effectiveCli = cliData || data || null;
   const effectiveRemote = remoteData || null;
   const hasBoth = !!(effectiveCli && effectiveRemote);
   const [mode, setMode] = useState('cli');
   const [copied, setCopied] = useState(false);
+  // État du bouton ▶ play. running = en train d'exécuter ; runOut =
+  // résultat textuel à afficher sous le terminal (null = pas de run).
+  const [running, setRunning] = useState(false);
+  const [runOut, setRunOut] = useState(null);
+  const rootRef = useRef(null);
 
   const active = mode === 'remote' && effectiveRemote ? effectiveRemote : effectiveCli;
   if (!active) return null;
   const lang = active.lang || 'shell';
+
+  // Smooth-scroll quand on bascule CLI ↔ Remote (le bloc grandit /
+  // rétrécit en fonction du contenu, on suit pour rester aligné).
+  const handleSetMode = (m) => {
+    if (m === mode) return;
+    setMode(m);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (typeof scrollGroupIntoView === 'function' && rootRef.current) {
+          try { scrollGroupIntoView(rootRef.current, rootRef.current); } catch {}
+        }
+      }, 30);
+    });
+  };
+
+  // Play button — exécute la commande selon le mode actif (CLI ou
+  // Remote). L'appelant fournit `onRun({mode, cmd})` qui sait quoi
+  // appeler côté backend. Si pas d'onRun, le bouton n'apparaît pas.
+  const handleRun = async () => {
+    if (!onRun || running) return;
+    setRunning(true);
+    setRunOut(null);
+    try {
+      const r = await onRun({ mode, cmd: active.cmd });
+      setRunOut(typeof r === 'string' ? r : (r ? JSON.stringify(r, null, 2) : '(ok)'));
+    } catch (e) {
+      setRunOut(`⚠️ ${e.message || e}`);
+    } finally {
+      setRunning(false);
+    }
+  };
 
   const copy = async () => {
     const text = active.cmd;
@@ -846,7 +882,7 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
   });
 
   return (
-    <div style={{
+    <div ref={rootRef} style={{
       background: '#1b1d22',
       border: '1px solid #2c2f36',
       borderRadius: 8,
@@ -893,7 +929,7 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
             display: 'flex', gap: 4,
           }}>
             <button
-              onClick={() => setMode('cli')}
+              onClick={() => handleSetMode('cli')}
               aria-label="CLI"
               title="Mode CLI (local)"
               className="focus-ring"
@@ -907,7 +943,7 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
               </svg>
             </button>
             <button
-              onClick={() => setMode('remote')}
+              onClick={() => handleSetMode('remote')}
               aria-label="Remote"
               title="Mode Remote (Gradio API)"
               className="focus-ring"
@@ -933,6 +969,31 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
         }}>
           jdm-agent — {lang === 'python' ? 'python' : 'bash'}
         </div>
+        {onRun && (
+          <button
+            onClick={handleRun}
+            disabled={running}
+            className="focus-ring"
+            title={mode === 'remote' ? 'Exécuter (Remote)' : 'Exécuter (CLI)'}
+            aria-label="Exécuter la commande"
+            style={{
+              position: 'absolute', right: 58, top: 4,
+              background: running ? 'rgba(125,205,255,0.10)' : 'rgba(125,205,255,0.16)',
+              border: '1px solid rgba(125,205,255,0.40)',
+              borderRadius: 3,
+              padding: '1px 6px',
+              fontFamily: 'inherit',
+              fontSize: 9.5,
+              color: running ? 'rgba(191,230,255,0.55)' : '#bfe6ff',
+              cursor: running ? 'wait' : 'pointer',
+              letterSpacing: '0.04em',
+              transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+            }}>
+            <span aria-hidden="true" style={{ fontSize: 8, lineHeight: 1 }}>▶</span>
+            <span>{running ? 'run…' : 'run'}</span>
+          </button>
+        )}
         <button
           onClick={copy}
           className="focus-ring"
@@ -973,6 +1034,8 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
             <span style={{ color: '#5d8fd6', flexShrink: 0, userSelect: 'none', marginLeft: 5 }}>~</span>
             <span style={{ color: '#e6e8ec', flexShrink: 0, userSelect: 'none', margin: '0 6px 0 5px' }}>$</span>
             <span style={{ wordBreak: 'break-word', color: '#e6e8ec' }}>{active.cmd}</span>
+            {/* Curseur clignotant : récupéré du brief designer (cf. CHANGELOG). */}
+            <span className="cli-caret" aria-hidden="true" />
           </div>
         ) : (
           // Python: render as a script (multi-line, no prompt) with subtle
@@ -990,6 +1053,36 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
           </pre>
         )}
       </div>
+      {/* Sortie du bouton ▶ : prolonge le terminal d'un panneau de
+          résultat. Reste mono, indenté, séparé par une fine ligne. */}
+      {(running || runOut != null) && (
+        <div style={{
+          borderTop: '1px solid #14151a',
+          background: '#15171b',
+          padding: '8px 12px 10px',
+          fontFamily: 'inherit',
+          fontSize: 11,
+          lineHeight: 1.5,
+          color: '#c9ccd2',
+        }}>
+          <div style={{ color: '#6b7180', fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
+            {running ? '↻ running…' : '↳ output'}
+          </div>
+          {running && runOut == null ? (
+            <div style={{ color: '#7d8390' }}>…</div>
+          ) : (
+            <pre style={{
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              maxHeight: 220,
+              overflow: 'auto',
+            }}>{runOut}</pre>
+          )}
+        </div>
+      )}
     </div>
   );
 }

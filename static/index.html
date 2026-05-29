@@ -279,6 +279,22 @@
     animation: pulse-dot 1.2s ease-in-out infinite;
   }
 
+  /* Curseur clignotant pour le terminal CLI (CliTerminalBlock).
+     Affiché après la commande shell, façon vrai prompt unix. */
+  @keyframes cli-blink {
+    0%, 49%   { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+  .cli-caret {
+    display: inline-block;
+    width: 8px;
+    height: 1.05em;
+    margin-left: 2px;
+    background: var(--term-text, #e6e8ec);
+    vertical-align: text-bottom;
+    animation: cli-blink 1.05s steps(1) infinite;
+  }
+
   /* ── Narration LLM (Jarvis pane, Agent bubble) ──
      Le LLM émet des <div class="jdm-narration"> et <span class="jarvis-term">.
      Ces styles les rendent lisibles et thématisés. */

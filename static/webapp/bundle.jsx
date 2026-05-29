@@ -793,17 +793,53 @@ const REMOTE_COMMANDS = {
 // Pass `cliData` and optionally `remoteData`. If both are present the
 // title bar renders a small CLI/Remote toggle (the active variant is
 // lit; the inactive is dimmed). Mode persists per-instance.
-function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
+function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data, onRun }) {
   // Back-compat: callers that pass `data` directly are treated as cli-only.
   const effectiveCli = cliData || data || null;
   const effectiveRemote = remoteData || null;
   const hasBoth = !!(effectiveCli && effectiveRemote);
   const [mode, setMode] = useState('cli');
   const [copied, setCopied] = useState(false);
+  // État du bouton ▶ play. running = en train d'exécuter ; runOut =
+  // résultat textuel à afficher sous le terminal (null = pas de run).
+  const [running, setRunning] = useState(false);
+  const [runOut, setRunOut] = useState(null);
+  const rootRef = useRef(null);
 
   const active = mode === 'remote' && effectiveRemote ? effectiveRemote : effectiveCli;
   if (!active) return null;
   const lang = active.lang || 'shell';
+
+  // Smooth-scroll quand on bascule CLI ↔ Remote (le bloc grandit /
+  // rétrécit en fonction du contenu, on suit pour rester aligné).
+  const handleSetMode = (m) => {
+    if (m === mode) return;
+    setMode(m);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (typeof scrollGroupIntoView === 'function' && rootRef.current) {
+          try { scrollGroupIntoView(rootRef.current, rootRef.current); } catch {}
+        }
+      }, 30);
+    });
+  };
+
+  // Play button — exécute la commande selon le mode actif (CLI ou
+  // Remote). L'appelant fournit `onRun({mode, cmd})` qui sait quoi
+  // appeler côté backend. Si pas d'onRun, le bouton n'apparaît pas.
+  const handleRun = async () => {
+    if (!onRun || running) return;
+    setRunning(true);
+    setRunOut(null);
+    try {
+      const r = await onRun({ mode, cmd: active.cmd });
+      setRunOut(typeof r === 'string' ? r : (r ? JSON.stringify(r, null, 2) : '(ok)'));
+    } catch (e) {
+      setRunOut(`⚠️ ${e.message || e}`);
+    } finally {
+      setRunning(false);
+    }
+  };
 
   const copy = async () => {
     const text = active.cmd;
@@ -847,7 +883,7 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
   });
 
   return (
-    <div style={{
+    <div ref={rootRef} style={{
       background: '#1b1d22',
       border: '1px solid #2c2f36',
       borderRadius: 8,
@@ -894,7 +930,7 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
             display: 'flex', gap: 4,
           }}>
             <button
-              onClick={() => setMode('cli')}
+              onClick={() => handleSetMode('cli')}
               aria-label="CLI"
               title="Mode CLI (local)"
               className="focus-ring"
@@ -908,7 +944,7 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
               </svg>
             </button>
             <button
-              onClick={() => setMode('remote')}
+              onClick={() => handleSetMode('remote')}
               aria-label="Remote"
               title="Mode Remote (Gradio API)"
               className="focus-ring"
@@ -934,6 +970,31 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
         }}>
           jdm-agent — {lang === 'python' ? 'python' : 'bash'}
         </div>
+        {onRun && (
+          <button
+            onClick={handleRun}
+            disabled={running}
+            className="focus-ring"
+            title={mode === 'remote' ? 'Exécuter (Remote)' : 'Exécuter (CLI)'}
+            aria-label="Exécuter la commande"
+            style={{
+              position: 'absolute', right: 58, top: 4,
+              background: running ? 'rgba(125,205,255,0.10)' : 'rgba(125,205,255,0.16)',
+              border: '1px solid rgba(125,205,255,0.40)',
+              borderRadius: 3,
+              padding: '1px 6px',
+              fontFamily: 'inherit',
+              fontSize: 9.5,
+              color: running ? 'rgba(191,230,255,0.55)' : '#bfe6ff',
+              cursor: running ? 'wait' : 'pointer',
+              letterSpacing: '0.04em',
+              transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+            }}>
+            <span aria-hidden="true" style={{ fontSize: 8, lineHeight: 1 }}>▶</span>
+            <span>{running ? 'run…' : 'run'}</span>
+          </button>
+        )}
         <button
           onClick={copy}
           className="focus-ring"
@@ -974,6 +1035,8 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
             <span style={{ color: '#5d8fd6', flexShrink: 0, userSelect: 'none', marginLeft: 5 }}>~</span>
             <span style={{ color: '#e6e8ec', flexShrink: 0, userSelect: 'none', margin: '0 6px 0 5px' }}>$</span>
             <span style={{ wordBreak: 'break-word', color: '#e6e8ec' }}>{active.cmd}</span>
+            {/* Curseur clignotant : récupéré du brief designer (cf. CHANGELOG). */}
+            <span className="cli-caret" aria-hidden="true" />
           </div>
         ) : (
           // Python: render as a script (multi-line, no prompt) with subtle
@@ -991,6 +1054,36 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
           </pre>
         )}
       </div>
+      {/* Sortie du bouton ▶ : prolonge le terminal d'un panneau de
+          résultat. Reste mono, indenté, séparé par une fine ligne. */}
+      {(running || runOut != null) && (
+        <div style={{
+          borderTop: '1px solid #14151a',
+          background: '#15171b',
+          padding: '8px 12px 10px',
+          fontFamily: 'inherit',
+          fontSize: 11,
+          lineHeight: 1.5,
+          color: '#c9ccd2',
+        }}>
+          <div style={{ color: '#6b7180', fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
+            {running ? '↻ running…' : '↳ output'}
+          </div>
+          {running && runOut == null ? (
+            <div style={{ color: '#7d8390' }}>…</div>
+          ) : (
+            <pre style={{
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              maxHeight: 220,
+              overflow: 'auto',
+            }}>{runOut}</pre>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -3330,12 +3423,28 @@ function scrollGroupIntoView(topEl, detailEl, gap = 18, duration = 520) {
   const sRect = scroller.getBoundingClientRect();
   const tRect = topEl.getBoundingClientRect();
   const topInScroll = tRect.top - sRect.top + scroller.scrollTop;
-  const groupHeight = tRect.height + (extraHeight > 0 ? gap + extraHeight : 0);
-  const center = topInScroll + groupHeight / 2;
-  // Don't clamp to current scrollHeight — the detail panel is still
-  // animating its row from 0→natural, so the scroll height grows over
-  // time. The browser will silently clamp each frame to the live max.
-  const target = Math.max(0, center - scroller.clientHeight / 2);
+  // 2 modes :
+  //   - panel briefs/features : on a un detailEl avec extraHeight > 0 →
+  //     groupHeight = topEl + gap + detail → on CENTRE le groupe entier
+  //     dans la viewport. C'est ce que veut la carte expandable.
+  //   - viz subgraph : topEl == detailEl (= le wrapper viz) sans
+  //     data-detail-content → extraHeight == 0 → on ne CENTRE PAS la
+  //     hauteur du panneau (qui mesure 800px+ et scrollerait trop
+  //     loin), on aligne juste son haut sur le haut de la viewport
+  //     avec une petite marge (24px).
+  // Compense le topbar sticky (56px de hauteur — voir TopBar dans
+  // shared.jsx) quand le scroller est la page entière. Sans ça, le
+  // top du target finit caché sous le topbar (« scrolle trop loin »).
+  const isPageScroll = scroller === document.scrollingElement || scroller === document.documentElement;
+  const topbarH = isPageScroll ? 56 : 0;
+  let target;
+  if (extraHeight > 0) {
+    const groupHeight = tRect.height + gap + extraHeight;
+    const center = topInScroll + groupHeight / 2;
+    target = Math.max(0, center - scroller.clientHeight / 2);
+  } else {
+    target = Math.max(0, topInScroll - 24 - topbarH);
+  }
 
   const start = scroller.scrollTop;
   if (Math.abs(target - start) < 2) return;
@@ -3466,13 +3575,7 @@ function FeatureDetailPanel({ f, goto, onClose }) {
                 textTransform: 'uppercase', letterSpacing: '0.14em',
                 marginBottom: 8,
               }}>Essai rapide</div>
-              <ModuleQuickTry config={shown.detail?.quickTry} />
-              <div style={{ marginTop: 16 }}>
-                <CliTerminalBlock
-                  cliData={CLI_COMMANDS[shown.id]}
-                  remoteData={REMOTE_COMMANDS[shown.id]}
-                />
-              </div>
+              <ModuleQuickTryAndCli moduleId={shown.id} config={shown.detail?.quickTry} />
             </div>
           </div>
         )}
@@ -3482,23 +3585,112 @@ function FeatureDetailPanel({ f, goto, onClose }) {
 }
 
 // ───── Inline quick-try widget per module ─────────────────────────────
-// Mock-only — exercises the form, returns a faux preview line.
-function ModuleQuickTry({ config }) {
+// Formulaire « contrôlé » : le state du form vit dans le parent
+// (ModuleQuickTryAndCli) pour qu'il soit partagé avec la CliTerminalBlock
+// (le bouton ▶ play). Le bouton du QT lui-même ne fait plus de fetch —
+// il navigue vers la vue du module (event jdm:goto) et laisse l'API
+// call au play ▶ de la CliTerminalBlock juste en-dessous.
+function ModuleQuickTry({ config, form, setForm, onNavigate }) {
   if (!config) return null;
   switch (config.kind) {
     case 'select-and-term':
-      return <QTSelectAndTerm config={config} />;
+      return <QTSelectAndTerm config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
     case 'prompt':
-      return <QTPrompt config={config} />;
+      return <QTPrompt config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
     case 'term-and-depth':
-      return <QTTermAndDepth config={config} />;
+      return <QTTermAndDepth config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
     case 'triplet':
-      return <QTTriplet config={config} />;
+      return <QTTriplet config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
     case 'term-and-relation':
-      return <QTTermAndRelation config={config} />;
+      return <QTTermAndRelation config={config} form={form} setForm={setForm} onNavigate={onNavigate} />;
     default:
       return null;
   }
+}
+
+// Initialise le state du form à partir des defaults du config — keyé
+// par config.kind. Renvoie {} si pas de config.
+function initFormState(config) {
+  if (!config) return {};
+  switch (config.kind) {
+    case 'select-and-term':
+      return { flow: config.defaultValue, term: config.termDefault };
+    case 'prompt':
+      return { q: config.defaultValue, model: config.defaultModel || (config.models?.[0]?.value) };
+    case 'term-and-depth':
+      return { term: config.termDefault, depth: config.depthDefault };
+    case 'triplet':
+      return { s: config.defaults.s, r: config.defaults.r, o: config.defaults.o };
+    case 'term-and-relation':
+      return { term: config.termDefault, rel: config.relationDefault };
+    default:
+      return {};
+  }
+}
+
+// Convertit le form state en ordre d'arguments attendu par config.mock.
+function formToArgs(form, kind) {
+  switch (kind) {
+    case 'select-and-term':   return [form.flow, form.term];
+    case 'prompt':            return [form.q, form.model];
+    case 'term-and-depth':    return [form.term, form.depth];
+    case 'triplet':           return [form.s, form.r, form.o];
+    case 'term-and-relation': return [form.term, form.rel];
+    default: return [];
+  }
+}
+
+// Wrapper qui colocate le form QT et le terminal CLI. Le state du form
+// vit ici et est passé EN BAS au QT (controlled inputs) ET utilisé par
+// le ▶ du terminal (qui exécute l'API call). Le bouton du QT lui-même
+// se contente de naviguer.
+function ModuleQuickTryAndCli({ moduleId, config }) {
+  const [form, setForm] = useState(() => initFormState(config));
+
+  // Si l'utilisateur change de module dans le carrousel, le config change
+  // → reset du form vers les defaults du nouveau module.
+  const lastIdRef = useRef(moduleId);
+  useEffect(() => {
+    if (lastIdRef.current !== moduleId) {
+      lastIdRef.current = moduleId;
+      setForm(initFormState(config));
+    }
+  }, [moduleId, config]);
+
+  // onRun du terminal CLI : appelle config.mock (qui fait le vrai fetch
+  // backend) avec les valeurs actuelles du form, renvoie une string.
+  const onRun = config?.mock ? async ({ mode }) => {
+    const args = formToArgs(form, config.kind);
+    const r = await config.mock(...args);
+    if (typeof r === 'string') return r;
+    if (r == null) return '(ok)';
+    try { return JSON.stringify(r, null, 2); } catch { return String(r); }
+  } : null;
+
+  // onNavigate du QT : dispatch jdm:goto vers la vue du module. Le `term`
+  // est posé sur window.__jdmPendingTerm pour les vues qui le lisent
+  // (subgraph). Le `payload` complet va dans window.__jdmPendingPayload
+  // pour les vues qui l'utilisent à terme.
+  const onNavigate = () => {
+    const detail = { view: moduleId, payload: form };
+    if (form.term) detail.term = form.term;
+    window.dispatchEvent(new CustomEvent('jdm:goto', { detail }));
+  };
+
+  return (
+    <>
+      <ModuleQuickTry config={config} form={form} setForm={setForm} onNavigate={onNavigate} />
+      {(CLI_COMMANDS[moduleId] || REMOTE_COMMANDS[moduleId]) && (
+        <div style={{ marginTop: 16 }}>
+          <CliTerminalBlock
+            cliData={CLI_COMMANDS[moduleId]}
+            remoteData={REMOTE_COMMANDS[moduleId]}
+            onRun={onRun}
+          />
+        </div>
+      )}
+    </>
+  );
 }
 
 const QT_PANEL = {
@@ -3645,154 +3837,77 @@ function ClaimVerdictBlock({ result }) {
   );
 }
 
-function QTRunButton({ onClick, label = 'Tester', loading = false }) {
+function QTRunButton({ onClick, label = 'Tester' }) {
   return (
     <div style={{ alignSelf: 'flex-start' }}>
-      <Button size="sm" onClick={onClick} disabled={loading}>
-        {loading ? '⏳ ' + label.replace(/^([A-ZÉ])/, m => m.toLowerCase()) + '…' : label}
-      </Button>
+      <Button size="sm" onClick={onClick}>{label}</Button>
     </div>
   );
 }
 
-// Helper async — exécute config.mock (qui retourne maintenant une
-// Promise hits le vrai backend), gère loading + erreurs.
-async function _runQT(fn, args, setOut, setLoading) {
-  setLoading(true);
-  try {
-    const r = await fn(...args);
-    setOut(r);
-  } catch (e) {
-    setOut(`⚠️ ${e.message || e}`);
-  } finally {
-    setLoading(false);
-  }
-}
+// Note : tous les QT widgets sont maintenant CONTROLLED — le state vit
+// dans ModuleQuickTryAndCli. Les boutons ne font plus que naviguer (via
+// onNavigate). Le vrai API call est désormais déclenché par le bouton
+// ▶ de la CliTerminalBlock juste en-dessous.
 
-function QTSelectAndTerm({ config }) {
-  const [flow, setFlow] = useState(config.defaultValue);
-  const [term, setTerm] = useState(config.termDefault);
-  const [out, setOut] = useState(null);
-  const [loading, setLoading] = useState(false);
+function QTSelectAndTerm({ config, form, setForm, onNavigate }) {
   return (
     <div style={QT_PANEL}>
-      <Select value={flow} onChange={setFlow} options={config.options} />
-      <Input value={term} onChange={setTerm} placeholder="terme" />
-      <QTRunButton onClick={() => _runQT(config.mock, [flow, term], setOut, setLoading)}
-                   loading={loading} label="Lancer le flux" />
-      <QTPreview text={out} />
+      <Select value={form.flow} onChange={v => setForm(s => ({ ...s, flow: v }))} options={config.options} />
+      <Input value={form.term} onChange={v => setForm(s => ({ ...s, term: v }))} placeholder="terme" />
+      <QTRunButton onClick={onNavigate} label="Lancer le flux" />
     </div>
   );
 }
 
-function QTPrompt({ config }) {
-  const [q, setQ] = useState(config.defaultValue);
-  const [model, setModel] = useState(config.defaultModel || (config.models?.[0]?.value));
-  const [out, setOut] = useState(null);
-  const [loading, setLoading] = useState(false);
+function QTPrompt({ config, form, setForm, onNavigate }) {
   return (
     <div style={QT_PANEL}>
       {config.models && (
-        <Select value={model} onChange={setModel} options={config.models} />
+        <Select value={form.model} onChange={v => setForm(s => ({ ...s, model: v }))} options={config.models} />
       )}
-      <Input value={q} onChange={setQ} placeholder={config.placeholder} />
-      <QTRunButton onClick={() => _runQT(config.mock, [q, model], setOut, setLoading)}
-                   loading={loading} label="Envoyer" />
-      <QTPreview text={out} />
+      <Input value={form.q} onChange={v => setForm(s => ({ ...s, q: v }))} placeholder={config.placeholder} />
+      <QTRunButton onClick={onNavigate} label="Envoyer" />
     </div>
   );
 }
 
-function QTTermAndDepth({ config }) {
-  const [term, setTerm] = useState(config.termDefault);
-  const [depth, setDepth] = useState(config.depthDefault);
-  const [out, setOut] = useState(null);
-  const [loading, setLoading] = useState(false);
+function QTTermAndDepth({ config, form, setForm, onNavigate }) {
   return (
     <div style={QT_PANEL}>
-      <Input value={term} onChange={setTerm} placeholder="terme" />
+      <Input value={form.term} onChange={v => setForm(s => ({ ...s, term: v }))} placeholder="terme" />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', minWidth: 78 }}>profondeur</span>
         <div style={{ flex: 1 }}>
-          <Slider min={1} max={4} step={1} value={depth} onChange={setDepth} />
+          <Slider min={1} max={4} step={1} value={form.depth} onChange={v => setForm(s => ({ ...s, depth: v }))} />
         </div>
       </div>
-      <QTRunButton onClick={() => _runQT(config.mock, [term, depth], setOut, setLoading)}
-                   loading={loading} label="Construire" />
-      <QTPreview text={out} />
+      <QTRunButton onClick={onNavigate} label="Construire" />
     </div>
   );
 }
 
-function QTTriplet({ config }) {
-  const [s, setS] = useState(config.defaults.s);
-  const [r, setR] = useState(config.defaults.r);
-  const [o, setO] = useState(config.defaults.o);
-  const [out, setOut] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const isVerdict = out && typeof out === 'object';
-  const rootRef = useRef(null);
-  const tailRef = useRef(null);
-
-  // After clicking Vérifier, smooth-scroll so the whole result (header +
-  // inference chain) is fully visible.
-  const onVerify = async () => {
-    setLoading(true);
-    try {
-      const r2 = await config.mock(s, r, o);
-      setOut(r2);
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          if (rootRef.current) scrollGroupIntoView(rootRef.current, tailRef.current || rootRef.current);
-        }, 30);
-      });
-    } catch (e) {
-      setOut(`⚠️ ${e.message || e}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+function QTTriplet({ config, form, setForm, onNavigate }) {
   return (
-    <div ref={rootRef} style={QT_PANEL}>
+    <div style={QT_PANEL}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-        <Input value={s} onChange={setS} placeholder="sujet" />
-        <Input value={r} onChange={setR} placeholder="relation" />
-        <Input value={o} onChange={setO} placeholder="objet" />
+        <Input value={form.s} onChange={v => setForm(st => ({ ...st, s: v }))} placeholder="sujet" />
+        <Input value={form.r} onChange={v => setForm(st => ({ ...st, r: v }))} placeholder="relation" />
+        <Input value={form.o} onChange={v => setForm(st => ({ ...st, o: v }))} placeholder="objet" />
       </div>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <QTRunButton onClick={onVerify} loading={loading} label="Vérifier" />
-        {out && (
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {isVerdict
-              ? <QTPreview node={<ClaimVerdictHeader result={out} />} onClose={() => setOut(null)} />
-              : <QTPreview text={out} onClose={() => setOut(null)} />}
-          </div>
-        )}
-      </div>
-      {isVerdict && (out.chain?.length > 0 || out.note || out.confidence != null) && (
-        <div ref={tailRef} data-detail-content>
-          <QTPreview node={<ClaimVerdictChain result={out} />} />
-        </div>
-      )}
+      <QTRunButton onClick={onNavigate} label="Vérifier" />
     </div>
   );
 }
 
-function QTTermAndRelation({ config }) {
-  const [term, setTerm] = useState(config.termDefault);
-  const [rel, setRel] = useState(config.relationDefault);
-  const [out, setOut] = useState(null);
-  const [loading, setLoading] = useState(false);
+function QTTermAndRelation({ config, form, setForm, onNavigate }) {
   return (
     <div style={QT_PANEL}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-        <Input value={term} onChange={setTerm} placeholder="terme" />
-        <Input value={rel} onChange={setRel} placeholder="relation" />
+        <Input value={form.term} onChange={v => setForm(s => ({ ...s, term: v }))} placeholder="terme" />
+        <Input value={form.rel} onChange={v => setForm(s => ({ ...s, rel: v }))} placeholder="relation" />
       </div>
-      <QTRunButton onClick={() => _runQT(config.mock, [term, rel], setOut, setLoading)}
-                   loading={loading} label="Lister" />
-      <QTPreview text={out} />
+      <QTRunButton onClick={onNavigate} label="Lister" />
     </div>
   );
 }
@@ -9448,6 +9563,12 @@ function App() {
     const handler = (e) => {
       const d = e.detail || {};
       if (d.term) window.__jdmPendingTerm = d.term;
+      // Payload générique : la vue cible le lira à son premier render via
+      // window.__jdmPendingPayload?.[view]. Ex : { jarvis: { flow, term } }.
+      if (d.payload && d.view) {
+        window.__jdmPendingPayload = window.__jdmPendingPayload || {};
+        window.__jdmPendingPayload[d.view] = d.payload;
+      }
       if (d.view && VIEWS[d.view]) setView(d.view);
     };
     window.addEventListener('jdm:goto', handler);
