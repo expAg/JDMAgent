@@ -7158,12 +7158,28 @@ const JarvisStore = {
       .map(([id]) => id);
   },
   stop(flowId) {
-    // ATTENTION : "stop" côté client = arrêter l'OBSERVATION SSE.
-    // Le bg thread serveur continue à pousser dans son buffer jusqu'à
-    // fin naturelle (budget atteint ou done) ou TTL. C'est volontaire :
-    // interrompre proprement un sync generator Python depuis un autre
-    // thread n'est pas trivial. Voir backend pour la note technique.
+    // Stop = cooperative cancellation côté serveur (POST /cancel) qui
+    // pose un flag que le bg thread voit entre deux chunks → break du
+    // for loop → finally blocs propres (exclusion_context exit, etc.).
+    // Latence ≈ 5-15s (le round-trip LLM en cours se termine, aucun
+    // nouveau ne démarre). En parallèle on coupe l'observation SSE
+    // locale pour libérer le reader.
     const cur = this.get(flowId);
+    if (cur.runId) {
+      // Fire-and-forget : on n'attend pas la réponse pour ne pas bloquer
+      // l'UI. Le bg confirmera le stop via event 'cancelled' dans la SSE
+      // (que l'observation soit encore branchée ou pas — au pire on le
+      // récupère au prochain bootReconcile via GET /runs).
+      fetch(`api/jarvis/runs/${encodeURIComponent(cur.runId)}/cancel`, {
+        method: 'POST',
+      }).catch(() => {});
+      const ts = () => new Date().toTimeString().slice(0, 8);
+      cur.log = [...cur.log, {
+        t: ts(), tag: '[stop]', kind: 'iter',
+        msg: 'Demande d\'arrêt envoyée — le flow se termine après le chunk en cours (~5-15s).',
+      }];
+      this._emit(flowId);
+    }
     if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
   },
   reset(flowId) {
@@ -7329,9 +7345,23 @@ const JarvisStore = {
             }
             break;
           }
-          case 'done':
-            cur.log = [...cur.log, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }];
+          case 'cancelled':
+            // Le bg thread a vu le flag et a fait sync_gen.close() —
+            // les finally ont tourné, le flow s'est arrêté proprement.
+            // Le serveur peut encore pousser un 'done' juste après pour
+            // confirmer la fin de boucle — on ignorera le doublon car
+            // status est déjà 'done'.
+            cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: d.text || 'Flow annulé.' }];
             cur.status = 'done';
+            _localRunIdSet(flowId, null);
+            break;
+          case 'done':
+            // Idempotent : si déjà 'done' (post-cancellation), on ne
+            // ré-écrit pas l'event log avec un message contradictoire.
+            if (cur.status !== 'done') {
+              cur.log = [...cur.log, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }];
+              cur.status = 'done';
+            }
             _localRunIdSet(flowId, null);
             break;
           case 'error':
