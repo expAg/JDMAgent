@@ -136,15 +136,24 @@ _CONSOLIDATION_OUTPUT_HEADER_WRITTEN: bool = False
 class RunContext:
     """État d'un run Jarvis, capturé en closure par ses tools.
 
-    Porte le canonical_path + mode + les registries (exclusion + consolidation).
-    Chaque champ a la même sémantique que son équivalent global mais
-    scopé au run. Aucune méthode magique — c'est juste un sac de state
-    avec un lock pour la cohérence en multi-thread (les tools tournent
-    en worker LangChain, donc cross-thread).
+    Porte le canonical_path + mode + les registries (exclusion + consolidation
+    + redirect_items). Chaque champ a la même sémantique que son équivalent
+    global mais scopé au run. Aucune méthode magique — c'est juste un sac
+    de state avec un lock pour la cohérence en multi-thread (les tools
+    tournent en worker LangChain, donc cross-thread).
+
+    `redirect_items` : liste accumulative des dicts passés à
+    `write_submission_file` en mode redirect, au fil des appels du run.
+    Le tool ne fait PAS confiance au LLM pour re-passer la liste complète
+    à chaque appel (cassait après une condense d'historique qui wipe les
+    ToolMessage précédents) — il accumule ici et écrit l'UNION dans le
+    canonical à chaque appel. Le LLM passe juste les nouveaux items ;
+    on possède la mémoire.
     """
     __slots__ = (
         "canonical_path", "canonical_mode",
         "consolidation_registry", "exclusion_registry",
+        "redirect_items", "redirect_seen_keys",
         "header_written", "lock",
     )
 
@@ -153,6 +162,12 @@ class RunContext:
         self.canonical_mode: Optional[str] = None
         self.consolidation_registry: dict = {}
         self.exclusion_registry: dict = {}
+        # Accumulation per-run pour redirect mode : ordre d'arrivée
+        # préservé, dédup OPTIONNELLE via redirect_seen_keys (peut être
+        # désactivée par le caller pour les flows où les dups sont
+        # légitimes — ex. err / signalement).
+        self.redirect_items: list = []
+        self.redirect_seen_keys: set = set()
         self.header_written: bool = False
         self.lock = threading.RLock()
 
@@ -164,6 +179,42 @@ class RunContext:
             self.canonical_path = path
             self.canonical_mode = mode if path is not None else None
             self.header_written = False
+
+    def merge_redirect_items(self, new_items: list,
+                              key_fn=None, dedup: bool = True) -> list:
+        """Accumule de nouveaux items dans `redirect_items`.
+
+        - Si `dedup=True` (par défaut) et `key_fn` fourni, ne garde que
+          les items dont la clé (`key_fn(item)`) n'est pas déjà dans
+          `redirect_seen_keys`. Tuples / strings hashables OK.
+        - Si `dedup=False`, append tel quel (cas err/signalement où les
+          dups sont sémantiquement légitimes).
+        - Si `key_fn=None`, append sans dédup (silencieux).
+
+        Renvoie la LISTE COMPLÈTE accumulée (snapshot, copie) — c'est
+        ce que le tool écrira dans le canonical à la place du payload
+        seul du LLM.
+        """
+        with self.lock:
+            if dedup and key_fn is not None:
+                for it in new_items:
+                    try:
+                        k = key_fn(it)
+                    except Exception:
+                        # Si la key fn plante sur un item, on l'append
+                        # quand même mais sans le tracer (impossible
+                        # à dédupliquer plus tard).
+                        self.redirect_items.append(it)
+                        continue
+                    if k in self.redirect_seen_keys:
+                        continue
+                    self.redirect_seen_keys.add(k)
+                    self.redirect_items.append(it)
+            else:
+                self.redirect_items.extend(new_items)
+            # Retourne une copie pour éviter qu'un caller mute la liste
+            # interne pendant qu'on écrit le fichier.
+            return list(self.redirect_items)
 
 
 def _norm_target(s: str) -> str:

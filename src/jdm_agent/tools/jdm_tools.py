@@ -1967,7 +1967,16 @@ def write_submission_file(
     # Si jarvis a posé un canonical en mode redirect (flows annot /
     # audit / err / stat), on IGNORE complètement le `path` passé par
     # le LLM et on overwrite ce canonical. Garantie structurelle zéro
-    # fragmentation : peu importe ce que le LLM tente, ça atterrit là.
+    # fragmentation sur le path : peu importe ce que le LLM tente, ça
+    # atterrit là.
+    #
+    # Garantie structurelle ANTI-PERTE sur le contenu : on n'écrit pas
+    # juste le payload de CE call (qui ne contiendrait que les nouveaux
+    # items après une condense d'historique LLM qui aurait wipé les
+    # appels précédents) — on accumule per-run dans `rctx.redirect_items`
+    # et on écrit l'UNION à chaque appel. Le LLM ne passe que ses
+    # nouveaux items ; on possède la mémoire. Plus jamais d'écrasement
+    # silencieux des items écrits aux relances précédentes.
     # Court-circuit AVANT l'anti-écrasement (qui n'a pas de sens en
     # redirect : c'est précisément l'overwrite répété qu'on autorise).
     try:
@@ -2056,7 +2065,9 @@ def write_submission_file(
             dict_items.append(t)
         # Dict avec d'autres clés ou clés vides : ignoré silencieusement.
 
-    # Garde-fou : rien à écrire → AUCUN fichier créé, on signale au LLM
+    # Garde-fou : rien à écrire → AUCUN fichier créé, on signale au LLM.
+    # NB : on garde-fou AVANT l'accumulation redirect — un appel vide est
+    # un appel vide, on ne le matérialise pas comme un overwrite no-op.
     if not str_lines and not dict_items:
         return {
             "path": path, "count": 0,
@@ -2069,6 +2080,99 @@ def write_submission_file(
                 "fichier vide n'a été créé."
             ),
         }
+
+    # ── REDIRECT MODE : ACCUMULATION CÔTÉ PYTHON ───────────────────
+    # Si redirect actif, on accumule les items de CE call dans le rctx
+    # puis on remplace str_lines/dict_items par l'union complète accumulée
+    # depuis le début du run. Conséquence : la suite du code écrit
+    # toujours l'historique complet, peu importe ce que le LLM a passé.
+    #
+    # Dédup déterministe :
+    #   - str_lines : par contenu exact de ligne (les dups n'apportent rien)
+    #   - dict_items : par (term, relation, target, annotation) — un même
+    #     triplet avec une annotation différente est un item distinct.
+    #     Une ré-annotation du même triplet écrase la précédente côté
+    #     accumulé : le LLM peut corriger en re-passant le triplet avec
+    #     une nouvelle annotation, on prend la nouvelle.
+    _redirect_added_lines = 0
+    _redirect_added_dicts = 0
+    if _redirect:
+        try:
+            from jdm_agent.enrich.validators import _active_ctx as _get_rctx
+            _rctx = _get_rctx()
+        except Exception:
+            _rctx = None
+        if _rctx is not None:
+            if str_lines:
+                _before = len(_rctx.redirect_items)
+                _new_full_lines = _rctx.merge_redirect_items(
+                    list(str_lines),
+                    key_fn=lambda s: ("line", s),
+                    dedup=True,
+                )
+                _redirect_added_lines = len(_rctx.redirect_items) - _before
+                # _new_full_lines mélange potentiellement lines + dicts
+                # accumulés. On ne garde que les str pour str_lines.
+                str_lines = [it for it in _new_full_lines if isinstance(it, str)]
+            if dict_items:
+                _before = len(_rctx.redirect_items)
+                # Pour les dicts, on dédup sur (term, relation, target,
+                # annotation) ET on REMPLACE quand annotation change pour
+                # le même (term, rel, target) — corrige les ré-annotations.
+                # Implémentation : on retire d'abord les items du rctx
+                # qui matchent (term, rel, target) si l'un des nouveaux
+                # items partage ces 3 champs, puis on merge normalement.
+                with _rctx.lock:
+                    new_keys_trt = {
+                        (str(d.get("term") or ""), str(d.get("relation") or ""),
+                         str(d.get("target") or ""))
+                        for d in dict_items if isinstance(d, dict)
+                    }
+                    if new_keys_trt:
+                        kept = []
+                        kept_keys = set()
+                        for it in _rctx.redirect_items:
+                            if not isinstance(it, dict):
+                                kept.append(it)
+                                continue
+                            trt = (str(it.get("term") or ""),
+                                   str(it.get("relation") or ""),
+                                   str(it.get("target") or ""))
+                            if trt in new_keys_trt:
+                                # remplacé par la nouvelle annotation du LLM
+                                continue
+                            kept.append(it)
+                            # garde aussi la clé dédup complète pour
+                            # cohérence avec redirect_seen_keys
+                            kept_keys.add((
+                                "dict", trt[0], trt[1], trt[2],
+                                str(it.get("annotation") or ""),
+                            ))
+                        _rctx.redirect_items = kept
+                        # Reset seen_keys aux clés réellement encore
+                        # présentes — sinon on bloquerait l'insertion
+                        # d'un (t,r,t,annot) précédemment supprimé.
+                        _rctx.redirect_seen_keys = {
+                            k for k in _rctx.redirect_seen_keys
+                            if k in kept_keys or not (
+                                isinstance(k, tuple) and len(k) >= 4
+                                and k[0] == "dict"
+                                and (k[1], k[2], k[3]) in new_keys_trt
+                            )
+                        }
+                _new_full_items = _rctx.merge_redirect_items(
+                    list(dict_items),
+                    key_fn=lambda d: (
+                        "dict",
+                        str(d.get("term") or ""),
+                        str(d.get("relation") or ""),
+                        str(d.get("target") or ""),
+                        str(d.get("annotation") or ""),
+                    ),
+                    dedup=True,
+                )
+                _redirect_added_dicts = len(_rctx.redirect_items) - _before
+                dict_items = [it for it in _new_full_items if isinstance(it, dict)]
 
     c = _client()
 
