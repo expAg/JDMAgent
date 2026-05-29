@@ -1350,6 +1350,7 @@ def run_jarvis_flow(
     max_persistence_relances: Optional[int] = None,
     auto_switch_on_perday: bool = False,
     resume_state: Optional[dict] = None,
+    flow_id: Optional[str] = None,
 ) -> Generator[tuple, None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -1497,7 +1498,47 @@ def run_jarvis_flow(
         import time as _time_mod
         _ts = _time_mod.strftime("%Y%m%d_%H%M%S")
         _hash = hashlib.sha1((prompt or "").encode("utf-8")).hexdigest()[:6]
-        canonical_path = f"/tmp/jdm_outputs/jdm_{_ts}_{_hash}.enrich"
+        # Extension + mode du canonical par flow_id :
+        #   - enrich      → .enrich, mode auto_append (streaming +
+        #     crash-safety via register_consolidation)
+        #   - annotation  → .annot,  mode redirect  (overwrite canonical)
+        #   - audit       → .audit,  mode redirect
+        #   - signalement → .err,    mode redirect
+        #   - stats       → .stat,   mode redirect
+        #   - gap         → pas de canonical (flow de découverte, ne
+        #     produit pas de fichier)
+        #   - flow_id None : compat legacy. Si consolidation_target est
+        #     set → enrich auto_append. Sinon, pas de canonical (le LLM
+        #     contrôle, anti-écrasement actif comme avant).
+        _flow_canonical_spec = {
+            "enrich":      (".enrich", "auto_append"),
+            "annotation":  (".annot",  "redirect"),
+            "audit":       (".audit",  "redirect"),
+            "signalement": (".err",    "redirect"),
+            "stats":       (".stat",   "redirect"),
+            "gap":         (".gap",    None),  # ext sentinelle, pas de canonical
+        }
+        if flow_id is not None:
+            _ext, _canon_mode = _flow_canonical_spec.get(flow_id, (".enrich", None))
+        elif consolidation_target is not None:
+            # Legacy : pas de flow_id mais on a consolidation_target → enrich.
+            _ext, _canon_mode = ".enrich", "auto_append"
+        else:
+            _ext, _canon_mode = ".enrich", None
+        canonical_path = f"/tmp/jdm_outputs/jdm_{_ts}_{_hash}{_ext}"
+
+        # Snapshot du dossier de sortie pour le cleanup filet en finally.
+        # On notera tout fichier nouveau qui n'est PAS canonical_path à la
+        # fin du run et on le supprimera. Avec le mode redirect en place,
+        # cette liste devrait être vide en pratique — c'est juste un
+        # filet pour les régressions futures.
+        try:
+            from pathlib import Path as _PathSnap
+            _outputs_dir = _PathSnap("/tmp/jdm_outputs")
+            _outputs_dir.mkdir(parents=True, exist_ok=True)
+            _pre_run_files = {p.resolve() for p in _outputs_dir.iterdir() if p.is_file()}
+        except Exception:
+            _pre_run_files = set()
 
         # Yield initial : user message + assistant placeholder, pas encore de fichier
         yield (
@@ -1561,12 +1602,19 @@ def run_jarvis_flow(
         # principal (cf. plus bas).
         _excl_ctx = exclusion_context()
         _excl_ctx.__enter__()
-        # Active l'auto-append : chaque register_consolidation écrit
-        # immédiatement la ligne dans canonical_path. L'UI verra le
-        # fichier grossir EN TEMPS RÉEL sans dépendre du LLM appelant
-        # write_submission_file. Désactivé dans le finally.
-        from jdm_agent.enrich import set_consolidation_output_path
-        set_consolidation_output_path(canonical_path)
+        # Active le canonical avec le bon mode :
+        #   - auto_append (enrich) : register_consolidation streame
+        #     ligne par ligne dans canonical_path. write_submission_file
+        #     y est no-op poli. UI voit le fichier grossir en temps réel.
+        #   - redirect (annot/audit/err/stat) : write_submission_file
+        #     overwrite canonical_path, ignore le path passé par le LLM.
+        #     Garantie structurelle zéro fragmentation.
+        #   - None (gap, ou legacy sans signal) : pas de canonical, le
+        #     LLM contrôle son path (anti-écrasement actif).
+        # Désactivé dans le finally.
+        from jdm_agent.enrich import set_canonical_output_path
+        if _canon_mode is not None:
+            set_canonical_output_path(canonical_path, mode=_canon_mode)
         while not persistence_done:
             rate_limit_attempts = 0
             # Hits de rate limit CONSÉCUTIFS sans aucun chunk reçu
@@ -2319,10 +2367,36 @@ def run_jarvis_flow(
             _current_file_path(), _read_file_preview(_current_file_path()),
         )
     finally:
-        # Désactive l'auto-append (path persistait globalement)
+        # Désactive le canonical (auto_append ou redirect) — il persiste
+        # globalement sinon et polluerait le run suivant.
         try:
-            from jdm_agent.enrich import set_consolidation_output_path
-            set_consolidation_output_path(None)
+            from jdm_agent.enrich import set_canonical_output_path
+            set_canonical_output_path(None)
+        except Exception:
+            pass
+        # CLEANUP FILET — supprime tout fichier créé pendant ce run dans
+        # /tmp/jdm_outputs qui n'est PAS le canonical. Avec le mode
+        # redirect en place, ne devrait jamais matcher (le LLM ne peut
+        # pas créer de fichier ailleurs). C'est juste un filet pour les
+        # régressions futures / les cas exotiques (legacy mode sans
+        # canonical, gap flow, etc.).
+        try:
+            from pathlib import Path as _PathClean
+            _canonical_resolved = _PathClean(canonical_path).resolve()
+            _outputs_dir2 = _PathClean("/tmp/jdm_outputs")
+            if _outputs_dir2.is_dir():
+                for _f in _outputs_dir2.iterdir():
+                    if not _f.is_file():
+                        continue
+                    _fr = _f.resolve()
+                    if _fr == _canonical_resolved:
+                        continue
+                    if _fr in _pre_run_files:
+                        continue  # existait avant ce run, pas notre affaire
+                    try:
+                        _f.unlink()
+                    except OSError:
+                        pass
         except Exception:
             pass
         # Ferme manuellement l'exclusion_context ouvert avant le
