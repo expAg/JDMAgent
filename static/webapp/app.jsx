@@ -14,9 +14,79 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 // Accent swatches available for cycling via the JDMMark click in the topbar.
 const TWEAK_ACCENTS = ['#c0411a', '#1f97b1', '#c83a73', '#4ea63c', '#7a4fbe', '#d96810'];
 
+// ─────────── Router URL (history.pushState + popstate) ───────────
+//
+// Map view ↔ pathname. Le préfixe de déploiement est lu depuis le
+// <base href> injecté par FastAPI (`/jdm-agent/` en prod LIRMM, `/` en
+// dev). Ça strippe automatiquement quel que soit l'environnement.
+//
+// Vues supportées : 8 top-level (cf. VIEWS). Jarvis a en plus des
+// sous-routes /jarvis/<flow> qui pré-remplissent
+// window.__jdmPendingPayload.jarvis.flow (lu par ViewJarvis au mount).
+const _VALID_VIEWS = ['projet', 'explorer', 'claim', 'subgraph',
+                       'agent', 'jarvis', 'productions', 'aide'];
+
+function _appBase() {
+  if (typeof document === 'undefined') return '';
+  const b = document.querySelector('base');
+  const href = (b && b.getAttribute('href')) || '/';
+  // "/jdm-agent/" → "/jdm-agent" ; "/" → ""
+  return href.replace(/\/+$/, '');
+}
+
+function _parseRoute(pathname) {
+  const base = _appBase();
+  let p = pathname || '/';
+  if (base && p.startsWith(base)) p = p.slice(base.length);
+  if (!p.startsWith('/')) p = '/' + p;
+  const segs = p.split('/').filter(Boolean);
+  const view = (segs[0] || 'projet').toLowerCase();
+  const sub = segs[1] || null;
+  return _VALID_VIEWS.includes(view) ? { view, sub } : { view: 'projet', sub: null };
+}
+
+function _buildPath(view, sub) {
+  const base = _appBase();
+  if (!view || view === 'projet') return base + '/';
+  let p = base + '/' + view;
+  if (sub) p += '/' + sub;
+  return p;
+}
+
+// Exposé sur window pour que ViewJarvis (et autres) puissent pousser
+// leurs sous-routes sans drilling de props.
+if (typeof window !== 'undefined') {
+  window.__jdmRoute = {
+    push(view, sub) {
+      if (!window.history || !window.history.pushState) return;
+      const target = _buildPath(view, sub);
+      if (window.location.pathname === target) return;
+      window.history.pushState({ view, sub }, '', target);
+    },
+    replace(view, sub) {
+      if (!window.history || !window.history.replaceState) return;
+      const target = _buildPath(view, sub);
+      window.history.replaceState({ view, sub }, '', target);
+    },
+  };
+}
+
 function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [view, setView] = useState('projet');
+  // Vue initiale tirée de l'URL (deep linking : /jarvis/enrich → jarvis
+  // avec flow=enrich préchargé dans le pending payload).
+  const _initialRoute = (typeof window !== 'undefined')
+    ? _parseRoute(window.location.pathname)
+    : { view: 'projet', sub: null };
+  if (_initialRoute.view === 'jarvis' && _initialRoute.sub
+      && typeof window !== 'undefined') {
+    window.__jdmPendingPayload = window.__jdmPendingPayload || {};
+    window.__jdmPendingPayload.jarvis = Object.assign(
+      {}, window.__jdmPendingPayload.jarvis || {},
+      { flow: _initialRoute.sub }
+    );
+  }
+  const [view, setView] = useState(_initialRoute.view);
 
   // Apply theme to body — suit le système au boot, persisté ensuite.
   useEffect(() => {
@@ -54,6 +124,40 @@ function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [view]);
+
+  // ─── Router : push URL on view change + listen popstate ───
+  //
+  // Premier render : remplace l'entrée d'historique pour normaliser
+  // l'URL (utile si l'utilisateur a tapé /JDM-AGENT/ ou un truc capi
+  // inconsistant — on rentre dans l'app avec le path canonique).
+  const _viewMountedRef = useRef(false);
+  useEffect(() => {
+    if (!_viewMountedRef.current) {
+      _viewMountedRef.current = true;
+      if (window.__jdmRoute) window.__jdmRoute.replace(view, null);
+      return;
+    }
+    if (window.__jdmRoute) window.__jdmRoute.push(view, null);
+  }, [view]);
+
+  // popstate (back/forward navigateur) : on relit l'URL et on switche.
+  // Si la nouvelle URL contient une sous-route Jarvis, on injecte le
+  // pending payload AVANT setView pour que ViewJarvis ouvre le bon flow.
+  useEffect(() => {
+    const handler = (e) => {
+      const r = _parseRoute(window.location.pathname);
+      if (r.view === 'jarvis' && r.sub) {
+        window.__jdmPendingPayload = window.__jdmPendingPayload || {};
+        window.__jdmPendingPayload.jarvis = Object.assign(
+          {}, window.__jdmPendingPayload.jarvis || {},
+          { flow: r.sub }
+        );
+      }
+      setView(r.view);
+    };
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, []);
 
   // Routing inter-vues : permet à n'importe quel composant de naviguer
   // via window.dispatchEvent(new CustomEvent('jdm:goto', { detail: { view, term, ... } })).

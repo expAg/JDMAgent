@@ -64,13 +64,22 @@ const SUBMITTABLE_FLOWS = new Set(['enrich', 'audit', 'signalement',
                                     'stats', 'annotation']);
 
 function ViewJarvis() {
-  // Pré-remplissage depuis Projet › Quick try : si l'utilisateur a cliqué
-  // « Préparer dans Jarvis » avec un flow + terme, on bascule directement
-  // sur ce flow (le terme est consommé par JarvisRun via une seconde lecture
-  // du payload — gardé sur window jusqu'au mount de JarvisRun).
+  // Pré-remplissage depuis Projet › Quick try OU deep link URL
+  // /jarvis/<flow> : si l'utilisateur a cliqué « Préparer dans Jarvis »
+  // ou ouvert un lien deep, on bascule directement sur ce flow (le terme
+  // est consommé par JarvisRun via une seconde lecture du payload —
+  // gardé sur window jusqu'au mount de JarvisRun).
   const _pending = (typeof window !== 'undefined'
                     && window.__jdmPendingPayload?.jarvis) || null;
   const [active, setActive] = useState(_pending?.flow || null);
+
+  // Synchronise l'URL avec le flow actif. /jarvis (liste) ↔ /jarvis/<id>
+  // (run). Permet bookmark/share + back/forward navigateur cohérents.
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !window.__jdmRoute) return;
+    window.__jdmRoute.replace('jarvis', active || null);
+  }, [active]);
+
   if (active) {
     const idx = JARVIS_FLOWS.findIndex(f => f.id === active);
     const flow = JARVIS_FLOWS[idx];
