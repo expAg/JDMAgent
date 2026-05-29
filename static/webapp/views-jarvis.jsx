@@ -301,7 +301,17 @@ const JarvisStore = {
               cur.metrics = { ...cur.metrics, tokens: d.tokens_estimate };
             }
             if (Array.isArray(d.consolidated)) {
+              // On garde tous les champs utiles à <ItemCard> (subject/
+              // relation/target/explanation) pour pouvoir afficher
+              // l'explication d'inférence sous chaque triplet — même
+              // rendu que les autres flows.
               cur.accepted = d.consolidated.map(c => ({
+                type: 'consolidated',
+                subject: c.term || '',
+                relation: c.relation || '',
+                target: c.target || '',
+                explanation: c.explanation || '',
+                // Compat ancien rendu (label/score) : conservés au cas où.
                 label: `${c.term} | ${c.relation} | ${c.target}`,
                 score: '✓',
               }));
@@ -1195,13 +1205,16 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                 padding: 0,
                 background: 'var(--bg-card)',
               }}>
-                {/* Rendu adaptatif selon flow.id et type de chaque item.
-                    Enrich = liste simple (canonique du registry).
-                    Audit/err/annot = cartes stylisées par type, avec
-                    bloc explication mis en valeur quand il existe. */}
+                {/* Rendu unifié : on utilise ItemCard pour tous les flows.
+                    Enrich = items issus du registry de consolidation
+                    (subject/relation/target + explanation d'inférence) ;
+                    le rendu inclut l'explication en italique sous le
+                    triplet — comme pour annot/audit/err.
+                    Autres flows = items parsés depuis le file_preview. */}
                 {(() => {
-                  // Enrich : on garde la source registry (accepted) qui
-                  // ne contient QUE les consolidés vérifiés.
+                  // Enrich : source registry (`accepted`) — déjà au format
+                  // ItemCard (cf. mapping SSE plus haut qui pose
+                  // type='consolidated' + explanation).
                   if (flow.id === 'enrich') {
                     if (accepted.length === 0) {
                       return (
@@ -1211,19 +1224,9 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                       );
                     }
                     return (
-                      <div style={{ display: 'grid', gap: 4, padding: 12 }}>
+                      <div style={{ display: 'grid', gap: 8, padding: 12 }}>
                         {accepted.map((a, i) => (
-                          <div key={i} className="fade-up" style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '6px 8px',
-                            background: 'var(--bg-elev)',
-                            border: '1px solid var(--line-soft)',
-                            borderRadius: 'var(--radius)',
-                            fontFamily: 'var(--font-mono)', fontSize: 11,
-                          }}>
-                            <span style={{ color: 'var(--jdm-green)', flexShrink: 0 }}>{a.score}</span>
-                            <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)' }}>{a.label}</span>
-                          </div>
+                          <ItemCard key={i} item={a} accent={flow.accent} />
                         ))}
                       </div>
                     );
