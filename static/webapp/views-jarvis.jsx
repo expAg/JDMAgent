@@ -1997,6 +1997,36 @@ function JLibrary({ list, onPick, onLaunch }) {
   const clear = () => setSel({});
   const activeCount = Object.values(sel).reduce((n, s) => n + (s ? s.size : 0), 0);
 
+  // Scroll auto-centre sur les resultats apres chaque changement de
+  // selection facette. Au mount initial (sel === {}), on ne fait rien
+  // (la vue est deja au top, le user n'a pas encore interagi).
+  // _userTouched evite le scroll sur le tout premier render.
+  const resultsRef = useRef(null);
+  const _userTouched = useRef(false);
+  useEffect(() => {
+    if (activeCount === 0 && !_userTouched.current) return;
+    _userTouched.current = true;
+    const el = resultsRef.current;
+    if (!el) return;
+    // Cherche le scrollable parent (.jpanel-scroll) et scrolle vers
+    // la position des resultats. scrollIntoView fonctionne aussi mais
+    // affecte la window — on prefere viser le panel pour ne pas casser
+    // la nav de carrousel. Smooth + block 'start' = haut des resultats
+    // arrive en haut de la fenetre de scroll.
+    let sc = el.parentElement;
+    while (sc && sc !== document.body) {
+      const oy = getComputedStyle(sc).overflowY;
+      if (oy === 'auto' || oy === 'scroll') break;
+      sc = sc.parentElement;
+    }
+    if (!sc) sc = window;
+    const elTop = el.getBoundingClientRect().top;
+    const scTop = (sc === window) ? 0 : sc.getBoundingClientRect().top;
+    const delta = elTop - scTop - 12;  // -12px de marge
+    if (sc.scrollBy) sc.scrollBy({ top: delta, behavior: 'smooth' });
+    else if (sc.scrollTo) sc.scrollTo({ top: (sc.scrollTop || 0) + delta, behavior: 'smooth' });
+  }, [sel, activeCount]);
+
   const groups = J_FACETS.map(g => {
     const counts = {};
     list.forEach(({ f }) => g.get(f).forEach(v => { counts[v] = (counts[v] || 0) + 1; }));
@@ -2086,8 +2116,9 @@ function JLibrary({ list, onPick, onLaunch }) {
         </div>
       </aside>
 
-      {/* Liste des resultats — sous le MediaBay */}
-      <div style={{ minWidth: 0 }}>
+      {/* Liste des resultats — sous le MediaBay. Le ref est cible par
+          le scroll auto-centre apres chaque toggle facette. */}
+      <div ref={resultsRef} style={{ minWidth: 0, scrollMarginTop: 12 }}>
         {results.length > 0 ? (
           <JRegistry list={results} onPick={onPick} onLaunch={onLaunch} />
         ) : (
