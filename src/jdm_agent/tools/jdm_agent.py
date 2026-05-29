@@ -145,7 +145,6 @@ def build_jdm_agent(
     llm: Optional[Any] = None,
     enrich_docstrings: bool = True,
     debug: bool = False,
-    exclude_tools: Optional[list] = None,
 ):
     """Construit un agent LangChain (LangGraph compilé) pour JDM.
 
@@ -155,19 +154,19 @@ def build_jdm_agent(
              Si None, `get_llm()` lit l'env (LLM_PROVIDER, LLM_MODEL).
         enrich_docstrings: ajoute les descriptions de relations aux docstrings.
         debug: trace verbose des appels.
-        exclude_tools: liste de noms de tools à RETIRER du toolset. Utilisé
-            par les flows Jarvis pour empêcher la contamination cross-flow
-            (ex : annotation ne doit pas pouvoir appeler `validate_candidate`
-            qui écrit dans le registry global de consolidation partagé avec
-            enrich).
 
     Returns:
         CompiledStateGraph — appeler `.invoke({"messages": [HumanMessage("...")]})`.
+
+    Note : l'isolation des flows Jarvis parallèles est gérée par
+    `validators.run_context_active(rctx)` (ContextVar), pas par filtrage de
+    tools. Chaque bg driver pose un `RunContext` dans la ContextVar avant
+    de streamer ; les tools (`validate_candidate`, `write_submission_file`,
+    etc.) lisent automatiquement ce RunContext via `_active_ctx()` et y
+    écrivent au lieu des globals partagés. Aucun tool n'a besoin d'être
+    retiré du toolset pour empêcher les fuites cross-flow.
     """
     tools = build_jdm_tools(client=client, enrich_docstrings=enrich_docstrings)
-    if exclude_tools:
-        excluded = set(exclude_tools)
-        tools = [t for t in tools if getattr(t, "name", "") not in excluded]
     if llm is None:
         llm = get_llm()
     return create_agent(model=llm, tools=tools, system_prompt=SYSTEM_PROMPT, debug=debug)

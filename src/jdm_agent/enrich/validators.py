@@ -32,6 +32,35 @@ import unicodedata
 from contextlib import contextmanager
 from typing import Optional
 
+# ContextVar — mécanisme principal d'isolation per-run. Le bg driver
+# Jarvis fait `_CURRENT_RUN_CTX.set(rctx)` au start, et langchain.agents
+# propage la valeur vers les ThreadPoolExecutor des tool workers via
+# copy_context(). Si non-set → globals (compat MCP/CLI/tests directs).
+_CURRENT_RUN_CTX: contextvars.ContextVar = contextvars.ContextVar(
+    "jdm_run_context", default=None,
+)
+
+
+def _active_ctx(explicit: "Optional[RunContext]" = None) -> "Optional[RunContext]":
+    """Résolution : explicite > ContextVar > None (globals)."""
+    if explicit is not None:
+        return explicit
+    return _CURRENT_RUN_CTX.get()
+
+
+@contextmanager
+def run_context_active(rctx):
+    """Context manager qui pose `rctx` dans la ContextVar puis le restaure.
+    Utilisé par le bg driver Jarvis. Sortie auto = restore automatique.
+    Note : la ContextVar est PAR THREAD/TASK via copy_context, donc
+    plusieurs bg threads chacun avec leur propre rctx ne se marchent
+    pas dessus."""
+    token = _CURRENT_RUN_CTX.set(rctx)
+    try:
+        yield rctx
+    finally:
+        _CURRENT_RUN_CTX.reset(token)
+
 from jdm_agent.client import JDMClient
 from jdm_agent.enrich.models import Candidate
 from jdm_agent.factcheck import Claim
@@ -85,6 +114,56 @@ _CONTEXT_DEPTH = 0  # compteur de nesting d'exclusion_context()
 _CANONICAL_OUTPUT_PATH: Optional[str] = None
 _CANONICAL_OUTPUT_MODE: Optional[str] = None  # "auto_append" | "redirect"
 _CONSOLIDATION_OUTPUT_HEADER_WRITTEN: bool = False
+
+
+# ---------- RunContext (isolation per-run pour Jarvis parallèle) ----------
+#
+# Problème : les globals ci-dessus + _CONSOLIDATION_REGISTRY sont partagés
+# entre tous les runs. Si deux flows Jarvis tournent en parallèle :
+#   - L'un set canonical_path/mode → l'autre l'écrase (last setter wins)
+#   - register_consolidation écrit dans une registry partagée → mix
+#
+# Solution : un objet `RunContext` par run, capturé en closure dans les
+# tools construits pour ce run (cf. build_jdm_tools_for_run dans
+# jdm_tools.py). Le tool lit/écrit dans CE RunContext, pas dans les
+# globals — donc isolation parfaite quel que soit le thread d'exécution
+# (la closure survit aux ThreadPoolExecutor LangChain).
+#
+# Les globals restent utilisés pour les cas hors-Jarvis (MCP, CLI, tests
+# directs) qui appellent les fonctions de niveau module sans passer par
+# un RunContext explicite.
+
+class RunContext:
+    """État d'un run Jarvis, capturé en closure par ses tools.
+
+    Porte le canonical_path + mode + les registries (exclusion + consolidation).
+    Chaque champ a la même sémantique que son équivalent global mais
+    scopé au run. Aucune méthode magique — c'est juste un sac de state
+    avec un lock pour la cohérence en multi-thread (les tools tournent
+    en worker LangChain, donc cross-thread).
+    """
+    __slots__ = (
+        "canonical_path", "canonical_mode",
+        "consolidation_registry", "exclusion_registry",
+        "header_written", "lock",
+    )
+
+    def __init__(self):
+        self.canonical_path: Optional[str] = None
+        self.canonical_mode: Optional[str] = None
+        self.consolidation_registry: dict = {}
+        self.exclusion_registry: dict = {}
+        self.header_written: bool = False
+        self.lock = threading.RLock()
+
+    def set_canonical(self, path: Optional[str], mode: str = "auto_append") -> None:
+        """Configure le canonical pour ce run. Cf. doc set_canonical_output_path."""
+        if path is not None and mode not in ("auto_append", "redirect"):
+            raise ValueError(f"mode must be 'auto_append' or 'redirect', got {mode!r}")
+        with self.lock:
+            self.canonical_path = path
+            self.canonical_mode = mode if path is not None else None
+            self.header_written = False
 
 
 def _norm_target(s: str) -> str:
@@ -142,23 +221,26 @@ def _norm_consolidation_key(term: str, relation: str, target: str) -> tuple[str,
     )
 
 
-def set_canonical_output_path(path: Optional[str], mode: str = "auto_append") -> None:
+def set_canonical_output_path(path: Optional[str], mode: str = "auto_append",
+                              run_context: Optional[RunContext] = None) -> None:
     """Configure le path canonique d'écriture pour le run courant.
+
+    Si `run_context` est fourni, configure sur ce contexte. Sinon, modifie
+    les globals module-level (compat MCP/CLI).
 
     `mode` :
       - "auto_append" : `register_consolidation` append en streaming
         dans `path` à chaque triplet consolidé. `write_submission_file`
-        sur ce path est no-op poli (le fichier est déjà à jour côté
-        backend). Utilisé pour ENRICH où le contenu est calculé par
-        l'inférence (streaming gratuit + crash-safety).
+        sur ce path est no-op poli. Utilisé pour ENRICH.
       - "redirect" : `write_submission_file` IGNORE le `path` passé
-        par le LLM et OVERWRITE `path`. Utilisé pour annot/audit/err/
-        stat où le contenu vient du jugement LLM. Garantie structurelle
-        zéro fragmentation : peu importe ce que le LLM appelle, ça
-        atterrit dans `path`.
+        par le LLM et OVERWRITE `path`. Utilisé pour annot/audit/err/stat.
 
     Passer `path=None` désactive le mécanisme (reset du flag header).
     """
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        ctx.set_canonical(path, mode)
+        return
     global _CANONICAL_OUTPUT_PATH, _CANONICAL_OUTPUT_MODE, _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
     if mode not in ("auto_append", "redirect"):
         raise ValueError(f"mode must be 'auto_append' or 'redirect', got {mode!r}")
@@ -168,35 +250,50 @@ def set_canonical_output_path(path: Optional[str], mode: str = "auto_append") ->
         _CONSOLIDATION_OUTPUT_HEADER_WRITTEN = False
 
 
-def get_canonical_output_path() -> tuple[Optional[str], Optional[str]]:
-    """Retourne `(path, mode)` du canonical courant. `(None, None)` si
-    désactivé."""
+def get_canonical_output_path(run_context: Optional[RunContext] = None) -> tuple[Optional[str], Optional[str]]:
+    """Retourne `(path, mode)` du canonical courant. `(None, None)` si désactivé."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            return ctx.canonical_path, ctx.canonical_mode
     with _REGISTRY_LOCK:
         return _CANONICAL_OUTPUT_PATH, _CANONICAL_OUTPUT_MODE
 
 
 # ---------- Compat wrappers (auto_append uniquement) ----------
 
-def set_consolidation_output_path(path: Optional[str]) -> None:
+def set_consolidation_output_path(path: Optional[str],
+                                   run_context: Optional[RunContext] = None) -> None:
     """Compat : pose le canonical en mode auto_append (= comportement
     historique d'enrich). Préfère `set_canonical_output_path(path,
     mode='auto_append')` pour le code neuf."""
-    set_canonical_output_path(path, mode="auto_append")
+    set_canonical_output_path(path, mode="auto_append", run_context=run_context)
 
 
-def get_consolidation_output_path() -> Optional[str]:
+def get_consolidation_output_path(run_context: Optional[RunContext] = None) -> Optional[str]:
     """Compat : retourne le path canonical SI mode auto_append, sinon
-    None. Sert aux call sites qui ne veulent QUE l'auto-append d'enrich
-    (ex. write_submission_file dans le guard auto-append)."""
+    None. Sert aux call sites qui ne veulent QUE l'auto-append d'enrich."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            if ctx.canonical_mode == "auto_append":
+                return ctx.canonical_path
+            return None
     with _REGISTRY_LOCK:
         if _CANONICAL_OUTPUT_MODE == "auto_append":
             return _CANONICAL_OUTPUT_PATH
         return None
 
 
-def get_redirect_output_path() -> Optional[str]:
+def get_redirect_output_path(run_context: Optional[RunContext] = None) -> Optional[str]:
     """Retourne le path canonical SI mode redirect, sinon None. Sert à
     `write_submission_file` pour détourner l'écriture LLM."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            if ctx.canonical_mode == "redirect":
+                return ctx.canonical_path
+            return None
     with _REGISTRY_LOCK:
         if _CANONICAL_OUTPUT_MODE == "redirect":
             return _CANONICAL_OUTPUT_PATH
@@ -204,23 +301,44 @@ def get_redirect_output_path() -> Optional[str]:
 
 
 def _append_consolidation_to_file(term: str, relation: str, target: str,
-                                   explanation: str) -> None:
+                                   explanation: str,
+                                   run_context: Optional[RunContext] = None) -> None:
     """Écrit une ligne `term | relation | target |  < explanation >`
-    en APPEND dans le path configuré par `set_consolidation_output_path`.
-    No-op si aucun path n'est défini. Crée le dossier parent si absent.
-    Écrit un header de soumission lors du PREMIER append.
+    en APPEND dans le path canonique (du run_context ou des globals).
+    No-op si aucun path n'est défini ou si mode ≠ auto_append.
 
-    Appelé sous `_REGISTRY_LOCK` par `register_consolidation`.
-    L'écriture file est rapide (~ms) ; le lock reste bref.
-
-    Pas de décodage des raffinements ici (raw `term>id` reste raw) —
-    le décodage propre est fait par la fusion finale via
-    `pipeline.write_submission`. Trade-off : visibilité temps réel
-    prime sur la cosmétique des noms.
+    Pas de décodage des raffinements ici — le décodage propre est fait
+    par la fusion finale via `pipeline.write_submission`.
     """
+    # Résout la source de state : run_context ou globals
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            path = ctx.canonical_path
+            mode = ctx.canonical_mode
+        if path is None or mode != "auto_append":
+            return
+        try:
+            from pathlib import Path as _Path
+            p = _Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            expl = " ".join((explanation or "").split())
+            with ctx.lock:
+                write_header = not ctx.header_written
+                if write_header:
+                    ctx.header_written = True
+            with p.open("a", encoding="utf-8") as f:
+                if write_header:
+                    f.write(
+                        "# Soumission JeuxDeMots — fichier d'enrichissement.\n"
+                        "# Format : terme | relation | cible | annotation < explication >\n\n"
+                    )
+                f.write(f"{term} | {relation} | {target} |  < {expl} >\n")
+        except Exception:
+            pass
+        return
+
     global _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
-    # Mode auto_append uniquement (redirect ne streame pas, c'est
-    # l'overwrite final du LLM qui matérialise le fichier).
     if _CANONICAL_OUTPUT_PATH is None or _CANONICAL_OUTPUT_MODE != "auto_append":
         return
     try:
@@ -238,21 +356,31 @@ def _append_consolidation_to_file(term: str, relation: str, target: str,
                 _CONSOLIDATION_OUTPUT_HEADER_WRITTEN = True
             f.write(f"{term} | {relation} | {target} |  < {expl} >\n")
     except Exception:
-        pass  # silent fail : le registry continue à fonctionner
+        pass
 
 
 def register_consolidation(term: str, relation: str, target: str,
-                            explanation: str, schema: Optional[str] = None) -> None:
-    """Stocke l'explication d'inférence produite par `infer()` pour ce
-    triplet. Appelé par `consolidate_candidate` quand le triplet est
-    confirmé. No-op si aucun `exclusion_context()` actif.
+                            explanation: str, schema: Optional[str] = None,
+                            run_context: Optional[RunContext] = None) -> None:
+    """Stocke l'explication d'inférence pour ce triplet. Appelé par
+    `consolidate_candidate` quand le triplet est confirmé.
 
-    Si `set_consolidation_output_path` a été appelé, écrit également
-    la ligne en APPEND dans ce fichier (auto-append temps réel).
-    Déduplication : si le triplet est déjà dans le registry, on
-    ne l'écrit PAS une 2e fois (évite les doublons dans le fichier
-    append-only).
-    """
+    Si `run_context` fourni → écrit dans son registry. Sinon → registry
+    global (no-op si pas dans exclusion_context())."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            key = _norm_consolidation_key(term, relation, target)
+            is_new = key not in ctx.consolidation_registry
+            ctx.consolidation_registry[key] = {
+                "explanation": (explanation or "").strip(),
+                "schema": (schema or "").strip(),
+            }
+        if is_new:
+            _append_consolidation_to_file(term, relation, target, explanation,
+                                          run_context=run_context)
+        return
+
     with _REGISTRY_LOCK:
         if _CONSOLIDATION_REGISTRY is None:
             return
@@ -266,10 +394,14 @@ def register_consolidation(term: str, relation: str, target: str,
             _append_consolidation_to_file(term, relation, target, explanation)
 
 
-def get_consolidation(term: str, relation: str, target: str) -> Optional[dict]:
-    """Récupère l'explication d'inférence stockée pour ce triplet, si
-    elle existe. None si pas trouvée. Utilisé par `write_submission_file`
-    pour OVERRIDER une éventuelle explanation custom du LLM."""
+def get_consolidation(term: str, relation: str, target: str,
+                       run_context: Optional[RunContext] = None) -> Optional[dict]:
+    """Récupère l'explication d'inférence stockée pour ce triplet."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            key = _norm_consolidation_key(term, relation, target)
+            return ctx.consolidation_registry.get(key)
     with _REGISTRY_LOCK:
         if _CONSOLIDATION_REGISTRY is None:
             return None
@@ -277,28 +409,32 @@ def get_consolidation(term: str, relation: str, target: str) -> Optional[dict]:
         return _CONSOLIDATION_REGISTRY.get(key)
 
 
-def count_consolidations() -> int:
-    """Renvoie le NOMBRE CUMULATIF de triplets consolidés depuis l'entrée
-    dans `exclusion_context()` — incluant TOUTES les relances persistance.
-
-    Source de vérité pour le compteur de progression du flow d'enrichissement.
-    À PRÉFÉRER à `count_consolidated_in_messages(accumulated_messages)` qui
-    ne voit que les ToolMessages du tour COURANT (l'accumulated_messages
-    étant reset à chaque relance via `build_relance_summary`).
-
-    Renvoie 0 hors `exclusion_context()` (registry None)."""
+def count_consolidations(run_context: Optional[RunContext] = None) -> int:
+    """Renvoie le NOMBRE CUMULATIF de triplets consolidés. Renvoie 0 hors
+    `exclusion_context()` (registry global None)."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            return len(ctx.consolidation_registry)
     with _REGISTRY_LOCK:
         if _CONSOLIDATION_REGISTRY is None:
             return 0
         return len(_CONSOLIDATION_REGISTRY)
 
 
-def list_consolidations() -> list[dict]:
-    """Renvoie la LISTE des triplets consolidés depuis l'entrée dans
-    `exclusion_context()` (incluant toutes les relances). Format :
-    [{term, relation, target, explanation, schema}, ...]. Liste vide
-    hors contexte. Utile pour une fusion finale (option B) ou un dump
-    complet en fin de flow."""
+def list_consolidations(run_context: Optional[RunContext] = None) -> list[dict]:
+    """Renvoie la LISTE des triplets consolidés. Liste vide hors contexte."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            return [
+                {
+                    "term": k[0], "relation": k[1], "target": k[2],
+                    "explanation": v.get("explanation", ""),
+                    "schema": v.get("schema", ""),
+                }
+                for k, v in ctx.consolidation_registry.items()
+            ]
     with _REGISTRY_LOCK:
         if _CONSOLIDATION_REGISTRY is None:
             return []
@@ -312,25 +448,33 @@ def list_consolidations() -> list[dict]:
         ]
 
 
-def register_exclusion(term: str, relation: str, exclusion_set) -> None:
-    """Stocke la liste de cibles déjà présentes pour (term, relation).
-    Appelé par `list_existing_for_enrichment` après son fetch.
-    No-op si aucun `exclusion_context()` n'est actif."""
+def register_exclusion(term: str, relation: str, exclusion_set,
+                        run_context: Optional[RunContext] = None) -> None:
+    """Stocke la liste de cibles déjà présentes pour (term, relation)."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            ctx.exclusion_registry[_norm_key(term, relation)] = set(exclusion_set or [])
+        return
     with _REGISTRY_LOCK:
         if _EXCLUSION_REGISTRY is None:
             return
         _EXCLUSION_REGISTRY[_norm_key(term, relation)] = set(exclusion_set or [])
 
 
-def is_excluded(term: str, relation: str, target: str) -> Optional[str]:
-    """Retourne None si la cible n'est pas dans l'exclusion enregistrée,
-    sinon un message court qui rappelle au LLM qu'il avait l'info.
-    No-op (None) si aucun `exclusion_context()` n'est actif ou si pas
-    de pré-fetch enregistré pour ce (term, relation)."""
-    with _REGISTRY_LOCK:
-        if _EXCLUSION_REGISTRY is None:
-            return None
-        excl = _EXCLUSION_REGISTRY.get(_norm_key(term, relation))
+def is_excluded(term: str, relation: str, target: str,
+                 run_context: Optional[RunContext] = None) -> Optional[str]:
+    """None si la cible n'est pas dans l'exclusion enregistrée, sinon
+    un message court qui rappelle au LLM."""
+    ctx = _active_ctx(run_context)
+    if ctx is not None:
+        with ctx.lock:
+            excl = ctx.exclusion_registry.get(_norm_key(term, relation))
+    else:
+        with _REGISTRY_LOCK:
+            if _EXCLUSION_REGISTRY is None:
+                return None
+            excl = _EXCLUSION_REGISTRY.get(_norm_key(term, relation))
     if not excl:
         return None
     if _norm_target(target) in excl:
@@ -345,11 +489,12 @@ def is_excluded(term: str, relation: str, target: str) -> Optional[str]:
 # ---------- Validation et consolidation ----------
 
 
-def validate_candidate(client: JDMClient, candidate: Candidate) -> Candidate:
+def validate_candidate(client: JDMClient, candidate: Candidate,
+                        run_context: Optional[RunContext] = None) -> Candidate:
     """Annote le candidat avec validation_status / validation_note.
 
-    Validation STRUCTURELLE en contenance pure (pas d'inférence) : on regarde
-    uniquement ce que JDM contient littéralement.
+    Si `run_context` fourni, l'exclusion check lit la registry de CE run
+    (pas le global). Sinon → registry global (compat).
     """
     # 1. La cible existe-t-elle dans JDM ?
     try:
@@ -362,7 +507,8 @@ def validate_candidate(client: JDMClient, candidate: Candidate) -> Candidate:
     # 1.5 FAST-PATH option A : si le pré-fetch a été fait pour ce
     # (term, relation) et que la cible y figure, on court-circuite sans
     # appeler verify_claim — message éducatif pour faire reculer le LLM.
-    excl_msg = is_excluded(candidate.term, candidate.relation, candidate.target)
+    excl_msg = is_excluded(candidate.term, candidate.relation, candidate.target,
+                            run_context=run_context)
     if excl_msg:
         candidate.validation_status = "duplicate"
         candidate.validation_note = excl_msg
@@ -405,7 +551,8 @@ def validate_candidate(client: JDMClient, candidate: Candidate) -> Candidate:
 
 def consolidate_candidate(client: JDMClient, candidate: Candidate, *,
                           effort: int = 1,
-                          budget: Optional[int] = None) -> Candidate:
+                          budget: Optional[int] = None,
+                          run_context: Optional[RunContext] = None) -> Candidate:
     """Consolide un candidat par INFÉRENCE dans le réseau JDM.
 
     Tente de déduire le triplet à partir du graphe :
@@ -432,6 +579,7 @@ def consolidate_candidate(client: JDMClient, candidate: Candidate, *,
         register_consolidation(
             candidate.term, candidate.relation, candidate.target,
             res.explanation, res.fired_schema.value,
+            run_context=run_context,
         )
     elif res.is_false:
         candidate.consolidation_status = "rejected"
