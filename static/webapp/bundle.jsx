@@ -8074,12 +8074,17 @@ function defaultParamsFor(flowId) {
   // (window.__JDM_JARVIS_CONFIG__, persisté en localStorage). L'utilisateur
   // peut toujours override dans le ParamsForm avant Lancer.
   const cfg = (typeof window !== 'undefined' && window.__JDM_JARVIS_CONFIG__) || {};
+  // temperature de JConfig : si l'utilisateur l'a deplacee depuis le
+  // default (0.3), on l'envoie au backend. Sinon undefined → defaults
+  // par-modele cote serveur (jdm_temperature env var, sinon 1.5-1.7).
+  const _temp = (typeof cfg.temperature === 'number') ? cfg.temperature : undefined;
   const common = {
     model: cfg.llm || 'gemini-3.1-flash-lite',
     api_key: '', drops_key: '',
     use_thinking: false,
     budget_label: 'illimité',
     auto_switch: false,
+    temperature: _temp,
   };
   // `upload` = soumission auto du fichier au LLMDrops (mappe cfg.autoSubmit).
   const autoUpload = cfg.autoSubmit === true;
@@ -8286,6 +8291,30 @@ function ViewJarvis() {
   // Au mount, reconnect aux runs serveur encore actifs apres un
   // refresh / tab close pendant un run (JarvisStore + localStorage).
   useEffect(() => { JarvisStore.bootReconcile().catch(() => {}); }, []);
+
+  // Reset au clic sur l'onglet Jarvis du TopNav (dispatched par App() quand
+  // l'utilisateur reclique sur l'onglet courant). On revient a Accueil
+  // (panelIndex=1) et on sort du mode run s'il y en avait un.
+  useEffect(() => {
+    const onReset = (e) => {
+      if (!e.detail || e.detail.view !== 'jarvis') return;
+      setRunning(null);
+      setPanelIndex(1);
+      setTransitioning(true);
+    };
+    window.addEventListener('jdm-nav-reset', onReset);
+    return () => window.removeEventListener('jdm-nav-reset', onReset);
+  }, []);
+
+  // Switch entre runs depuis le rail bas du JarvisRun.
+  useEffect(() => {
+    const onSwitch = (e) => {
+      const id = e.detail && e.detail.flow_id;
+      if (id) setRunning(id);
+    };
+    window.addEventListener('jdm-jarvis-switch-run', onSwitch);
+    return () => window.removeEventListener('jdm-jarvis-switch-run', onSwitch);
+  }, []);
 
   const lastScroll = useRef(0);
   useEffect(() => { lastScroll.current = 0; setNavHidden(false); }, [panelIndex]);
@@ -9215,7 +9244,17 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
     if (sc && sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
   }, [active]);
 
+  // Live computed pour CHAQUE flow dans l'ordre canonique du catalogue.
+  // Sert au KPI strip aggrege ET au tri d'affichage (en cours d'abord).
   const live = flows.map((f, i) => computeFlowLive(f, i, tick, serverRuns, localActiveSet));
+  // Ordre d'affichage : flux EN COURS en haut, AU REPOS apres.
+  // L'ordre intra-bucket suit l'ordre canonique du catalogue JARVIS_FLOWS.
+  const orderedIdx = flows.map((_, i) => i).sort((a, b) => {
+    const aRun = live[a].isRunning ? 0 : 1;
+    const bRun = live[b].isRunning ? 0 : 1;
+    if (aRun !== bRun) return aRun - bRun;
+    return a - b;
+  });
   // Aggregats reels : iter cumule (sum des iter detectes par flux),
   // tools cumule, accepted cumule. Aucune valeur fabriquee.
   const agg = live.reduce((a, l) => ({
@@ -9285,10 +9324,13 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))',
         gap: 14,
       }}>
-        {flows.map((f, i) => (
-          <JFlowDashCard key={f.id} flow={f} num={i + 1} live={live[i]}
-            onOpen={() => onPick(f.id)} onLaunch={() => onLaunch(f.id)} />
-        ))}
+        {orderedIdx.map(i => {
+          const f = flows[i];
+          return (
+            <JFlowDashCard key={f.id} flow={f} num={i + 1} live={live[i]}
+              onOpen={() => onPick(f.id)} onLaunch={() => onLaunch(f.id)} />
+          );
+        })}
       </div>
 
       <div style={{
@@ -9347,24 +9389,33 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
   const tools = m.toolsCalled || 0;
   const narration = (store && store.narrationHTML) || '';
 
-  // iter = TENTATIVE REELLE de l'agent. On detecte chaque "retour au
-  // debut du flow" en parcourant la sequence des tool calls dans la
-  // narration LLM et en croisant avec FLOW_TOOL_STEPS[flow.id] :
-  //   - le 1er appel a un tool de step 0  →  attempt = 1
-  //   - chaque fois qu'on revient a step 0 alors qu'on etait passe par
-  //     un step >= 1  →  attempt += 1 (= nouvelle tentative)
-  // Cas concret annot : workflow (step 0) → lookup_term (step 0) →
-  // get_relations (step 1) → lookup_term (step 0 → +1 tentative) →
-  // get_relations (step 1) → write_submission (step 2) → 2 tentatives.
-  let iter = 0;
+  // Sequence des tool calls cote agent — chaque div narration porte
+  // `data-tool="<nom>"` depuis jarvis.py. On parcourt cette sequence
+  // UNE seule fois pour calculer iter (tentatives) ET stepIdx (etape
+  // active courante). data-result="1" marque un retour de tool ; on
+  // ne garde que les APPELS pour ne pas doubler chaque tool.
+  const toolSeq = [];
   if (narration) {
-    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
-    const reAll = /`(\w+)\(/g;
-    let prevStep = -1, mm;
-    while ((mm = reAll.exec(narration)) !== null) {
-      const s = fts[mm[1]];
+    const re = /<div\s+class="jdm-narration"\s+data-tool="(\w+)"([^>]*)>/g;
+    let mm;
+    while ((mm = re.exec(narration)) !== null) {
+      const isResult = /data-result="1"/.test(mm[2] || '');
+      if (!isResult) toolSeq.push(mm[1]);
+    }
+  }
+
+  // iter = TENTATIVE REELLE : chaque fois que l'agent retourne a step 0
+  // depuis un step >= 1, c'est une nouvelle tentative. Le 1er passage en
+  // step 0 compte aussi pour 1.
+  //   ex annot : workflow(0) → lookup(0) → get_relations(1) → lookup(0=>+1)
+  //              → get_relations(1) → write_submission(2)  ⇒ 2 tentatives
+  const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+  let iter = 0;
+  {
+    let prevStep = -1;
+    for (const name of toolSeq) {
+      const s = fts[name];
       if (s === undefined) continue;
-      // Transition step >=1 → step 0  OU  toute premiere entree en step 0
       if (s === 0 && (prevStep === -1 || prevStep >= 1)) iter++;
       prevStep = s;
     }
@@ -9410,20 +9461,17 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
   const produced = accepted;
   const pct = span ? Math.min(100, Math.round((produced / span) * 100)) : null;
 
-  // Step ACTIF REEL : on inspecte la narration pour le DERNIER tool
-  // mentionne et on lookup son etape via FLOW_TOOL_STEPS. Pattern de
-  // narration : `🔧 \`tool_name(...)\`` ou `🔗 ...` ou `📖 ...` selon
-  // _narrate_tool_call cote jarvis.py. On extrait le nom de tool avec
-  // une regex sur \`(\w+)\(.
+  // Step ACTIF REEL : derniere etape touchee dans toolSeq (= meme source
+  // que iter, derive des data-tool attributes). Quand le flow tourne, ca
+  // anime visuellement la progression : chaque nouveau tool dans la
+  // narration → re-render → stepIdx mis a jour → highlight CSS transition.
+  // Hors run (idle/done), aucune etape highlightee.
   let stepIdx = -1;
-  if (isRunning && narration) {
-    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
-    const re = /`(\w+)\(/g;
-    let mm, lastIdx = -1;
-    while ((mm = re.exec(narration)) !== null) {
-      if (fts[mm[1]] !== undefined) lastIdx = fts[mm[1]];
+  if (isRunning) {
+    for (let k = toolSeq.length - 1; k >= 0; k--) {
+      const s = fts[toolSeq[k]];
+      if (s !== undefined) { stepIdx = s; break; }
     }
-    if (lastIdx >= 0) stepIdx = lastIdx;
   }
 
   // Recent items : 3 derniers items avec leur LABEL reel ET un TAG
@@ -9469,11 +9517,14 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
   const tint = (p) => `color-mix(in srgb, ${a} ${p}%, transparent)`;
+  // Cards "au repos" grisees (alpha sur la card entiere) — visuellement
+  // reconnaissables en un coup d'oeil dans Supervision.
+  const dimmed = !live.isRunning;
   return (
     <div
       role="button" tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      onClick={onLaunch}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLaunch(); } }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       className="focus-ring"
@@ -9485,7 +9536,9 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
         boxShadow: hover ? `0 12px 32px -18px ${a}` : 'var(--shadow-sm)',
         overflow: 'hidden', cursor: 'pointer',
         transform: hover ? 'translateY(-2px)' : 'none',
-        transition: 'transform .18s, border-color .16s, box-shadow .28s',
+        transition: 'transform .18s, border-color .16s, box-shadow .28s, opacity .25s, filter .25s',
+        opacity: dimmed ? 0.62 : 1,
+        filter: dimmed ? 'saturate(0.55)' : 'none',
       }}>
 
       {/* top hairline in the flow's colour */}
@@ -9621,19 +9674,24 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
             </div>
           ) : live.recent.map(({ key, label, tag, ok }) => (
             <div key={key} className="fade-up" style={{
-              display: 'flex', alignItems: 'center', gap: 7,
+              display: 'flex', alignItems: 'center', gap: 6,
               padding: '5px 8px', borderRadius: 'var(--radius)',
               background: 'var(--bg-elev)', border: '1px solid var(--line-soft)',
               fontFamily: 'var(--font-mono)', fontSize: 10.5,
+              minWidth: 0,
             }}>
               <span style={{ flexShrink: 0, color: ok ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>{ok ? '✓' : '!'}</span>
-              <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+              <span style={{
+                flex: '1 1 auto', minWidth: 0, color: 'var(--ink)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }} title={label}>{label}</span>
               {tag && (
                 <span style={{
-                  flexShrink: 0, color: 'var(--ink-3)', fontSize: 9.5,
-                  padding: '1px 6px', borderRadius: 4,
+                  flex: '0 1 auto', minWidth: 0,
+                  color: 'var(--ink-3)', fontSize: 9, lineHeight: 1.3,
+                  padding: '1px 5px', borderRadius: 3,
                   background: 'var(--bg-card)', border: '1px solid var(--line-soft)',
-                  maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  maxWidth: 72, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }} title={String(tag)}>{tag}</span>
               )}
             </div>
@@ -9641,18 +9699,26 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
         </div>
       </div>
 
-      {/* footer */}
+      {/* footer — "détail →" est un bouton qui stoppe la propagation et
+          ouvre le panneau de détail du flux (l'explication). Le reste de
+          la card route vers le run. */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '9px 15px', borderTop: '1px solid var(--line-soft)', background: 'var(--bg-elev)',
       }}>
         <span className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>boucle {'·'} {flow.steps.length} etapes</span>
-        <span className="mono" style={{
-          fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
-          color: hover ? a : 'var(--ink-3)',
-          transition: 'color .16s, transform .16s',
-          transform: hover ? 'translateX(3px)' : 'none',
-        }}>detail {'→'}</span>
+        <button type="button"
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="focus-ring"
+          style={{
+            background: 'transparent', border: 'none', padding: '2px 0', cursor: 'pointer',
+            fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: 'var(--ink-3)',
+            transition: 'color .16s, transform .16s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = a; e.currentTarget.style.transform = 'translateX(3px)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.transform = 'none'; }}
+        >detail {'→'}</button>
       </div>
     </div>
   );
@@ -10049,9 +10115,35 @@ function JToolDialog({ flow, tool, onClose }) {
   // Every flow whose sequence calls this tool (souvent plus d'une).
   const usages = JARVIS_FLOWS.filter(f => (FLOW_TOOL_STEPS[f.id] || {})[tool] != null);
 
+  // « Prompt » du flow courant = concatenation des docstrings de TOUS les
+  // tools du flow (workflow + step tools), dans l'ordre de leur step.
+  // C'est ce qui constitue le « contexte LLM » que l'agent voit pour le
+  // flow — plus utile que le prompt isole d'un seul tool.
+  const flowPrompt = (() => {
+    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+    const ordered = Object.keys(fts).sort((a, b) => (fts[a] - fts[b]));
+    if (ordered.length === 0) return doc.prompt;
+    const parts = [`# Prompt agreged du flow « ${flow.title} »`,
+                   `# Etapes : ${flow.steps.map(s => s.n).join(' → ')}`,
+                   ''];
+    for (const t of ordered) {
+      const d = docs[t];
+      if (!d) continue;
+      const step = fts[t];
+      const stepName = (flow.steps[step] && flow.steps[step].n) || '';
+      parts.push(`## [step ${step}${stepName ? ' · ' + stepName : ''}] ${t}`);
+      parts.push('');
+      parts.push((d.docstring || d.desc || '').trim());
+      parts.push('');
+      parts.push('---');
+      parts.push('');
+    }
+    return parts.join('\n');
+  })();
+
   const codeTabs = [
     { id: 'docstring', label: 'Docstring', body: doc.docstring, lang: 'text', tag: doc.kind === 'API JDM' ? 'HTTP' : 'DOC' },
-    { id: 'prompt',    label: 'Prompt',    body: doc.prompt,    lang: 'text', tag: 'PROMPT' },
+    { id: 'prompt',    label: 'Prompt',    body: flowPrompt,    lang: 'text', tag: 'PROMPT · FLOW' },
     { id: 'cli',       label: 'CLI',       body: doc.cli,       lang: 'sh' },
     { id: 'output',    label: 'Sortie',    body: doc.output,    lang: 'json', tag: 'JSON' },
   ];
@@ -10179,9 +10271,14 @@ function JToolDialog({ flow, tool, onClose }) {
                 );
               })}
             </div>
-            {active.id === 'cli'
-              ? <JCliBlock command={doc.cli} />
-              : <JCodeBlock tag={active.tag} code={active.body} />}
+            {/* Scrollable container — la docstring et surtout le prompt
+                aggregé peuvent être longs ; on les rend défilables (max
+                hauteur ~50vh) au lieu de tronquer. */}
+            <div style={{ maxHeight: '52vh', overflowY: 'auto', borderRadius: 'var(--radius)' }} className="jpanel-scroll">
+              {active.id === 'cli'
+                ? <JCliBlock command={doc.cli} />
+                : <JCodeBlock tag={active.tag} code={active.body} />}
+            </div>
           </JToolSection>
         </div>
       </div>
@@ -11160,21 +11257,100 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   </div>
                 )}
                 {leftView === 'log' ? (
-                  // Vue Log : timeline mono-fontée des events SSE bruts.
-                  (log || []).map((l, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
-                      <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
-                      <span style={{
-                        flexShrink: 0,
-                        color: l.kind === 'tool' ? 'var(--accent)' :
-                               l.kind === 'accept' ? 'var(--jdm-green)' :
-                               l.kind === 'reject' ? 'var(--jdm-magenta)' :
-                               l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
-                        minWidth: 56,
-                      }}>{l.tag}</span>
-                      <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
-                    </div>
-                  ))
+                  // Vue Log : derive les TENTATIVES depuis narrationHTML
+                  // (data-tool attributes) + croise avec FLOW_TOOL_STEPS,
+                  // puis groupe les tools de chaque tentative sous un
+                  // header « Tentative N ». Les events SSE brut (log)
+                  // restent en pied de page pour les meta-evenements
+                  // (start/done/error/cancelled/file).
+                  (() => {
+                    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+                    // Parse les tool calls (sans data-result) avec leur emoji+message
+                    const re = /<div\s+class="jdm-narration"\s+data-tool="(\w+)"(?:\s+data-result="1")?[^>]*>([\s\S]*?)<\/div>/g;
+                    const items = [];
+                    if (narrationHTML) {
+                      let mm;
+                      while ((mm = re.exec(narrationHTML)) !== null) {
+                        const isResult = /data-result="1"/.test(mm[0]);
+                        items.push({ tool: mm[1], text: mm[2].replace(/<[^>]+>/g, '').trim(), isResult });
+                      }
+                    }
+                    // Regroupe par tentative (chaque step 0 apres step >=1 ouvre une nouvelle)
+                    const tentatives = [];
+                    let cur = null, prevStep = -1;
+                    for (const it of items) {
+                      if (it.isResult) {
+                        if (cur) cur.push(it);
+                        continue;
+                      }
+                      const s = fts[it.tool];
+                      if (s === undefined) {
+                        if (cur) cur.push(it);
+                        continue;
+                      }
+                      if (s === 0 && (prevStep === -1 || prevStep >= 1)) {
+                        cur = [];
+                        tentatives.push(cur);
+                      }
+                      if (cur) cur.push(it);
+                      prevStep = s;
+                    }
+                    if (!narrationHTML && (!log || log.length === 0)) return null;
+                    return (
+                      <>
+                        {tentatives.map((tent, ti) => (
+                          <div key={'t' + ti} style={{ marginBottom: 12 }}>
+                            <div style={{
+                              display: 'flex', alignItems: 'center', gap: 8,
+                              padding: '4px 0', marginBottom: 6,
+                              borderBottom: `1px dashed color-mix(in srgb, ${flow.accent} 35%, transparent)`,
+                              color: flow.accent, fontWeight: 600,
+                              textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10,
+                            }}>
+                              <span style={{
+                                background: flow.accent, color: 'var(--bg)',
+                                padding: '1px 7px', borderRadius: 3, fontSize: 9.5,
+                              }}>Tentative {ti + 1}</span>
+                              <span style={{ color: 'var(--ink-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
+                                {tent.filter(x => !x.isResult).length} appel(s), {tent.filter(x => x.isResult).length} retour(s)
+                              </span>
+                            </div>
+                            {tent.map((it, k) => (
+                              <div key={k} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline', paddingLeft: 8 }}>
+                                <span style={{ flexShrink: 0, minWidth: 56, color: it.isResult ? 'var(--jdm-green)' : 'var(--accent)' }}>
+                                  {it.isResult ? '←' : '→'} {it.tool}
+                                </span>
+                                <span style={{ color: 'var(--ink-2)', wordBreak: 'break-word' }}>{it.text}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                        {/* Events SSE bruts (start/done/cancelled/file/error) en pied de page */}
+                        {(log || []).length > 0 && (
+                          <div style={{
+                            marginTop: 14, paddingTop: 10,
+                            borderTop: '1px solid var(--line-soft)',
+                          }}>
+                            <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>Events systeme</div>
+                            {log.map((l, i) => (
+                              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
+                                <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                                <span style={{
+                                  flexShrink: 0,
+                                  color: l.kind === 'tool' ? 'var(--accent)' :
+                                         l.kind === 'accept' ? 'var(--jdm-green)' :
+                                         l.kind === 'reject' ? 'var(--jdm-magenta)' :
+                                         l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
+                                  minWidth: 56,
+                                }}>{l.tag}</span>
+                                <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()
                 ) : narrationHTML ? (
                   // Vue Narration : markdown + HTML <jdm-narration> inline
                   // rendus par marked.js (la trace d'outils reste structurée,
@@ -11375,7 +11551,99 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
 
         </div>
       </div>
+
+      {/* Rail discret d'acces rapide aux 10 premiers flux (running d'abord).
+          Permet de switcher entre runs depuis la vue de run sans repasser
+          par le carrousel sommaire. Styling subtil — bg-elev, separateurs
+          fins, pulse-dot sur le flux courant et les flux en cours. */}
+      <JarvisRunRail flow={flow}
+        onPick={(id) => {
+          // Si on est deja sur ce flow, no-op ; sinon switch en passant par
+          // window.__jdmRoute pour preserver l'historique.
+          if (id === flow.id) return;
+          if (typeof window !== 'undefined' && window.__jdmRoute) {
+            window.__jdmRoute.push('jarvis', id);
+          }
+          // Force le ViewJarvis a re-evaluer son state running depuis l'URL.
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('jdm-jarvis-switch-run', { detail: { flow_id: id } }));
+          }
+        }}
+      />
     </PageShell>
+  );
+}
+
+// Rail bas de page — 10 premiers flux du catalogue, ordonnes : en cours
+// d'abord (avec pulse-dot d'accent), puis au repos. Le flux courant a un
+// outline et une pastille « actuel ». Styling aligne sur le design
+// (mono font, var(--bg-elev), bordures fines).
+function JarvisRunRail({ flow, onPick }) {
+  const activeSet = useJarvisActiveSet();
+  const ordered = JARVIS_FLOWS.slice(0, 10).slice().sort((a, b) => {
+    const aRun = activeSet.has(a.id) ? 0 : 1;
+    const bRun = activeSet.has(b.id) ? 0 : 1;
+    if (aRun !== bRun) return aRun - bRun;
+    return JARVIS_FLOWS.findIndex(f => f.id === a.id) - JARVIS_FLOWS.findIndex(f => f.id === b.id);
+  });
+  return (
+    <div style={{
+      position: 'sticky', bottom: 0, zIndex: 5,
+      marginTop: 18,
+      borderTop: '1px solid var(--line-soft)',
+      background: 'color-mix(in srgb, var(--bg) 92%, transparent)',
+      backdropFilter: 'blur(6px)',
+      WebkitBackdropFilter: 'blur(6px)',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 14px',
+        overflowX: 'auto', whiteSpace: 'nowrap',
+        scrollbarWidth: 'none',
+      }} className="jpanel-scroll">
+        <span className="mono" style={{
+          flexShrink: 0, fontSize: 9.5, color: 'var(--ink-3)',
+          textTransform: 'uppercase', letterSpacing: '0.1em',
+          marginRight: 4,
+        }}>Flux</span>
+        {ordered.map(f => {
+          const isCurrent = f.id === flow.id;
+          const isActive = activeSet.has(f.id);
+          return (
+            <button key={f.id} type="button" onClick={() => onPick(f.id)}
+              title={`${f.title}${isActive ? ' · en cours' : ''}`}
+              className="focus-ring"
+              style={{
+                flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 7,
+                padding: '5px 11px',
+                background: isCurrent ? `color-mix(in srgb, ${f.accent} 12%, var(--bg-card))` : 'var(--bg-card)',
+                border: '1px solid ' + (isCurrent ? `color-mix(in srgb, ${f.accent} 55%, transparent)` : 'var(--line-soft)'),
+                borderRadius: 999, cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+                color: isCurrent ? f.accent : 'var(--ink-2)',
+                transition: 'background .15s, border-color .15s, color .15s',
+              }}>
+              {isActive && (
+                <span className="pulse-dot" style={{ background: f.accent, width: 6, height: 6 }} />
+              )}
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: f.accent, opacity: isActive ? 0 : 0.55,
+                display: isActive ? 'none' : 'inline-block',
+              }} />
+              <span style={{ color: 'inherit' }}>{f.title}</span>
+              {isCurrent && (
+                <span className="mono" style={{
+                  fontSize: 8.5, padding: '1px 5px', borderRadius: 3,
+                  background: f.accent, color: 'var(--bg)',
+                  textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600,
+                }}>actuel</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -13156,7 +13424,15 @@ function App() {
               ['aide', 'Aide'],
             ].map(([id, label]) => (
               <button key={id}
-                onClick={() => setView(id)}
+                onClick={() => {
+                  // Si on est deja sur cette vue, on declenche un "reset"
+                  // event que les vues peuvent ecouter pour revenir a leur
+                  // etat initial (ex: ViewJarvis → panel Accueil).
+                  if (view === id && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('jdm-nav-reset', { detail: { view: id } }));
+                  }
+                  setView(id);
+                }}
                 style={{
                   padding: '6px 10px',
                   background: view === id ? 'var(--accent)' : 'var(--bg-elev)',

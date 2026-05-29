@@ -1194,6 +1194,7 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
                                           fromlist=["build_jdm_agent"]).build_jdm_agent,
             get_client_fn=_app.get_client,
             use_thinking=bool(p.get("use_thinking", False)),
+            temperature=(p.get("temperature") if isinstance(p.get("temperature"), (int, float)) else None),
             consolidation_target=(
                 p.get("target_count") if flow_id == "enrich" else None
             ),

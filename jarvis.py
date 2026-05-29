@@ -1398,6 +1398,7 @@ def run_jarvis_flow(
     auto_switch_on_perday: bool = False,
     resume_state: Optional[dict] = None,
     flow_id: Optional[str] = None,
+    temperature: Optional[float] = None,
 ) -> Generator[tuple, None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -1550,7 +1551,7 @@ def run_jarvis_flow(
                 _set_current_model(model)
             except Exception:
                 pass  # app pas importable (test mode) → comportement standard
-            llm = build_llm_fn(model, api_key, use_thinking=use_thinking,
+            llm = build_llm_fn(model, api_key, use_thinking=use_thinking, temperature=temperature,
                                gemini_key_override=current_gemini_key)
         except ValueError as e:
             yield (
@@ -1808,7 +1809,7 @@ def run_jarvis_flow(
                                                 narrated = _narrate_tool_call(name, tc_args)
                                                 if narrated:
                                                     _add_line(
-                                                        f'<div class="jdm-narration">'
+                                                        f'<div class="jdm-narration" data-tool="{name}">'
                                                         f'{narrated}</div>'
                                                     )
                                                 else:
@@ -1817,7 +1818,7 @@ def run_jarvis_flow(
                                                         for k, v in tc_args.items()
                                                     )
                                                     _add_line(
-                                                        f'<div class="jdm-narration">'
+                                                        f'<div class="jdm-narration" data-tool="{name}">'
                                                         f'🔧 `{name}({args_str})`</div>'
                                                     )
                                             # Ajoute en bas un indicateur fugace
@@ -1850,7 +1851,7 @@ def run_jarvis_flow(
                                         narrated_done = _narrate_tool_result(m.name, content)
                                         if narrated_done:
                                             _add_line(
-                                                f'<div class="jdm-narration">'
+                                                f'<div class="jdm-narration" data-tool="{m.name}" data-result="1">'
                                                 f'{narrated_done}</div>'
                                             )
                                         else:
@@ -1858,7 +1859,7 @@ def run_jarvis_flow(
                                             if len(content) > 120:
                                                 preview += "…"
                                             _add_line(
-                                                f'<div class="jdm-narration">'
+                                                f'<div class="jdm-narration" data-tool="{m.name}" data-result="1">'
                                                 f'✓ *{m.name}* renvoie {len(content)} chars : `{preview}`'
                                                 f'</div>'
                                             )
@@ -2000,6 +2001,7 @@ def run_jarvis_flow(
                                     llm = build_llm_fn(
                                         model, api_key,
                                         use_thinking=use_thinking,
+                                        temperature=temperature,
                                         gemini_key_override=current_gemini_key,
                                     )
                                     agent = build_agent_fn(
@@ -2113,6 +2115,7 @@ def run_jarvis_flow(
                                     llm = build_llm_fn(
                                         model, api_key,
                                         use_thinking=use_thinking,
+                                        temperature=temperature,
                                         gemini_key_override=current_gemini_key,
                                     )
                                     agent = build_agent_fn(
@@ -2193,6 +2196,7 @@ def run_jarvis_flow(
                                     llm = build_llm_fn(
                                         model, api_key,
                                         use_thinking=use_thinking,
+                                        temperature=temperature,
                                         gemini_key_override=current_gemini_key,
                                     )
                                     agent = build_agent_fn(

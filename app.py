@@ -824,7 +824,8 @@ def _thinking_tooltip_js(checkbox_elem_id: str) -> str:
 
 
 def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
-               gemini_key_override: Optional[str] = None):
+               gemini_key_override: Optional[str] = None,
+               temperature: Optional[float] = None):
     """Instancie le ChatModel selon le modèle choisi.
 
     - claude-*   → Anthropic via clé visiteur (BYOK, sk-ant-...)
@@ -848,7 +849,23 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
     (mêmes outils, mêmes sorties).
 
     Lève ValueError avec message utilisateur explicite si la clé manque.
+
+    `temperature` : override explicite passé par l'appelant (typiquement
+    JConfigPanel via Jarvis). Fallback : variable d'env `JDM_TEMPERATURE`
+    si définie (admin Space). Sinon les defaults par-modele s'appliquent
+    (1.0 pour Claude, 1.5 pour GPT, etc.). 0..1 attendu (slider UI), on
+    laisse l'appelant le passer brut.
     """
+    # Resolution de la temperature : arg explicite > env > None (defaults
+    # par-modele). Centralisee ici pour qu'elle s'applique uniformement.
+    _effective_temp = temperature
+    if _effective_temp is None:
+        _env_t = os.environ.get("JDM_TEMPERATURE", "").strip()
+        if _env_t:
+            try:
+                _effective_temp = float(_env_t)
+            except ValueError:
+                _effective_temp = None
     if model.startswith("claude-"):
         if not api_key.strip():
             raise ValueError(
@@ -864,14 +881,13 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
             # Extended thinking Anthropic — Claude Sonnet 4.5 / Haiku 4.5
             # le supportent (cf. https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking).
             # budget_tokens=1024 : minimum officiel, raisonnement léger.
-            # temperature=1.0 est requis par l'API quand thinking est activé.
+            # temperature=1.0 est REQUISE par l'API quand thinking est activé
+            # → override utilisateur ignoré dans ce cas.
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
             kwargs["temperature"] = 1.0
         else:
-            # Sans thinking, sinon le fallback factory mettait temp=0
-            # (= argmax greedy → mêmes mots à chaque session). Anthropic
-            # n'expose pas de seed → la temperature est le seul levier.
-            kwargs["temperature"] = 1.0
+            # Sans thinking : override utilisateur si fourni, sinon 1.0.
+            kwargs["temperature"] = _effective_temp if _effective_temp is not None else 1.0
         return get_llm(provider="anthropic", model=model, **kwargs)
 
     if model.startswith("gpt-"):
@@ -892,12 +908,14 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
             # raisonné léger, équivalent en intention au thinking_level
             # 'low' chez Gemini.
             kwargs["reasoning_effort"] = "low"
-        # Sinon le fallback factory mettait temp=0 (= argmax greedy →
-        # mêmes mots à chaque session). 1.5 = compromis variété / cohérence
-        # éprouvé sur GPT (bump from 1.3 after user feedback).
-        # + seed aléatoire pour casser les sorties identiques sur prompts
-        # proches (primitive standard de l'API OpenAI).
-        kwargs.setdefault("temperature", 1.5)
+        # Override utilisateur si fourni, sinon 1.5 (compromis variété /
+        # cohérence éprouvé). Sans override le factory mettait temp=0
+        # (argmax greedy → mêmes mots à chaque session). + seed aléatoire
+        # pour casser les sorties identiques sur prompts proches.
+        if _effective_temp is not None:
+            kwargs["temperature"] = _effective_temp
+        else:
+            kwargs.setdefault("temperature", 1.5)
         kwargs.setdefault("seed", _random.randint(0, 2**31 - 1))
         return get_llm(provider="openai", model=model, **kwargs)
 
@@ -906,6 +924,12 @@ def _build_llm(model: str, api_key: str, *, use_thinking: bool = True,
     # Token côté Space, gratuit pour le visiteur. Si épuisement → BYOK
     # Claude / GPT.
     if model.startswith("gemini-"):
+        # Si override temperature fourni, on le pose en env pour que
+        # _build_gemini_native et _build_openai_compat le voient (les
+        # deux liront JDM_TEMPERATURE en interne). Restore en fin
+        # ailleurs (pas critique : l'env reste pour le run en cours).
+        if _effective_temp is not None:
+            os.environ["JDM_TEMPERATURE"] = str(_effective_temp)
         # 3.x preview → SDK natif Google (préserve thought_signature).
         # 2.x stables → endpoint OpenAI-compat (déjà éprouvé, plus simple).
         if model in GEMINI_NATIVE_REQUIRED:
@@ -985,7 +1009,16 @@ def _build_openai_compat(*, model_id: str, label: str, env_var: str,
     # Échelle 0..2 pour Gemini et GPT. Bump à 1.7/1.5 après feedback
     # user (1.5/1.3 produisait encore trop souvent les mêmes mots).
     # Au-delà : risque de tokens incohérents sur les tool_calls.
-    temp = 1.7 if "gemini" in routed_model.lower() else 1.5
+    # Override JDM_TEMPERATURE (posé par _build_llm depuis l'UI Jarvis ou
+    # l'env admin) prime sur les defaults par-modele.
+    _env_t = os.environ.get("JDM_TEMPERATURE", "").strip()
+    if _env_t:
+        try:
+            temp = float(_env_t)
+        except ValueError:
+            temp = 1.7 if "gemini" in routed_model.lower() else 1.5
+    else:
+        temp = 1.7 if "gemini" in routed_model.lower() else 1.5
     # SEED ALÉATOIRE par instance : sans seed explicite, Gemini OpenAI-compat
     # et OpenAI tendent à retomber sur des sorties identiques pour des
     # prompts proches (cf. pb du LLM qui re-pioche les mêmes mots même
@@ -1062,14 +1095,21 @@ def _build_gemini_native(model_id: str, *, use_thinking: bool = True,
     # trajectoire de sampling différente. Primitive standard, pas
     # du bricolage prompt.
     import random as _random
+    # Override JDM_TEMPERATURE (posé par _build_llm depuis l'UI Jarvis ou
+    # l'env admin) prime sur le default 1.7.
+    _env_t = os.environ.get("JDM_TEMPERATURE", "").strip()
+    try:
+        _temp_override = float(_env_t) if _env_t else None
+    except ValueError:
+        _temp_override = None
     base_kwargs = {
         "model": routed_model,
         "google_api_key": token,
         # Échelle 0..2. Bump à 1.7 après feedback user (1.5 produisait
         # encore les mêmes mots récurrents). 1.7 ouvre nettement plus
         # l'espace de tirage sans casser les tool_calls — au-delà
-        # commencent les artefacts.
-        "temperature": 1.7,
+        # commencent les artefacts. Override possible via JDM_TEMPERATURE.
+        "temperature": _temp_override if _temp_override is not None else 1.7,
         # Passé au SDK Google via model_kwargs → atterrit dans le
         # generation_config de l'API REST de Gemini.
         "model_kwargs": {"seed": _random.randint(0, 2**31 - 1)},

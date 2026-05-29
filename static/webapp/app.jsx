@@ -315,7 +315,15 @@ function App() {
               ['aide', 'Aide'],
             ].map(([id, label]) => (
               <button key={id}
-                onClick={() => setView(id)}
+                onClick={() => {
+                  // Si on est deja sur cette vue, on declenche un "reset"
+                  // event que les vues peuvent ecouter pour revenir a leur
+                  // etat initial (ex: ViewJarvis → panel Accueil).
+                  if (view === id && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('jdm-nav-reset', { detail: { view: id } }));
+                  }
+                  setView(id);
+                }}
                 style={{
                   padding: '6px 10px',
                   background: view === id ? 'var(--accent)' : 'var(--bg-elev)',
