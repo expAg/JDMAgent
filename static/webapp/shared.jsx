@@ -757,32 +757,171 @@ const CLI_COMMANDS = {
                  hint: 'Affiche les flags de chacune des CLI (--help fonctionne sur tous les modules).' },
 };
 
+// Runners par vue — appelés par le bouton ▶ run de chaque CliTerminalBlock
+// quand aucun `onRun` explicite n'est passé (= cas de la popover
+// CliCommandButton, qui n'a pas accès à un form). Le navigateur ne peut
+// pas exec Python local, donc CLI et Remote pointent sur le même
+// endpoint FastAPI same-origin. Paramètres = valeurs présentes dans le
+// snippet affiché (voiture, baleine, etc.).
+async function _runExplorer() {
+  const r = await fetch('api/explore', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ term: 'voiture', relation: 'r_isa',
+                            limit: 50, min_weight: 25 }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return await r.json();
+}
+async function _runClaim() {
+  const r = await fetch('api/factcheck', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject: 'baleine', relation: 'r_isa',
+                            object: 'poisson', effort: 1 }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return await r.json();
+}
+async function _runSubgraph() {
+  const r = await fetch('api/subgraph', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ term: 'voiture', depth: 2, top_k: 3, format: 'json' }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const d = await r.json();
+  const s = d.stats || {};
+  return `→ voiture · depth=2\n${s.n_nodes ?? d.nodes?.length ?? '?'} nœuds · `
+       + `${s.n_edges ?? d.edges?.length ?? '?'} arêtes · `
+       + `${s.n_negative ?? 0} négations`;
+}
+// SSE runners — capturent les premiers chunks puis abortent. Affichent
+// un résumé court plutôt que la stream brute (qui partirait à 10k+ chars).
+async function _runAgentStream() {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const r = await fetch('api/agent/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'quels sens de voiture ?',
+                              model: 'gemini-3.1-flash-lite',
+                              use_thinking: false }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', text = '', tools = 0;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 8000) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value);
+      const re = /event:\s*(\w+)\s*\ndata:\s*({.*})/g;
+      let m;
+      while ((m = re.exec(buf)) !== null) {
+        try {
+          const d = JSON.parse(m[2]);
+          if (m[1] === 'chunk' && d.text) text += d.text;
+          else if (m[1] === 'tool') tools++;
+        } catch {}
+      }
+      if (text.length > 300) break;
+    }
+    try { await reader.cancel(); } catch {}
+    return `(premiers ${text.length} chars, ${tools} appels outils)\n\n`
+         + text.slice(0, 300) + (text.length > 300 ? '…' : '');
+  } finally {
+    clearTimeout(tid);
+  }
+}
+async function _runJarvisStream() {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const r = await fetch('api/jarvis/enrich/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        params: { term: 'voiture', target_count: 5, budget_label: '10',
+                  model: 'gemini-3.1-flash-lite' }
+      }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let received = '', events = 0;
+    while (events < 3) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += dec.decode(value);
+      events = (received.match(/event:/g) || []).length;
+    }
+    try { await reader.cancel(); } catch {}
+    const headlineMatch = received.match(/event: headline\s*\ndata: ({.*})/);
+    const headline = headlineMatch ? JSON.parse(headlineMatch[1]).text : '(en cours)';
+    return `Flow enrich démarré sur « voiture »\n${headline}\n`
+         + `(${events} events SSE reçus, connexion fermée — `
+         + `ouvrir l'onglet Jarvis pour la suite)`;
+  } finally {
+    clearTimeout(tid);
+  }
+}
+async function _runProductions() {
+  const r = await fetch('api/productions');
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const d = await r.json();
+  const files = d.files || [];
+  if (files.length === 0) return '(aucun fichier produit pour l\'instant)';
+  return files.slice(0, 20).map(p =>
+    `${p.name}  ${p.size} bytes  ${p.mtime || ''}`
+  ).join('\n') + (files.length > 20 ? `\n… (+ ${files.length - 20} autres)` : '');
+}
+async function _runAide() {
+  const r = await fetch('openapi.json');
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const schema = await r.json();
+  const lines = [];
+  for (const [path, methods] of Object.entries(schema.paths || {})) {
+    for (const method of Object.keys(methods)) {
+      lines.push(`${method.toUpperCase().padEnd(6)} ${path}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 // Remote API equivalents — vrais endpoints FastAPI du projet (depuis
 // la migration). Snippets Python via `httpx` (déjà dépendance) ou
 // curl en alternative. Pas de gradio_client — le backend est FastAPI
 // pur. Endpoint host = celui du déploiement (LIRMM, HF Space, etc.).
+// Chaque entrée embarque un `runner` invoqué par le bouton ▶ run.
 const REMOTE_COMMANDS = {
   explorer:    { lang: 'python',
                  cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/explore", json={\n    "term": "voiture",\n    "relation": "r_isa",\n    "limit": 50,\n    "min_weight": 25\n})\nprint(r.json())',
-                 hint: 'POST /api/explore — triplets bruts {nodes, edges, relations}.' },
+                 hint: 'POST /api/explore — triplets bruts {nodes, edges, relations}.',
+                 runner: _runExplorer },
   claim:       { lang: 'python',
                  cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/factcheck", json={\n    "subject": "baleine",\n    "relation": "r_isa",\n    "object": "poisson",\n    "effort": 1\n})\nprint(r.json())',
-                 hint: 'POST /api/factcheck — verdict + chaîne d\'inférence.' },
+                 hint: 'POST /api/factcheck — verdict + chaîne d\'inférence.',
+                 runner: _runClaim },
   subgraph:    { lang: 'python',
                  cmd: 'import httpx\n\nr = httpx.post("http://localhost:7860/api/subgraph", json={\n    "term": "voiture",\n    "depth": 2,\n    "top_k": 3,\n    "format": "json"\n})\nprint(r.json())',
-                 hint: 'POST /api/subgraph — nodes/edges JSON ou HTML (format="html").' },
+                 hint: 'POST /api/subgraph — nodes/edges JSON ou HTML (format="html").',
+                 runner: _runSubgraph },
   agent:       { lang: 'python',
                  cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/agent/stream",\n        json={"message": "quels sens de voiture ?",\n              "model": "gemini-3.1-flash-lite"}) as r:\n    for line in r.iter_lines():\n        if line.startswith("data:"): print(line[5:].strip())',
-                 hint: 'POST /api/agent/stream — SSE streaming (events: chunk, tool, done).' },
+                 hint: 'POST /api/agent/stream — SSE streaming (events: chunk, tool, done).',
+                 runner: _runAgentStream },
   jarvis:      { lang: 'python',
                  cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/jarvis/enrich/stream",\n        json={"params": {"term": "voiture", "target_count": 20,\n                          "iterate": True, "budget_label": "50"}}) as r:\n    for line in r.iter_lines():\n        if line.startswith("event:"): print(line)',
-                 hint: 'POST /api/jarvis/{enrich|audit|gap|annotation|stats}/stream — SSE.' },
+                 hint: 'POST /api/jarvis/{enrich|audit|gap|annotation|stats}/stream — SSE.',
+                 runner: _runJarvisStream },
   productions: { lang: 'python',
                  cmd: 'import httpx\n\nr = httpx.get("http://localhost:7860/api/productions")\nfor p in r.json().get("files", []):\n    print(p["name"], p["size"], p["mtime"])',
-                 hint: 'GET /api/productions — liste tous les fichiers produits.' },
+                 hint: 'GET /api/productions — liste tous les fichiers produits.',
+                 runner: _runProductions },
   aide:        { lang: 'python',
                  cmd: 'import httpx\n\nr = httpx.get("http://localhost:7860/openapi.json")\nschema = r.json()\nfor path, methods in schema["paths"].items():\n    for method in methods:\n        print(f"{method.upper():6} {path}")',
-                 hint: 'GET /openapi.json — schéma OpenAPI complet (ou /docs pour UI Swagger).' },
+                 hint: 'GET /openapi.json — schéma OpenAPI complet (ou /docs pour UI Swagger).',
+                 runner: _runAide },
 };
 
 // ───────── Reusable terminal block — same look as the CLI popover,
@@ -823,15 +962,23 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data, onRun
     });
   };
 
-  // Play button — exécute la commande selon le mode actif (CLI ou
-  // Remote). L'appelant fournit `onRun({mode, cmd})` qui sait quoi
-  // appeler côté backend. Si pas d'onRun, le bouton n'apparaît pas.
+  // Runner effectif : priorité au `onRun` du parent (ex. Projet ›
+  // ModuleQuickTryAndCli qui exécute avec le state du form), sinon
+  // fallback sur le `runner` défini sur la commande Remote (les
+  // CliCommandButton popovers de chaque onglet utilisent ce chemin —
+  // le navigateur ne peut pas exec Python local de toute façon, donc
+  // CLI et Remote pointent sur le même endpoint FastAPI).
+  const resolvedRunner = onRun
+    || (effectiveRemote && effectiveRemote.runner)
+    || (effectiveCli && effectiveCli.runner)
+    || null;
+
   const handleRun = async () => {
-    if (!onRun || running) return;
+    if (!resolvedRunner || running) return;
     setRunning(true);
     setRunOut(null);
     try {
-      const r = await onRun({ mode, cmd: active.cmd });
+      const r = await resolvedRunner({ mode, cmd: active.cmd });
       setRunOut(typeof r === 'string' ? r : (r ? JSON.stringify(r, null, 2) : '(ok)'));
     } catch (e) {
       setRunOut(`⚠️ ${e.message || e}`);
@@ -923,41 +1070,81 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data, onRun
           <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#28c840', boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.2)' }} />
         </div>
 
-        {hasBoth && (
-          <div style={{
-            position: 'absolute', left: 60, top: 4,
-            display: 'flex', gap: 4,
-          }}>
-            <button
-              onClick={() => handleSetMode('cli')}
-              aria-label="CLI"
-              title="Mode CLI (local)"
-              className="focus-ring"
-              style={togglePillStyle(mode === 'cli')}
-            >
-              {/* terminal */}
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <rect x="1.5" y="3" width="13" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none"/>
-                <path d="M4 6.5 L6.5 8 L4 9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                <line x1="8" y1="10" x2="11.5" y2="10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-              </svg>
-            </button>
-            <button
-              onClick={() => handleSetMode('remote')}
-              aria-label="Remote"
-              title="Mode Remote (Gradio API)"
-              className="focus-ring"
-              style={togglePillStyle(mode === 'remote')}
-            >
-              {/* cloud */}
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M4.4 12.5h7.2c1.6 0 2.9-1.3 2.9-2.9 0-1.5-1.1-2.7-2.6-2.9 -.4-1.7-1.9-3-3.7-3 -1.8 0-3.3 1.3-3.7 2.9 -1.5.2-2.5 1.4-2.5 2.9 0 1.6 1.3 3 2.9 3z"
-                  stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinejoin="round"/>
-              </svg>
-            </button>
-          </div>
-        )}
+        {/* Cluster gauche : toggle CLI/Remote (si les deux variantes
+            existent) + bouton ▶ run. Tout regroupé pour que le run soit
+            visuellement adjacent au switch CLI/Remote. */}
+        <div style={{
+          position: 'absolute', left: 60, top: 4,
+          display: 'flex', gap: 4, alignItems: 'center',
+        }}>
+          {hasBoth && (
+            <>
+              <button
+                onClick={() => handleSetMode('cli')}
+                aria-label="CLI"
+                title="Mode CLI (local)"
+                className="focus-ring"
+                style={togglePillStyle(mode === 'cli')}
+              >
+                {/* terminal */}
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="1.5" y="3" width="13" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none"/>
+                  <path d="M4 6.5 L6.5 8 L4 9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                  <line x1="8" y1="10" x2="11.5" y2="10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                </svg>
+              </button>
+              <button
+                onClick={() => handleSetMode('remote')}
+                aria-label="Remote"
+                title="Mode Remote (Gradio API)"
+                className="focus-ring"
+                style={togglePillStyle(mode === 'remote')}
+              >
+                {/* cloud */}
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path
+                    d="M4.4 12.5h7.2c1.6 0 2.9-1.3 2.9-2.9 0-1.5-1.1-2.7-2.6-2.9 -.4-1.7-1.9-3-3.7-3 -1.8 0-3.3 1.3-3.7 2.9 -1.5.2-2.5 1.4-2.5 2.9 0 1.6 1.3 3 2.9 3z"
+                    stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </>
+          )}
+          {/* ▶ run : toujours présent maintenant. Si pas de runner
+              résolu (cas dégénéré), le bouton est disabled et grisé. */}
+          <button
+            onClick={handleRun}
+            disabled={running || !resolvedRunner}
+            className="focus-ring"
+            title={
+              !resolvedRunner ? 'Pas d\'exécuteur disponible pour cette commande'
+              : mode === 'remote' ? 'Exécuter (Remote)' : 'Exécuter (CLI)'
+            }
+            aria-label="Exécuter la commande"
+            style={{
+              background: !resolvedRunner ? 'rgba(255,255,255,0.04)'
+                          : running ? 'rgba(125,205,255,0.10)'
+                          : 'rgba(125,205,255,0.16)',
+              border: '1px solid ' + (
+                !resolvedRunner ? 'rgba(255,255,255,0.10)'
+                                : 'rgba(125,205,255,0.40)'),
+              borderRadius: 3,
+              padding: '1px 6px',
+              fontFamily: 'inherit',
+              fontSize: 9.5,
+              color: !resolvedRunner ? 'rgba(201,204,210,0.40)'
+                    : running ? 'rgba(191,230,255,0.55)'
+                    : '#bfe6ff',
+              cursor: !resolvedRunner ? 'not-allowed'
+                    : running ? 'wait' : 'pointer',
+              letterSpacing: '0.04em',
+              transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              height: 18,
+            }}>
+            <span aria-hidden="true" style={{ fontSize: 8, lineHeight: 1 }}>▶</span>
+            <span>{running ? 'run…' : 'run'}</span>
+          </button>
+        </div>
 
         <div style={{
           flex: 1, textAlign: 'center',
@@ -965,35 +1152,10 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data, onRun
           color: '#9aa0aa',
           letterSpacing: '0.02em',
           userSelect: 'none',
-          paddingLeft: hasBoth ? 64 : 0,
+          paddingLeft: hasBoth ? 110 : 50,
         }}>
           jdm-agent — {lang === 'python' ? 'python' : 'bash'}
         </div>
-        {onRun && (
-          <button
-            onClick={handleRun}
-            disabled={running}
-            className="focus-ring"
-            title={mode === 'remote' ? 'Exécuter (Remote)' : 'Exécuter (CLI)'}
-            aria-label="Exécuter la commande"
-            style={{
-              position: 'absolute', right: 58, top: 4,
-              background: running ? 'rgba(125,205,255,0.10)' : 'rgba(125,205,255,0.16)',
-              border: '1px solid rgba(125,205,255,0.40)',
-              borderRadius: 3,
-              padding: '1px 6px',
-              fontFamily: 'inherit',
-              fontSize: 9.5,
-              color: running ? 'rgba(191,230,255,0.55)' : '#bfe6ff',
-              cursor: running ? 'wait' : 'pointer',
-              letterSpacing: '0.04em',
-              transition: 'background 0.15s, color 0.15s, border-color 0.15s',
-              display: 'inline-flex', alignItems: 'center', gap: 3,
-            }}>
-            <span aria-hidden="true" style={{ fontSize: 8, lineHeight: 1 }}>▶</span>
-            <span>{running ? 'run…' : 'run'}</span>
-          </button>
-        )}
         <button
           onClick={copy}
           className="focus-ring"
