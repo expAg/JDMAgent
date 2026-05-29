@@ -1533,10 +1533,18 @@ function ProductionsCountPill() {
   const borderRGBA = `rgba(${r}, ${g}, ${b}, 0.45)`;
   const dotRGB = accentRGB;
   return (
-    <span
+    <button
+      type="button"
+      className="focus-ring"
+      onClick={() => {
+        // Navigate to Jarvis tab + Supervision panel. App.jsx ecoute pour
+        // setView('jarvis'), ViewJarvis ecoute pour setPanelIndex(2).
+        if (typeof window === 'undefined') return;
+        window.dispatchEvent(new CustomEvent('jdm-goto-jarvis-supervision'));
+      }}
       title={
         active == null ? 'Chargement…'
-        : `${active} flux Jarvis actuellement en cours sur ${JARVIS_FLOWS_TOTAL} disponibles`
+        : `${active} flux Jarvis actuellement en cours sur ${JARVIS_FLOWS_TOTAL} disponibles · clic pour ouvrir Supervision`
       }
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -1550,12 +1558,15 @@ function ProductionsCountPill() {
         color: accentRGB,
         letterSpacing: '0.03em',
         textTransform: 'uppercase',
-        transition: 'background 0.2s, border-color 0.2s, color 0.2s',
-      }}>
+        cursor: 'pointer',
+        transition: 'background 0.2s, border-color 0.2s, color 0.2s, transform .12s',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
       <span className="pulse-dot" style={{ background: dotRGB }} />
       <span>{label}</span>
       <span style={{ opacity: 0.65, fontWeight: 400, textTransform: 'lowercase' }}>flux</span>
-    </span>
+    </button>
   );
 }
 
@@ -8316,6 +8327,20 @@ function ViewJarvis() {
     return () => window.removeEventListener('jdm-jarvis-switch-run', onSwitch);
   }, []);
 
+  // Clic sur la pill « N/M flux » du header (ProductionsCountPill) :
+  // sort du mode run + ouvre le panneau Supervision (index 2 = derniere
+  // section avant les flux details).
+  useEffect(() => {
+    const onGoToSup = () => {
+      setRunning(null);
+      setTransitioning(true);
+      const supIdx = J_SECTIONS.findIndex(s => s.id === 'supervision');
+      if (supIdx >= 0) setPanelIndex(supIdx);
+    };
+    window.addEventListener('jdm-goto-jarvis-supervision', onGoToSup);
+    return () => window.removeEventListener('jdm-goto-jarvis-supervision', onGoToSup);
+  }, []);
+
   const lastScroll = useRef(0);
   useEffect(() => { lastScroll.current = 0; setNavHidden(false); }, [panelIndex]);
   useEffect(() => {
@@ -13256,6 +13281,15 @@ function App() {
     if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
       window.__jdmJarvisStore.bootReconcile?.();
     }
+  }, []);
+
+  // Clic sur la pill « N/M flux » du header (ProductionsCountPill) →
+  // ouvre l'onglet Jarvis. ViewJarvis ecoute le meme event pour
+  // basculer sur le panneau Supervision (panelIndex=2).
+  useEffect(() => {
+    const onGoToSup = () => setView('jarvis');
+    window.addEventListener('jdm-goto-jarvis-supervision', onGoToSup);
+    return () => window.removeEventListener('jdm-goto-jarvis-supervision', onGoToSup);
   }, []);
 
   // popstate (back/forward navigateur) : on relit l'URL et on switche.

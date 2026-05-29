@@ -1171,6 +1171,20 @@ function ViewJarvis() {
     return () => window.removeEventListener('jdm-jarvis-switch-run', onSwitch);
   }, []);
 
+  // Clic sur la pill « N/M flux » du header (ProductionsCountPill) :
+  // sort du mode run + ouvre le panneau Supervision (index 2 = derniere
+  // section avant les flux details).
+  useEffect(() => {
+    const onGoToSup = () => {
+      setRunning(null);
+      setTransitioning(true);
+      const supIdx = J_SECTIONS.findIndex(s => s.id === 'supervision');
+      if (supIdx >= 0) setPanelIndex(supIdx);
+    };
+    window.addEventListener('jdm-goto-jarvis-supervision', onGoToSup);
+    return () => window.removeEventListener('jdm-goto-jarvis-supervision', onGoToSup);
+  }, []);
+
   const lastScroll = useRef(0);
   useEffect(() => { lastScroll.current = 0; setNavHidden(false); }, [panelIndex]);
   useEffect(() => {

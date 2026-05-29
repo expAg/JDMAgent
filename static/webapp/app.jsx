@@ -149,6 +149,15 @@ function App() {
     }
   }, []);
 
+  // Clic sur la pill « N/M flux » du header (ProductionsCountPill) →
+  // ouvre l'onglet Jarvis. ViewJarvis ecoute le meme event pour
+  // basculer sur le panneau Supervision (panelIndex=2).
+  useEffect(() => {
+    const onGoToSup = () => setView('jarvis');
+    window.addEventListener('jdm-goto-jarvis-supervision', onGoToSup);
+    return () => window.removeEventListener('jdm-goto-jarvis-supervision', onGoToSup);
+  }, []);
+
   // popstate (back/forward navigateur) : on relit l'URL et on switche.
   // Si la nouvelle URL contient une sous-route Jarvis, on injecte le
   // pending payload AVANT setView pour que ViewJarvis ouvre le bon flow.
