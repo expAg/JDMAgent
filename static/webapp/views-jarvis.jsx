@@ -1647,6 +1647,10 @@ function JSumRow({ k, v, accent, mono }) {
 // Two views: "Aperçus" (rich animated preview rows) and "Registre"
 // (dense library/explorer table). Search filters both; scales to hundreds.
 function JAccueilPanel({ flows, onPick, onLaunch }) {
+  // Set des flows actuellement en cours (resync via JarvisStore — survit
+  // aux unmount). Sert à dégrader chaque carte avec un badge « en cours »
+  // pour que l'utilisateur retrouve d'un coup d'œil ses runs.
+  const activeFlowSet = useJarvisActiveSet();
   const [q, setQ] = useState('');
   const [view, setView] = useState('apercus'); // 'apercus' | 'registre'
 
@@ -1734,6 +1738,7 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
           <div style={{ display: 'grid', gap: 10 }}>
             {list.map(({ f, num }) => (
               <JTocRow key={f.id} flow={f} num={num} delay={(num - 1) * 0.45}
+                running={activeFlowSet.has(f.id)}
                 onOpen={() => onPick(f.id)} onLaunch={() => onLaunch(f.id)} />
             ))}
           </div>
@@ -1746,10 +1751,26 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
 }
 
 // Rich animated preview row (loop ring + full preview). Default "Aperçus" view.
-function JTocRow({ flow, num, delay, onOpen, onLaunch }) {
+function JTocRow({ flow, num, delay, onOpen, onLaunch, running }) {
   const [hover, setHover] = useState(false);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
+      {running && (
+        <div style={{
+          position: 'absolute', top: -6, right: 10, zIndex: 2,
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '2px 8px',
+          background: 'rgba(78,166,60,0.12)',
+          border: '1px solid rgba(78,166,60,0.40)',
+          borderRadius: 999,
+          fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600,
+          color: 'var(--jdm-green)',
+          letterSpacing: '0.04em', textTransform: 'uppercase',
+        }}>
+          <span className="pulse-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--jdm-green)' }} />
+          en cours
+        </div>
+      )}
       {/* Circular loop schematic — OUTSIDE the card. Click = launch the flux. */}
       <button type="button" onClick={onLaunch} className="jring-btn"
         title={`Lancer le flux « ${flow.title} »`} aria-label={`Lancer le flux ${flow.title}`}
@@ -1883,11 +1904,17 @@ function JRegistryRow({ flow, num, cols, last, onOpen, onLaunch }) {
   );
 }
 
-// Tool kinds (API JDM / LLM / logique) a flow touches — used for faceting.
+// Tool kinds (API JDM / logique / workflow / IO / outil) a flow touches —
+// utilise pour les facettes de la Bibliotheque. Source de verite :
+// FLOW_TOOL_STEPS (mapping reel tool -> etape par flux) croise avec
+// TOOL_DOCS (fetched : kind par tool).
 function flowToolKinds(flow) {
-  const tools = (typeof FLOW_FAKES !== 'undefined' && FLOW_FAKES[flow.id] ? FLOW_FAKES[flow.id].tools : []) || [];
+  const steps = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
   const kinds = new Set();
-  tools.forEach(t => { const d = (typeof TOOL_DOCS !== 'undefined') && TOOL_DOCS[t]; if (d) kinds.add(d.kind); });
+  for (const t of Object.keys(steps)) {
+    const d = TOOL_DOCS[t];
+    if (d) kinds.add(d.kind);
+  }
   return [...kinds];
 }
 
@@ -2826,9 +2853,14 @@ function JToolDialog({ flow, tool, onClose }) {
 
 // ═══════════════════ Per-flow design panel ═══════════════════
 function JFlowPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
-  const fake = FLOW_FAKES[flow.id] || { tools: [], candidatesPool: [] };
-  const samples = fake.candidatesPool.filter(c => c.ok).slice(0, 4);
-  const tools = fake.tools;
+  // Tools utilises par ce flow (derives de FLOW_TOOL_STEPS — le mapping
+  // reel tool -> etape, defini en haut du fichier en s'alignant sur les
+  // workflows backend). Pas de samples : la "candidatesPool" du design
+  // etait des donnees fictives ; les vraies candidats remontent dans
+  // le ItemCard de la vue Run au moment du run, pas en preview.
+  const steps = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+  const tools = Object.keys(steps);
+  const samples = [];
   const params = defaultParamsFor(flow.id);
   const [openTool, setOpenTool] = useState(null);
   const panelPos = J_PANELS.findIndex(p => p.id === flow.id);  // position in the carousel track
