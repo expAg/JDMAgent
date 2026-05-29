@@ -2197,7 +2197,20 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           const f = flows[i];
           return (
             <JFlowDashCard key={f.id} flow={f} num={i + 1} live={live[i]}
-              onOpen={() => onPick(f.id)} onLaunch={() => onLaunch(f.id)} />
+              onOpen={() => onPick(f.id)}
+              onLaunch={() => onLaunch(f.id)}
+              onStart={() => {
+                // Demarre le flow IMMEDIATEMENT avec defaults (term/relation
+                // vides → tirage random cote backend) sans naviguer. La card
+                // passera "en cours" au prochain poll /api/jarvis/runs.
+                if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
+                  const dp = (typeof defaultParamsFor === 'function')
+                    ? defaultParamsFor(f.id) : {};
+                  window.__jdmJarvisStore.start(f.id, {
+                    params: dp, isResume: false, resumeState: null,
+                  }).catch(() => {});
+                }
+              }} />
           );
         })}
       </div>
@@ -2382,7 +2395,14 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
 }
 
 // One live "monitor" card for a flux — the heart of the dashboard.
-function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
+//   onLaunch : ouvre la vue de Run (navigation interne du carrousel)
+//   onOpen   : ouvre le panneau de detail du flow (l'explication)
+//   onStart  : LANCE le flow IMMEDIATEMENT via JarvisStore.start avec
+//              les params par defaut (term/relation vides) SANS changer
+//              de page. Utilise par le ring click pour permettre de
+//              demarrer un flow grise depuis Supervision en gardant le
+//              tableau de bord visible.
+function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
   const tint = (p) => `color-mix(in srgb, ${a} ${p}%, transparent)`;
@@ -2416,8 +2436,16 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch }) {
       {/* header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '14px 15px 12px' }}>
         <button type="button" className="jring-btn"
-          onClick={(e) => { e.stopPropagation(); onLaunch(); }}
-          title={`(Re)lancer "${flow.title}"`} aria-label={`Lancer ${flow.title}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            // Si onStart fourni : demarre en place (Supervision), la card
+            // s'allume "en cours" via le poll /api/jarvis/runs sans
+            // changer de page. Sinon fallback onLaunch (navigation vers
+            // la vue Run — comportement par defaut hors Supervision).
+            if (onStart) onStart(); else onLaunch();
+          }}
+          title={onStart ? `Lancer "${flow.title}" maintenant (defaults)` : `(Re)lancer "${flow.title}"`}
+          aria-label={`Lancer ${flow.title}`}
           style={{ flexShrink: 0 }}>
           <JLoopRing accent={a} num={num} steps={flow.steps.length} delay={num * 0.3} size={50} />
         </button>
@@ -2986,23 +3014,35 @@ function JToolDialog({ flow, tool, onClose }) {
 
   // « Prompt » du flow courant = concatenation des docstrings de TOUS les
   // tools du flow (workflow + step tools), dans l'ordre de leur step.
-  // C'est ce qui constitue le « contexte LLM » que l'agent voit pour le
-  // flow — plus utile que le prompt isole d'un seul tool.
+  // C'est exactement ce qui est envoye au LLM comme contexte pour ce flow.
+  // On INCLUT TOUT, sans tronquer — meme si certains tools n'ont pas leur
+  // doc disponible cote catalogue (chargement en cours), on liste leur
+  // nom avec un placeholder pour ne pas masquer leur presence.
   const flowPrompt = (() => {
     const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
     const ordered = Object.keys(fts).sort((a, b) => (fts[a] - fts[b]));
     if (ordered.length === 0) return doc.prompt;
-    const parts = [`# Prompt agreged du flow « ${flow.title} »`,
-                   `# Etapes : ${flow.steps.map(s => s.n).join(' → ')}`,
-                   ''];
+    const parts = [
+      `# PROMPT AGREGED — flow « ${flow.title} » (${flow.id})`,
+      `# Etapes : ${flow.steps.map((s, k) => `[${k}] ${s.n}`).join(' → ')}`,
+      `# ${ordered.length} tools concatenes ci-dessous dans l'ordre d'execution.`,
+      `# C'est ce que voit le LLM comme contexte agent pour ce flow.`,
+      '',
+    ];
     for (const t of ordered) {
       const d = docs[t];
-      if (!d) continue;
       const step = fts[t];
       const stepName = (flow.steps[step] && flow.steps[step].n) || '';
-      parts.push(`## [step ${step}${stepName ? ' · ' + stepName : ''}] ${t}`);
+      parts.push(`## [step ${step}${stepName ? ' · ' + stepName : ''}] ${t}()`);
       parts.push('');
-      parts.push((d.docstring || d.desc || '').trim());
+      if (d) {
+        if (d.sig) parts.push(`# signature : ${d.sig}`);
+        if (d.kind) parts.push(`# kind : ${d.kind}`);
+        if (d.sig || d.kind) parts.push('');
+        parts.push((d.docstring || d.desc || '(pas de docstring)').trim());
+      } else {
+        parts.push('(documentation indisponible — catalogue /api/jarvis/tools encore en chargement ou ce tool n\'est pas registry-expose)');
+      }
       parts.push('');
       parts.push('---');
       parts.push('');
@@ -3035,8 +3075,8 @@ function JToolDialog({ flow, tool, onClose }) {
       backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)',
     }}>
       <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={doc.sig}
-        className="fade-up" style={{
-          width: 'min(640px, 100%)', maxHeight: '86vh', overflowY: 'auto',
+        className="fade-up jpanel-scroll" style={{
+          width: 'min(820px, 100%)', maxHeight: '90vh', overflowY: 'auto',
           background: 'var(--bg-card)', border: '1px solid var(--line)',
           borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow)',
           borderTop: `3px solid ${kindColor}`,
@@ -3140,14 +3180,14 @@ function JToolDialog({ flow, tool, onClose }) {
                 );
               })}
             </div>
-            {/* Scrollable container — la docstring et surtout le prompt
-                aggregé peuvent être longs ; on les rend défilables (max
-                hauteur ~50vh) au lieu de tronquer. */}
-            <div style={{ maxHeight: '52vh', overflowY: 'auto', borderRadius: 'var(--radius)' }} className="jpanel-scroll">
-              {active.id === 'cli'
-                ? <JCliBlock command={doc.cli} />
-                : <JCodeBlock tag={active.tag} code={active.body} />}
-            </div>
+            {/* Le body du tab est rendu en pleine hauteur — le scroll est
+                porte par le modal exterieur (overflow:auto sur le dialog
+                container). Comme ca le prompt aggreged d'un flow peut
+                faire 1500 lignes : tout reste visible, on scrolle juste
+                le modal de bout en bout. */}
+            {active.id === 'cli'
+              ? <JCliBlock command={doc.cli} />
+              : <JCodeBlock tag={active.tag} code={active.body} />}
           </JToolSection>
         </div>
       </div>
@@ -4134,14 +4174,21 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   // (start/done/error/cancelled/file).
                   (() => {
                     const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
-                    // Parse les tool calls (sans data-result) avec leur emoji+message
-                    const re = /<div\s+class="jdm-narration"\s+data-tool="(\w+)"(?:\s+data-result="1")?[^>]*>([\s\S]*?)<\/div>/g;
+                    // Parse les tool calls — on extrait data-tool, data-triplet
+                    // (pose cote backend depuis tc.args.term/relation/target) et
+                    // data-result. La vue Log affiche les TRIPLETS tentes, pas
+                    // la phrase humaine ; le pattern « X | r_xxx | Y » ressort
+                    // directement de l'attribut data-triplet, deterministe.
+                    const re = /<div\s+class="jdm-narration"\s+data-tool="(\w+)"\s*(data-triplet="([^"]*)")?\s*(data-result="1")?[^>]*>/g;
                     const items = [];
                     if (narrationHTML) {
                       let mm;
                       while ((mm = re.exec(narrationHTML)) !== null) {
-                        const isResult = /data-result="1"/.test(mm[0]);
-                        items.push({ tool: mm[1], text: mm[2].replace(/<[^>]+>/g, '').trim(), isResult });
+                        items.push({
+                          tool: mm[1],
+                          triplet: mm[3] || '',
+                          isResult: !!mm[4],
+                        });
                       }
                     }
                     // Regroupe par tentative (chaque step 0 apres step >=1 ouvre une nouvelle)
@@ -4184,14 +4231,40 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                                 {tent.filter(x => !x.isResult).length} appel(s), {tent.filter(x => x.isResult).length} retour(s)
                               </span>
                             </div>
-                            {tent.map((it, k) => (
-                              <div key={k} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline', paddingLeft: 8 }}>
-                                <span style={{ flexShrink: 0, minWidth: 56, color: it.isResult ? 'var(--jdm-green)' : 'var(--accent)' }}>
-                                  {it.isResult ? '←' : '→'} {it.tool}
-                                </span>
-                                <span style={{ color: 'var(--ink-2)', wordBreak: 'break-word' }}>{it.text}</span>
+                            {tent.filter(x => !x.isResult && x.triplet).map((it, k) => {
+                              // Affiche le TRIPLET tente (data-triplet : term|rel|target,
+                              // term|rel, ou term seul selon le tool). Skip les tools
+                              // sans triplet (workflow init, write_submission_file).
+                              const parts = it.triplet.split('|');
+                              const [term, rel, target] = parts;
+                              return (
+                                <div key={k} style={{
+                                  display: 'flex', gap: 8, marginBottom: 3, alignItems: 'baseline',
+                                  paddingLeft: 8, paddingRight: 8,
+                                }}>
+                                  <span style={{ flexShrink: 0, color: 'var(--accent)', fontSize: 10 }}>→</span>
+                                  <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', wordBreak: 'break-word' }}>
+                                    <span style={{ fontWeight: 600 }}>{term}</span>
+                                    {rel && (<>
+                                      <span style={{ color: 'var(--ink-3)' }}> | </span>
+                                      <span style={{ color: flow.accent }}>{rel}</span>
+                                    </>)}
+                                    {target && (<>
+                                      <span style={{ color: 'var(--ink-3)' }}> | </span>
+                                      <span style={{ fontWeight: 600 }}>{target}</span>
+                                    </>)}
+                                  </span>
+                                  <span style={{ flexShrink: 0, color: 'var(--ink-3)', fontSize: 9.5 }}>{it.tool}</span>
+                                </div>
+                              );
+                            })}
+                            {/* Si la tentative n'a aucun triplet (workflow + lookup seuls),
+                                affiche un placeholder leger pour ne pas etre invisible. */}
+                            {tent.filter(x => !x.isResult && x.triplet).length === 0 && (
+                              <div style={{ paddingLeft: 8, fontSize: 10, color: 'var(--ink-3)', fontStyle: 'italic' }}>
+                                aucun triplet tente dans cette tentative ({tent.filter(x => !x.isResult).length} appel(s) sans args triplet)
                               </div>
-                            ))}
+                            )}
                           </div>
                         ))}
                         {/* Events SSE bruts (start/done/cancelled/file/error) en pied de page */}

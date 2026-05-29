@@ -1806,10 +1806,29 @@ def run_jarvis_flow(
                                             for tc in tcs:
                                                 name = tc.get("name", "?")
                                                 tc_args = tc.get("args") or {}
+                                                # data-triplet : encode le (term, rel,
+                                                # target) tente, pour que la vue Log de
+                                                # narration cote front puisse afficher
+                                                # directement les triplets parcourus
+                                                # sans avoir a re-parser la phrase
+                                                # humaine. Utile pour validate_candidate
+                                                # consolidate_candidate, get_relations,
+                                                # write_submission_file, etc.
+                                                _t  = tc_args.get("term") or tc_args.get("subject") or ""
+                                                _r  = tc_args.get("relation") or tc_args.get("relation_name") or ""
+                                                _tg = tc_args.get("target") or ""
+                                                if _t and _r and _tg:
+                                                    _trip = f'data-triplet="{_t}|{_r}|{_tg}"'
+                                                elif _t and _r:
+                                                    _trip = f'data-triplet="{_t}|{_r}"'
+                                                elif _t:
+                                                    _trip = f'data-triplet="{_t}"'
+                                                else:
+                                                    _trip = ""
                                                 narrated = _narrate_tool_call(name, tc_args)
                                                 if narrated:
                                                     _add_line(
-                                                        f'<div class="jdm-narration" data-tool="{name}">'
+                                                        f'<div class="jdm-narration" data-tool="{name}" {_trip}>'
                                                         f'{narrated}</div>'
                                                     )
                                                 else:
@@ -1818,7 +1837,7 @@ def run_jarvis_flow(
                                                         for k, v in tc_args.items()
                                                     )
                                                     _add_line(
-                                                        f'<div class="jdm-narration" data-tool="{name}">'
+                                                        f'<div class="jdm-narration" data-tool="{name}" {_trip}>'
                                                         f'🔧 `{name}({args_str})`</div>'
                                                     )
                                             # Ajoute en bas un indicateur fugace

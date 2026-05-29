@@ -325,10 +325,11 @@ function App() {
             ].map(([id, label]) => (
               <button key={id}
                 onClick={() => {
-                  // Si on est deja sur cette vue, on declenche un "reset"
-                  // event que les vues peuvent ecouter pour revenir a leur
-                  // etat initial (ex: ViewJarvis → panel Accueil).
-                  if (view === id && typeof window !== 'undefined') {
+                  // Dispatch SYSTEMATIQUEMENT le reset event quand on clique
+                  // un onglet — qu'on soit deja dessus ou qu'on arrive depuis
+                  // une autre vue. Les vues l'ecoutent pour revenir a leur
+                  // etat initial (ex: ViewJarvis → panel Accueil + exit run).
+                  if (typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('jdm-nav-reset', { detail: { view: id } }));
                   }
                   setView(id);
