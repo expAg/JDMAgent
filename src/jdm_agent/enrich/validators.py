@@ -60,24 +60,30 @@ import threading
 _REGISTRY_LOCK = threading.RLock()
 _EXCLUSION_REGISTRY: Optional[dict] = None
 _CONSOLIDATION_REGISTRY: Optional[dict] = None
-# Set des paths résolus que le LLM a écrits dans CE run (exclusion_context
-# actif). Sert à `write_submission_file` pour distinguer :
-#   - path appartenant à ce run → OVERWRITE autorisé (le LLM rewrite le
-#     même fichier en relance pour cumuler ses productions). Sinon le
-#     anti-écrasement renomme en `_2`, `_3` etc. à chaque relance →
-#     fragments / bribes éparpillées (bug rapporté).
-#   - path NEUF (jamais écrit dans ce run) → anti-écrasement classique.
-# Stocke les paths POST-résolution (après le /tmp/jdm_outputs/ prefix).
-_RUN_OUTPUT_PATHS: Optional[set] = None
 _CONTEXT_DEPTH = 0  # compteur de nesting d'exclusion_context()
 
-# Path d'append automatique pour les consolidations. Quand non-None,
-# register_consolidation() écrit chaque triplet consolidé en mode
-# append dans ce fichier IMMÉDIATEMENT après l'avoir ajouté au
-# registry. Permet à l'UI Gradio (et au mcp client) de voir le
-# fichier grossir en temps réel, sans dépendre du LLM appelant
-# write_submission_file (qui écraserait à chaque appel).
-_CONSOLIDATION_OUTPUT_PATH: Optional[str] = None
+# ---------- Canonical output path (deux modes) ----------
+#
+# Path canonique d'écriture pour le run courant. Quand non-None :
+#   - mode "auto_append" : `register_consolidation` écrit chaque
+#     triplet consolidé en APPEND dans ce fichier IMMÉDIATEMENT
+#     (streaming temps réel). `write_submission_file` no-op poli
+#     pour ce path. Utilisé pour le flow ENRICH où le contenu est
+#     calculé par le backend (inférence) et donc captureable côté
+#     streaming.
+#   - mode "redirect" : `write_submission_file` IGNORE le `path` que
+#     le LLM passe et OVERWRITE ce path canonique. Utilisé pour
+#     annot/audit/err/stat où le contenu = jugement LLM (non
+#     interceptable en streaming). Le LLM compose le contenu, on
+#     contrôle où ça va — pas de fragmentation possible peu importe
+#     ce que le LLM appelle. Pas de dédup (jugements parallèles
+#     légitimes côté err).
+#
+# Note historique : initialement nommé _CONSOLIDATION_OUTPUT_PATH (ne
+# gérait que le mode auto_append). Renommé _CANONICAL_OUTPUT_PATH avec
+# wrapper de compat `set_consolidation_output_path`.
+_CANONICAL_OUTPUT_PATH: Optional[str] = None
+_CANONICAL_OUTPUT_MODE: Optional[str] = None  # "auto_append" | "redirect"
 _CONSOLIDATION_OUTPUT_HEADER_WRITTEN: bool = False
 
 
@@ -110,12 +116,11 @@ def exclusion_context():
     le compteur supporte le nesting (plusieurs invocations imbriquées
     partagent le même dict, seule la SORTIE la plus externe le vide).
     """
-    global _EXCLUSION_REGISTRY, _CONSOLIDATION_REGISTRY, _RUN_OUTPUT_PATHS, _CONTEXT_DEPTH
+    global _EXCLUSION_REGISTRY, _CONSOLIDATION_REGISTRY, _CONTEXT_DEPTH
     with _REGISTRY_LOCK:
         if _CONTEXT_DEPTH == 0:
             _EXCLUSION_REGISTRY = {}
             _CONSOLIDATION_REGISTRY = {}
-            _RUN_OUTPUT_PATHS = set()
         _CONTEXT_DEPTH += 1
     try:
         yield
@@ -125,7 +130,6 @@ def exclusion_context():
             if _CONTEXT_DEPTH == 0:
                 _EXCLUSION_REGISTRY = None
                 _CONSOLIDATION_REGISTRY = None
-                _RUN_OUTPUT_PATHS = None
 
 
 # ---------- Registry de consolidation ----------
@@ -138,27 +142,65 @@ def _norm_consolidation_key(term: str, relation: str, target: str) -> tuple[str,
     )
 
 
-def set_consolidation_output_path(path: Optional[str]) -> None:
-    """Active l'écriture automatique en mode APPEND : chaque appel à
-    `register_consolidation` écrit la ligne du triplet consolidé dans
-    `path` immédiatement après l'avoir ajouté au registry.
+def set_canonical_output_path(path: Optional[str], mode: str = "auto_append") -> None:
+    """Configure le path canonique d'écriture pour le run courant.
 
-    Permet à l'UI (Gradio gr.File) de voir le fichier grossir en temps
-    réel sans dépendre du LLM appelant `write_submission_file`. Le
-    fichier reçoit un header de soumission JeuxDeMots au PREMIER append.
+    `mode` :
+      - "auto_append" : `register_consolidation` append en streaming
+        dans `path` à chaque triplet consolidé. `write_submission_file`
+        sur ce path est no-op poli (le fichier est déjà à jour côté
+        backend). Utilisé pour ENRICH où le contenu est calculé par
+        l'inférence (streaming gratuit + crash-safety).
+      - "redirect" : `write_submission_file` IGNORE le `path` passé
+        par le LLM et OVERWRITE `path`. Utilisé pour annot/audit/err/
+        stat où le contenu vient du jugement LLM. Garantie structurelle
+        zéro fragmentation : peu importe ce que le LLM appelle, ça
+        atterrit dans `path`.
 
-    Passer `None` désactive l'auto-append (reset du flag header).
+    Passer `path=None` désactive le mécanisme (reset du flag header).
     """
-    global _CONSOLIDATION_OUTPUT_PATH, _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
+    global _CANONICAL_OUTPUT_PATH, _CANONICAL_OUTPUT_MODE, _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
+    if mode not in ("auto_append", "redirect"):
+        raise ValueError(f"mode must be 'auto_append' or 'redirect', got {mode!r}")
     with _REGISTRY_LOCK:
-        _CONSOLIDATION_OUTPUT_PATH = path
+        _CANONICAL_OUTPUT_PATH = path
+        _CANONICAL_OUTPUT_MODE = mode if path is not None else None
         _CONSOLIDATION_OUTPUT_HEADER_WRITTEN = False
 
 
-def get_consolidation_output_path() -> Optional[str]:
-    """Retourne le path d'auto-append courant, ou None si désactivé."""
+def get_canonical_output_path() -> tuple[Optional[str], Optional[str]]:
+    """Retourne `(path, mode)` du canonical courant. `(None, None)` si
+    désactivé."""
     with _REGISTRY_LOCK:
-        return _CONSOLIDATION_OUTPUT_PATH
+        return _CANONICAL_OUTPUT_PATH, _CANONICAL_OUTPUT_MODE
+
+
+# ---------- Compat wrappers (auto_append uniquement) ----------
+
+def set_consolidation_output_path(path: Optional[str]) -> None:
+    """Compat : pose le canonical en mode auto_append (= comportement
+    historique d'enrich). Préfère `set_canonical_output_path(path,
+    mode='auto_append')` pour le code neuf."""
+    set_canonical_output_path(path, mode="auto_append")
+
+
+def get_consolidation_output_path() -> Optional[str]:
+    """Compat : retourne le path canonical SI mode auto_append, sinon
+    None. Sert aux call sites qui ne veulent QUE l'auto-append d'enrich
+    (ex. write_submission_file dans le guard auto-append)."""
+    with _REGISTRY_LOCK:
+        if _CANONICAL_OUTPUT_MODE == "auto_append":
+            return _CANONICAL_OUTPUT_PATH
+        return None
+
+
+def get_redirect_output_path() -> Optional[str]:
+    """Retourne le path canonical SI mode redirect, sinon None. Sert à
+    `write_submission_file` pour détourner l'écriture LLM."""
+    with _REGISTRY_LOCK:
+        if _CANONICAL_OUTPUT_MODE == "redirect":
+            return _CANONICAL_OUTPUT_PATH
+        return None
 
 
 def _append_consolidation_to_file(term: str, relation: str, target: str,
@@ -177,11 +219,13 @@ def _append_consolidation_to_file(term: str, relation: str, target: str,
     prime sur la cosmétique des noms.
     """
     global _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
-    if _CONSOLIDATION_OUTPUT_PATH is None:
+    # Mode auto_append uniquement (redirect ne streame pas, c'est
+    # l'overwrite final du LLM qui matérialise le fichier).
+    if _CANONICAL_OUTPUT_PATH is None or _CANONICAL_OUTPUT_MODE != "auto_append":
         return
     try:
         from pathlib import Path as _Path
-        p = _Path(_CONSOLIDATION_OUTPUT_PATH)
+        p = _Path(_CANONICAL_OUTPUT_PATH)
         p.parent.mkdir(parents=True, exist_ok=True)
         write_header = not _CONSOLIDATION_OUTPUT_HEADER_WRITTEN
         expl = " ".join((explanation or "").split())
@@ -266,40 +310,6 @@ def list_consolidations() -> list[dict]:
             }
             for k, v in _CONSOLIDATION_REGISTRY.items()
         ]
-
-
-# ---------- Registry des paths écrits dans le run ----------
-
-def is_run_output_path(path: str) -> bool:
-    """True si `path` (str d'une `Path.resolve()`) a déjà été écrit par
-    le LLM dans le run courant (`exclusion_context` actif). Permet à
-    `write_submission_file` d'autoriser l'OVERWRITE plutôt que de
-    rajouter un suffixe `_2`/`_3` — autrement chaque relance redémarre
-    un nouveau fichier (bug « bribes »)."""
-    with _REGISTRY_LOCK:
-        if _RUN_OUTPUT_PATHS is None:
-            return False
-        return path in _RUN_OUTPUT_PATHS
-
-
-def register_run_output_path(path: str) -> None:
-    """Mémorise `path` (str d'une `Path.resolve()`) comme appartenant au
-    run courant. Appelé par `write_submission_file` après chaque écriture
-    réussie. No-op hors `exclusion_context()`."""
-    with _REGISTRY_LOCK:
-        if _RUN_OUTPUT_PATHS is None:
-            return
-        _RUN_OUTPUT_PATHS.add(path)
-
-
-def list_run_output_paths() -> list[str]:
-    """Renvoie la LISTE des paths écrits dans le run courant (ordre non
-    spécifié, c'est un set). Vide hors `exclusion_context()`. Utile pour
-    rappeler au LLM, en relance, quel fichier il avait commencé."""
-    with _REGISTRY_LOCK:
-        if _RUN_OUTPUT_PATHS is None:
-            return []
-        return list(_RUN_OUTPUT_PATHS)
 
 
 def register_exclusion(term: str, relation: str, exclusion_set) -> None:

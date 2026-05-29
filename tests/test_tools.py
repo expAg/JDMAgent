@@ -433,3 +433,91 @@ def test_write_submission_file_upload_without_api_key(tmp_path, monkeypatch):
     assert out["count"] == 1
     assert out["upload"]["ok"] is False
     assert "API" in out["upload"]["error"] or "JDM_DROPS_API_KEY" in out["upload"]["error"]
+
+
+# -------------------- Canonical redirect mode (anti-bribes Jarvis) --------------------
+
+def test_redirect_mode_ignores_llm_path(tmp_path):
+    """En mode redirect, write_submission_file IGNORE le path passé par le
+    LLM et écrit dans le canonical posé par set_canonical_output_path.
+    Garantie structurelle : un seul fichier par run, peu importe ce que
+    le LLM appelle."""
+    from jdm_agent.tools.jdm_tools import write_submission_file
+    from jdm_agent.enrich import set_canonical_output_path
+    from pathlib import Path
+
+    canonical = tmp_path / "canonical_run.annot"
+    set_canonical_output_path(str(canonical), mode="redirect")
+    try:
+        # Le LLM passe un path délibérément différent.
+        out = write_submission_file.invoke({
+            "triplets": [{"line": "chat | r_carac | doux | constitutif < trait usuel >"}],
+            "path": "/tmp/jdm_outputs/llm_chose_this_name.annot",
+        })
+        # Le fichier est écrit au canonical, pas au path du LLM.
+        assert Path(out["path"]).resolve() == canonical.resolve()
+        assert canonical.exists()
+        assert "chat | r_carac | doux" in canonical.read_text(encoding="utf-8")
+    finally:
+        set_canonical_output_path(None)
+
+
+def test_redirect_mode_overwrites_no_suffix(tmp_path):
+    """En mode redirect, deux écritures successives OVERWRITE le canonical
+    — pas de suffixe _2 ajouté. C'est exactement le bug 'bribes' qu'on
+    coupe à la racine."""
+    from jdm_agent.tools.jdm_tools import write_submission_file
+    from jdm_agent.enrich import set_canonical_output_path
+    from pathlib import Path
+
+    canonical = tmp_path / "canonical_overwrite.annot"
+    set_canonical_output_path(str(canonical), mode="redirect")
+    try:
+        write_submission_file.invoke({
+            "triplets": [{"line": "tour 1 ligne A"}],
+            "path": "ignored.annot",
+        })
+        write_submission_file.invoke({
+            "triplets": [
+                {"line": "tour 2 ligne A"},
+                {"line": "tour 2 ligne B"},
+            ],
+            "path": "also_ignored.annot",
+        })
+        # Le canonical contient le contenu du DERNIER write — pas
+        # d'accumulation, pas de fichier _2.
+        content = canonical.read_text(encoding="utf-8")
+        assert "tour 2 ligne A" in content
+        assert "tour 2 ligne B" in content
+        assert "tour 1" not in content
+        # Pas de fichier _2 créé à côté.
+        siblings = list(canonical.parent.glob("canonical_overwrite_*.annot"))
+        assert siblings == []
+    finally:
+        set_canonical_output_path(None)
+
+
+def test_redirect_mode_disabled_after_none(tmp_path):
+    """Après set_canonical_output_path(None), on retombe sur l'anti-
+    écrasement classique (suffixe _2 si le fichier existe déjà)."""
+    from jdm_agent.tools.jdm_tools import write_submission_file
+    from jdm_agent.enrich import set_canonical_output_path
+    from pathlib import Path
+
+    set_canonical_output_path(None)
+    # Crée un fichier pré-existant
+    (Path("/tmp/jdm_outputs") / "preexisting.annot").parent.mkdir(parents=True, exist_ok=True)
+    p = Path("/tmp/jdm_outputs/preexisting_collision_test.annot")
+    p.write_text("déjà là\n", encoding="utf-8")
+    try:
+        out = write_submission_file.invoke({
+            "triplets": [{"line": "nouveau contenu"}],
+            "path": str(p),
+        })
+        # Le tool a renommé en _2 (anti-écrasement legacy intact).
+        assert out["path"].endswith("_2.annot")
+        assert p.read_text(encoding="utf-8") == "déjà là\n"  # original intact
+    finally:
+        p.unlink(missing_ok=True)
+        for sib in p.parent.glob("preexisting_collision_test*.annot"):
+            sib.unlink(missing_ok=True)

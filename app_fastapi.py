@@ -1119,6 +1119,11 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
                 }.get(flow_id, "items"),
                 auto_switch_on_perday=bool(p.get("auto_switch", False)),
                 resume_state=p.get("resume_state"),
+                # Pilote la stratégie canonical_path : enrich → auto_append
+                # (streaming), annot/audit/err/stat → redirect (overwrite
+                # canonical, ignore le path passé par le LLM = anti-bribes
+                # structurel), gap → pas de canonical.
+                flow_id=flow_id,
             )
             # Importe le compteur consolidés du registre (mécanique
             # battle-tested de jdm_agent.enrich) — fournit le VRAI nombre
