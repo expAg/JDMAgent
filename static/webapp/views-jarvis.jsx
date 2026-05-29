@@ -2363,244 +2363,125 @@ function JLoopRing({ accent, num, steps, delay, size = 60 }) {
   );
 }
 
+// ═══════════════════ Tool catalog — fetché depuis le backend ═══════════════════
+// TOOL_DOCS et FLOW_TOOL_STEPS sont alimentés au boot par
+// GET /api/jarvis/tools. Le backend introspecte les @tool LangChain
+// de build_jdm_tools() et renvoie 39 fiches : {name, kind, description,
+// signature, args}. Avant la fin du fetch, TOOL_DOCS est un objet vide
+// et les usages tombent sur le fallback générique défini dans
+// JToolDialog (sig='nom(…)', kind='outil').
+//
+// useToolDocs() renvoie [docs, ready] et force le re-render des
+// consommateurs quand le fetch arrive — sans cela, JToolDialog ouvert
+// avant que le catalogue soit chargé n'afficherait jamais ses détails.
+
+let TOOL_DOCS = {};
+const _TOOL_DOCS_LISTENERS = new Set();
+let _TOOL_DOCS_LOADED = false;
+
+function _notifyToolDocs() {
+  for (const cb of _TOOL_DOCS_LISTENERS) { try { cb(); } catch {} }
+}
+
+async function _loadToolDocs() {
+  if (_TOOL_DOCS_LOADED) return;
+  try {
+    const r = await fetch('api/jarvis/tools');
+    if (!r.ok) return;
+    const d = await r.json();
+    const m = {};
+    for (const t of d.tools || []) {
+      // Adapter le format backend -> celui attendu par JToolDialog
+      // (sig, kind, desc, docstring, prompt, cli, output).
+      const argList = (t.args || []).map(a => a.name + (a.required ? '' : '?')).join(', ');
+      m[t.name] = {
+        sig: t.signature || `${t.name}(${argList})`,
+        kind: t.kind || 'outil',
+        desc: (t.description || '').split('\n')[0],  // 1re ligne en résumé
+        docstring: t.docstring || t.description || '',
+        // Pas d'entrée prompt ni de cli côté backend — on synthétise.
+        prompt: `# Outil LangChain — ${t.name}\n\n` +
+                (t.description || '').slice(0, 600) +
+                ((t.description || '').length > 600 ? '…' : ''),
+        cli: `# Disponible via le serveur MCP\nmcp call ${t.name} ${(t.args || []).map(a => '--' + a.name + ' …').join(' ')}`,
+        output: (t.args || []).length === 0
+          ? '{}'
+          : '{\n  // sortie selon la signature du tool\n  // schéma : ' +
+            (t.args || []).map(a => a.name + ':' + (a.type || 'any')).join(', ') + '\n}',
+      };
+    }
+    TOOL_DOCS = m;
+    _TOOL_DOCS_LOADED = true;
+    _notifyToolDocs();
+  } catch {}
+}
+if (typeof window !== 'undefined') { _loadToolDocs(); }
+
+function useToolDocs() {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => {
+    _TOOL_DOCS_LISTENERS.add(force);
+    return () => _TOOL_DOCS_LISTENERS.delete(force);
+  }, []);
+  return [TOOL_DOCS, _TOOL_DOCS_LOADED];
+}
+
+// Map outil → index d'étape dans flow.steps, par flow_id réel. Établi
+// d'après les workflows backend (enrichment_workflow, audit_workflow,
+// etc.) qui décrivent quel tool LLM est attendu à quelle étape.
+const FLOW_TOOL_STEPS = {
+  enrich: {
+    enrichment_workflow: 0,
+    list_existing_for_enrichment: 0,
+    disambiguate: 0,
+    validate_candidate: 1,
+    consolidate_candidate: 1,
+    verify_claim: 1,
+    infer: 1,
+    write_submission_file: 2,
+    submit_to_jdm: 2,
+  },
+  audit: {
+    audit_workflow: 0,
+    disambiguate: 0,
+    lookup_term: 0,
+    get_relations_of_type: 1,
+    verify_claim: 1,
+    write_submission_file: 2,
+  },
+  gap: {
+    gap_detection_workflow: 0,
+    lookup_term: 0,
+    detect_gaps: 1,
+    list_existing_for_enrichment: 1,
+    get_relations_of_type: 1,
+  },
+  signalement: {
+    signalement_workflow: 0,
+    lookup_term: 0,
+    get_relations_of_type: 1,
+    verify_claim: 1,
+    write_submission_file: 2,
+  },
+  stats: {
+    stats_workflow: 0,
+    lookup_term: 0,
+    list_existing_for_enrichment: 1,
+    get_relations_of_type: 1,
+  },
+  annotation: {
+    annotation_workflow: 0,
+    lookup_term: 0,
+    disambiguate: 0,
+    get_relations_of_type: 1,
+    write_submission_file: 2,
+  },
+};
+
 // ═══════════════════ Tool catalog — fiches d'outils ═══════════════════
 // Per-tool documentation surfaced in the JToolDialog (clic sur un chip outil).
-const TOOL_DOCS = {
-  relations_from: {
-    sig: 'relations_from(terme, type?) → Relation[]', kind: 'API JDM',
-    desc: "Récupère les relations sortantes d'un terme : celles dont le terme est la source. Optionnellement filtrées par type de relation.",
-    docstring: `GET /relations/from/{terme}?type={type}
-
-Renvoie les relations sortantes du nœud {terme} dans
-JeuxDeMots, triées par poids décroissant. Si {type}
-est fourni, ne renvoie que ce type (r_isa, r_carac…).`,
-    prompt: `# Outil agent — relations_from
-Récolte les indices sortants AVANT de proposer un triplet.
-
-{ "name": "relations_from",
-  "args": { "terme": "str", "type": "str?" } }
-
-« Filtre par {type} quand tu cibles une relation précise. »`,
-    cli: 'jdm-agent tool relations_from --terme chat --type r_carac',
-    output: `[
-  { "r": "r_isa",   "node": "félin",   "w": 412 },
-  { "r": "r_carac", "node": "agile",   "w": 142 },
-  { "r": "r_carac", "node": "curieux", "w":  88 }
-]`,
-  },
-  relations_to: {
-    sig: 'relations_to(terme, type?) → Relation[]', kind: 'API JDM',
-    desc: "Relations entrantes : celles dont le terme est la cible. Utile pour savoir « qui pointe vers » ce terme.",
-    docstring: `GET /relations/to/{terme}?type={type}
-
-Renvoie les relations dont {terme} est le nœud cible.
-Ex. relations_to("félin", "r_isa") → les termes qui
-sont des félins.`,
-    prompt: `# Outil agent — relations_to
-Trouve les termes qui pointent VERS la cible.
-
-{ "name": "relations_to",
-  "args": { "terme": "str", "type": "str?" } }
-
-« Idéal pour énumérer les hyponymes d'une classe. »`,
-    cli: 'jdm-agent tool relations_to --terme félin --type r_isa',
-    output: `[
-  { "r": "r_isa", "source": "chat",  "w": 380 },
-  { "r": "r_isa", "source": "tigre", "w": 210 },
-  { "r": "r_isa", "source": "lion",  "w": 198 }
-]`,
-  },
-  analogies: {
-    sig: 'analogies(terme, k?) → Analogy[]', kind: 'API JDM',
-    desc: "Propose des analogies proportionnelles (a est à b ce que c est à d) à partir du voisinage du terme. Sert à générer des candidats par transfert.",
-    docstring: `GET /analogies/{terme}?k={k}
-
-Renvoie les k meilleures analogies proportionnelles
-impliquant {terme}, sous la forme a:b :: c:d.`,
-    prompt: `# Outil agent — analogies
-Génère des candidats par transfert proportionnel.
-
-{ "name": "analogies",
-  "args": { "terme": "str", "k": "int?" } }
-
-« Si a:b tient, teste d sur c. »`,
-    cli: 'jdm-agent tool analogies --terme chat -k 5',
-    output: `[
-  { "a":"chat","b":"miauler","c":"chien","d":"aboyer","conf":0.86 },
-  { "a":"chat","b":"chaton", "c":"chien","d":"chiot", "conf":0.81 }
-]`,
-  },
-  common_ancestors: {
-    sig: 'common_ancestors(t1, t2) → Node[]', kind: 'API JDM',
-    desc: "Hyperonymes (r_isa) partagés par deux termes — leurs ancêtres communs dans la taxonomie. Mesure la proximité sémantique.",
-    docstring: `GET /common_ancestors?a={t1}&b={t2}
-
-Remonte les chaînes r_isa de {t1} et {t2} et renvoie
-leurs ancêtres communs, du plus spécifique au plus général.`,
-    prompt: `# Outil agent — common_ancestors
-Mesure la parenté sémantique de deux termes.
-
-{ "name": "common_ancestors",
-  "args": { "t1": "str", "t2": "str" } }
-
-« Un ancêtre proche = forte parenté. »`,
-    cli: 'jdm-agent tool common_ancestors --a chat --b chien',
-    output: `[
-  { "node": "félin",     "depth": 1 },
-  { "node": "mammifère", "depth": 2 },
-  { "node": "animal",    "depth": 3 }
-]`,
-  },
-  validate_candidate: {
-    sig: 'validate_candidate(triplet) → { ok, score, raison }', kind: 'LLM',
-    desc: "Soumet un triplet candidat à un panel de vérifications (poids JDM, contradictions, support croisé) et renvoie un score de confiance et une décision.",
-    docstring: `validate_candidate(triplet) → { ok, score, raison }
-
-Wrapper LLM : confronte le triplet aux indices JDM
-rassemblés puis rend une décision pondérée.`,
-    prompt: `Tu es un validateur de connaissances pour JeuxDeMots.
-Triplet : {sujet} | {relation} | {objet}
-Indices JDM : {relations_pertinentes}
-
-Évalue si le triplet est plausible. Pénalise toute
-contradiction. Réponds en JSON :
-{ "ok": bool, "score": 0..1, "raison": str }`,
-    cli: 'jdm-agent tool validate_candidate --triplet "chat|r_carac|curieux"',
-    output: `{
-  "ok": true,
-  "score": 0.92,
-  "raison": "soutenu par r_carac(chat, curieux) w=88"
-}`,
-  },
-  cross_check: {
-    sig: 'cross_check(relation) → Evidence', kind: 'logique',
-    desc: "Recoupe une relation avec d'autres relations du graphe pour mesurer son support ou repérer un conflit.",
-    docstring: `cross_check(relation) → { support, conflits[] }
-
-Pour R = (s, r, o), collecte les relations voisines qui
-la confirment ou l'infirment et calcule un support net
-dans [-1, 1].`,
-    prompt: `# Outil agent — cross_check
-Recoupe une relation avant de la garder.
-
-{ "name": "cross_check",
-  "args": { "relation": "s|r|o" } }
-
-« Un support négatif = conflit à examiner. »`,
-    cli: 'jdm-agent tool cross_check --relation "chat|r_isa|chien"',
-    output: `{
-  "relation": "chat | r_isa | chien",
-  "support": -0.91,
-  "conflits": ["r_isa(chat, félin) w=412"]
-}`,
-  },
-  detect_contradiction: {
-    sig: 'detect_contradiction(relation) → Contradiction?', kind: 'logique',
-    desc: "Détecte une contradiction logique entre une relation et le reste du voisinage (incompatibilités isa, antonymie, exclusions).",
-    docstring: `detect_contradiction(relation) → Contradiction | null
-
-Étant donné R et le voisinage du sujet, cherche une
-relation incompatible (ex. deux r_isa mutuellement
-exclusifs). Renvoie la plus forte, sinon null.`,
-    prompt: `# Outil agent — detect_contradiction
-Signale toute incompatibilité logique.
-
-{ "name": "detect_contradiction",
-  "args": { "relation": "s|r|o" } }
-
-« isa exclusifs, antonymie → contradiction. »`,
-    cli: 'jdm-agent tool detect_contradiction --relation "chat|r_isa|chien"',
-    output: `{
-  "type": "isa_exclusif",
-  "avec": "r_isa(chat, félin)",
-  "gravite": "haute"
-}`,
-  },
-  flag_suspect: {
-    sig: 'flag_suspect(triplet, raison) → void', kind: 'logique',
-    desc: "Marque un triplet comme suspect dans le rapport d'audit, avec la raison et la gravité, pour relecture ultérieure.",
-    docstring: `flag_suspect(triplet, raison) → void
-
-Ajoute {triplet} à la liste des suspects du rapport avec
-{ raison, gravite, source }. N'écrit jamais dans le graphe.`,
-    prompt: `# Outil agent — flag_suspect
-Marque, ne corrige pas.
-
-{ "name": "flag_suspect",
-  "args": { "triplet": "s|r|o", "raison": "str" } }
-
-« La décision finale revient au relecteur. »`,
-    cli: 'jdm-agent tool flag_suspect --triplet "chat|r_has_color|bleu" --raison "poids faible"',
-    output: `{
-  "flagged": "chat | r_has_color | bleu",
-  "raison": "poids faible (w=3)",
-  "gravite": "moyenne"
-}`,
-  },
-  refinements_decoded: {
-    sig: 'refinements_decoded(terme) → Sense[]', kind: 'API JDM',
-    desc: "Renvoie les raffinements sémantiques (sens / gloses) d'un terme polysémique, décodés en libellés lisibles.",
-    docstring: `GET /refinements/{terme}
-
-Renvoie les nœuds de raffinement de {terme} (ex.
-"souris>animal", "souris>périphérique") avec leur gloss.`,
-    prompt: `# Outil agent — refinements_decoded
-Désambiguïse un terme polysémique.
-
-{ "name": "refinements_decoded",
-  "args": { "terme": "str" } }
-
-« À appeler avant d'étendre ou de vérifier. »`,
-    cli: 'jdm-agent tool refinements_decoded --terme souris',
-    output: `[
-  { "sens": "chat>animal",   "gloss": "félin domestique" },
-  { "sens": "chat>logiciel", "gloss": "messagerie instantanée" }
-]`,
-  },
-  extract_claims: {
-    sig: 'extract_claims(texte) → Claim[]', kind: 'LLM',
-    desc: "Découpe un texte en affirmations atomiques, normalisées en triplets vérifiables.",
-    docstring: `extract_claims(texte) → Claim[]
-
-Wrapper LLM : segmente le texte en affirmations
-atomiques, chacune normalisée en triplet JDM.`,
-    prompt: `Décompose le texte en affirmations atomiques. Pour chacune,
-produis un triplet { sujet, relation, objet } normalisé
-sur les relations JDM.
-Texte : """{texte}"""`,
-    cli: 'jdm-agent tool extract_claims --texte "Le chat est un mammifère."',
-    output: `[
-  { "claim":"Le chat est un mammifère","t":"chat | r_isa | mammifère" },
-  { "claim":"Il mange des croquettes", "t":"chat | r_patient | croquette" }
-]`,
-  },
-  verify_claim: {
-    sig: 'verify_claim(triplet) → { verdict, conf, preuves }', kind: 'LLM',
-    desc: "Confronte une affirmation atomique au graphe JDM et rend un verdict (vrai / faux / indéterminé) avec ses preuves.",
-    docstring: `verify_claim(triplet) → { verdict, conf, preuves }
-
-Wrapper LLM : vérifie une affirmation contre JDM
-et cite les relations de preuve.`,
-    prompt: `Vérifie le triplet {t} contre JeuxDeMots. Cite les
-relations de preuve et leur poids. Réponds :
-{ "verdict": "vrai|faux|indéterminé", "conf": 0..1, "preuves": [...] }`,
-    cli: 'jdm-agent tool verify_claim --triplet "chat|r_isa|mammifère"',
-    output: `{
-  "verdict": "vrai",
-  "conf": 0.97,
-  "preuves": ["r_isa(chat, mammifère) w=205"]
-}`,
-  },
-};
 
 // Which step (index into flow.steps) each tool serves, per flow.
-const FLOW_TOOL_STEPS = {
-  enrich:    { relations_from: 0, relations_to: 0, analogies: 0, common_ancestors: 0, validate_candidate: 1 },
-  audit:     { relations_from: 0, cross_check: 1, detect_contradiction: 1, flag_suspect: 2 },
-  expand:    { refinements_decoded: 0, relations_from: 1, common_ancestors: 2 },
-  factcheck: { extract_claims: 0, verify_claim: 1 },
-  synth:     { relations_from: 0, refinements_decoded: 0, common_ancestors: 1 },
-};
 
 function JToolCode({ children }) {
   return (
@@ -2731,7 +2612,16 @@ function JCliBlock({ command }) {
 
 // Modal fiche for a single tool, contextualised to the flow it's used in.
 function JToolDialog({ flow, tool, onClose }) {
-  const doc = TOOL_DOCS[tool] || { sig: tool + '(…)', kind: 'outil', desc: 'Outil interne.', docstring: '—', prompt: '—', cli: tool, output: '—' };
+  // useToolDocs s'abonne au catalogue : le 1er render après l'ouverture
+  // peut tomber sur TOOL_DOCS={} (fetch pas encore arrivé), useToolDocs
+  // force le re-render dès que /api/jarvis/tools répond.
+  const [docs, ready] = useToolDocs();
+  const doc = docs[tool] || {
+    sig: tool + '(…)',
+    kind: 'outil',
+    desc: ready ? 'Outil non documenté.' : 'Chargement du catalogue…',
+    docstring: '—', prompt: '—', cli: tool, output: '—',
+  };
   const a = flow.accent;
   const kindColor = { 'API JDM': 'var(--jdm-cyan)', 'LLM': 'var(--jdm-violet)', 'logique': 'var(--jdm-orange)' }[doc.kind] || a;
 

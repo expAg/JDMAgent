@@ -1371,6 +1371,101 @@ def api_jarvis_list_runs():
         }
 
 
+# Catalogue d'outils mis en cache au premier hit — l'introspection
+# LangChain coûte ~50ms (39 tools, docstrings parsées) ; le résultat
+# est strictement statique pour la durée du process, donc cache infini.
+_TOOLS_CATALOG_CACHE: Optional[list[dict]] = None
+
+
+def _build_tools_catalog() -> list[dict]:
+    """Introspecte les @tool LangChain de build_jdm_tools() + workflows.
+
+    Renvoie : [{name, description, kind, signature, args, returns, examples}]
+    - kind dérivé du nom : workflow → 'workflow', verify_claim/infer → 'logique',
+      lookup_term/get_* → 'API JDM', write_submission_file/submit_to_jdm → 'IO',
+      defaut → 'LLM'.
+    - args dérivés de args_schema (Pydantic) : {name, type, required, desc}.
+    """
+    from jdm_agent.tools.jdm_tools import build_jdm_tools
+
+    def _kind(name: str) -> str:
+        if name.endswith("_workflow"):
+            return "workflow"
+        if name in {"verify_claim", "infer", "validate_candidate",
+                    "consolidate_candidate"}:
+            return "logique"
+        if name.startswith("get_") or name in {
+            "lookup_term", "disambiguate", "list_relation_types",
+            "list_existing_for_enrichment", "describe_relation",
+            "detect_gaps",
+        }:
+            return "API JDM"
+        if name in {"write_submission_file", "submit_to_jdm"}:
+            return "IO"
+        return "outil"
+
+    def _args(schema) -> list[dict]:
+        if not schema:
+            return []
+        try:
+            # Pydantic v2 : model_fields ; v1 : __fields__
+            fields = getattr(schema, "model_fields", None) or {}
+            if not fields:
+                fields = getattr(schema, "__fields__", None) or {}
+            out = []
+            for fname, finfo in fields.items():
+                # v2 FieldInfo : .annotation, .is_required(), .description
+                anno = getattr(finfo, "annotation", None)
+                tname = getattr(anno, "__name__", str(anno)) if anno else "any"
+                desc = getattr(finfo, "description", None) or ""
+                req = True
+                if hasattr(finfo, "is_required"):
+                    try:
+                        req = bool(finfo.is_required())
+                    except Exception:
+                        pass
+                out.append({
+                    "name": fname,
+                    "type": tname,
+                    "required": req,
+                    "desc": desc,
+                })
+            return out
+        except Exception:
+            return []
+
+    tools = build_jdm_tools()
+    catalog = []
+    for t in tools:
+        name = t.name
+        desc = (t.description or "").strip()
+        catalog.append({
+            "name": name,
+            "kind": _kind(name),
+            "description": desc,
+            "docstring": desc,  # même contenu : LangChain prend la docstring
+            "signature": f"{name}({', '.join(a['name'] for a in _args(t.args_schema))})",
+            "args": _args(t.args_schema),
+        })
+    return catalog
+
+
+@app.get("/api/jarvis/tools")
+def api_jarvis_tools():
+    """Catalogue introspecté du registre LangChain de l'agent JDM.
+
+    Sert à alimenter `JToolDialog` (panneau de détail outil) côté
+    frontend Jarvis. Une fiche par tool : description, kind, signature,
+    args (depuis les schémas Pydantic).
+
+    Résultat caché en mémoire process (statique pour la durée du run).
+    """
+    global _TOOLS_CATALOG_CACHE
+    if _TOOLS_CATALOG_CACHE is None:
+        _TOOLS_CATALOG_CACHE = _build_tools_catalog()
+    return {"tools": _TOOLS_CATALOG_CACHE, "count": len(_TOOLS_CATALOG_CACHE)}
+
+
 @app.post("/api/jarvis/runs/{run_id}/cancel")
 def api_jarvis_cancel_run(run_id: str):
     """Demande l'arrêt cooperative d'un run en cours. Pose un flag que
