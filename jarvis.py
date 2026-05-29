@@ -1554,7 +1554,23 @@ def run_jarvis_flow(
             )
             return
 
-        agent = build_agent_fn(client=get_client_fn(), llm=llm)
+        # Tool isolation cross-flow : `validate_candidate` (et son helper
+        # `consolidate_candidate`) écrit dans le registry global de
+        # consolidation partagé par tous les flows. Si annotation ou un
+        # autre flow non-enrich appelle validate_candidate (rien ne l'en
+        # empêche structurellement), ses triplets pollueraient le panneau
+        # « Triplets consolidés » d'un enrich tournant en parallèle.
+        # On retire donc ces tools du toolset pour tous les flows
+        # sauf enrich. Aucune perte fonctionnelle : les autres flows
+        # n'ont aucun besoin légitime de consolider par inférence.
+        _excl_tools = (
+            None if flow_id == "enrich"
+            else ["validate_candidate"]
+        )
+        agent = build_agent_fn(
+            client=get_client_fn(), llm=llm,
+            exclude_tools=_excl_tools,
+        )
         limit = BUDGET_LABEL_TO_LIMIT.get(budget_label, 25)
 
         # Deux listes parallèles :
@@ -1980,7 +1996,8 @@ def run_jarvis_flow(
                                         gemini_key_override=current_gemini_key,
                                     )
                                     agent = build_agent_fn(
-                                        client=get_client_fn(), llm=llm
+                                        client=get_client_fn(), llm=llm,
+                                        exclude_tools=_excl_tools,
                                     )
                                     _add_line(
                                         f"*🔑 Clé Google invalide détectée — "
@@ -2093,7 +2110,8 @@ def run_jarvis_flow(
                                         gemini_key_override=current_gemini_key,
                                     )
                                     agent = build_agent_fn(
-                                        client=get_client_fn(), llm=llm
+                                        client=get_client_fn(), llm=llm,
+                                        exclude_tools=_excl_tools,
                                     )
                                     _add_line(
                                         f"*🔄 Quota épuisé — bascule auto "
@@ -2173,7 +2191,8 @@ def run_jarvis_flow(
                                         gemini_key_override=current_gemini_key,
                                     )
                                     agent = build_agent_fn(
-                                        client=get_client_fn(), llm=llm
+                                        client=get_client_fn(), llm=llm,
+                                        exclude_tools=_excl_tools,
                                     )
                                     _add_line(
                                         f"*🔄 Quota quotidien atteint sur "

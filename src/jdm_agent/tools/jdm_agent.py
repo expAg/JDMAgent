@@ -145,6 +145,7 @@ def build_jdm_agent(
     llm: Optional[Any] = None,
     enrich_docstrings: bool = True,
     debug: bool = False,
+    exclude_tools: Optional[list] = None,
 ):
     """Construit un agent LangChain (LangGraph compilé) pour JDM.
 
@@ -154,11 +155,19 @@ def build_jdm_agent(
              Si None, `get_llm()` lit l'env (LLM_PROVIDER, LLM_MODEL).
         enrich_docstrings: ajoute les descriptions de relations aux docstrings.
         debug: trace verbose des appels.
+        exclude_tools: liste de noms de tools à RETIRER du toolset. Utilisé
+            par les flows Jarvis pour empêcher la contamination cross-flow
+            (ex : annotation ne doit pas pouvoir appeler `validate_candidate`
+            qui écrit dans le registry global de consolidation partagé avec
+            enrich).
 
     Returns:
         CompiledStateGraph — appeler `.invoke({"messages": [HumanMessage("...")]})`.
     """
     tools = build_jdm_tools(client=client, enrich_docstrings=enrich_docstrings)
+    if exclude_tools:
+        excluded = set(exclude_tools)
+        tools = [t for t in tools if getattr(t, "name", "") not in excluded]
     if llm is None:
         llm = get_llm()
     return create_agent(model=llm, tools=tools, system_prompt=SYSTEM_PROMPT, debug=debug)
