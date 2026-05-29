@@ -1428,7 +1428,7 @@ def run_jarvis_flow(
     user_display = headline.strip() or "🚀 Demande envoyée."
     import os
     from jdm_agent.tools.budget import budget_context
-    from jdm_agent.enrich.validators import exclusion_context
+    from jdm_agent.enrich.validators import RunContext, run_context_active
     from jdm_agent.enrich import count_consolidations
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -1554,22 +1554,8 @@ def run_jarvis_flow(
             )
             return
 
-        # Tool isolation cross-flow : `validate_candidate` (et son helper
-        # `consolidate_candidate`) écrit dans le registry global de
-        # consolidation partagé par tous les flows. Si annotation ou un
-        # autre flow non-enrich appelle validate_candidate (rien ne l'en
-        # empêche structurellement), ses triplets pollueraient le panneau
-        # « Triplets consolidés » d'un enrich tournant en parallèle.
-        # On retire donc ces tools du toolset pour tous les flows
-        # sauf enrich. Aucune perte fonctionnelle : les autres flows
-        # n'ont aucun besoin légitime de consolider par inférence.
-        _excl_tools = (
-            None if flow_id == "enrich"
-            else ["validate_candidate"]
-        )
         agent = build_agent_fn(
             client=get_client_fn(), llm=llm,
-            exclude_tools=_excl_tools,
         )
         limit = BUDGET_LABEL_TO_LIMIT.get(budget_label, 25)
 
@@ -1698,12 +1684,26 @@ def run_jarvis_flow(
         # budget_context reste dans la boucle (compteur reset par relance
         # = comportement actuel volontaire, budget interprété par session
         # de streaming).
+        # ---------------------------------------------------------------
+        # ISOLATION PER-RUN (fix contamination cross-flow parallèle) :
+        # On crée un RunContext propre au run et on le pose dans la
+        # ContextVar `_CURRENT_RUN_CTX`. Tous les tools (validate_candidate,
+        # register_consolidation, write_submission_file, etc.) lisent
+        # CE rctx via `_active_ctx()` et y écrivent au lieu des globals
+        # partagés. Conséquence : deux flows en parallèle ont chacun leur
+        # canonical_path/mode + leurs registries propres — plus jamais de
+        # mélange.
+        # La ContextVar se propage à travers les ThreadPoolExecutor
+        # langchain.agents.create_agent via copy_context — vérifié par
+        # test end-to-end avec un fake LLM + outil custom.
         # Entrée MANUELLE du context manager (__enter__/__exit__) pour
         # ne pas re-indenter tout le while → fermé dans le finally du try
         # principal (cf. plus bas).
-        _excl_ctx = exclusion_context()
-        _excl_ctx.__enter__()
-        # Active le canonical avec le bon mode :
+        rctx = RunContext()
+        _rctx_ctx = run_context_active(rctx)
+        _rctx_ctx.__enter__()
+        # Active le canonical avec le bon mode SUR LE RCTX (pas sur les
+        # globals — l'isolation per-run dépend de ça) :
         #   - auto_append (enrich) : register_consolidation streame
         #     ligne par ligne dans canonical_path. write_submission_file
         #     y est no-op poli. UI voit le fichier grossir en temps réel.
@@ -1712,10 +1712,11 @@ def run_jarvis_flow(
         #     Garantie structurelle zéro fragmentation.
         #   - None (gap, ou legacy sans signal) : pas de canonical, le
         #     LLM contrôle son path (anti-écrasement actif).
-        # Désactivé dans le finally.
-        from jdm_agent.enrich import set_canonical_output_path
+        # Désactivé automatiquement quand `_rctx_ctx.__exit__` est appelé
+        # dans le finally (le rctx tombe hors scope, plus de globals à
+        # nettoyer).
         if _canon_mode is not None:
-            set_canonical_output_path(canonical_path, mode=_canon_mode)
+            rctx.set_canonical(canonical_path, _canon_mode)
         while not persistence_done:
             rate_limit_attempts = 0
             # Hits de rate limit CONSÉCUTIFS sans aucun chunk reçu
@@ -1997,7 +1998,6 @@ def run_jarvis_flow(
                                     )
                                     agent = build_agent_fn(
                                         client=get_client_fn(), llm=llm,
-                                        exclude_tools=_excl_tools,
                                     )
                                     _add_line(
                                         f"*🔑 Clé Google invalide détectée — "
@@ -2111,7 +2111,6 @@ def run_jarvis_flow(
                                     )
                                     agent = build_agent_fn(
                                         client=get_client_fn(), llm=llm,
-                                        exclude_tools=_excl_tools,
                                     )
                                     _add_line(
                                         f"*🔄 Quota épuisé — bascule auto "
@@ -2192,7 +2191,6 @@ def run_jarvis_flow(
                                     )
                                     agent = build_agent_fn(
                                         client=get_client_fn(), llm=llm,
-                                        exclude_tools=_excl_tools,
                                     )
                                     _add_line(
                                         f"*🔄 Quota quotidien atteint sur "
@@ -2475,13 +2473,11 @@ def run_jarvis_flow(
             _current_file_path(), _read_file_preview(_current_file_path()),
         )
     finally:
-        # Désactive le canonical (auto_append ou redirect) — il persiste
-        # globalement sinon et polluerait le run suivant.
-        try:
-            from jdm_agent.enrich import set_canonical_output_path
-            set_canonical_output_path(None)
-        except Exception:
-            pass
+        # Note : pas besoin de `set_canonical_output_path(None)` ici.
+        # Le canonical est posé sur `rctx`, pas sur les globals — il
+        # disparaît automatiquement à la sortie de `_rctx_ctx.__exit__`
+        # (la ContextVar est restorée à sa valeur précédente, le rctx
+        # tombe hors scope, GC). Aucune fuite cross-run possible.
         # CLEANUP FILET — supprime tout fichier créé pendant ce run dans
         # /tmp/jdm_outputs qui n'est PAS le canonical. Avec le mode
         # redirect en place, ne devrait jamais matcher (le LLM ne peut
@@ -2507,12 +2503,14 @@ def run_jarvis_flow(
                         pass
         except Exception:
             pass
-        # Ferme manuellement l'exclusion_context ouvert avant le
-        # while persistance (cf. __enter__ plus haut). Try/except pour
-        # supporter le cas où _excl_ctx n'a pas été initialisé (erreur
-        # tres precoce dans le run).
+        # Ferme manuellement le run_context_active ouvert avant le
+        # while persistance (cf. __enter__ plus haut). Restore la
+        # ContextVar à sa valeur précédente — un autre flow Jarvis qui
+        # tournait en parallèle reprend son propre rctx sans pollution.
+        # Try/except : supporte le cas où `_rctx_ctx` n'a pas été
+        # initialisé (erreur très précoce dans le run).
         try:
-            _excl_ctx.__exit__(None, None, None)
+            _rctx_ctx.__exit__(None, None, None)
         except Exception:
             pass
         # Restore env var si on l'avait modifiée
