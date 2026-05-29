@@ -720,30 +720,30 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const stop = () => JarvisStore.stop(flow.id);
   const reset = () => JarvisStore.reset(flow.id);
 
-  // Smooth scroll à l'ouverture : si le flow a déjà du contenu (status
-  // running/done/error, narration ou file_preview non vides), on amène
-  // le bas des panneaux dans la viewport — l'utilisateur voit l'état
-  // courant (dernières lignes de narration, derniers triplets) sans
-  // avoir à scroller manuellement. Si le flow est idle (premier mount,
-  // pas encore lancé), on ne touche pas (formulaire en haut).
-  const _bottomAnchorRef = useRef(null);
+  // Smooth scroll à l'ouverture : si le flow a déjà du contenu (run en
+  // cours ou terminé avec données), on amène le bas des panneaux dans
+  // la viewport — l'utilisateur voit l'état courant (dernières lignes
+  // de narration, derniers triplets) sans scroller manuellement.
+  //
+  // Robustesse : on lit le state DEPUIS LE STORE au moment du setTimeout
+  // (pas une closure stale), on attend que le layout se pose (300ms
+  // pour laisser le temps aux panneaux narration/triplets de calculer
+  // leur hauteur), et on scroll via window.scrollTo + scrollHeight
+  // plutôt que scrollIntoView qui se comporte erratiquement quand le
+  // contenu grandit pendant l'animation.
   React.useEffect(() => {
-    const hasContent = state === 'running' || state === 'done' || state === 'error'
-                    || (narrationHTML && narrationHTML.length > 0)
-                    || (filePreview && filePreview.length > 0);
-    if (!hasContent || !_bottomAnchorRef.current) return;
-    // requestAnimationFrame + petit timeout pour laisser le layout se
-    // poser après le mount (les panneaux à hauteur variable).
-    const id = requestAnimationFrame(() => {
-      setTimeout(() => {
-        try {
-          _bottomAnchorRef.current.scrollIntoView({
-            behavior: 'smooth', block: 'end',
-          });
-        } catch {}
-      }, 80);
-    });
-    return () => cancelAnimationFrame(id);
+    const tid = setTimeout(() => {
+      const fresh = JarvisStore.get(flow.id);
+      const hasContent = fresh.status === 'running' || fresh.status === 'done' || fresh.status === 'error'
+                      || (fresh.narrationHTML && fresh.narrationHTML.length > 0)
+                      || (fresh.filePreview && fresh.filePreview.length > 0);
+      if (!hasContent) return;
+      try {
+        const targetY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        window.scrollTo({ top: targetY, behavior: 'smooth' });
+      } catch {}
+    }, 300);
+    return () => clearTimeout(tid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow.id]);
 
@@ -1086,13 +1086,34 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                         renommer correctement côté serveur. */}
                     {SUBMITTABLE_FLOWS.has(flow.id) && (
                       <Button size="sm" variant="ghost"
+                        // Disabled UNIQUEMENT si pas de clé OU upload en cours.
+                        // Si le flow tourne encore mais qu'on a la clé, on
+                        // laisse cliquer (avec grisage visuel + confirm).
                         disabled={!_canSubmit || submitState === 'sending'}
+                        style={state === 'running' && _canSubmit
+                          ? { opacity: 0.55 }
+                          : undefined}
                         title={!_canSubmit
                           ? 'Renseigne la clé LLMDrops (ou configure JDM_DROPS_API_KEY côté serveur) pour activer la soumission'
-                          : (params.drops_key
-                            ? 'Soumettre ce fichier au LLMDrops JDM (clé saisie)'
-                            : 'Soumettre ce fichier au LLMDrops JDM (clé serveur)')}
+                          : state === 'running'
+                            ? 'Soumission anticipée — le flow tourne encore (clic pour confirmer)'
+                            : (params.drops_key
+                              ? 'Soumettre ce fichier au LLMDrops JDM (clé saisie)'
+                              : 'Soumettre ce fichier au LLMDrops JDM (clé serveur)')}
                         onClick={async () => {
+                          // Confirmation si le flow tourne encore — soumettre
+                          // un fichier incomplet est légitime mais inhabituel.
+                          if (state === 'running') {
+                            const ok = window.confirm(
+                              'Le flow n\'est pas encore terminé — le fichier .' +
+                              (flow.id === 'enrich' ? 'enrich' : flow.id === 'audit' ? 'audit'
+                                : flow.id === 'signalement' ? 'err' : flow.id === 'stats' ? 'stat'
+                                : flow.id === 'annotation' ? 'annot' : 'txt') +
+                              ' contient seulement les triplets produits jusqu\'à maintenant. ' +
+                              '\n\nSoumettre maintenant quand même ?'
+                            );
+                            if (!ok) return;
+                          }
                           const name = filePath.split(/[\\/]/).slice(-1)[0];
                           setSubmitState('sending');
                           setSubmitMsg('');
@@ -1217,12 +1238,6 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
 
         </div>
       </div>
-      {/* Ancre fin de page pour le smooth-scroll d'ouverture (cf.
-          useEffect au mount de JarvisRun). Quand on rouvre un flow qui
-          tournait déjà, on scroll ici pour montrer la fin de la
-          narration et la fin du fichier qui se construit. */}
-      <div ref={_bottomAnchorRef} aria-hidden="true"
-           style={{ height: 1, scrollMarginBottom: 16 }} />
     </PageShell>
   );
 }

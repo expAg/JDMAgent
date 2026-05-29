@@ -1487,7 +1487,16 @@ function _loadGradientRGB(load) {
 }
 
 function ProductionsCountPill() {
-  const [active, setActive] = useState(null);  // null = chargement, number = compte
+  // Source primaire : le JarvisStore local (instant, sans polling).
+  // Source secondaire : GET /api/jarvis/runs pour rattraper les runs
+  // lancés dans une autre tab/session. On prend le MAX des deux.
+  const [serverActive, setServerActive] = useState(null);
+  // Force-update sur changement du store local
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.__jdmJarvisStore) return;
+    return window.__jdmJarvisStore.subscribe('*', () => forceTick(t => t + 1));
+  }, []);
   useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -1497,25 +1506,20 @@ function ProductionsCountPill() {
         const d = await r.json();
         const runs = d.runs || [];
         const n = runs.filter(r => r.status === 'starting' || r.status === 'running').length;
-        setActive(n);
+        setServerActive(n);
       } catch {}
     };
     load();
-    // Polling adaptatif : si quelque chose tourne, on rafraîchit vite
-    // pour suivre les changements ; sinon on laisse tranquille.
-    let id = setInterval(load, 30_000);
-    const adapt = setInterval(() => {
-      const wantFast = (active != null && active > 0);
-      clearInterval(id);
-      id = setInterval(load, wantFast ? 5_000 : 30_000);
-    }, 1_000);
-    return () => { alive = false; clearInterval(id); clearInterval(adapt); };
-  }, [active]);
+    const id = setInterval(load, 15_000);  // 15s, sans logique adapt cassée
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
-  const label = active == null
-    ? '—'
-    : `${active}/${JARVIS_FLOWS_TOTAL}`;
-  const load = active == null ? 0 : Math.min(1, active / JARVIS_FLOWS_TOTAL);
+  const localActive = (typeof window !== 'undefined' && window.__jdmJarvisStore)
+    ? window.__jdmJarvisStore.activeFlowIds().length
+    : 0;
+  const active = serverActive == null ? localActive : Math.max(localActive, serverActive);
+  const label = `${active}/${JARVIS_FLOWS_TOTAL}`;
+  const load = Math.min(1, active / JARVIS_FLOWS_TOTAL);
   const [r, g, b] = _loadGradientRGB(load);
   const accentRGB = `rgb(${r}, ${g}, ${b})`;
   const fillRGBA = `rgba(${r}, ${g}, ${b}, 0.14)`;
