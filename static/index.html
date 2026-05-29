@@ -29,6 +29,47 @@
     --jdm-cyan:    #1f97b1;
     --jdm-orange:  #d96810;
     --jdm-violet:  #7a4fbe;
+
+    /* ── CLI / Remote terminal block (design-pass-2) ──
+       Pour les CliCommandButton du topbar et CliTerminalBlock
+       sous "Essai rapide". Couleurs fixes (style macOS Terminal)
+       qui ne suivent PAS le thème. */
+    --term-bg:               #1b1d22;
+    --term-titlebar-from:    #33363d;
+    --term-titlebar-to:      #2a2d33;
+    --term-titlebar-border:  #14151a;
+    --term-border:           #2c2f36;
+    --term-text:             #e6e8ec;
+    --term-comment:          #6b7180;
+    --term-prompt-host:      #7ee59a;
+    --term-prompt-path:      #5d8fd6;
+    --term-prompt-sigil:     #e6e8ec;
+    --term-title:            #9aa0aa;
+    --term-light-red:        #ff5f57;
+    --term-light-amber:      #febc2e;
+    --term-light-green:      #28c840;
+    --term-toggle-on-bg:     rgba(125, 205, 255, 0.20);
+    --term-toggle-on-border: rgba(125, 205, 255, 0.50);
+    --term-toggle-on-fg:     #bfe6ff;
+    --term-toggle-off-bg:    rgba(255, 255, 255, 0.04);
+    --term-toggle-off-border: rgba(255, 255, 255, 0.10);
+    --term-toggle-off-fg:    rgba(201, 204, 210, 0.55);
+    --term-py-keyword:       #c89bff;
+    --term-py-string:        #e0c890;
+    --term-py-call:          #7ee59a;
+
+    /* ── Verdict pills (Claim checker quick-try) ──
+       Hues empruntés à --jdm-* + alphas pour les pills. */
+    --verdict-supported-fg:     var(--jdm-green);
+    --verdict-supported-bg:     rgba(78, 166, 60, 0.15);
+    --verdict-supported-border: rgba(78, 166, 60, 0.45);
+    --verdict-contradicted-fg:     var(--jdm-magenta);
+    --verdict-contradicted-bg:     rgba(200, 58, 115, 0.15);
+    --verdict-contradicted-border: rgba(200, 58, 115, 0.45);
+    --verdict-unknown-fg:     var(--jdm-yellow);
+    --verdict-unknown-bg:     rgba(212, 169, 10, 0.15);
+    --verdict-unknown-border: rgba(212, 169, 10, 0.45);
+
     --font-sans: 'Inter', system-ui, sans-serif;
     --font-serif: 'Newsreader', Georgia, serif;
     --font-mono: 'JetBrains Mono', ui-monospace, monospace;

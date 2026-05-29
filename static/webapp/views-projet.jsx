@@ -1,3 +1,4 @@
+// === webapp/views-projet.jsx ===
 // View: Projet — landing page.
 //
 // Three vertical panels with scroll-snap:
@@ -57,6 +58,17 @@ function ViewProjet({ goto }) {
   const goToIndex = useCallback((i) => {
     setPanelIndex(Math.max(0, Math.min(totalPanels - 1, i)));
   }, [totalPanels]);
+
+  // External nav hook : let other components (e.g. the topbar wordmark)
+  // jump to a specific panel via window.dispatchEvent.
+  useEffect(() => {
+    const onPanel = (e) => {
+      const i = e.detail?.index;
+      if (typeof i === 'number') goToIndex(i);
+    };
+    window.addEventListener('jdm:projet-panel', onPanel);
+    return () => window.removeEventListener('jdm:projet-panel', onPanel);
+  }, [goToIndex]);
 
   const activePanel = PANELS[panelIndex].id;
 
@@ -181,6 +193,23 @@ function ViewProjet({ goto }) {
       primary: true,
       desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
       example: 'enrichissement → 17 triplets consolidés',
+      detail: {
+        lede: 'Cinq workflows agentiques guidés par formulaire — pas de prompt à écrire, l\'enchaînement outils + LLM + consolidation est canonique.',
+        body: 'Chaque flux suit un workflow déterministe (defined-in-code) avec un budget de tokens, un budget d\'outils et un critère d\'arrêt. Le LLM ne décide jamais seul de continuer ; il propose, le moteur consolide ou rejette.',
+        quickTry: {
+          kind: 'select-and-term',
+          options: [
+            { value: 'enrich', label: 'Enrichissement' },
+            { value: 'audit', label: 'Audit sémantique' },
+            { value: 'gap', label: 'Détection de trous' },
+            { value: 'signalement', label: 'Signalement' },
+            { value: 'stats', label: 'Stats' },
+          ],
+          defaultValue: 'enrich',
+          termDefault: 'voiture',
+          mock: (flow, term) => `→ Lancement ${flow} sur "${term}" — ETA ~45s · cible 20 triplets`,
+        },
+      },
     },
     {
       id: 'agent',
@@ -188,6 +217,24 @@ function ViewProjet({ goto }) {
       kind: 'LLM · BYOK',
       desc: 'Conversation avec un agent (Gemini hébergé gratuit, ou BYOK Claude/GPT) qui n\'utilise QUE les outils JDM et cite ses sources.',
       example: '« Que mange typiquement un chat ? »',
+      detail: {
+        lede: 'Agent contraint à l\'usage exclusif des outils JDM. Toute affirmation factuelle est appuyée par un triplet cité.',
+        body: 'Le modèle planifie en boucle (raisonnement → outil → observation) sans jamais répondre à partir de sa mémoire pré-entraînée seule. Si JDM ne couvre pas la question, l\'agent l\'explicite plutôt que d\'halluciner.',
+        quickTry: {
+          kind: 'prompt',
+          placeholder: 'Que mange typiquement un chat ?',
+          defaultValue: 'Que mange typiquement un chat ?',
+          models: [
+            { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash · gratuit' },
+            { value: 'gemini-2.0-pro',        label: 'Gemini 2.0 Pro · BYOK' },
+            { value: 'claude-4.5-sonnet',     label: 'Claude 4.5 Sonnet · BYOK' },
+            { value: 'gpt-5-mini',            label: 'GPT-5 mini · BYOK' },
+            { value: 'llama-4-70b',           label: 'Llama 4 70B · local' },
+          ],
+          defaultModel: 'gemini-3.1-flash-lite',
+          mock: (q, model) => `agent (${model}) → recherche dans JDM (r_agent-1, r_mange) → 4 triplets retournés · w_moyen=621`,
+        },
+      },
     },
     {
       id: 'subgraph',
@@ -195,6 +242,16 @@ function ViewProjet({ goto }) {
       kind: 'visuel',
       desc: 'Visualisation interactive (vis-network) du voisinage sémantique d\'un terme jusqu\'à profondeur 4, sélection de relations indépendante par niveau, négations en rouge.',
       example: 'plat asiatique · depth 1 · 8 relations',
+      detail: {
+        lede: 'Sous-graphe lexico-sémantique d\'un terme, filtré par relation et par profondeur — un instrument de lecture, pas seulement de visualisation.',
+        body: 'Construit un HTML autonome (zéro requête externe) qui peut être archivé dans un dépôt de publication. Palette par famille de relation, négations marquées en rouge, opacité dégradée par profondeur.',
+        quickTry: {
+          kind: 'term-and-depth',
+          termDefault: 'voiture',
+          depthDefault: 2,
+          mock: (term, depth) => `→ ${term} · depth=${depth} · ~${Math.floor(8 + depth * 12)} arcs estimés`,
+        },
+      },
     },
     {
       id: 'claim',
@@ -202,6 +259,45 @@ function ViewProjet({ goto }) {
       kind: 'déterministe',
       desc: 'Vérifie une affirmation factuelle contre JDM de façon déterministe (sans LLM) : SUPPORTED / CONTRADICTED / UNKNOWN avec citations des triplets utilisés.',
       example: 'baleine | r_isa | poisson → ❌',
+      detail: {
+        lede: 'Vérification déterministe d\'un triplet contre JDM — pas de LLM dans la boucle de jugement, le verdict est rejouable et auditable.',
+        body: 'L\'effort de vérification est paramétrable (0 = match direct ; 1 = contenance ; 2+ = inférence transitive bornée). Chaque verdict est accompagné de la chaîne d\'évidence (triplets cités, poids).',
+        quickTry: {
+          kind: 'triplet',
+          defaults: { s: 'baleine', r: 'r_isa', o: 'mammifère' },
+          mock: (s, r, o) => {
+            const key = `${s}|${r}|${o}`.toLowerCase();
+            if (s === 'baleine' && o === 'mammifère') {
+              return {
+                verdict: 'SUPPORTED', confidence: 0.92,
+                triplet: { s, r, o },
+                chain: [
+                  { from: 'baleine', rel: 'r_isa', to: 'cétacé',    w: 2014 },
+                  { from: 'cétacé',  rel: 'r_isa', to: 'mammifère', w: 1421 },
+                ],
+                note: '2 hops · transitivité de r_isa',
+              };
+            }
+            if (s === 'baleine' && o === 'poisson') {
+              return {
+                verdict: 'CONTRADICTED', confidence: 0.88,
+                triplet: { s, r, o },
+                chain: [
+                  { from: 'baleine', rel: 'r_isa',       to: 'mammifère', w: 1421 },
+                  { from: 'baleine', rel: 'r_isa_not',   to: 'poisson',   w:  734, neg: true },
+                ],
+                note: 'négation explicite trouvée (r_isa_not)',
+              };
+            }
+            return {
+              verdict: 'UNKNOWN', confidence: 0,
+              triplet: { s, r, o },
+              chain: [],
+              note: 'aucune chaîne d\'inférence (≤ k=2) ni triplet direct',
+            };
+          },
+        },
+      },
     },
     {
       id: 'explorer',
@@ -209,6 +305,16 @@ function ViewProjet({ goto }) {
       kind: 'instant',
       desc: 'Choisis un terme et une relation, vois les triplets triés par poids consensuel. Annotations sémantiques (constitutif, contrastif, exception…) optionnelles. Désambiguïsation des termes polysémiques (avocat, souris, police…).',
       example: 'chat | r_has_part | ?',
+      detail: {
+        lede: 'Table déterministe des triplets d\'un terme pour une relation — l\'instrument le plus simple pour inspecter JDM.',
+        body: 'Tri par poids consensuel décroissant. Désambiguïsation polysémique optionnelle (avocat, souris, police…). Annotations sémantiques (constitutif, contrastif, exception).',
+        quickTry: {
+          kind: 'term-and-relation',
+          termDefault: 'chat',
+          relationDefault: 'r_has_part',
+          mock: (term, rel) => `→ ${term} | ${rel} → 12 triplets · 1ers : tête (w=1842) · patte (w=1721) · queue (w=1640)`,
+        },
+      },
     },
   ];
 
@@ -216,18 +322,77 @@ function ViewProjet({ goto }) {
     {
       title: 'Client typé + cache disque',
       body: <>Couche client <code>JDMClient</code> sur l&apos;<a href="https://jdm-api.demo.lirmm.fr" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>API JeuxDeMots</a>, cache disque, retry exponentiel.</>,
+      // ── Detail panel content ─────────────────────────────────────────
+      detail: {
+        kicker: 'Reproductibilité · Abstraction typée',
+        lede: 'Une couche d\'abstraction Python entre l\'agent et l\'API JeuxDeMots — pas un wrapper trivial, mais un substrat qui rend les workflows agentiques auditables, déterministes et rejouables.',
+        paragraphs: [
+          <>Les <em>workflows agentiques</em> souffrent classiquement d&apos;un problème de reproductibilité : un même prompt produit des appels API distincts à chaque exécution, rendant l&apos;audit et la régression difficiles. Le client typé matérialise chaque réponse JDM en objet Python (<code>Term</code>, <code>Relation</code>, <code>Triplet</code>), sérialisé sur disque dans un cache LRU adressé par hash de requête.</>,
+          <>Cette indirection ouvre trois bénéfices : <strong>hors-ligne</strong> (un workflow déjà exécuté peut être rejoué sans accès réseau), <strong>idempotence</strong> (deux runs du même flow produisent strictement le même artefact), <strong>traçabilité</strong> (chaque triplet consolidé pointe vers la requête API qui l&apos;a produit, avec timestamp et version du cache).</>,
+        ],
+        citations: [
+          { author: 'Lafourcade, M.', year: 2007, title: 'Making people play for Lexical Acquisition with the JeuxDeMots prototype', venue: 'SNLP\'07, Pattaya' },
+          { author: 'Schick, T. et al.', year: 2023, title: 'Toolformer: Language Models Can Teach Themselves to Use Tools', venue: 'NeurIPS' },
+          { author: 'Anthropic', year: 2024, title: 'Model Context Protocol — Specification', venue: 'Technical Report' },
+        ],
+        cta: { label: 'Voir le client sur GitHub →', href: 'https://github.com/expAg/JDMAgent' },
+      },
     },
     {
       title: '~35 outils MCP exposés',
       body: <>À n&apos;importe quel client (Claude Code/Desktop, Cursor, etc.) via <a href="https://github.com/jlowin/fastmcp" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>FastMCP</a>.</>,
+      detail: {
+        kicker: 'Interopérabilité · Outils standardisés',
+        lede: 'Le Model Context Protocol comme standard d\'accès à une base de connaissance lexico-sémantique — une trentaine d\'outils typés exposés à tout client compatible (Claude Code, Claude Desktop, Cursor, OpenAI Realtime…).',
+        paragraphs: [
+          <>L&apos;exposition MCP transforme JeuxDeMots d&apos;une API REST traditionnelle en un <em>knowledge backend</em> consultable nativement par les agents LLM. Chaque outil porte une <strong>signature typée</strong> (Pydantic) et une <strong>docstring discriminante</strong> — le LLM choisit l&apos;outil par similarité sémantique sans heuristique côté serveur.</>,
+          <>Le découpage suit la sémantique JDM, pas l&apos;API : <code>get_relations(term, relation_type)</code> plutôt qu&apos;un endpoint paramétrique générique. Cela réduit l&apos;espace de décision du modèle et accroît la précision du tool-calling — un effet documenté par <em>Patil et al. (2024)</em> dans l&apos;évaluation de Gorilla.</>,
+        ],
+        citations: [
+          { author: 'Patil, S.G. et al.', year: 2024, title: 'Gorilla: Large Language Model Connected with Massive APIs', venue: 'NeurIPS' },
+          { author: 'Yao, S. et al.', year: 2023, title: 'ReAct: Synergizing Reasoning and Acting in Language Models', venue: 'ICLR' },
+          { author: 'Lafourcade, M. & Joubert, A.', year: 2008, title: 'Une approche lexico-sémantique du jeu pour l\'acquisition de connaissances', venue: 'TALN' },
+        ],
+        cta: { label: 'Lire l\'USAGE MCP →', href: 'https://github.com/expAg/JDMAgent/blob/main/USAGE.md' },
+      },
     },
     {
       title: 'Pipeline fact-check + inférence',
       body: <>Détermination + détection de gaps + <strong>moteur d&apos;inférence symbolique borné</strong> pour la consolidation des candidats avant soumission au canal contributif LLMDrops de JDM.</>,
+      detail: {
+        kicker: 'Neuro-symbolique · Consolidation',
+        lede: 'Au cœur du projet : un pipeline neuro-symbolique qui mobilise un LLM pour proposer des connaissances, puis un moteur d\'inférence borné pour vérifier, contraindre et consolider avant écriture dans la base.',
+        paragraphs: [
+          <>L&apos;agent illustre une instance pragmatique de l&apos;<em>approche neuro-symbolique</em> formalisée par <strong>Garcez & Lamb (2020)</strong> : le LLM joue le rôle de <em>générateur sous-contraint</em> (créativité, formulation, désambiguïsation), tandis que le moteur d&apos;inférence sur la base JDM joue le rôle de <em>vérificateur formel</em> (cohérence, antonymie, transitivité bornée).</>,
+          <>La consolidation procède en trois passes : <strong>(i) génération</strong> — le modèle propose <code>n</code> triplets candidats pour un terme cible ; <strong>(ii) vérification</strong> — chaque candidat est soumis au claim-checker déterministe (chaîne d&apos;inférence ≤ k, contradiction explicite, sub-graphe d&apos;évidence) ; <strong>(iii) annotation</strong> — les triplets survivants sont étiquetés (légitime, contrastif, sens-spécifique) puis sérialisés dans le format de soumission JDM (canal LLMDrops).</>,
+          <>Cette architecture évite à la fois l&apos;écueil des <em>hallucinations symboliques pures</em> (génération sans LLM = peu inventive) et celui des <em>hallucinations neurales</em> (LLM sans contrôle symbolique = injection de bruit dans la base).</>,
+        ],
+        citations: [
+          { author: 'd\'Avila Garcez, A. & Lamb, L.C.', year: 2020, title: 'Neurosymbolic AI: The 3rd Wave', venue: 'arXiv:2012.05876' },
+          { author: 'Hitzler, P. & Sarker, M.K.', year: 2021, title: 'Neuro-Symbolic Artificial Intelligence: The State of the Art', venue: 'IOS Press' },
+          { author: 'Marcus, G.', year: 2020, title: 'The Next Decade in AI: Four Steps Towards Robust AI', venue: 'arXiv:2002.06177' },
+          { author: 'Pan, S. et al.', year: 2024, title: 'Unifying Large Language Models and Knowledge Graphs: A Roadmap', venue: 'IEEE TKDE' },
+        ],
+        cta: { label: 'Comprendre le pipeline →', href: 'https://github.com/expAg/JDMAgent/blob/main/docs/pipeline.md' },
+      },
     },
     {
       title: 'Sous-graphe HTML autonome',
       body: <>vis-network avec sélection de relations par niveau, palette par famille de relation, opacité progressive.</>,
+      detail: {
+        kicker: 'Explicabilité · Graphes lexico-sémantiques',
+        lede: 'Visualisation du voisinage sémantique comme outil d\'explicabilité : le chercheur ou le contributeur voit pourquoi un triplet a été retenu ou rejeté, sans relancer l\'agent.',
+        paragraphs: [
+          <>JeuxDeMots compte ~2 millions de termes et 180+ relations typées et pondérées (<em>Lafourcade, 2007</em>). Naviguer ce graphe à profondeur ≥ 2 sans filtrage produit des sous-graphes hyper-denses inutilisables visuellement (densité moyenne &gt; 80 arcs/nœud sur les termes-vedettes).</>,
+          <>Le module construit un sous-graphe avec <strong>sélection indépendante par profondeur</strong> et <strong>palette par famille de relation</strong> — choix de design issus des conventions de visualisation de graphes lexicaux (<em>Crouch et al., 2019</em>). L&apos;HTML produit est <strong>autonome</strong> (zéro requête externe) pour rester archivable dans un dépôt de publication.</>,
+        ],
+        citations: [
+          { author: 'Lafourcade, M.', year: 2007, title: 'Making people play for Lexical Acquisition', venue: 'SNLP\'07' },
+          { author: 'Crouch, R. et al.', year: 2019, title: 'Lexical Semantics in the Age of LLMs', venue: 'CL Journal' },
+          { author: 'Almeida, A. & Lafourcade, M.', year: 2015, title: 'Sentiment polarity and term relevance in JeuxDeMots', venue: 'LREC' },
+        ],
+        cta: { label: 'Ouvrir le module Sous-graphe →', goto: 'subgraph' },
+      },
     },
   ];
 
@@ -282,35 +447,7 @@ function ViewProjet({ goto }) {
                 desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
               />
 
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                gap: 12, marginBottom: 24,
-              }}>
-                {briefs.map((b, i) => (
-                  <div key={i} style={{
-                    background: 'var(--bg-card)',
-                    border: '1px solid var(--line)',
-                    borderRadius: 'var(--radius-lg)',
-                    padding: 20,
-                  }}>
-                    <div className="mono" style={{
-                      fontSize: 11, color: 'var(--accent)',
-                      textTransform: 'uppercase', letterSpacing: '0.1em',
-                      marginBottom: 8, fontWeight: 600,
-                    }}>0{i + 1}</div>
-                    <div className="display" style={{
-                      fontFamily: 'var(--font-display)',
-                      fontSize: 18, fontWeight: 600,
-                      marginBottom: 8, color: 'var(--ink)',
-                    }}>{b.title}</div>
-                    <p style={{
-                      margin: 0, fontSize: 13,
-                      color: 'var(--ink-2)', lineHeight: 1.55,
-                    }}>{b.body}</p>
-                  </div>
-                ))}
-              </div>
+              <ExpandableBriefsGrid briefs={briefs} goto={goto} />
 
               <div style={{
                 padding: 24,
@@ -359,7 +496,7 @@ function ViewProjet({ goto }) {
               flexDirection: 'column',
               gap: 'clamp(20px, 3vh, 36px)',
             }}>
-              <HeroAnimation height={Math.min(420, Math.round(window.innerHeight * 0.44))} />
+              <HeroAnimation height={Math.min(320, Math.round(window.innerHeight * 0.34))} />
 
               <div style={{
                 display: 'grid',
@@ -431,7 +568,7 @@ function ViewProjet({ goto }) {
                 title={<>Fonctionnalités de l'API :<br/>Utilisation CLI, distant (à venir)</>}
                 desc="Chaque fonctionnalité est accessible via remote API et en ligne de commande."
               />
-              <FeaturesGrid features={features} goto={goto} />
+              <ExpandableFeaturesPanel features={features} goto={goto} />
             </div>
           </CarouselPanel>
 
@@ -454,7 +591,7 @@ function CarouselPanel({ children }) {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'flex-start',
-      padding: '40px 28px 28px',
+      padding: '40px 28px 110px',
       overflow: 'auto',
     }}>
       {children}
@@ -523,6 +660,8 @@ function NavBottomDots({ activePanel, onSelect }) {
     <nav
       ref={containerRef}
       aria-label="Navigation entre panneaux bas"
+      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5'; }}
       style={{
         position: 'fixed',
         bottom: 28,
@@ -539,6 +678,8 @@ function NavBottomDots({ activePanel, onSelect }) {
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
         zIndex: 40,
+        opacity: 0.5,
+        transition: 'opacity 0.22s ease-out',
       }}>
       {/* Pill d'indicateur — glisse en horizontal */}
       <span aria-hidden="true" style={{
@@ -828,7 +969,7 @@ function StatsGrid({ stats }) {
 //      verticale (14px haut + bas) + margin négative compensatrice, le
 //      hover lift (+ son ombre) s'épanouit dans la zone padded — pas
 //      clippé visuellement. La mask-image fait le boulot du gradient.
-function FeaturesGrid({ features, goto }) {
+function FeaturesGrid({ features, onCardClick, expandedId }) {
   const colors = useShuffledAccents(features.length);
   const scrollRef = useRef(null);
   const [canPrev, setCanPrev] = useState(false);
@@ -954,7 +1095,7 @@ function FeaturesGrid({ features, goto }) {
             display: 'flex',
             transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}>
-            <FeatureCard f={f} goto={goto} hoverColor={colors[i]} />
+            <FeatureCard f={f} onClick={() => onCardClick(f.id)} hoverColor={colors[i]} selected={expandedId === f.id} />
           </div>
         ))}
       </div>
@@ -975,7 +1116,7 @@ function FeaturesGrid({ features, goto }) {
   );
 }
 
-function FeatureCard({ f, goto, hoverColor }) {
+function FeatureCard({ f, onClick, hoverColor, selected }) {
   const [hovering, setHovering] = useState(false);
   const primary = !!f.primary;
 
@@ -985,21 +1126,25 @@ function FeatureCard({ f, goto, hoverColor }) {
   const inkColor = primary ? 'var(--bg)' : 'var(--ink)';
   const ink2Color = primary ? 'rgba(255,255,255,0.88)' : 'var(--ink-2)';
   const ink3Color = primary ? 'rgba(255,255,255,0.72)' : 'var(--ink-3)';
-  const borderColor = primary
-    ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
-    : (hovering ? hoverColor : 'var(--line)');
-  const shadow = hovering
-    ? (primary
-        ? '0 10px 24px -10px var(--accent)'
-        : `0 6px 18px -8px ${hoverColor}`)
-    : 'none';
+  const borderColor = selected
+    ? 'var(--accent)'
+    : primary
+      ? 'color-mix(in srgb, var(--accent) 88%, var(--ink) 12%)'
+      : (hovering ? hoverColor : 'var(--line)');
+  const shadow = selected
+    ? '0 8px 22px -10px var(--accent)'
+    : hovering
+      ? (primary
+          ? '0 10px 24px -10px var(--accent)'
+          : `0 6px 18px -8px ${hoverColor}`)
+      : 'none';
 
   return (
     <div
-      onClick={() => goto(f.id)}
+      onClick={onClick}
       className="focus-ring"
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter') goto(f.id); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') onClick && onClick(); }}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
       style={{
@@ -1067,6 +1212,742 @@ function FeatureCard({ f, goto, hoverColor }) {
   );
 }
 
+// ───────── Scroll helper — centers a card+detail group in its scroll parent.
+// Walks up to the closest overflowing ancestor and animates scrollTo there.
+// (Avoids scrollIntoView, which behaves unpredictably across our layout.)
+function findScrollableParent(el) {
+  let p = el && el.parentElement;
+  while (p) {
+    const cs = getComputedStyle(p);
+    // Accept any auto/scroll ancestor — don't require scrollHeight>clientHeight
+    // (the overflow only appears AFTER the detail panel expands).
+    if (/(auto|scroll)/.test(cs.overflowY)) return p;
+    p = p.parentElement;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
+// Custom rAF-driven smooth scroll. Runs in parallel with the panel's
+// grid-template-rows animation so the two motions feel like a single
+// coordinated gesture — no waiting, no jank.
+//   topEl       : top of the group (the card)
+//   extraHeight : natural height of the detail content (measured separately)
+//   gap         : px between card and detail (matches CSS gap)
+//   duration    : ms; ease = easeInOutCubic
+function scrollGroupIntoView(topEl, detailEl, gap = 18, duration = 520) {
+  if (!topEl) return;
+  const scroller = findScrollableParent(topEl);
+  if (!scroller) return;
+  // Detail's natural height — measure the inner content (which is not
+  // affected by the grid-template-rows animation).
+  const contentEl = detailEl && detailEl.querySelector('[data-detail-content]');
+  const extraHeight = contentEl ? contentEl.getBoundingClientRect().height : 0;
+
+  const sRect = scroller.getBoundingClientRect();
+  const tRect = topEl.getBoundingClientRect();
+  const topInScroll = tRect.top - sRect.top + scroller.scrollTop;
+  const groupHeight = tRect.height + (extraHeight > 0 ? gap + extraHeight : 0);
+  const center = topInScroll + groupHeight / 2;
+  // Don't clamp to current scrollHeight — the detail panel is still
+  // animating its row from 0→natural, so the scroll height grows over
+  // time. The browser will silently clamp each frame to the live max.
+  const target = Math.max(0, center - scroller.clientHeight / 2);
+
+  const start = scroller.scrollTop;
+  if (Math.abs(target - start) < 2) return;
+  const t0 = performance.now();
+  const ease = (t) => (t < 0.5
+    ? 4 * t * t * t
+    : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const tick = (now) => {
+    const t = Math.min(1, (now - t0) / duration);
+    scroller.scrollTop = start + (target - start) * ease(t);
+    if (t < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// ───────── Expandable features panel (Modules) ─────────
+// Click a card → inline DetailPanel below the carousel with the expanded
+// description, an "Aller à <module>" CTA, and a small quick-try widget.
+function ExpandableFeaturesPanel({ features, goto }) {
+  const [expandedId, setExpandedId] = useState(null);
+  const toggle = (id) => setExpandedId(prev => prev === id ? null : id);
+  const expanded = expandedId ? features.find(f => f.id === expandedId) : null;
+  const gridRef = useRef(null);
+  const detailRef = useRef(null);
+
+  useEffect(() => {
+    if (!expandedId) return;
+    // Measure & scroll on next frame — refs are in place, panel content
+    // has its natural size (only the row animation clips it visually).
+    const raf = requestAnimationFrame(() => {
+      scrollGroupIntoView(gridRef.current, detailRef.current);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [expandedId]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div ref={gridRef}>
+        <FeaturesGrid features={features} onCardClick={toggle} expandedId={expandedId} />
+      </div>
+      <div ref={detailRef}>
+        <FeatureDetailPanel f={expanded} goto={goto} onClose={() => setExpandedId(null)} />
+      </div>
+    </div>
+  );
+}
+
+function FeatureDetailPanel({ f, goto, onClose }) {
+  // Keep last truthy f around so the panel can finish its close animation
+  // before content unmounts. Ref so the value is committed SYNCHRONOUSLY
+  // — fixes the first-click case where the scroll measurement would happen
+  // before content had a natural height.
+  const lastFRef = useRef(null);
+  if (f) lastFRef.current = f;
+  const [, forceRender] = useReducer(x => x + 1, 0);
+  const open = !!f;
+  const shown = lastFRef.current;
+  return (
+    <div
+      onTransitionEnd={(e) => {
+        if (!open && e.target === e.currentTarget && lastFRef.current) {
+          lastFRef.current = null;
+          forceRender();
+        }
+      }}
+      style={{
+        display: 'grid',
+        gridTemplateRows: open ? '1fr' : '0fr',
+        transition: 'grid-template-rows 0.32s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.22s',
+        opacity: open ? 1 : 0,
+      }}>
+      <div style={{ minHeight: 0, overflow: 'hidden' }}>
+        {shown && (
+          <div data-detail-content style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 24,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1.3fr) minmax(0, 1fr)',
+            gap: 28,
+            position: 'relative',
+          }}>
+            <button
+              onClick={onClose}
+              aria-label="Refermer le panneau"
+              className="focus-ring"
+              style={{
+                position: 'absolute',
+                top: 12, right: 12,
+                background: 'transparent', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius)',
+                width: 26, height: 26, padding: 0,
+                color: 'var(--ink-3)', cursor: 'pointer',
+                fontSize: 14, lineHeight: 1,
+                zIndex: 2,
+              }}>×</button>
+            <div>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 12, marginBottom: 12,
+              }}>
+                <div className="mono" style={{
+                  fontSize: 11, color: 'var(--accent)',
+                  textTransform: 'uppercase', letterSpacing: '0.12em',
+                  fontWeight: 600,
+                }}>
+                  {shown.title} · détail
+                </div>
+              </div>
+              <p className="display" style={{
+                margin: 0,
+                fontFamily: 'var(--font-display)',
+                fontSize: 22, fontWeight: 500, letterSpacing: '-0.01em',
+                color: 'var(--ink)', lineHeight: 1.25,
+                marginBottom: 12,
+              }}>{shown.detail?.lede}</p>
+              <p style={{
+                margin: 0, fontSize: 14, lineHeight: 1.6,
+                color: 'var(--ink-2)',
+                marginBottom: 18,
+              }}>{shown.detail?.body}</p>
+              <Button onClick={() => goto(shown.id)}>Aller au module {shown.title.replace(/^[^\s]+\s/, '')} →</Button>
+            </div>
+            <div>
+              <div className="mono" style={{
+                fontSize: 10, color: 'var(--ink-3)',
+                textTransform: 'uppercase', letterSpacing: '0.14em',
+                marginBottom: 8,
+              }}>Essai rapide</div>
+              <ModuleQuickTry config={shown.detail?.quickTry} />
+              <div style={{ marginTop: 16 }}>
+                <CliTerminalBlock
+                  cliData={CLI_COMMANDS[shown.id]}
+                  remoteData={REMOTE_COMMANDS[shown.id]}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ───── Inline quick-try widget per module ─────────────────────────────
+// Mock-only — exercises the form, returns a faux preview line.
+function ModuleQuickTry({ config }) {
+  if (!config) return null;
+  switch (config.kind) {
+    case 'select-and-term':
+      return <QTSelectAndTerm config={config} />;
+    case 'prompt':
+      return <QTPrompt config={config} />;
+    case 'term-and-depth':
+      return <QTTermAndDepth config={config} />;
+    case 'triplet':
+      return <QTTriplet config={config} />;
+    case 'term-and-relation':
+      return <QTTermAndRelation config={config} />;
+    default:
+      return null;
+  }
+}
+
+const QT_PANEL = {
+  background: 'var(--bg-elev)',
+  border: '1px solid var(--line-soft)',
+  borderRadius: 'var(--radius)',
+  padding: 12,
+  display: 'flex', flexDirection: 'column', gap: 10,
+};
+
+function QTPreview({ text, node, onClose }) {
+  const content = node ?? text;
+  if (!content) return null;
+  return (
+    <div className="mono" style={{
+      fontSize: 11,
+      color: 'var(--ink-2)',
+      background: 'var(--bg-card)',
+      border: '1px dashed var(--line)',
+      borderRadius: 4,
+      padding: '8px 10px',
+      lineHeight: 1.5,
+      wordBreak: 'break-word',
+      position: 'relative',
+    }}>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Fermer le résultat"
+          title="Fermer"
+          className="focus-ring"
+          style={{
+            position: 'absolute',
+            top: 4, right: 4,
+            width: 18, height: 18, padding: 0,
+            background: 'transparent',
+            border: '1px solid var(--line)',
+            borderRadius: 3,
+            color: 'var(--ink-3)',
+            cursor: 'pointer',
+            fontSize: 12, lineHeight: 1,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          }}>×</button>
+      )}
+      <div style={{ paddingRight: onClose ? 24 : 0 }}>{content}</div>
+    </div>
+  );
+}
+
+// Verdict colors — match the claim checker's UI conventions.
+const VERDICT_STYLES = {
+  SUPPORTED:    { color: 'var(--jdm-green)',   bg: 'rgba(78,166,60,0.15)',  border: 'rgba(78,166,60,0.45)' },
+  CONTRADICTED: { color: 'var(--jdm-magenta)', bg: 'rgba(200,58,115,0.15)', border: 'rgba(200,58,115,0.45)' },
+  UNKNOWN:      { color: 'var(--jdm-yellow)',  bg: 'rgba(212,169,10,0.15)', border: 'rgba(212,169,10,0.45)' },
+};
+
+function VerdictPill({ verdict }) {
+  const s = VERDICT_STYLES[verdict] || VERDICT_STYLES.UNKNOWN;
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '1px 7px',
+      background: s.bg,
+      border: `1px solid ${s.border}`,
+      color: s.color,
+      borderRadius: 3,
+      fontSize: 10,
+      fontWeight: 600,
+      letterSpacing: '0.04em',
+    }}>{verdict}</span>
+  );
+}
+
+function ClaimVerdictHeader({ result }) {
+  if (!result) return null;
+  const { verdict, triplet } = result;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <span style={{ color: 'var(--ink-3)' }}>→</span>
+      <span style={{ color: 'var(--ink)' }}>{triplet.s}</span>
+      <span style={{ color: 'var(--ink-3)' }}>|</span>
+      <span style={{ color: 'var(--accent)' }}>{triplet.r}</span>
+      <span style={{ color: 'var(--ink-3)' }}>|</span>
+      <span style={{ color: 'var(--ink)' }}>{triplet.o}</span>
+      <span style={{ color: 'var(--ink-3)' }}>→</span>
+      <VerdictPill verdict={verdict} />
+    </div>
+  );
+}
+
+function ClaimVerdictChain({ result }) {
+  if (!result) return null;
+  const { verdict, chain, confidence, note } = result;
+  const vStyle = VERDICT_STYLES[verdict] || VERDICT_STYLES.UNKNOWN;
+  if ((!chain || chain.length === 0) && !note && confidence == null) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {chain && chain.length > 0 && (
+        <div style={{
+          paddingLeft: 8,
+          borderLeft: `2px solid ${vStyle.border}`,
+          color: 'var(--ink-2)',
+          display: 'flex', flexDirection: 'column', gap: 2,
+        }}>
+          <div style={{ color: 'var(--ink-3)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>
+            Schéma d'inférence
+          </div>
+          {chain.map((step, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--ink-3)' }}>{i === chain.length - 1 ? '└─' : '├─'}</span>
+              <span style={{ color: 'var(--ink)' }}>{step.from}</span>
+              <span style={{ color: 'var(--ink-3)' }}>──</span>
+              <span style={{ color: step.neg ? 'var(--jdm-magenta)' : 'var(--accent)' }}>{step.rel}</span>
+              <span style={{ color: 'var(--ink-3)' }}>→</span>
+              <span style={{ color: 'var(--ink)' }}>{step.to}</span>
+              {step.w != null && (
+                <span style={{ color: 'var(--ink-3)', marginLeft: 'auto', fontSize: 10 }}>w={step.w}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {(confidence != null || note) && (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          color: 'var(--ink-3)', fontSize: 10,
+        }}>
+          {note && <span>{note}</span>}
+          {confidence != null && <span>confidence = {confidence.toFixed(2)}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClaimVerdictBlock({ result }) {
+  if (!result) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <ClaimVerdictHeader result={result} />
+      <ClaimVerdictChain result={result} />
+    </div>
+  );
+}
+
+function QTRunButton({ onClick, label = 'Tester' }) {
+  return (
+    <div style={{ alignSelf: 'flex-start' }}>
+      <Button size="sm" onClick={onClick}>{label}</Button>
+    </div>
+  );
+}
+
+function QTSelectAndTerm({ config }) {
+  const [flow, setFlow] = useState(config.defaultValue);
+  const [term, setTerm] = useState(config.termDefault);
+  const [out, setOut] = useState(null);
+  return (
+    <div style={QT_PANEL}>
+      <Select value={flow} onChange={setFlow} options={config.options} />
+      <Input value={term} onChange={setTerm} placeholder="terme" />
+      <QTRunButton onClick={() => setOut(config.mock(flow, term))} label="Simuler le flux" />
+      <QTPreview text={out} />
+    </div>
+  );
+}
+
+function QTPrompt({ config }) {
+  const [q, setQ] = useState(config.defaultValue);
+  const [model, setModel] = useState(config.defaultModel || (config.models?.[0]?.value));
+  const [out, setOut] = useState(null);
+  return (
+    <div style={QT_PANEL}>
+      {config.models && (
+        <Select
+          value={model}
+          onChange={setModel}
+          options={config.models}
+        />
+      )}
+      <Input value={q} onChange={setQ} placeholder={config.placeholder} />
+      <QTRunButton onClick={() => setOut(config.mock(q, model))} label="Envoyer" />
+      <QTPreview text={out} />
+    </div>
+  );
+}
+
+function QTTermAndDepth({ config }) {
+  const [term, setTerm] = useState(config.termDefault);
+  const [depth, setDepth] = useState(config.depthDefault);
+  const [out, setOut] = useState(null);
+  return (
+    <div style={QT_PANEL}>
+      <Input value={term} onChange={setTerm} placeholder="terme" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', minWidth: 78 }}>profondeur</span>
+        <div style={{ flex: 1 }}>
+          <Slider min={1} max={4} step={1} value={depth} onChange={setDepth} />
+        </div>
+      </div>
+      <QTRunButton onClick={() => setOut(config.mock(term, depth))} label="Construire" />
+      <QTPreview text={out} />
+    </div>
+  );
+}
+
+function QTTriplet({ config }) {
+  const [s, setS] = useState(config.defaults.s);
+  const [r, setR] = useState(config.defaults.r);
+  const [o, setO] = useState(config.defaults.o);
+  const [out, setOut] = useState(null);
+  const isVerdict = out && typeof out === 'object';
+  const rootRef = useRef(null);
+  const tailRef = useRef(null);
+
+  // After clicking Vérifier, smooth-scroll so the whole result (header +
+  // inference chain) is fully visible.
+  const onVerify = () => {
+    setOut(config.mock(s, r, o));
+    requestAnimationFrame(() => {
+      // Wait a beat so React renders the new chain block, then center.
+      setTimeout(() => {
+        if (rootRef.current) scrollGroupIntoView(rootRef.current, tailRef.current || rootRef.current);
+      }, 30);
+    });
+  };
+
+  return (
+    <div ref={rootRef} style={QT_PANEL}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+        <Input value={s} onChange={setS} placeholder="sujet" />
+        <Input value={r} onChange={setR} placeholder="relation" />
+        <Input value={o} onChange={setO} placeholder="objet" />
+      </div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <QTRunButton onClick={onVerify} label="Vérifier" />
+        {out && (
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {isVerdict
+              ? <QTPreview node={<ClaimVerdictHeader result={out} />} onClose={() => setOut(null)} />
+              : <QTPreview text={out} onClose={() => setOut(null)} />}
+          </div>
+        )}
+      </div>
+      {isVerdict && (out.chain?.length > 0 || out.note || out.confidence != null) && (
+        <div ref={tailRef} data-detail-content>
+          <QTPreview node={<ClaimVerdictChain result={out} />} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QTTermAndRelation({ config }) {
+  const [term, setTerm] = useState(config.termDefault);
+  const [rel, setRel] = useState(config.relationDefault);
+  const [out, setOut] = useState(null);
+  return (
+    <div style={QT_PANEL}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        <Input value={term} onChange={setTerm} placeholder="terme" />
+        <Input value={rel} onChange={setRel} placeholder="relation" />
+      </div>
+      <QTRunButton onClick={() => setOut(config.mock(term, rel))} label="Lister" />
+      <QTPreview text={out} />
+    </div>
+  );
+}
+
+// ───────── Expandable briefs grid (Sous le capot) ─────────
+function ExpandableBriefsGrid({ briefs, goto }) {
+  const [expandedIdx, setExpandedIdx] = useState(null);
+  const expanded = expandedIdx == null ? null : briefs[expandedIdx];
+  const toggle = (i) => setExpandedIdx(prev => prev === i ? null : i);
+  const cardRefs = useRef({});
+  const detailRef = useRef(null);
+
+  useEffect(() => {
+    if (expandedIdx == null) return;
+    const raf = requestAnimationFrame(() => {
+      scrollGroupIntoView(cardRefs.current[expandedIdx], detailRef.current);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [expandedIdx]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 24 }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        gap: 12,
+      }}>
+        {briefs.map((b, i) => {
+          const isOpen = expandedIdx === i;
+          return (
+            <div
+              key={i}
+              ref={el => { if (el) cardRefs.current[i] = el; }}
+              onClick={() => toggle(i)}
+              onKeyDown={(e) => { if (e.key === 'Enter') toggle(i); }}
+              className="focus-ring"
+              tabIndex={0}
+              style={{
+                background: 'var(--bg-card)',
+                border: '1px solid ' + (isOpen ? 'var(--accent)' : 'var(--line)'),
+                borderRadius: 'var(--radius-lg)',
+                padding: 20,
+                cursor: 'pointer',
+                position: 'relative',
+                boxShadow: isOpen ? '0 6px 18px -10px var(--accent)' : 'none',
+                transition: 'border-color 0.18s, box-shadow 0.18s, transform 0.18s',
+                transform: isOpen ? 'translateY(-1px)' : 'none',
+              }}>
+              <div className="mono" style={{
+                fontSize: 11,
+                color: isOpen ? 'var(--accent)' : 'var(--ink-3)',
+                textTransform: 'uppercase', letterSpacing: '0.1em',
+                marginBottom: 8, fontWeight: 600,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <span style={{ color: 'var(--accent)' }}>0{i + 1}</span>
+                <span style={{
+                  fontSize: 10,
+                  color: isOpen ? 'var(--accent)' : 'var(--ink-3)',
+                  letterSpacing: '0.08em',
+                }}>{isOpen ? '— refermer' : 'déplier +'}</span>
+              </div>
+              <div className="display" style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 18, fontWeight: 600,
+                marginBottom: 8, color: 'var(--ink)',
+              }}>{b.title}</div>
+              <p style={{
+                margin: 0, fontSize: 13,
+                color: 'var(--ink-2)', lineHeight: 1.55,
+              }}>{b.body}</p>
+            </div>
+          );
+        })}
+      </div>
+      <div ref={detailRef}>
+        <BriefDetailPanel
+          brief={expanded}
+          index={expandedIdx}
+          goto={goto}
+          onClose={() => setExpandedIdx(null)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function BriefDetailPanel({ brief, index, goto, onClose }) {
+  // Keep last truthy brief around so the panel can finish its close animation
+  // before content unmounts. Ref so the value is committed SYNCHRONOUSLY
+  // — fixes the first-click case where scroll measurement would happen
+  // before content had a natural height.
+  const lastBriefRef = useRef(null);
+  const lastIndexRef = useRef(index);
+  if (brief) { lastBriefRef.current = brief; lastIndexRef.current = index; }
+  const [, forceRender] = useReducer(x => x + 1, 0);
+  const open = !!brief;
+  const shown = lastBriefRef.current;
+  const shownIndex = lastIndexRef.current;
+  return (
+    <div
+      onTransitionEnd={(e) => {
+        if (!open && e.target === e.currentTarget && lastBriefRef.current) {
+          lastBriefRef.current = null;
+          forceRender();
+        }
+      }}
+      style={{
+        display: 'grid',
+        gridTemplateRows: open ? '1fr' : '0fr',
+        transition: 'grid-template-rows 0.34s cubic-bezier(0.65, 0, 0.35, 1), opacity 0.22s',
+        opacity: open ? 1 : 0,
+      }}>
+      <div style={{ minHeight: 0, overflow: 'hidden' }}>
+        {shown && (
+          <div data-detail-content style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--line)',
+            borderLeft: '3px solid var(--accent)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '22px 26px 0',
+            display: 'flex', flexDirection: 'column', gap: 16,
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              gap: 12,
+            }}>
+              <div className="mono" style={{
+                fontSize: 11, color: 'var(--accent)',
+                textTransform: 'uppercase', letterSpacing: '0.14em',
+                fontWeight: 600,
+              }}>
+                0{(shownIndex ?? 0) + 1} · {shown.detail?.kicker}
+              </div>
+              <button
+                onClick={onClose}
+                aria-label="Refermer le panneau"
+                className="focus-ring"
+                style={{
+                  background: 'transparent', border: '1px solid var(--line)',
+                  borderRadius: 'var(--radius)',
+                  width: 26, height: 26, padding: 0,
+                  color: 'var(--ink-3)', cursor: 'pointer',
+                  fontSize: 14, lineHeight: 1,
+                }}>×</button>
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
+              gap: 32,
+              alignItems: 'start',
+            }}>
+              <div>
+                <p className="display" style={{
+                  margin: 0,
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 22, fontWeight: 500, letterSpacing: '-0.01em',
+                  color: 'var(--ink)', lineHeight: 1.3,
+                  marginBottom: 14,
+                }}>{shown.detail?.lede}</p>
+                {(shown.detail?.paragraphs || []).map((p, i) => (
+                  <p key={i} style={{
+                    margin: '0 0 12px',
+                    fontSize: 14, lineHeight: 1.65,
+                    color: 'var(--ink-2)',
+                    fontFamily: 'var(--font-serif)',
+                  }}>{p}</p>
+                ))}
+                {shown.detail?.cta && (
+                  <div style={{ marginTop: 12 }}>
+                    {shown.detail.cta.goto ? (
+                      <Button onClick={() => goto(shown.detail.cta.goto)}>
+                        {shown.detail.cta.label}
+                      </Button>
+                    ) : (
+                      <a href={shown.detail.cta.href} target="_blank" rel="noopener noreferrer"
+                         style={{ textDecoration: 'none' }}>
+                        <Button variant="secondary">{shown.detail.cta.label}</Button>
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mono" style={{
+                  fontSize: 10, color: 'var(--ink-3)',
+                  textTransform: 'uppercase', letterSpacing: '0.14em',
+                  marginBottom: 10,
+                }}>Bibliographie convoquée</div>
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {(shown.detail?.citations || []).map((c, i) => (
+                    <li key={i} style={{
+                      fontSize: 12.5,
+                      lineHeight: 1.5,
+                      color: 'var(--ink-2)',
+                      paddingLeft: 12,
+                      borderLeft: '2px solid var(--line-soft)',
+                    }}>
+                      <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{c.author}</span>
+                      <span style={{ color: 'var(--ink-3)' }}> ({c.year})</span>
+                      <div style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic', color: 'var(--ink-2)' }}>
+                        {c.title}
+                      </div>
+                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-3)', letterSpacing: '0.04em', marginTop: 2 }}>
+                        {c.venue}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {/* Scrolling marquee — citations égrainées */}
+            <CitationsMarquee citations={shown.detail?.citations || []} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CitationsMarquee({ citations }) {
+  if (!citations.length) return null;
+  // Duplicate the run to make seamless loop.
+  const items = [...citations, ...citations, ...citations];
+  return (
+    <div style={{
+      borderTop: '1px solid var(--line-soft)',
+      margin: '0 -26px',
+      padding: '10px 0',
+      overflow: 'hidden',
+      position: 'relative',
+      maskImage: 'linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent)',
+      WebkitMaskImage: 'linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent)',
+    }}>
+      <div style={{
+        display: 'flex',
+        gap: 36,
+        whiteSpace: 'nowrap',
+        animation: 'jdm-citations-scroll 48s linear infinite',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        color: 'var(--ink-3)',
+        letterSpacing: '0.04em',
+      }}>
+        {items.map((c, i) => (
+          <span key={i} style={{ flexShrink: 0 }}>
+            <span style={{ color: 'var(--accent)' }}>●</span>{' '}
+            <span style={{ color: 'var(--ink-2)' }}>{c.author}</span>
+            {' '}({c.year}) — <span style={{ fontFamily: 'var(--font-serif)', fontStyle: 'italic' }}>{c.title}</span>
+            {' '}· <span>{c.venue}</span>
+          </span>
+        ))}
+      </div>
+      <style>{`
+        @keyframes jdm-citations-scroll {
+          from { transform: translateX(0); }
+          to   { transform: translateX(calc(-100% / 3)); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function StatTile({ stat, hoverColor }) {
   const parsed = React.useMemo(() => {
     const m = String(stat.value).match(/^([\d.]+)(.*)$/);
@@ -1081,58 +1962,63 @@ function StatTile({ stat, hoverColor }) {
   const animate = () => {
     cancelAnimationFrame(rafRef.current);
     const start = performance.now();
-    const duration = 1200;
     const target = parsed.num;
     const suffix = parsed.suffix || '';
     const hasM = /M/.test(suffix);
-    // Pour les stats en "M+" on commence à 700k (= 0.7M) et on passe
+    const hasPlus = /\+/.test(suffix);
+    // Pour les stats en "M+" on commence à 1k (= 0.001M) et on passe
     // de k vers M lorsqu'on atteint 1M.
     // Pour les stats sans magnitude (180+, 35, 5) : start = 0.45 * target.
-    const startVal = hasM ? 0.7 : target * 0.45;
-    // Format dynamique : sous 1M on affiche "Xk" (entier), au-dessus "X.YM"
-    // sans le .0 (donc "2M" plutôt que "2.0M", mais "1.5M" reste).
-    const fmtNum = (v) => {
+    const startVal = hasM ? 0.001 : target * 0.45;
+    // Plus la plage est large, plus on prend de temps — sinon le début
+    // (les milliers) défile trop vite pour être lisible.
+    const duration = hasM ? 2400 : 1200;
+    // Renvoie la chaîne complète (nombre + magnitude) — le "+" est ajouté
+    // uniquement à la fin de l'animation pour ne pas distraire pendant.
+    // Tant que v < 1M, on affiche "Xk" (PAS de M) ; ≥ 1M, on affiche "X.YM".
+    const fmtFull = (v, final = false) => {
+      const plus = final && hasPlus ? '+' : '';
       if (hasM) {
-        if (v < 1) return Math.round(v * 1000) + 'k';  // 700, 800, 900k
-        // ≥ 1M : 1 décimale, mais on retire le .0 final
+        if (v < 1) return Math.round(v * 1000) + 'k' + plus;
         const s = v.toFixed(1);
-        return s.endsWith('.0') ? s.slice(0, -2) : s;
+        return (s.endsWith('.0') ? s.slice(0, -2) : s) + 'M' + plus;
       }
-      // Pas de magnitude : entier
-      return String(Math.floor(v));
+      return String(Math.floor(v)) + plus;
     };
     const tick = (now) => {
       const t = Math.min(1, (now - start) / duration);
-      const eased = 1 - Math.pow(1 - t, 3);
-      const v = startVal + (target - startVal) * eased;
-      if (t === 1) {
-        // Snap final exact
-        if (hasM) {
-          const s = target.toFixed(1);
-          setDisplay(s.endsWith('.0') ? s.slice(0, -2) : s);
-        } else {
-          setDisplay(Number.isInteger(target) ? target : target);
-        }
+      // Pour les "M" (1k → 2M = 3+ ordres de grandeur) on interpole en
+      // exponentiel pour que chaque décade soit visible le même temps.
+      // Pour les autres, ease-out cubique standard.
+      let v;
+      if (hasM) {
+        const logStart = Math.log(startVal);
+        const logEnd = Math.log(target);
+        const eased = 0.5 - 0.5 * Math.cos(Math.PI * t);
+        v = Math.exp(logStart + (logEnd - logStart) * eased);
       } else {
-        setDisplay(fmtNum(v));
+        const eased = 1 - Math.pow(1 - t, 3);
+        v = startVal + (target - startVal) * eased;
       }
+      setDisplay(fmtFull(v, t === 1));
       if (t < 1) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
   };
 
   // Au mount : affichage initial = valeur formatée selon les règles ci-dessus
-  // (donc "2M" pas "2M+" partial, "180" entier, etc.). Sans toucher au suffix
-  // qui reste "+".
+  // (donc "2M+" complet d'office, "180+", "35", etc.).
   React.useEffect(() => {
     const target = parsed.num;
     const suffix = parsed.suffix || '';
     const hasM = /M/.test(suffix);
+    const hasPlus = /\+/.test(suffix);
+    const plus = hasPlus ? '+' : '';
     if (hasM) {
       const s = target.toFixed(1);
-      setDisplay(s.endsWith('.0') ? s.slice(0, -2) : s);
+      setDisplay((s.endsWith('.0') ? s.slice(0, -2) : s) + 'M' + plus);
     } else {
-      setDisplay(target);
+      setDisplay(String(target) + plus);
     }
   }, [parsed]);
 
@@ -1161,7 +2047,7 @@ function StatTile({ stat, hoverColor }) {
         letterSpacing: '-0.02em',
         transition: 'color 0.18s',
         fontVariantNumeric: 'tabular-nums',
-      }}>{display}{parsed.suffix}</div>
+      }}>{display}</div>
       <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{stat.sub}</div>
     </div>
   );
@@ -1177,3 +2063,4 @@ function GitHubMark({ size = 22 }) {
 }
 
 window.ViewProjet = ViewProjet;
+

@@ -252,22 +252,30 @@ function sleepHero(ms) {
 }
 
 function GraphCanvas({ scenario, tick, height, interactive = false, onNodeClick = null }) {
-  // viewBox élargi en mode interactif (LIVE) pour que les nœuds
-  // utilisent toute la largeur du canvas, pas juste le carré central.
-  // Les scénarios démo (typing+chat) gardent 560×H (carré centré).
-  const W = interactive ? 920 : 560;
+  // viewBox dynamique : ratio 1.55 sur la hauteur pour que la démo
+  // accueil tienne dans le panneau (≠ ancien 560 fixe qui marginait
+  // sur les hauteurs < 380). En mode interactif (LIVE) on garde 920
+  // pour la pleine largeur du sidebar.   (design-pass-2)
   const H = height;
+  const W = interactive ? 920 : Math.round(H * 1.55);
   const cx = W / 2, cy = H / 2;
   const g = scenario.graph;
+
+  // distScale : adapte les distances aux nœuds à la hauteur réelle du
+  // panneau démo (sinon nœuds périphériques touchent les bords quand
+  // height < 380). Cap à 0.92 pour ne pas surdimensionner sur grand H.
+  // En interactif l'autofit + zoom utilisateur gèrent — pas de scale.
+  const distScale = interactive ? 1 : Math.min(0.92, H / 430);
 
   const positions = {};
   if (g.center) positions[g.center] = { x: 0, y: 0 };
   g.nodes.forEach(n => {
     if (n.x !== undefined) {
-      positions[n.id] = { x: n.x, y: n.y };
+      positions[n.id] = { x: n.x * distScale, y: n.y * distScale };
     } else {
       const rad = (n.angle * Math.PI) / 180;
-      positions[n.id] = { x: Math.cos(rad) * n.dist, y: Math.sin(rad) * n.dist };
+      const d = n.dist * distScale;
+      positions[n.id] = { x: Math.cos(rad) * d, y: Math.sin(rad) * d };
     }
   });
 
@@ -542,7 +550,7 @@ function CenterNode({ label, tick, counterRotate, tooltip }) {
         fontFamily="var(--font-display)"
         fontSize="13"
         fontWeight="600"
-        fill="var(--bg)"
+        fill="var(--ink)"
         transform={`rotate(${counterRotate})`}
       >
         {label}

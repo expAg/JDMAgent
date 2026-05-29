@@ -1,9 +1,10 @@
+// === webapp/shared.jsx ===
 // Shared components — custom Select (fix dropdown hit-area bug),
 // Field wrapper, Button, Card, Pill, Sparkline, JDMLogo mark.
 //
 // All exposed on window for cross-script consumption.
 
-const { useState, useRef, useEffect, useMemo, useCallback } = React;
+const { useState, useRef, useEffect, useMemo, useCallback, useReducer } = React;
 
 // ───────── JDM palette (logo + accent fallback) ─────────
 const JDM_PALETTE = {
@@ -179,6 +180,7 @@ function Select({ value, options, onChange, placeholder = 'Choisir…', width })
     </div>
   );
 }
+
 
 // ───────── MultiSelect — sélection multiple à cases à cocher ─────────
 // Même look que `Select`. `value` = tableau de valeurs sélectionnées.
@@ -406,7 +408,7 @@ function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '' }) 
         style={{ flex: 1, accentColor: 'var(--accent)' }}
       />
       <div className="mono" style={{
-        minWidth: 48, textAlign: 'right',
+        minWidth: 28, textAlign: 'right',
         fontSize: 12, color: 'var(--ink-2)',
       }}>{value}{suffix}</div>
     </div>
@@ -614,7 +616,7 @@ function Triplet({ subject, relation, object, weight, annotations }) {
 }
 
 // ───────── Top nav (horizontal) — used by all themes ─────────
-function TopNav({ active, setActive, theme, setTheme }) {
+function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
   const items = [
     { id: 'projet',      label: 'Projet' },
     { id: 'explorer',    label: 'Explorer' },
@@ -644,8 +646,48 @@ function TopNav({ active, setActive, theme, setTheme }) {
         height: 56,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <JDMMark size={26} />
-          <JDMWordmark />
+          <button
+            type="button"
+            onClick={cycleAccent}
+            className="focus-ring"
+            title="Cycler la couleur d'accent"
+            aria-label="Cycler la couleur d'accent"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              cursor: cycleAccent ? 'pointer' : 'default',
+              display: 'inline-flex',
+              alignItems: 'center',
+              borderRadius: 999,
+              transition: 'transform 0.18s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = 'rotate(-12deg) scale(1.06)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = ''; }}
+          >
+            <JDMMark size={26} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('jdm:goto', { detail: { view: 'projet' } }));
+              // Defer the panel-set so it runs after the view actually
+              // mounted (ViewProjet attaches its listener on mount).
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('jdm:projet-panel', { detail: { index: 1 } }));
+              }, 30);
+            }}
+            className="focus-ring"
+            title="Accueil — panneau Présentation"
+            aria-label="Accueil"
+            style={{
+              background: 'transparent', border: 'none', padding: 0,
+              cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center',
+            }}
+          >
+            <JDMWordmark />
+          </button>
         </div>
         <nav style={{ display: 'flex', gap: 2, marginLeft: 12, overflow: 'hidden', scrollbarWidth: 'none' }}>
           {items.map(it => {
@@ -682,11 +724,375 @@ function TopNav({ active, setActive, theme, setTheme }) {
           })}
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+          {active !== 'projet' && <CliCommandButton view={active} />}
           {setTheme && <ThemeSwitcher theme={theme} setTheme={setTheme} />}
           <ProductionsCountPill />
         </div>
       </div>
     </header>
+  );
+}
+
+// ───────── CLI command pill — shows the cli entrypoint for the current view
+// Hidden on the Projet view (where the whole product is presented, not a tool).
+// Click → popover with the command + copy button. Styled monospace,
+// dark on light themes and slate on dark themes.
+const CLI_COMMANDS = {
+  explorer:    { cmd: 'app.py explore --term "voiture" --relation r_isa --limit 50',
+                 hint: 'Liste les triplets autour d\'un terme.' },
+  claim:       { cmd: 'app.py claim --triplet "baleine | r_isa | poisson" --effort 0',
+                 hint: 'Vérifie un triplet : SUPPORTED / CONTRADICTED / UNKNOWN.' },
+  subgraph:    { cmd: 'app.py subgraph --term "voiture" --depth 3 --format html',
+                 hint: 'Construit le voisinage sémantique en HTML interactif.' },
+  agent:       { cmd: 'app.py chat --model gemini-3.1-flash-lite',
+                 hint: 'Lance le chat LLM avec accès aux outils JDM.' },
+  jarvis:      { cmd: 'app.py jarvis --flow enrich --term "voiture" --target 20',
+                 hint: 'Exécute un flux Jarvis (enrich, audit, gap, signalement, stats).' },
+  productions: { cmd: 'app.py productions --list --status pending',
+                 hint: 'Liste les fichiers de production prêts à soumettre.' },
+  aide:        { cmd: 'app.py --help',
+                 hint: 'Affiche l\'aide complète et la liste des commandes.' },
+};
+
+// Remote API equivalents — Gradio client snippets (Python) hitting the
+// hosted endpoint for each module. Shown when the user toggles the
+// remote pill in the Modules detail panel.
+const REMOTE_COMMANDS = {
+  explorer:    { lang: 'python',
+                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("voiture", "r_isa", 50, api_name="/explore")',
+                 hint: 'Endpoint /explore — accès distant à JDM.' },
+  claim:       { lang: 'python',
+                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("baleine", "r_isa", "poisson", 0, api_name="/claim")',
+                 hint: 'Endpoint /claim — verdict déterministe distant.' },
+  subgraph:    { lang: 'python',
+                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict("voiture", depth=3, fmt="html", api_name="/subgraph")',
+                 hint: 'Endpoint /subgraph — renvoie l\'HTML autonome.' },
+  agent:       { lang: 'python',
+                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nfor chunk in client.submit("quels sens de \\"voiture\\" ?", api_name="/chat"):\n    print(chunk, end="")',
+                 hint: 'Endpoint /chat — agent LLM + outils JDM, streaming.' },
+  jarvis:      { lang: 'python',
+                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict(flow="enrich", term="voiture", target=20, api_name="/jarvis")',
+                 hint: 'Endpoint /jarvis — lance un flux guidé sur le serveur.' },
+  productions: { lang: 'python',
+                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nclient.predict(status="pending", api_name="/productions")',
+                 hint: 'Endpoint /productions — liste les fichiers prêts.' },
+  aide:        { lang: 'python',
+                 cmd: 'from gradio_client import Client\n\nclient = Client("https://jdmagent.lirmm.fr")\nprint(client.view_api())',
+                 hint: 'Imprime la liste de tous les endpoints exposés.' },
+};
+
+// ───────── Reusable terminal block — same look as the CLI popover,
+// but standalone (no positioning, no open/close). Used inline in the
+// Modules detail panels and inside the header's CliCommandButton.
+//
+// Pass `cliData` and optionally `remoteData`. If both are present the
+// title bar renders a small CLI/Remote toggle (the active variant is
+// lit; the inactive is dimmed). Mode persists per-instance.
+function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
+  // Back-compat: callers that pass `data` directly are treated as cli-only.
+  const effectiveCli = cliData || data || null;
+  const effectiveRemote = remoteData || null;
+  const hasBoth = !!(effectiveCli && effectiveRemote);
+  const [mode, setMode] = useState('cli');
+  const [copied, setCopied] = useState(false);
+
+  const active = mode === 'remote' && effectiveRemote ? effectiveRemote : effectiveCli;
+  if (!active) return null;
+  const lang = active.lang || 'shell';
+
+  const copy = async () => {
+    const text = active.cmd;
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext !== false) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch {}
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {}
+    }
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }
+  };
+
+  // Small toggle pill in the title bar — lit (cyan-tinted) for the active
+  // variant, dim white at low alpha for the other.
+  const togglePillStyle = (isActive) => ({
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 22, height: 18, padding: 0,
+    background: isActive ? 'rgba(125,205,255,0.20)' : 'rgba(255,255,255,0.04)',
+    border: '1px solid ' + (isActive ? 'rgba(125,205,255,0.50)' : 'rgba(255,255,255,0.10)'),
+    borderRadius: 3,
+    color: isActive ? '#bfe6ff' : 'rgba(201,204,210,0.55)',
+    cursor: 'pointer',
+    transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+  });
+
+  return (
+    <div style={{
+      background: '#1b1d22',
+      border: '1px solid #2c2f36',
+      borderRadius: 8,
+      overflow: 'hidden',
+      fontFamily: 'var(--font-mono)',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+    }}>
+      {/* title bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center',
+        padding: '6px 10px',
+        background: 'linear-gradient(#33363d, #2a2d33)',
+        borderBottom: '1px solid #14151a',
+        position: 'relative',
+        height: 26,
+        boxSizing: 'border-box',
+      }}>
+        <div style={{ display: 'flex', gap: 5, position: 'absolute', left: 10, top: 8 }}>
+          {closeable ? (
+            <button
+              onClick={onClose}
+              aria-label="Fermer"
+              title="Fermer"
+              className="focus-ring"
+              style={{
+                width: 9, height: 9, padding: 0,
+                borderRadius: '50%',
+                background: '#ff5f57',
+                border: 'none',
+                boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.2)',
+                cursor: 'pointer',
+              }}
+            />
+          ) : (
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#ff5f57', boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.2)' }} />
+          )}
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#febc2e', boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.2)' }} />
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#28c840', boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.2)' }} />
+        </div>
+
+        {hasBoth && (
+          <div style={{
+            position: 'absolute', left: 60, top: 4,
+            display: 'flex', gap: 4,
+          }}>
+            <button
+              onClick={() => setMode('cli')}
+              aria-label="CLI"
+              title="Mode CLI (local)"
+              className="focus-ring"
+              style={togglePillStyle(mode === 'cli')}
+            >
+              {/* terminal */}
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="1.5" y="3" width="13" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none"/>
+                <path d="M4 6.5 L6.5 8 L4 9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                <line x1="8" y1="10" x2="11.5" y2="10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+              </svg>
+            </button>
+            <button
+              onClick={() => setMode('remote')}
+              aria-label="Remote"
+              title="Mode Remote (Gradio API)"
+              className="focus-ring"
+              style={togglePillStyle(mode === 'remote')}
+            >
+              {/* cloud */}
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M4.4 12.5h7.2c1.6 0 2.9-1.3 2.9-2.9 0-1.5-1.1-2.7-2.6-2.9 -.4-1.7-1.9-3-3.7-3 -1.8 0-3.3 1.3-3.7 2.9 -1.5.2-2.5 1.4-2.5 2.9 0 1.6 1.3 3 2.9 3z"
+                  stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        )}
+
+        <div style={{
+          flex: 1, textAlign: 'center',
+          fontSize: 10,
+          color: '#9aa0aa',
+          letterSpacing: '0.02em',
+          userSelect: 'none',
+          paddingLeft: hasBoth ? 64 : 0,
+        }}>
+          jdm-agent — {lang === 'python' ? 'python' : 'bash'}
+        </div>
+        <button
+          onClick={copy}
+          className="focus-ring"
+          title="Copier la commande"
+          style={{
+            position: 'absolute', right: 8, top: 4,
+            background: copied ? 'rgba(40,200,64,0.18)' : 'rgba(255,255,255,0.06)',
+            border: '1px solid ' + (copied ? 'rgba(40,200,64,0.45)' : 'rgba(255,255,255,0.12)'),
+            borderRadius: 3,
+            padding: '1px 6px',
+            fontFamily: 'inherit',
+            fontSize: 9.5,
+            color: copied ? '#7ee59a' : '#c9ccd2',
+            cursor: 'pointer',
+            textTransform: 'lowercase',
+            letterSpacing: '0.04em',
+            transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+          }}>
+          {copied ? '✓ copied' : 'copy'}
+        </button>
+      </div>
+      {/* body */}
+      <div style={{
+        padding: '10px 12px 12px',
+        fontFamily: 'inherit',
+        fontSize: 11.5,
+        lineHeight: 1.55,
+        color: '#e6e8ec',
+      }}>
+        {active.hint && (
+          <div style={{ color: '#6b7180', whiteSpace: 'pre-wrap' }}>
+            # {active.hint}
+          </div>
+        )}
+        {lang === 'shell' ? (
+          <div style={{ display: 'flex', alignItems: 'baseline', marginTop: active.hint ? 4 : 0, flexWrap: 'wrap' }}>
+            <span style={{ color: '#7ee59a', flexShrink: 0, userSelect: 'none' }}>(jdm-agent)</span>
+            <span style={{ color: '#5d8fd6', flexShrink: 0, userSelect: 'none', marginLeft: 5 }}>~</span>
+            <span style={{ color: '#e6e8ec', flexShrink: 0, userSelect: 'none', margin: '0 6px 0 5px' }}>$</span>
+            <span style={{ wordBreak: 'break-word', color: '#e6e8ec' }}>{active.cmd}</span>
+          </div>
+        ) : (
+          // Python: render as a script (multi-line, no prompt) with subtle
+          // syntax tint — keywords + strings hinted in cooler colors.
+          <pre style={{
+            margin: active.hint ? '4px 0 0' : 0,
+            color: '#e6e8ec',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+            lineHeight: 1.6,
+          }}>
+            <code dangerouslySetInnerHTML={{ __html: highlightPython(active.cmd) }}/>
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Minimal Python syntax highlight — keywords, strings, comments. Not a
+// full parser; just enough to make the snippet feel like code.
+function highlightPython(src) {
+  // Escape HTML first to avoid breaking from < > & in user content.
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let out = esc(src);
+  // Strings (greedy non-newline)
+  out = out.replace(/(&quot;[^&\n]*?&quot;|'[^'\n]*?')/g,
+    '<span style="color:#e0c890">$1</span>');
+  // Keywords
+  out = out.replace(/\b(from|import|for|in|print|return|if|else|as|def|class|with|try|except|raise|yield|lambda)\b/g,
+    '<span style="color:#c89bff">$1</span>');
+  // Function-ish calls (.predict, .submit, etc.)
+  out = out.replace(/\.(predict|submit|view_api)\b/g,
+    '.<span style="color:#7ee59a">$1</span>');
+  // Comments (# ...)
+  out = out.replace(/(#[^\n]*)/g,
+    '<span style="color:#6b7180">$1</span>');
+  return out;
+}
+
+function CliCommandButton({ view }) {
+  const data = CLI_COMMANDS[view];
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  if (!data) return null;
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="focus-ring"
+        title="Commande CLI équivalente"
+        aria-label="Voir la commande CLI"
+        aria-expanded={open}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 28, height: 28,
+          padding: 0,
+          background: open ? 'var(--bg-elev)' : 'transparent',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius)',
+          color: open ? 'var(--ink)' : 'var(--ink-2)',
+          cursor: 'pointer',
+          transition: 'background 0.12s, color 0.12s, border-color 0.12s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--ink)'; }}
+        onMouseLeave={(e) => { if (!open) e.currentTarget.style.color = 'var(--ink-2)'; }}
+      >
+        {/* terminal glyph — fills the button frame */}
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="1" y="2.5" width="14" height="11" rx="1.5"
+                stroke="currentColor" strokeWidth="1.2" fill="none"/>
+          <path d="M4 6.5 L6.5 8 L4 9.5" stroke="currentColor"
+                strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+          <line x1="8" y1="10" x2="11.5" y2="10"
+                stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Commande CLI / Remote"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 8px)',
+            right: 0,
+            width: 'min(540px, calc(100vw - 32px))',
+            zIndex: 100,
+            animation: 'cli-pop 0.14s ease-out',
+          }}>
+          <CliTerminalBlock
+            cliData={CLI_COMMANDS[view]}
+            remoteData={REMOTE_COMMANDS[view]}
+            closeable
+            onClose={() => setOpen(false)}
+          />
+        </div>
+      )}
+
+      <style>{`
+        @keyframes cli-pop {
+          from { opacity: 0; transform: translateY(-4px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
   );
 }
 
@@ -808,3 +1214,4 @@ Object.assign(window, {
   Select, Field, Input, Slider, Button, Card, Pill, SectionTitle, EmptyState,
   Triplet, TopNav, ThemeSwitcher, PageShell, JDMMark, JDMWordmark,
 });
+

@@ -1,3 +1,4 @@
+// === webapp/app.jsx ===
 // Main app: theme switcher + router + Tweaks panel wiring.
 
 // Thème par défaut suit la préférence système (prefers-color-scheme).
@@ -9,6 +10,9 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "theme": _PREFERS_DARK ? "lab" : "paper",
   "accent": "#c0411a"
 }/*EDITMODE-END*/;
+
+// Accent swatches available for cycling via the JDMMark click in the topbar.
+const TWEAK_ACCENTS = ['#c0411a', '#1f97b1', '#c83a73', '#4ea63c', '#7a4fbe', '#d96810'];
 
 function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
@@ -133,6 +137,13 @@ function App() {
         active={view} setActive={setView}
         theme={tweaks.theme}
         setTheme={(t) => setTweak('theme', t)}
+        accent={tweaks.accent}
+        cycleAccent={() => {
+          const cur = tweaks.accent || TWEAK_ACCENTS[0];
+          const i = TWEAK_ACCENTS.indexOf(cur);
+          const next = TWEAK_ACCENTS[(i + 1) % TWEAK_ACCENTS.length];
+          setTweak('accent', next);
+        }}
       />
       <main>{VIEWS[view]}</main>
 
@@ -206,3 +217,4 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+

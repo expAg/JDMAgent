@@ -1134,26 +1134,28 @@ function parseFilePreview(text, flowId) {
 }
 
 // Libellé adaptatif du compteur "Consolidés" selon le flow.
+// (design-pass-2 : aligné sur le wording designer — Signalés/Analysés)
 function metricLabelFor(flowId) {
   switch (flowId) {
-    case 'enrich':      return { label: 'Consolidés', sub: 'triplets' };
-    case 'audit':       return { label: 'Verdicts',   sub: 'signalements' };
-    case 'signalement': return { label: 'Suspects',   sub: 'triplets flaggés' };
-    case 'annotation':  return { label: 'Annotations',sub: '+ signalements' };
-    case 'stats':       return { label: 'Lignes',     sub: 'produites' };
-    case 'gap':         return { label: 'Trous',      sub: 'détectés' };
-    default:            return { label: 'Items',      sub: 'produits' };
+    case 'enrich':      return { label: 'Consolidés',  sub: 'triplets' };
+    case 'audit':       return { label: 'Verdicts',    sub: 'signalements' };
+    case 'signalement': return { label: 'Signalés',    sub: 'triplets flaggés' };
+    case 'annotation':  return { label: 'Annotations', sub: '+ signalements' };
+    case 'stats':       return { label: 'Analysés',    sub: 'Termes/Relations' };
+    case 'gap':         return { label: 'Trous',       sub: 'détectés' };
+    default:            return { label: 'Items',       sub: 'produits' };
   }
 }
 
 // Titre adaptatif du panneau de droite selon le flow.
+// (design-pass-2 : 'Triplets signalés' + 'Artefacts analysés')
 function panelTitleFor(flowId) {
   switch (flowId) {
     case 'enrich':      return 'Triplets consolidés';
     case 'audit':       return 'Verdicts d\'audit (signalements)';
-    case 'signalement': return 'Triplets suspects (signalés)';
+    case 'signalement': return 'Triplets signalés';
     case 'annotation':  return 'Annotations + signalements';
-    case 'stats':       return 'Lignes produites';
+    case 'stats':       return 'Artefacts analysés';
     case 'gap':         return 'Trous détectés';
     default:            return 'Résultats';
   }
