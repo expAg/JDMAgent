@@ -1450,6 +1450,38 @@ def _build_tools_catalog() -> list[dict]:
     return catalog
 
 
+@app.get("/api/jarvis/models")
+def api_jarvis_models():
+    """Catalogue des modèles LLM utilisables par l'agent Jarvis.
+
+    Source de vérité : `app.GEMINI_MODELS` (et `GEMINI_THINKING_SUPPORTED`
+    pour annoter quels modèles supportent le raisonnement). Le front
+    utilise ça pour peupler le sélecteur de modèle dans `JConfigPanel`
+    et dans `ParamsForm` — fini les listes codées en dur dans le JS.
+    """
+    try:
+        from app import (
+            GEMINI_MODELS,
+            GEMINI_THINKING_SUPPORTED,
+            GEMINI_POOL_PROTECTED_MODEL,
+        )
+    except Exception as e:
+        return {"models": [], "default": None, "error": str(e)}
+    models = []
+    for k, label in GEMINI_MODELS.items():
+        models.append({
+            "value": k,
+            "label": label,
+            "supports_thinking": k in GEMINI_THINKING_SUPPORTED,
+            "pool_protected": k == GEMINI_POOL_PROTECTED_MODEL,
+        })
+    return {
+        "models": models,
+        "default": GEMINI_POOL_PROTECTED_MODEL,
+        "count": len(models),
+    }
+
+
 @app.get("/api/jarvis/tools")
 def api_jarvis_tools():
     """Catalogue introspecté du registre LangChain de l'agent JDM.

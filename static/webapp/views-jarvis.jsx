@@ -923,28 +923,35 @@ function defaultParamsFor(flowId) {
   // term vide partout (= tirage au hasard côté backend), budget illimité,
   // thinking=false (Jarvis = robustesse > raisonnement), upload=false,
   // auto_switch=false (= mode B : abort + bouton Continuer).
+  //
+  // Le `model` et `autoSubmit` sont pré-remplis depuis JConfigPanel
+  // (window.__JDM_JARVIS_CONFIG__, persisté en localStorage). L'utilisateur
+  // peut toujours override dans le ParamsForm avant Lancer.
+  const cfg = (typeof window !== 'undefined' && window.__JDM_JARVIS_CONFIG__) || {};
   const common = {
-    model: 'gemini-3.1-flash-lite',
+    model: cfg.llm || 'gemini-3.1-flash-lite',
     api_key: '', drops_key: '',
     use_thinking: false,
     budget_label: 'illimité',
     auto_switch: false,
   };
+  // `upload` = soumission auto du fichier au LLMDrops (mappe cfg.autoSubmit).
+  const autoUpload = cfg.autoSubmit === true;
   switch (flowId) {
     case 'enrich':
       return { ...common, term: '', relation: [],
-               target_count: 3, vary_relations: true, iterate: true, upload: false };
+               target_count: 3, vary_relations: true, iterate: true, upload: autoUpload };
     case 'audit':
-      return { ...common, term: '', relation: [], upload: false };
+      return { ...common, term: '', relation: [], upload: autoUpload };
     case 'gap':
       return { ...common, term: '' };
     case 'signalement':
-      return { ...common, term: '', relation: [], upload: false };
+      return { ...common, term: '', relation: [], upload: autoUpload };
     case 'stats':
-      return { ...common, term: '', relation: [], upload: false };
+      return { ...common, term: '', relation: [], upload: autoUpload };
     case 'annotation':
       return { ...common, term: '', relation: [], top_k: 8,
-               target_count: 10, upload: false };
+               target_count: 10, upload: autoUpload };
   }
   return common;
 }
@@ -1273,24 +1280,69 @@ function JPanel({ children }) {
 }
 
 // ═══════════════════ Configuration — réglages de l'agent ═══════════════════
-const JARVIS_LLMS = [
-  { value: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5 — équilibré' },
-  { value: 'claude-opus-4.1',   label: 'Claude Opus 4.1 — qualité max' },
-  { value: 'gpt-4o',            label: 'GPT-4o' },
-  { value: 'mistral-large',     label: 'Mistral Large — FR' },
-  { value: 'llama-3.1-70b',     label: 'Llama 3.1 70B — local' },
+//
+// JARVIS_LLMS = liste DE FALLBACK utilisée si /api/jarvis/models répond
+// pas (offline mode, dev sans backend). Le vrai catalogue est fetché à
+// l'init et populé via useGeminiModels() ci-dessous. Les modèles fictifs
+// (Claude/GPT/Mistral/Llama) sont remplacés par les Gemini réels dispos
+// côté serveur.
+let JARVIS_LLMS = [
+  { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
 ];
+const _LLMS_LISTENERS = new Set();
+let _LLMS_LOADED = false;
+
+async function _loadJarvisModels() {
+  if (_LLMS_LOADED) return;
+  try {
+    const r = await fetch('api/jarvis/models');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (Array.isArray(d.models) && d.models.length > 0) {
+      JARVIS_LLMS = d.models.map(m => ({ value: m.value, label: m.label }));
+      // Met à jour le default initial du JCONFIG si encore l'ancien fallback
+      if (d.default) _JARVIS_DEFAULT_LLM = d.default;
+      _LLMS_LOADED = true;
+      for (const cb of _LLMS_LISTENERS) { try { cb(); } catch {} }
+    }
+  } catch {}
+}
+if (typeof window !== 'undefined') { _loadJarvisModels(); }
+
+function useGeminiModels() {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => {
+    _LLMS_LISTENERS.add(force);
+    return () => _LLMS_LISTENERS.delete(force);
+  }, []);
+  return [JARVIS_LLMS, _LLMS_LOADED];
+}
+
+// JARVIS_FORMATS : champ purement informatif (aucun backend de conversion
+// d'export — les sorties sont des fichiers texte typés par flux :
+// .enrich/.audit/.err/.stat/.annot, format JDM pipe-separated). Conservé
+// pour ne pas casser le rendu du Select dans JConfigPanel mais marqué
+// disabled côté UI ; tout choix utilisateur reste sans effet backend.
 const JARVIS_FORMATS = [
-  { value: 'json',   label: 'JSON' },
-  { value: 'csv',    label: 'CSV' },
-  { value: 'rdf',    label: 'RDF / Turtle' },
-  { value: 'jsonld', label: 'JSON-LD' },
+  { value: 'jdm', label: 'JDM (.enrich/.audit/.err/.stat/.annot)' },
 ];
+
+let _JARVIS_DEFAULT_LLM = 'gemini-3.1-flash-lite';
+
+// JCONFIG = preferences UI (localStorage). Les champs « mode », « parallel »,
+// « defaultMaxIter », « temperature », « globalConf », « humanReview »,
+// « logLevel », « storageDir », « keepHistory » sont COSMETIQUES — ils
+// n'ont aucun pendant backend dans le routage actuel des flows Jarvis
+// (les vrais leviers sont passes per-run via /api/jarvis/{flow}/stream :
+// model, api_key, budget_label, drops_key, auto_switch, term, relation,
+// target_count, upload, vary_relations, iterate, top_k). On conserve la
+// surface UI pour la fidelite au design ; seuls « llm » et « autoSubmit »
+// sont reellement pre-utilises par ParamsForm via JarvisStore.
 const JCONFIG_DEFAULTS = {
   mode: 'autonome', parallel: 2, defaultMaxIter: 30,
-  llm: 'claude-sonnet-4.5', temperature: 0.3, globalConf: 50,
+  llm: 'gemini-3.1-flash-lite', temperature: 0.3, globalConf: 50,
   humanReview: false, autoSubmit: true, logLevel: 'detaille',
-  storageDir: '~/jdm/exports', exportFormat: 'json', keepHistory: true,
+  storageDir: '~/jdm/exports', exportFormat: 'jdm', keepHistory: true,
 };
 
 function useJarvisConfig() {
@@ -1388,13 +1440,17 @@ function JCfgRow({ label, hint, children, stack }) {
 
 function JConfigPanel({ onAccueil }) {
   const [cfg, set, reset] = useJarvisConfig();
+  // useGeminiModels s'abonne au catalogue : le Select se met à jour
+  // automatiquement quand /api/jarvis/models répond. Avant cela on
+  // tombe sur le fallback (1 entrée gemini-3.1-flash-lite).
+  const [llmList /*, llmsReady */] = useGeminiModels();
   const autonomous = cfg.mode === 'autonome';
   const modeHint = {
     autonome: 'La boucle s’exécute de bout en bout, sans intervention humaine.',
     supervise: 'Jarvis sollicite ta validation aux étapes critiques.',
     pasapas: 'Tu valides chaque itération avant qu’elle ne soit écrite.',
   }[cfg.mode];
-  const llmLabel = (JARVIS_LLMS.find(l => l.value === cfg.llm) || {}).label || cfg.llm;
+  const llmLabel = (llmList.find(l => l.value === cfg.llm) || {}).label || cfg.llm;
   const fmtLabel = (JARVIS_FORMATS.find(f => f.value === cfg.exportFormat) || {}).label || cfg.exportFormat;
   const modeLabel = { autonome: 'Autonome', supervise: 'Supervisé', pasapas: 'Pas-à-pas' }[cfg.mode];
   const modeColor = { autonome: 'var(--jdm-green)', supervise: 'var(--jdm-orange)', pasapas: 'var(--jdm-cyan)' }[cfg.mode];
@@ -1468,7 +1524,7 @@ function JConfigPanel({ onAccueil }) {
 
           <JCfgGroup title="Modèle & inférence">
             <JCfgRow label="Modèle LLM" stack>
-              <Select value={cfg.llm} onChange={(v) => set('llm', v)} options={JARVIS_LLMS} />
+              <Select value={cfg.llm} onChange={(v) => set('llm', v)} options={llmList} />
             </JCfgRow>
             <JCfgRow label="Température" hint="Créativité de la génération de candidats." stack>
               <Slider value={Math.round(cfg.temperature * 100)} onChange={(v) => set('temperature', v / 100)} min={0} max={100} step={5} suffix="%" />
