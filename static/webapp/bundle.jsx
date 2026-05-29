@@ -7158,6 +7158,11 @@ const JarvisStore = {
       .map(([id]) => id);
   },
   stop(flowId) {
+    // ATTENTION : "stop" côté client = arrêter l'OBSERVATION SSE.
+    // Le bg thread serveur continue à pousser dans son buffer jusqu'à
+    // fin naturelle (budget atteint ou done) ou TTL. C'est volontaire :
+    // interrompre proprement un sync generator Python depuis un autre
+    // thread n'est pas trivial. Voir backend pour la note technique.
     const cur = this.get(flowId);
     if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
   },
@@ -7165,48 +7170,101 @@ const JarvisStore = {
     const cur = this.get(flowId);
     if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
     if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
+    _localRunIdSet(flowId, null);  // purge la persistance localStorage
     _JARVIS_RUNS[flowId] = _emptyJarvisRun(flowId);
     this._emit(flowId);
+  },
+
+  // Helpers internes ─────────────────────────────────────
+  _resetRunData(cur) {
+    Object.assign(cur, {
+      status: 'running',
+      log: [],
+      accepted: [],
+      narrationHTML: '',
+      filePreview: '',
+      filePath: null,
+      headline: '',
+      metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+      _prevConsolidatedCount: 0,
+      _startTime: Date.now(),
+      runId: null,
+    });
+  },
+  _startElapsedTimer(cur) {
+    if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
+    cur._elapsedTimer = setInterval(() => {
+      cur.metrics = { ...cur.metrics, elapsed: Date.now() - (cur._startTime || Date.now()) };
+      this._emit(cur.flowId);
+    }, 250);
+  },
+
+  /**
+   * Réattache une stream SSE à un run_id existant côté serveur. Utilisé
+   * au boot pour reconnecter aux runs qui tournaient avant un refresh
+   * ou une tab close. Le serveur replay tous les events bufferés puis
+   * passe en live → on retrouve l'état exact.
+   *
+   * Cas d'usage : au boot, on lit localStorage, on GET /api/jarvis/runs
+   * pour filtrer les still-active, et on appelle attach() pour chacun.
+   */
+  async attach(flowId, runId, knownHeadline) {
+    const cur = this.get(flowId);
+    if (cur.status === 'running') return;  // déjà attaché ou en cours
+    this._resetRunData(cur);
+    cur.status = 'running';
+    cur.runId = runId;
+    if (knownHeadline) cur.headline = knownHeadline;
+    cur._abortCtrl = new AbortController();
+    this._startElapsedTimer(cur);
+    this._emit(flowId);
+    await this._consumeStream(
+      flowId,
+      `api/jarvis/runs/${encodeURIComponent(runId)}/stream`,
+      { method: 'GET' },
+      cur._abortCtrl,
+    );
   },
   async start(flowId, { params, isResume, resumeState }) {
     const cur = this.get(flowId);
     if (cur.status === 'running') return;
-    const ts = () => new Date().toTimeString().slice(0, 8);
     if (!isResume) {
-      Object.assign(cur, {
-        status: 'running',
-        log: [],
-        accepted: [],
-        narrationHTML: '',
-        filePreview: '',
-        filePath: null,
-        headline: '',
-        metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
-        _prevConsolidatedCount: 0,
-        _startTime: Date.now(),
-      });
+      this._resetRunData(cur);
     } else {
+      const ts = () => new Date().toTimeString().slice(0, 8);
       cur.status = 'running';
       cur.log = [...cur.log, { t: ts(), tag: '[resume]', kind: 'iter', msg: 'Reprise après abort PerDay…' }];
     }
     cur._abortCtrl = new AbortController();
-    if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
-    cur._elapsedTimer = setInterval(() => {
-      cur.metrics = { ...cur.metrics, elapsed: Date.now() - (cur._startTime || Date.now()) };
-      this._emit(flowId);
-    }, 250);
+    this._startElapsedTimer(cur);
     this._emit(flowId);
 
     const flowParams = {
       ...params,
       ...(isResume && resumeState ? { resume_state: resumeState } : {}),
     };
-    try {
-      const res = await fetch(`api/jarvis/${flowId}/stream`, {
+    await this._consumeStream(
+      flowId,
+      `api/jarvis/${flowId}/stream`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ flow_id: flowId, params: flowParams }),
-        signal: cur._abortCtrl.signal,
+      },
+      cur._abortCtrl,
+    );
+  },
+
+  // Boucle de consommation SSE partagée par start() et attach(). Le
+  // dispatchEv gère désormais 'run_id' (persisté en localStorage pour
+  // reconnexion ultérieure) et 'ping' (keepalive — ignoré).
+  async _consumeStream(flowId, url, fetchInit, abortCtrl) {
+    const cur = this.get(flowId);
+    const ts = () => new Date().toTimeString().slice(0, 8);
+    try {
+      const res = await fetch(url, {
+        ...fetchInit,
+        signal: abortCtrl.signal,
       });
       if (!res.ok || !res.body) {
         const txt = await res.text().catch(() => '');
@@ -7218,8 +7276,24 @@ const JarvisStore = {
       const dispatchEv = (ev) => {
         const d = ev.data || {};
         switch (ev.event) {
+          case 'run_id':
+            // Premier event de la SSE POST — on persiste pour reconnect.
+            if (d.run_id) {
+              cur.runId = d.run_id;
+              _localRunIdSet(flowId, d.run_id);
+            }
+            break;
+          case 'ping':
+            // Keepalive serveur (toutes les ~20s d'idle) — no-op.
+            break;
           case 'headline':
             cur.headline = d.text || '';
+            // Premier event utile : on enregistre le run_id côté serveur
+            // si présent dans le payload (sécurité / cas de reconnect).
+            if (d.run_id && !cur.runId) {
+              cur.runId = d.run_id;
+              _localRunIdSet(flowId, d.run_id);
+            }
             cur.log = [...cur.log, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }];
             break;
           case 'jarvis': {
@@ -7258,10 +7332,12 @@ const JarvisStore = {
           case 'done':
             cur.log = [...cur.log, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }];
             cur.status = 'done';
+            _localRunIdSet(flowId, null);
             break;
           case 'error':
             cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }];
             cur.status = 'error';
+            _localRunIdSet(flowId, null);
             break;
         }
         this._emit(flowId);
@@ -7289,18 +7365,86 @@ const JarvisStore = {
       if (cur.status === 'running') cur.status = 'done';
     } catch (e) {
       if (cur._abortCtrl && cur._abortCtrl.signal.aborted) {
-        cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: 'Annulé par l\'utilisateur.' }];
-        cur.status = 'done';
+        // Abort côté client = on arrête l'observation. Le bg thread
+        // serveur peut continuer — donc on ne marque PAS done, on
+        // garde le runId. La reconnexion ultérieure (boot reconcile)
+        // récupérera la progression.
+        cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: 'Observation arrêtée (le flow continue côté serveur).' }];
+        // Statut = idle pour signaler que le composant local est détaché ;
+        // le badge "en cours" reste via le serveur listing au prochain
+        // bootReconcile() ou getRunStatus().
+        cur.status = 'idle';
       } else {
         cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }];
         cur.status = 'error';
+        _localRunIdSet(flowId, null);
       }
     } finally {
       if (cur._elapsedTimer) { clearInterval(cur._elapsedTimer); cur._elapsedTimer = null; }
       this._emit(flowId);
     }
   },
+
+  // Boot reconcile : appelée une fois au démarrage de l'app pour
+  // détecter les runs qui tournaient encore côté serveur quand
+  // l'utilisateur a fermé la tab / refresh / etc. Pour chaque
+  // (flowId, runId) trouvé en localStorage qui est encore actif
+  // côté serveur, on rouvre une stream pour récupérer la progression.
+  async bootReconcile() {
+    let local = {};
+    try { local = _localRunIdMap(); } catch {}
+    const flowIds = Object.keys(local);
+    if (flowIds.length === 0) return;
+    let serverRuns = [];
+    try {
+      const r = await fetch('api/jarvis/runs');
+      if (r.ok) {
+        const d = await r.json();
+        serverRuns = d.runs || [];
+      }
+    } catch {}
+    const activeOnServer = new Map(
+      serverRuns
+        .filter(s => s.status === 'starting' || s.status === 'running')
+        .map(s => [s.run_id, s])
+    );
+    for (const flowId of flowIds) {
+      const runId = local[flowId];
+      if (!runId) continue;
+      const serverInfo = activeOnServer.get(runId);
+      if (!serverInfo) {
+        // Plus actif côté serveur (terminé, ou TTL dépassé, ou process
+        // restart) → purge la persistance.
+        _localRunIdSet(flowId, null);
+        continue;
+      }
+      // Reconnect — fire-and-forget. attach() retourne après que la
+      // stream se ferme (= run terminé) ou que l'observation est
+      // arrêtée par l'utilisateur. Pas besoin d'attendre.
+      this.attach(flowId, runId, serverInfo.headline).catch(() => {});
+    }
+  },
 };
+
+// ── localStorage helpers ────────────────────────────────────────
+// Stocke un mapping {[flowId]: runId} pour permettre la reconnexion
+// au boot après refresh / tab close. Effacée à la terminaison normale
+// (done / error) du flow ou au reset explicite.
+const _JARVIS_LS_KEY = 'jdm_jarvis_runs_v1';
+
+function _localRunIdMap() {
+  try {
+    const raw = localStorage.getItem(_JARVIS_LS_KEY);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch { return {}; }
+}
+function _localRunIdSet(flowId, runId) {
+  try {
+    const cur = _localRunIdMap();
+    if (runId) cur[flowId] = runId; else delete cur[flowId];
+    localStorage.setItem(_JARVIS_LS_KEY, JSON.stringify(cur));
+  } catch {}
+}
 if (typeof window !== 'undefined') window.__jdmJarvisStore = JarvisStore;
 
 function useJarvisRunState(flowId) {
@@ -10122,6 +10266,15 @@ function App() {
     }
     if (window.__jdmRoute) window.__jdmRoute.push(view, null);
   }, [view]);
+
+  // Reconcile au boot : si des runs Jarvis tournaient encore côté
+  // serveur quand l'utilisateur a fermé la tab / refresh, on s'y
+  // rebranche pour récupérer la progression. Fire-and-forget.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
+      window.__jdmJarvisStore.bootReconcile?.();
+    }
+  }, []);
 
   // popstate (back/forward navigateur) : on relit l'URL et on switche.
   // Si la nouvelle URL contient une sous-route Jarvis, on injecte le

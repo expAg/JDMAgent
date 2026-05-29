@@ -140,6 +140,15 @@ function App() {
     if (window.__jdmRoute) window.__jdmRoute.push(view, null);
   }, [view]);
 
+  // Reconcile au boot : si des runs Jarvis tournaient encore côté
+  // serveur quand l'utilisateur a fermé la tab / refresh, on s'y
+  // rebranche pour récupérer la progression. Fire-and-forget.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
+      window.__jdmJarvisStore.bootReconcile?.();
+    }
+  }, []);
+
   // popstate (back/forward navigateur) : on relit l'URL et on switche.
   // Si la nouvelle URL contient une sous-route Jarvis, on injecte le
   // pending payload AVANT setView pour que ViewJarvis ouvre le bon flow.
