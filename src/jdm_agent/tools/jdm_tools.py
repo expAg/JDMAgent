@@ -1963,15 +1963,25 @@ def write_submission_file(
     except OSError:
         pass
     # ANTI-ÉCRASEMENT : si un fichier au même nom existe déjà, on suffixe
-    # _2, _3, _4… avant l'extension. Sauf si le path est celui géré par
-    # l'auto-append (cf. guard plus bas qui no-op cet appel de toute façon).
+    # _2, _3, _4… avant l'extension. Sauf dans deux cas :
+    #   1) le path est celui géré par l'auto-append (cf. guard plus bas
+    #      qui no-op cet appel de toute façon).
+    #   2) le path appartient au RUN courant (registry per-run actif
+    #      via exclusion_context) — sinon chaque relance Jarvis crée
+    #      un nouveau fichier `_2`, `_3` → bribes éparpillées. Le LLM
+    #      doit pouvoir réécrire son propre fichier pendant le run.
     try:
         from jdm_agent.enrich import get_consolidation_output_path as _g
         _is_auto_path = (_g() is not None
                          and str(_Path(_g()).resolve()) == str(_p.resolve()))
     except Exception:
         _is_auto_path = False
-    if not _is_auto_path and _p.exists():
+    try:
+        from jdm_agent.enrich import is_run_output_path as _is_run
+        _is_own_run_path = _is_run(str(_p.resolve()))
+    except Exception:
+        _is_own_run_path = False
+    if not _is_auto_path and not _is_own_run_path and _p.exists():
         _stem, _ext = _p.stem, _p.suffix
         _i = 2
         while True:
@@ -2140,6 +2150,17 @@ def write_submission_file(
                 "Triplets non écrits car absents du registry d'inférence. "
                 "Re-passe-les par consolidate_candidate avant write_submission_file."
             )
+
+    # Mémorise ce path dans le registry per-run pour qu'une réécriture
+    # ultérieure (ex. relance Jarvis qui ré-écrit le même fichier pour
+    # cumuler ses productions) ne déclenche PAS l'anti-écrasement `_2`.
+    # No-op hors exclusion_context.
+    if out.get("path") and not out.get("error"):
+        try:
+            from jdm_agent.enrich import register_run_output_path
+            register_run_output_path(str(_Path(out["path"]).resolve()))
+        except Exception:
+            pass
 
     if upload:
         from jdm_agent.enrich.uploader import submit_to_jdm

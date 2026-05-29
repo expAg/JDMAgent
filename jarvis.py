@@ -190,7 +190,8 @@ def strip_thinking_blocks(messages: list, keep_last: bool = True) -> list:
 def build_relance_summary(messages: list, n_done: int, target: int,
                           relance_num: int,
                           max_relances: Optional[int] = None,
-                          unit: str = "triplet consolidé") -> str:
+                          unit: str = "triplet consolidé",
+                          current_file_path: Optional[str] = None) -> str:
     """Construit un résumé condensé pour le HumanMessage de relance.
 
     Au lieu de ré-injecter `accumulated_messages` complet (50-200 messages,
@@ -237,6 +238,21 @@ def build_relance_summary(messages: list, n_done: int, target: int,
         f"⛔ STOP. Tu as produit **{n_done}/{target} {unit}(s)** — il en manque "
         f"{missing}.",
     ]
+    # Directive de continuité du fichier — sans ça, le LLM repart sur
+    # un nouveau nom à chaque relance et write_submission_file applique
+    # son anti-écrasement → fichiers fragmentés (`*_2.annot`, `*_3.annot`
+    # etc.). Le registry per-run autorise désormais l'overwrite explicite.
+    if current_file_path:
+        lines.append("")
+        lines.append(
+            f"📄 **Continue d'écrire dans le MÊME fichier** : "
+            f"`{current_file_path}`.\n"
+            f"   Quand tu rappelles `write_submission_file`, passe "
+            f"EXACTEMENT ce path et INCLUS la liste complète "
+            f"(déjà produits + nouveaux). L'anti-écrasement est "
+            f"désactivé pour ce path dans le run courant — pas de "
+            f"`_2`/`_3` qui éparpilleraient tes triplets."
+        )
     if consolidated:
         lines.append("")
         lines.append(f"**Déjà produits (PRÉSERVE-les dans le fichier final)** :")
@@ -314,6 +330,7 @@ def condense_history_with_nudge(
     count_fn: Optional[Any] = None,
     unit: str = "triplet consolidé",
     attempt: int = 0,
+    current_file_path: Optional[str] = None,
 ) -> Optional[list]:
     """Condense `messages` en `[HumanMessage initial, HumanMessage(summary
     + nudge aléatoire)]` SI son poids dépasse `HISTORY_CONDENSE_THRESHOLD_CHARS`.
@@ -347,6 +364,7 @@ def condense_history_with_nudge(
             effective_target = consolidation_target or (n_so_far + 1)
         summary = build_relance_summary(
             messages, n_so_far, effective_target, attempt, None, unit=unit,
+            current_file_path=current_file_path,
         )
         nudge = _random.choice(_CONDENSE_NUDGE_VARIANTS)
         return [
@@ -1818,6 +1836,7 @@ def run_jarvis_flow(
                                     target=_tgt2, count_fn=_ctr2,
                                     unit=_u2 or "triplet consolidé",
                                     attempt=proactive_condense_count,
+                                    current_file_path=_current_file_path(),
                                 )
                                 if condensed is not None:
                                     proactive_condense_count += 1
@@ -2207,6 +2226,7 @@ def run_jarvis_flow(
                                 target=_tgt3, count_fn=_ctr3,
                                 unit=_u3 or "triplet consolidé",
                                 attempt=rate_limit_attempts,
+                                current_file_path=_current_file_path(),
                             )
                             if condensed is not None:
                                 accumulated_messages = condensed
@@ -2288,6 +2308,7 @@ def run_jarvis_flow(
                 accumulated_messages, n_done, _tgt,
                 persistence_relances, max_persistence_relances,
                 unit=_unit or "triplet consolidé",
+                current_file_path=_current_file_path(),
             )
             initial_human = accumulated_messages[0]  # HumanMessage(prompt)
             accumulated_messages = [

@@ -60,6 +60,15 @@ import threading
 _REGISTRY_LOCK = threading.RLock()
 _EXCLUSION_REGISTRY: Optional[dict] = None
 _CONSOLIDATION_REGISTRY: Optional[dict] = None
+# Set des paths résolus que le LLM a écrits dans CE run (exclusion_context
+# actif). Sert à `write_submission_file` pour distinguer :
+#   - path appartenant à ce run → OVERWRITE autorisé (le LLM rewrite le
+#     même fichier en relance pour cumuler ses productions). Sinon le
+#     anti-écrasement renomme en `_2`, `_3` etc. à chaque relance →
+#     fragments / bribes éparpillées (bug rapporté).
+#   - path NEUF (jamais écrit dans ce run) → anti-écrasement classique.
+# Stocke les paths POST-résolution (après le /tmp/jdm_outputs/ prefix).
+_RUN_OUTPUT_PATHS: Optional[set] = None
 _CONTEXT_DEPTH = 0  # compteur de nesting d'exclusion_context()
 
 # Path d'append automatique pour les consolidations. Quand non-None,
@@ -101,11 +110,12 @@ def exclusion_context():
     le compteur supporte le nesting (plusieurs invocations imbriquées
     partagent le même dict, seule la SORTIE la plus externe le vide).
     """
-    global _EXCLUSION_REGISTRY, _CONSOLIDATION_REGISTRY, _CONTEXT_DEPTH
+    global _EXCLUSION_REGISTRY, _CONSOLIDATION_REGISTRY, _RUN_OUTPUT_PATHS, _CONTEXT_DEPTH
     with _REGISTRY_LOCK:
         if _CONTEXT_DEPTH == 0:
             _EXCLUSION_REGISTRY = {}
             _CONSOLIDATION_REGISTRY = {}
+            _RUN_OUTPUT_PATHS = set()
         _CONTEXT_DEPTH += 1
     try:
         yield
@@ -115,6 +125,7 @@ def exclusion_context():
             if _CONTEXT_DEPTH == 0:
                 _EXCLUSION_REGISTRY = None
                 _CONSOLIDATION_REGISTRY = None
+                _RUN_OUTPUT_PATHS = None
 
 
 # ---------- Registry de consolidation ----------
@@ -255,6 +266,40 @@ def list_consolidations() -> list[dict]:
             }
             for k, v in _CONSOLIDATION_REGISTRY.items()
         ]
+
+
+# ---------- Registry des paths écrits dans le run ----------
+
+def is_run_output_path(path: str) -> bool:
+    """True si `path` (str d'une `Path.resolve()`) a déjà été écrit par
+    le LLM dans le run courant (`exclusion_context` actif). Permet à
+    `write_submission_file` d'autoriser l'OVERWRITE plutôt que de
+    rajouter un suffixe `_2`/`_3` — autrement chaque relance redémarre
+    un nouveau fichier (bug « bribes »)."""
+    with _REGISTRY_LOCK:
+        if _RUN_OUTPUT_PATHS is None:
+            return False
+        return path in _RUN_OUTPUT_PATHS
+
+
+def register_run_output_path(path: str) -> None:
+    """Mémorise `path` (str d'une `Path.resolve()`) comme appartenant au
+    run courant. Appelé par `write_submission_file` après chaque écriture
+    réussie. No-op hors `exclusion_context()`."""
+    with _REGISTRY_LOCK:
+        if _RUN_OUTPUT_PATHS is None:
+            return
+        _RUN_OUTPUT_PATHS.add(path)
+
+
+def list_run_output_paths() -> list[str]:
+    """Renvoie la LISTE des paths écrits dans le run courant (ordre non
+    spécifié, c'est un set). Vide hors `exclusion_context()`. Utile pour
+    rappeler au LLM, en relance, quel fichier il avait commencé."""
+    with _REGISTRY_LOCK:
+        if _RUN_OUTPUT_PATHS is None:
+            return []
+        return list(_RUN_OUTPUT_PATHS)
 
 
 def register_exclusion(term: str, relation: str, exclusion_set) -> None:
