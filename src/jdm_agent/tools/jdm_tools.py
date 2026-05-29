@@ -165,6 +165,36 @@ def _lim(v: Optional[int], default: int) -> int:
 # ---------- Tools ----------
 
 @tool
+def pick_random_term() -> dict:
+    """Tire un terme au hasard dans JeuxDeMots — UNIFORM SAMPLING vrai
+    sur l'espace des IDs JDM (~5M nœuds). Appelle-moi à chaque fois que
+    l'utilisateur te demande de « choisir un mot au hasard », « tirer
+    aléatoirement », ou que tu n'as pas de terme imposé.
+
+    POURQUOI un outil dédié : si tu choisis toi-même, tu retombes
+    systématiquement sur le cluster « symphonie / sérénité / télétravail
+    / ébéniste / alchimiste / harmonie / frugalité / mélancolie » — c'est
+    du mode collapse classique (sur-représentation des listes « beaux
+    mots français » dans ton corpus d'entraînement). Cet outil
+    court-circuite ton biais en tirant un ID au hasard puis en
+    récupérant le nœud correspondant — la queue de distribution est
+    vraiment respectée.
+
+    Renvoie {id, name, decoded, type, weight} comme `lookup_term`, ou
+    {error} si rien n'a pu être tiré (réseau down / KB injoignable).
+    """
+    c = _client()
+    n = c.random_term()
+    if n is None:
+        return {"error": "tirage aleatoire echoue (max_tries epuises ou JDM injoignable)"}
+    dec = c.decode_node_name(n.name)
+    return {
+        "id": n.id, "name": n.name, "decoded": dec["decoded"],
+        "type": n.type, "weight": n.w,
+    }
+
+
+@tool
 def lookup_term(term: str) -> dict:
     """Cherche un terme dans JeuxDeMots et renvoie ses informations de base.
 
@@ -708,16 +738,13 @@ def detect_gaps(
     Si l'utilisateur a indiqué SEULEMENT une relation (ex. « détecte les
     trous pour r_holo », « r_telic_role »...) SANS donner de terme, NE LUI
     DEMANDE PAS de terme. NE LUI POSE PAS DE QUESTION. À la place :
-      1. tire toi-même un mot français au hasard. VARIE VRAIMENT — d'un
-         essai à l'autre, et d'une session à l'autre. La langue française
-         et JDM sont infiniment riches : ne te limite à aucun registre,
-         change de domaine, de longueur, de niveau d'abstraction ;
-      2. vérifie qu'il existe dans JDM via `lookup_term` ;
-      3. appelle `detect_gaps` dessus avec la relation demandée ;
-      4. si le terme n'est pas dans JDM OU si tu ne trouves pas au moins
-         3 gaps intéressants, RECOMMENCE avec un AUTRE mot (registre
-         différent) — itère silencieusement, max 6-8 essais, et ne montre
-         que le résultat final exploitable.
+      1. appelle `pick_random_term()` pour obtenir un terme JDM tiré au
+         hasard (uniform sampling backend — pas de tirage à la main) ;
+      2. appelle `detect_gaps` dessus avec la relation demandée ;
+      3. si tu ne trouves pas au moins 3 gaps intéressants, rappelle
+         `pick_random_term()` pour avoir un AUTRE terme — itère
+         silencieusement, max 6-8 essais, et ne montre que le résultat
+         final exploitable.
     Cette règle prime sur tout réflexe de « clarifier avec l'utilisateur ».
 
     Trois types de gaps :
@@ -731,8 +758,8 @@ def detect_gaps(
     proposer des triplets sans passer par lui).
 
     Args:
-        term: terme à analyser (tiré au hasard par TOI si l'utilisateur
-              n'en a pas donné — cf. règle ci-dessus).
+        term: terme à analyser (obtenu via `pick_random_term()` si
+              l'utilisateur n'en a pas donné — cf. règle ci-dessus).
         relations: relations à inspecter (défaut: jeu standard noun+verb).
                    Exemples: ["r_has_part", "r_carac", "r_telic_role"].
         min_coverage: une relation à < N triplets positifs est signalée
@@ -1166,13 +1193,11 @@ def enrichment_workflow() -> dict:
         "if_no_term": (
             "Si l'utilisateur n'a donné qu'une relation (ex. « enrichis r_holo » "
             "ou « propose des triplets pour r_telic_role »), c'est À TOI de "
-            "fournir le terme. Tire un mot français au hasard (vraie variété "
-            "— ne te limite à aucun registre, varie domaine / longueur / niveau "
-            "d'abstraction d'un essai à l'autre et d'une session à l'autre), "
-            "vérifie qu'il existe dans JDM via `lookup_term`. Si le mot n'est "
-            "pas dans JDM ou si tu n'obtiens rien d'intéressant après "
-            "pré-fetch, recommence avec un AUTRE mot. NE demande JAMAIS le "
-            "terme à l'utilisateur."
+            "fournir le terme : appelle `pick_random_term()` (uniform sampling "
+            "backend sur JDM — pas de tirage à la main, qui causerait du mode "
+            "collapse). Si tu n'obtiens rien d'intéressant après pré-fetch, "
+            "rappelle `pick_random_term()` pour un AUTRE terme. NE demande "
+            "JAMAIS le terme à l'utilisateur."
         ),
     }
 
@@ -1206,14 +1231,13 @@ def audit_workflow() -> dict:
                 "description": (
                     "Si l'utilisateur a fourni un terme, vérifie sa "
                     "polysémie via `disambiguate`. S'il n'en a pas "
-                    "fourni, TIRE toi-même un mot français au hasard "
-                    "et varié (varie domaine, registre, longueur d'un "
-                    "essai à l'autre), vérifie qu'il existe via "
-                    "`lookup_term` puis qu'il est polysémique via "
-                    "`disambiguate`. Si non polysémique → autre tirage. "
+                    "fourni, appelle `pick_random_term()` (uniform "
+                    "sampling backend, pas de tirage à la main), puis "
+                    "vérifie qu'il est polysémique via `disambiguate`. "
+                    "Si non polysémique → rappelle `pick_random_term()`. "
                     "Max 6-8 essais avant de proposer le résultat."
                 ),
-                "tool": "lookup_term + disambiguate",
+                "tool": "pick_random_term + disambiguate",
             },
             {
                 "order": 2,
@@ -1724,27 +1748,17 @@ def annotation_workflow() -> dict:
                 "description": (
                     "Si un TERME et/ou une RELATION sont fournis → "
                     "utilise-les directement. Si AUCUN n'est fourni → "
-                    "TU AS CARTE BLANCHE pour piocher dans TOUT le "
-                    "lexique français. La langue est vaste : noms "
-                    "abstraits, verbes, adjectifs, expressions, objets "
-                    "ordinaires, concepts techniques, sentiments, "
-                    "états, processus, métiers, phénomènes physiques "
-                    "ou sociaux… ÉVITE les champs scolaires sur-"
-                    "explorés (animaux courants, plantes, couleurs "
-                    "primaires) où JDM est déjà dense. VARIE "
-                    "radicalement : registre (familier ↔ soutenu), "
-                    "longueur (1 mot ↔ expression), niveau "
-                    "d'abstraction (concret ↔ abstrait), fréquence "
-                    "(commun ↔ rare). PAS de catégorie imposée. Tire "
-                    "UN terme à la fois, vérifie qu'il existe via "
-                    "`lookup_term`, puis itère (cf. règle 'itération' "
-                    "ci-dessous).\n"
+                    "appelle `pick_random_term()` pour obtenir un terme "
+                    "JDM tiré au hasard (uniform sampling backend — pas "
+                    "de tirage à la main). Itère (cf. règle 'itération' "
+                    "ci-dessous) : un nouveau `pick_random_term()` à "
+                    "chaque tour si tu veux varier.\n"
                     "Si le terme est polysémique → désambiguïse via "
                     "`disambiguate(term)` puis travaille SUR LE SENS "
                     "RAFFINÉ (`term>91594`) PAS sur le générique. "
                     "L'annotation dépend du sens — c'est crucial."
                 ),
-                "tool": "disambiguate (si polysémique)",
+                "tool": "pick_random_term (si rien fourni) + disambiguate (si polysémique)",
             },
             {
                 "order": 2,
@@ -2464,6 +2478,7 @@ def build_subgraph_visualization(
 # ---------- Registry ----------
 
 ALL_TOOLS: list[StructuredTool] = [
+    pick_random_term,
     lookup_term,
     get_synonyms,
     get_antonyms,

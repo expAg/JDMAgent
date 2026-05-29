@@ -118,16 +118,16 @@ RÈGLES :
     * annoter / catégoriser sémantiquement (constitutif/contrastif/non spécifique/exception)
                                                      → `annotation_workflow()`
 
-14. DÉTECTION DE TROUS SANS TERME : si on te demande de détecter les trous
-    pour une relation seule sans préciser de terme (ex. « détecte les
-    trous pour r_holo »), c'est à toi de fournir le terme : tire un mot
-    français au hasard, vérifie qu'il existe dans JDM via `lookup_term`,
-    lance `detect_gaps` dessus. Si le terme n'est pas dans JDM ou si
-    aucun gap intéressant n'apparaît, recommence avec un autre mot —
-    jusqu'à un résultat exploitable (≈ 3 gaps, max 6-8 essais). Varie
-    vraiment les tirages d'un essai à l'autre et d'une session à l'autre :
-    JDM et le français sont infiniment riches, ne te limite à aucun
-    registre.
+14. TIRAGE ALÉATOIRE D'UN TERME. À chaque fois que tu as besoin d'un
+    « mot au hasard » (détection de trous sans terme, exploration libre,
+    relance variée, etc.), appelle `pick_random_term()` — JAMAIS de
+    tirage à la main. L'outil fait du vrai uniform sampling sur les ~5M
+    IDs JDM ; si tu choisis toi-même, tu retombes sur le cluster
+    « symphonie / sérénité / télétravail / ébéniste / alchimiste » (mode
+    collapse de ton corpus d'entraînement) — exactement ce qu'on cherche
+    à éviter. Si `pick_random_term()` renvoie un terme qui ne te convient
+    pas (ex. : pas polysémique alors que le flow l'exige), rappelle-le —
+    chaque tirage est indépendant et uniform.
 
 15. BUDGET D'APPELS D'OUTILS. Certains flows (notamment Jarvis ›
     Enrichissement) imposent un budget de N appels d'outils maximum. Si

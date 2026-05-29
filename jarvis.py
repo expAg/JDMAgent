@@ -674,26 +674,19 @@ def _is_bounded_budget(budget_label: str) -> bool:
     return s.isdigit() and int(s) > 0
 
 
+# Instruction de tirage d'un terme aléatoire.
+# La version « carte blanche, varie radicalement, registre, abstraction… »
+# a été retirée : elle alimentait précisément le mode collapse du LLM
+# (cluster « symphonie / sérénité / télétravail / ébéniste / alchimiste »).
+# On remplace par UNE ligne qui pointe vers l'outil dédié `pick_random_term`
+# (cf. jdm_tools.py) — celui-ci fait du vrai uniform sampling sur les IDs
+# JDM côté backend, sans laisser le LLM choisir.
 _RANDOM_TERM_INSTRUCTION = (
-    "Je n'ai pas précisé de terme — TU AS CARTE BLANCHE pour piocher "
-    "au hasard dans TOUT le lexique français. La langue est vaste : "
-    "noms abstraits, verbes, adjectifs, expressions, objets ordinaires, "
-    "concepts techniques, sentiments, états, processus, métiers, "
-    "phénomènes physiques ou sociaux… N'IMPORTE QUOI peut être "
-    "intéressant. ÉVITE les champs scolaires sur-explorés (animaux "
-    "courants, plantes, couleurs primaires) — JDM y est déjà dense "
-    "et tu ne ferais que dupliquer du connu.\n"
-    "VARIE RADICALEMENT d'un essai à l'autre et d'une session à "
-    "l'autre : registre (familier ↔ soutenu), longueur (1 mot ↔ "
-    "expression), niveau d'abstraction (concret ↔ abstrait), "
-    "fréquence (commun ↔ rare). Vérifie d'abord qu'il existe via "
-    "`lookup_term` ; si non, recommence avec un autre."
+    "Je n'ai pas précisé de terme : appelle `pick_random_term()` pour "
+    "en obtenir un au hasard (uniform sampling sur JDM)."
 )
 
 
-# Compat : les anciens callers utilisent random_term_instruction()
-# (la version avec ancres a été retirée — c'était bricolé). On garde
-# une fonction qui retourne juste la constante pour ne rien casser.
 def random_term_instruction() -> str:
     return _RANDOM_TERM_INSTRUCTION
 
