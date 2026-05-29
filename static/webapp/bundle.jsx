@@ -1000,20 +1000,48 @@ function CliTerminalBlock({ cliData, remoteData, closeable, onClose, data }) {
 function highlightPython(src) {
   // Escape HTML first to avoid breaking from < > & in user content.
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  let out = esc(src);
-  // Strings (greedy non-newline)
-  out = out.replace(/(&quot;[^&\n]*?&quot;|'[^'\n]*?')/g,
-    '<span style="color:#e0c890">$1</span>');
-  // Keywords
-  out = out.replace(/\b(from|import|for|in|print|return|if|else|as|def|class|with|try|except|raise|yield|lambda)\b/g,
-    '<span style="color:#c89bff">$1</span>');
-  // Function-ish calls (.predict, .submit, etc.)
-  out = out.replace(/\.(predict|submit|view_api)\b/g,
-    '.<span style="color:#7ee59a">$1</span>');
-  // Comments (# ...)
-  out = out.replace(/(#[^\n]*)/g,
-    '<span style="color:#6b7180">$1</span>');
-  return out;
+
+  // Highlight une PORTION DE CODE (= sans commentaire) :
+  // strings → keywords → calls. L'ordre interne importe peu ici car
+  // ces tokens ne contiennent pas de `#`.
+  const highlightCode = (code) => {
+    code = code.replace(/(&quot;[^&\n]*?&quot;|'[^'\n]*?')/g,
+      '<span style="color:#e0c890">$1</span>');
+    code = code.replace(/\b(from|import|for|in|print|return|if|else|as|def|class|with|try|except|raise|yield|lambda)\b/g,
+      '<span style="color:#c89bff">$1</span>');
+    code = code.replace(/\.(predict|submit|view_api|post|get|stream|iter_lines|startswith|strip|json|items|append|read|write|close)\b/g,
+      '.<span style="color:#7ee59a">$1</span>');
+    return code;
+  };
+
+  // Bug rapporté : appliquer les keywords AVANT les commentaires
+  // produit du HTML inline du style `<span style="color:#c89bff">`,
+  // et la regex de commentaire qui tourne après matche `#c89bff">…`
+  // comme un commentaire littéral → la couleur s'affiche en texte.
+  // Fix : traiter ligne par ligne et isoler le `#` (= premier `#`
+  // hors-string) AVANT toute autre coloration.
+  return src.split('\n').map(line => {
+    // Cherche le 1er `#` qui n'est pas dans une string.
+    let inStr = null, commentIdx = -1;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inStr) {
+        if (c === inStr && line[i - 1] !== '\\') inStr = null;
+      } else if (c === '"' || c === "'") {
+        inStr = c;
+      } else if (c === '#') {
+        commentIdx = i;
+        break;
+      }
+    }
+    if (commentIdx < 0) {
+      return highlightCode(esc(line));
+    }
+    const code = line.slice(0, commentIdx);
+    const comment = line.slice(commentIdx);
+    return highlightCode(esc(code))
+         + '<span style="color:#6b7180">' + esc(comment) + '</span>';
+  }).join('\n');
 }
 
 function CliCommandButton({ view }) {
