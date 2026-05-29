@@ -1117,6 +1117,10 @@ def _new_run(flow_id: str, params: dict, headline: str) -> dict:
         "finished_at": None,
         "loop": _asyncio.get_event_loop(),
         "error_text": None,
+        # Cooperative cancellation flag — vu par le bg thread entre
+        # deux chunks. Posé par POST /api/jarvis/runs/{id}/cancel.
+        # Latence d'arrêt ≈ temps du round-trip LLM en cours (5-15s).
+        "cancel_requested": False,
     }
     with _JARVIS_RUNS_LOCK:
         _JARVIS_RUNS[run_id] = run
@@ -1190,7 +1194,23 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
         except ImportError:
             count_consolidations = lambda: 0
             list_consolidations = lambda: []
+        cancelled = False
         for chunk in sync_gen:
+            # Cooperative cancellation : check le flag entre chaque chunk.
+            # Le chunk LLM en cours s'est déjà terminé (on l'a payé), mais
+            # on n'en démarre pas de nouveau. Latence d'arrêt ≈ 5-15s.
+            if run.get("cancel_requested"):
+                _push_event(run, "cancelled", {
+                    "text": "Flow annulé par l'utilisateur.",
+                })
+                cancelled = True
+                # Ferme proprement le générateur sync — déclenche les
+                # `finally` (exclusion_context exit, etc.).
+                try:
+                    sync_gen.close()
+                except Exception:
+                    pass
+                break
             if not isinstance(chunk, tuple):
                 continue
             messages = chunk[0] if len(chunk) >= 1 else None
@@ -1300,6 +1320,29 @@ def api_jarvis_list_runs():
                 for r in _JARVIS_RUNS.values()
             ]
         }
+
+
+@app.post("/api/jarvis/runs/{run_id}/cancel")
+def api_jarvis_cancel_run(run_id: str):
+    """Demande l'arrêt cooperative d'un run en cours. Pose un flag que
+    le bg thread voit entre deux chunks et déclenche `sync_gen.close()`
+    → `finally` blocs propres (exclusion_context exit, etc.).
+
+    Idempotent : si le run est déjà terminé (done/error), no-op + 200.
+    Si run_id inconnu (typo ou TTL dépassé), 404.
+
+    Latence d'arrêt ≈ temps d'un round-trip LLM en cours (5-15s) —
+    on ne peut pas interrompre du code sync Python proprement depuis
+    un autre thread sans corrompre les locks/registries (cf. note
+    archi en tête de section)."""
+    with _JARVIS_RUNS_LOCK:
+        run = _JARVIS_RUNS.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run_id inconnu : {run_id}")
+    if run["status"] in ("done", "error"):
+        return {"ok": True, "status": run["status"], "note": "already terminated"}
+    run["cancel_requested"] = True
+    return {"ok": True, "status": run["status"], "note": "cancel requested"}
 
 
 @app.get("/api/jarvis/runs/{run_id}/stream")
