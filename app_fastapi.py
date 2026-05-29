@@ -1105,6 +1105,26 @@ _JARVIS_RUN_TTL = 24 * 3600  # 24h après terminaison (done / error)
 
 def _new_run(flow_id: str, params: dict, headline: str) -> dict:
     run_id = _uuid.uuid4().hex[:12]
+    # Snapshot des clés du registry de consolidation au moment du start.
+    # Le registry est un global module-level (cf. note historique dans
+    # validators.py expliquant pourquoi ce n'est pas un ContextVar — les
+    # workers LangChain ne préservent pas le contexte). En parallèle,
+    # plusieurs runs partagent ce registry → contamination de la liste
+    # `consolidated` envoyée en SSE.
+    #
+    # Filtre pragmatique : on snapshot l'état du registry au start, et
+    # on envoie en SSE uniquement les triplets dont la clé n'était PAS
+    # dans le snapshot (= ajoutés depuis le start de CE run). Imparfait
+    # pour le premier run quand un second démarre après et ajoute en
+    # parallèle, mais résout 90% des cas (le nouveau run voit propre).
+    try:
+        from jdm_agent.enrich import validators as _v
+        with _v._REGISTRY_LOCK:
+            initial_keys = (set(_v._CONSOLIDATION_REGISTRY.keys())
+                            if _v._CONSOLIDATION_REGISTRY else set())
+    except Exception:
+        initial_keys = set()
+
     run = {
         "run_id": run_id,
         "flow_id": flow_id,
@@ -1121,6 +1141,9 @@ def _new_run(flow_id: str, params: dict, headline: str) -> dict:
         # deux chunks. Posé par POST /api/jarvis/runs/{id}/cancel.
         # Latence d'arrêt ≈ temps du round-trip LLM en cours (5-15s).
         "cancel_requested": False,
+        # Snapshot des clés pré-existantes pour filtrer le `consolidated`
+        # envoyé en SSE (anti-contamination cross-run).
+        "initial_consolidation_keys": initial_keys,
     }
     with _JARVIS_RUNS_LOCK:
         _JARVIS_RUNS[run_id] = run
@@ -1237,8 +1260,21 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
                             "content": m.get("content", ""),
                         })
             try:
-                cc = int(count_consolidations() or 0)
-                consolidated = list_consolidations() or []
+                # Filtre anti-contamination : ne garde que les triplets
+                # AJOUTÉS depuis le start de CE run (clés absentes du
+                # snapshot initial). Les compteurs cc/produced suivent
+                # cette même restriction pour rester cohérents avec
+                # ce que l'UI affiche.
+                from jdm_agent.enrich.validators import _norm_consolidation_key as _nck
+                all_consolidated = list_consolidations() or []
+                initial_keys = run.get("initial_consolidation_keys") or set()
+                consolidated = [
+                    c for c in all_consolidated
+                    if _nck(c.get("term") or "",
+                            c.get("relation") or "",
+                            c.get("target") or "") not in initial_keys
+                ]
+                cc = len(consolidated)
             except Exception:
                 cc = 0
                 consolidated = []

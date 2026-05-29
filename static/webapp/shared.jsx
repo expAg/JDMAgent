@@ -1517,7 +1517,13 @@ function ProductionsCountPill() {
   const localActive = (typeof window !== 'undefined' && window.__jdmJarvisStore)
     ? window.__jdmJarvisStore.activeFlowIds().length
     : 0;
-  const active = serverActive == null ? localActive : Math.max(localActive, serverActive);
+  // Source de vérité = store local (instantané, réactif à chaque
+  // changement de status). Le poll serveur est utilisé UNIQUEMENT en
+  // fallback quand le local n'a aucun run actif (cas où l'utilisateur
+  // a lancé des runs depuis une autre tab). Sans ce fallback-only,
+  // l'ancien `max(local, server)` empêchait la décroissance immédiate
+  // au stop (serveur lag 15s + bg thread cancellation 5-15s).
+  const active = localActive > 0 ? localActive : (serverActive ?? 0);
   const label = `${active}/${JARVIS_FLOWS_TOTAL}`;
   const load = Math.min(1, active / JARVIS_FLOWS_TOTAL);
   const [r, g, b] = _loadGradientRGB(load);
