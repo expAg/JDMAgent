@@ -365,10 +365,10 @@ function Field({ label, hint, children, inline }) {
 }
 
 // ───────── Input — text input that matches the select ─────────
-function Input({ value, onChange, placeholder, mono, ...rest }) {
+function Input({ value, onChange, placeholder, mono, type, ...rest }) {
   return (
     <input
-      type="text"
+      type={type || "text"}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
@@ -1457,31 +1457,94 @@ function ThemeSwitcher({ theme, setTheme }) {
   );
 }
 
-// ───────── Productions count pill — sticky en haut, polling léger ─────
-// Affiche le nombre de productions actives (fichiers sortie de Jarvis)
-// dans la nav. Recharge toutes les 30s ; échec silencieux si l'API
-// n'est pas dispo.
+// ───────── Flux en cours pill — sticky en haut, polling léger ─────
+// Affiche `X/N flux en cours` où X = runs actifs (status=running)
+// retournés par GET /api/jarvis/runs et N = nombre de flows distincts
+// (configuré globalement par JARVIS_FLOWS_TOTAL). Gradient de couleur :
+//   0%   → vert  (var(--jdm-green))      tout dispo
+//   50%  → jaune (var(--jdm-yellow))     mi-charge
+//   100% → rouge (var(--jdm-magenta))    tous pris, file d'attente
+// Recharge toutes les 5s pendant qu'on a au moins un run actif (pour
+// suivre le pulse), 30s sinon (économe quand idle).
+const JARVIS_FLOWS_TOTAL = 6;  // enrich + audit + gap + signalement + stats + annotation
+
+function _interpolateColor(c1, c2, t) {
+  // c1, c2 = [r, g, b] ; t in [0,1]
+  return [
+    Math.round(c1[0] + (c2[0] - c1[0]) * t),
+    Math.round(c1[1] + (c2[1] - c1[1]) * t),
+    Math.round(c1[2] + (c2[2] - c1[2]) * t),
+  ];
+}
+function _loadGradientRGB(load) {
+  // load in [0,1]. 0=vert, 0.5=jaune, 1=rouge. Interpolation par segments
+  // pour matcher le sentiment visuel (jaune intermédiaire).
+  const green  = [78, 166, 60];   // var(--jdm-green)
+  const yellow = [212, 169, 10];  // var(--jdm-yellow)
+  const red    = [200, 58, 115];  // var(--jdm-magenta)
+  if (load <= 0.5) return _interpolateColor(green, yellow, load * 2);
+  return _interpolateColor(yellow, red, (load - 0.5) * 2);
+}
+
 function ProductionsCountPill() {
-  const [n, setN] = useState(null);
+  const [active, setActive] = useState(null);  // null = chargement, number = compte
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch('api/productions');
+        const r = await fetch('api/jarvis/runs');
         if (!r.ok || !alive) return;
         const d = await r.json();
-        setN((d.productions || []).length);
+        const runs = d.runs || [];
+        const n = runs.filter(r => r.status === 'starting' || r.status === 'running').length;
+        setActive(n);
       } catch {}
     };
     load();
-    const id = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
+    // Polling adaptatif : si quelque chose tourne, on rafraîchit vite
+    // pour suivre les changements ; sinon on laisse tranquille.
+    let id = setInterval(load, 30_000);
+    const adapt = setInterval(() => {
+      const wantFast = (active != null && active > 0);
+      clearInterval(id);
+      id = setInterval(load, wantFast ? 5_000 : 30_000);
+    }, 1_000);
+    return () => { alive = false; clearInterval(id); clearInterval(adapt); };
+  }, [active]);
+
+  const label = active == null
+    ? '—'
+    : `${active}/${JARVIS_FLOWS_TOTAL}`;
+  const load = active == null ? 0 : Math.min(1, active / JARVIS_FLOWS_TOTAL);
+  const [r, g, b] = _loadGradientRGB(load);
+  const accentRGB = `rgb(${r}, ${g}, ${b})`;
+  const fillRGBA = `rgba(${r}, ${g}, ${b}, 0.14)`;
+  const borderRGBA = `rgba(${r}, ${g}, ${b}, 0.45)`;
+  const dotRGB = accentRGB;
   return (
-    <Pill color="var(--jdm-green)" tone="outline">
-      <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
-      {n == null ? '— productions' : `${n} production${n > 1 ? 's' : ''} soumise${n > 1 ? 's' : ''}`}
-    </Pill>
+    <span
+      title={
+        active == null ? 'Chargement…'
+        : `${active} flux Jarvis actuellement en cours sur ${JARVIS_FLOWS_TOTAL} disponibles`
+      }
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '4px 11px',
+        background: fillRGBA,
+        border: '1px solid ' + borderRGBA,
+        borderRadius: 999,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        fontWeight: 600,
+        color: accentRGB,
+        letterSpacing: '0.03em',
+        textTransform: 'uppercase',
+        transition: 'background 0.2s, border-color 0.2s, color 0.2s',
+      }}>
+      <span className="pulse-dot" style={{ background: dotRGB }} />
+      <span>{label}</span>
+      <span style={{ opacity: 0.65, fontWeight: 400, textTransform: 'lowercase' }}>flux</span>
+    </span>
   );
 }
 
@@ -1496,9 +1559,52 @@ function PageShell({ children }) {
   );
 }
 
+// ───────── Env-status hook — quels secrets sont configurés en .env ─────
+// Le backend expose GET /api/env-status qui renvoie pour chaque clé :
+// `{set: bool}`. Le front l'utilise pour dégriser les boutons qui
+// dépendent d'une clé : si l'utilisateur n'a rien tapé MAIS l'env
+// contient la clé, on autorise (la clé sera prise côté serveur).
+//
+// Cache module-level + recharge unique au boot — l'env ne change pas
+// au runtime. Si tu déploies un changement, tu redémarres uvicorn.
+let _ENV_STATUS_CACHE = null;
+let _ENV_STATUS_LOADERS = new Set();
+
+async function _fetchEnvStatus() {
+  try {
+    const r = await fetch('api/env-status');
+    if (!r.ok) return {};
+    const d = await r.json();
+    return d.env || {};
+  } catch { return {}; }
+}
+
+function useEnvStatus() {
+  const [env, setEnv] = useState(_ENV_STATUS_CACHE);
+  useEffect(() => {
+    if (_ENV_STATUS_CACHE !== null) return;
+    _ENV_STATUS_LOADERS.add(setEnv);
+    if (_ENV_STATUS_LOADERS.size > 1) return;  // déjà en cours
+    _fetchEnvStatus().then(e => {
+      _ENV_STATUS_CACHE = e;
+      _ENV_STATUS_LOADERS.forEach(s => { try { s(e); } catch {} });
+      _ENV_STATUS_LOADERS.clear();
+    });
+    return () => { _ENV_STATUS_LOADERS.delete(setEnv); };
+  }, []);
+  return env || {};
+}
+
+// Helper : la clé `name` est-elle disponible (saisie ou en env) ?
+function isKeyAvailable(envStatus, name, userInput) {
+  if (userInput && userInput.trim()) return true;
+  return !!(envStatus && envStatus[name] && envStatus[name].set);
+}
+
 Object.assign(window, {
   JDM_PALETTE, JDM_COLORS,
   Select, Field, Input, Slider, Button, Card, Pill, SectionTitle, EmptyState,
   Triplet, TopNav, ThemeSwitcher, PageShell, JDMMark, JDMWordmark,
+  useEnvStatus, isKeyAvailable,
 });
 

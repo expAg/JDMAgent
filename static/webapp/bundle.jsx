@@ -366,10 +366,10 @@ function Field({ label, hint, children, inline }) {
 }
 
 // ───────── Input — text input that matches the select ─────────
-function Input({ value, onChange, placeholder, mono, ...rest }) {
+function Input({ value, onChange, placeholder, mono, type, ...rest }) {
   return (
     <input
-      type="text"
+      type={type || "text"}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
@@ -1458,31 +1458,94 @@ function ThemeSwitcher({ theme, setTheme }) {
   );
 }
 
-// ───────── Productions count pill — sticky en haut, polling léger ─────
-// Affiche le nombre de productions actives (fichiers sortie de Jarvis)
-// dans la nav. Recharge toutes les 30s ; échec silencieux si l'API
-// n'est pas dispo.
+// ───────── Flux en cours pill — sticky en haut, polling léger ─────
+// Affiche `X/N flux en cours` où X = runs actifs (status=running)
+// retournés par GET /api/jarvis/runs et N = nombre de flows distincts
+// (configuré globalement par JARVIS_FLOWS_TOTAL). Gradient de couleur :
+//   0%   → vert  (var(--jdm-green))      tout dispo
+//   50%  → jaune (var(--jdm-yellow))     mi-charge
+//   100% → rouge (var(--jdm-magenta))    tous pris, file d'attente
+// Recharge toutes les 5s pendant qu'on a au moins un run actif (pour
+// suivre le pulse), 30s sinon (économe quand idle).
+const JARVIS_FLOWS_TOTAL = 6;  // enrich + audit + gap + signalement + stats + annotation
+
+function _interpolateColor(c1, c2, t) {
+  // c1, c2 = [r, g, b] ; t in [0,1]
+  return [
+    Math.round(c1[0] + (c2[0] - c1[0]) * t),
+    Math.round(c1[1] + (c2[1] - c1[1]) * t),
+    Math.round(c1[2] + (c2[2] - c1[2]) * t),
+  ];
+}
+function _loadGradientRGB(load) {
+  // load in [0,1]. 0=vert, 0.5=jaune, 1=rouge. Interpolation par segments
+  // pour matcher le sentiment visuel (jaune intermédiaire).
+  const green  = [78, 166, 60];   // var(--jdm-green)
+  const yellow = [212, 169, 10];  // var(--jdm-yellow)
+  const red    = [200, 58, 115];  // var(--jdm-magenta)
+  if (load <= 0.5) return _interpolateColor(green, yellow, load * 2);
+  return _interpolateColor(yellow, red, (load - 0.5) * 2);
+}
+
 function ProductionsCountPill() {
-  const [n, setN] = useState(null);
+  const [active, setActive] = useState(null);  // null = chargement, number = compte
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch('api/productions');
+        const r = await fetch('api/jarvis/runs');
         if (!r.ok || !alive) return;
         const d = await r.json();
-        setN((d.productions || []).length);
+        const runs = d.runs || [];
+        const n = runs.filter(r => r.status === 'starting' || r.status === 'running').length;
+        setActive(n);
       } catch {}
     };
     load();
-    const id = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
+    // Polling adaptatif : si quelque chose tourne, on rafraîchit vite
+    // pour suivre les changements ; sinon on laisse tranquille.
+    let id = setInterval(load, 30_000);
+    const adapt = setInterval(() => {
+      const wantFast = (active != null && active > 0);
+      clearInterval(id);
+      id = setInterval(load, wantFast ? 5_000 : 30_000);
+    }, 1_000);
+    return () => { alive = false; clearInterval(id); clearInterval(adapt); };
+  }, [active]);
+
+  const label = active == null
+    ? '—'
+    : `${active}/${JARVIS_FLOWS_TOTAL}`;
+  const load = active == null ? 0 : Math.min(1, active / JARVIS_FLOWS_TOTAL);
+  const [r, g, b] = _loadGradientRGB(load);
+  const accentRGB = `rgb(${r}, ${g}, ${b})`;
+  const fillRGBA = `rgba(${r}, ${g}, ${b}, 0.14)`;
+  const borderRGBA = `rgba(${r}, ${g}, ${b}, 0.45)`;
+  const dotRGB = accentRGB;
   return (
-    <Pill color="var(--jdm-green)" tone="outline">
-      <span className="pulse-dot" style={{ background: 'var(--jdm-green)' }} />
-      {n == null ? '— productions' : `${n} production${n > 1 ? 's' : ''} soumise${n > 1 ? 's' : ''}`}
-    </Pill>
+    <span
+      title={
+        active == null ? 'Chargement…'
+        : `${active} flux Jarvis actuellement en cours sur ${JARVIS_FLOWS_TOTAL} disponibles`
+      }
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '4px 11px',
+        background: fillRGBA,
+        border: '1px solid ' + borderRGBA,
+        borderRadius: 999,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        fontWeight: 600,
+        color: accentRGB,
+        letterSpacing: '0.03em',
+        textTransform: 'uppercase',
+        transition: 'background 0.2s, border-color 0.2s, color 0.2s',
+      }}>
+      <span className="pulse-dot" style={{ background: dotRGB }} />
+      <span>{label}</span>
+      <span style={{ opacity: 0.65, fontWeight: 400, textTransform: 'lowercase' }}>flux</span>
+    </span>
   );
 }
 
@@ -1497,10 +1560,53 @@ function PageShell({ children }) {
   );
 }
 
+// ───────── Env-status hook — quels secrets sont configurés en .env ─────
+// Le backend expose GET /api/env-status qui renvoie pour chaque clé :
+// `{set: bool}`. Le front l'utilise pour dégriser les boutons qui
+// dépendent d'une clé : si l'utilisateur n'a rien tapé MAIS l'env
+// contient la clé, on autorise (la clé sera prise côté serveur).
+//
+// Cache module-level + recharge unique au boot — l'env ne change pas
+// au runtime. Si tu déploies un changement, tu redémarres uvicorn.
+let _ENV_STATUS_CACHE = null;
+let _ENV_STATUS_LOADERS = new Set();
+
+async function _fetchEnvStatus() {
+  try {
+    const r = await fetch('api/env-status');
+    if (!r.ok) return {};
+    const d = await r.json();
+    return d.env || {};
+  } catch { return {}; }
+}
+
+function useEnvStatus() {
+  const [env, setEnv] = useState(_ENV_STATUS_CACHE);
+  useEffect(() => {
+    if (_ENV_STATUS_CACHE !== null) return;
+    _ENV_STATUS_LOADERS.add(setEnv);
+    if (_ENV_STATUS_LOADERS.size > 1) return;  // déjà en cours
+    _fetchEnvStatus().then(e => {
+      _ENV_STATUS_CACHE = e;
+      _ENV_STATUS_LOADERS.forEach(s => { try { s(e); } catch {} });
+      _ENV_STATUS_LOADERS.clear();
+    });
+    return () => { _ENV_STATUS_LOADERS.delete(setEnv); };
+  }, []);
+  return env || {};
+}
+
+// Helper : la clé `name` est-elle disponible (saisie ou en env) ?
+function isKeyAvailable(envStatus, name, userInput) {
+  if (userInput && userInput.trim()) return true;
+  return !!(envStatus && envStatus[name] && envStatus[name].set);
+}
+
 Object.assign(window, {
   JDM_PALETTE, JDM_COLORS,
   Select, Field, Input, Slider, Button, Card, Pill, SectionTitle, EmptyState,
   Triplet, TopNav, ThemeSwitcher, PageShell, JDMMark, JDMWordmark,
+  useEnvStatus, isKeyAvailable,
 });
 
 // === webapp/hero-animation.jsx ===
@@ -7680,6 +7786,12 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const resumeState = run.resumeState;
   const setResumeState = (v) => JarvisStore.patch(flow.id, { resumeState: v });
   const [poolStatus, setPoolStatus] = useState(null);
+  // État des secrets en env serveur. Permet d'autoriser
+  // soumission / auto-upload même si l'utilisateur n'a pas tapé la clé
+  // (elle sera prise depuis l'env par le backend).
+  const _envStatus = useEnvStatus();
+  const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
+  const _canSubmit = !!params.drops_key || _envHasDrops;
   // État du bouton « 📤 Soumettre » post-hoc à côté de Télécharger.
   // submitState ∈ {idle, sending, done, error}. submitMsg = retour serveur
   // affiché en pastille discrète sous l'en-tête du panneau pour ~6s.
@@ -7742,6 +7854,33 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   };
   const stop = () => JarvisStore.stop(flow.id);
   const reset = () => JarvisStore.reset(flow.id);
+
+  // Smooth scroll à l'ouverture : si le flow a déjà du contenu (status
+  // running/done/error, narration ou file_preview non vides), on amène
+  // le bas des panneaux dans la viewport — l'utilisateur voit l'état
+  // courant (dernières lignes de narration, derniers triplets) sans
+  // avoir à scroller manuellement. Si le flow est idle (premier mount,
+  // pas encore lancé), on ne touche pas (formulaire en haut).
+  const _bottomAnchorRef = useRef(null);
+  React.useEffect(() => {
+    const hasContent = state === 'running' || state === 'done' || state === 'error'
+                    || (narrationHTML && narrationHTML.length > 0)
+                    || (filePreview && filePreview.length > 0);
+    if (!hasContent || !_bottomAnchorRef.current) return;
+    // requestAnimationFrame + petit timeout pour laisser le layout se
+    // poser après le mount (les panneaux à hauteur variable).
+    const id = requestAnimationFrame(() => {
+      setTimeout(() => {
+        try {
+          _bottomAnchorRef.current.scrollIntoView({
+            behavior: 'smooth', block: 'end',
+          });
+        } catch {}
+      }, 80);
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow.id]);
 
   return (
     <PageShell>
@@ -7915,19 +8054,32 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   onChange={(v) => setParams(p => ({ ...p, budget_label: v }))}
                   options={BUDGET_OPTS} />
               </Field>
-              <Field label="Clé LLMDrops">
-                <Input value={params.drops_key || ''}
+              <Field label={
+                _envHasDrops
+                  ? 'Clé LLMDrops (override .env)'
+                  : 'Clé LLMDrops'
+              }>
+                <Input type="password"
+                  value={params.drops_key || ''}
                   onChange={(v) => setParams(p => ({ ...p, drops_key: v }))}
-                  placeholder="vide = clé serveur…" mono />
+                  placeholder={_envHasDrops ? '— configurée côté serveur —' : 'vide = pas de clé'}
+                  mono />
               </Field>
-              {(params.model || '').match(/^(claude|gpt)-/) && (
-                <Field label="Clé API LLM">
-                  <Input value={params.api_key || ''}
-                    onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
-                    placeholder={(params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…'}
-                    mono />
-                </Field>
-              )}
+              {(params.model || '').match(/^(claude|gpt)-/) && (() => {
+                const envKey = (params.model || '').startsWith('claude-') ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+                const envHas = !!(_envStatus[envKey] && _envStatus[envKey].set);
+                return (
+                  <Field label={envHas ? 'Clé API LLM (override .env)' : 'Clé API LLM'}>
+                    <Input type="password"
+                      value={params.api_key || ''}
+                      onChange={(v) => setParams(p => ({ ...p, api_key: v }))}
+                      placeholder={envHas
+                        ? '— configurée côté serveur —'
+                        : ((params.model || '').startsWith('claude-') ? 'sk-ant-…' : 'sk-…')}
+                      mono />
+                  </Field>
+                );
+              })()}
             </div>
           </Card>
 
@@ -8049,10 +8201,12 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                         renommer correctement côté serveur. */}
                     {SUBMITTABLE_FLOWS.has(flow.id) && (
                       <Button size="sm" variant="ghost"
-                        disabled={!params.drops_key || submitState === 'sending'}
-                        title={!params.drops_key
-                          ? 'Renseigne la clé LLMDrops pour activer la soumission'
-                          : 'Soumettre ce fichier au LLMDrops JDM'}
+                        disabled={!_canSubmit || submitState === 'sending'}
+                        title={!_canSubmit
+                          ? 'Renseigne la clé LLMDrops (ou configure JDM_DROPS_API_KEY côté serveur) pour activer la soumission'
+                          : (params.drops_key
+                            ? 'Soumettre ce fichier au LLMDrops JDM (clé saisie)'
+                            : 'Soumettre ce fichier au LLMDrops JDM (clé serveur)')}
                         onClick={async () => {
                           const name = filePath.split(/[\\/]/).slice(-1)[0];
                           setSubmitState('sending');
@@ -8178,6 +8332,12 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
 
         </div>
       </div>
+      {/* Ancre fin de page pour le smooth-scroll d'ouverture (cf.
+          useEffect au mount de JarvisRun). Quand on rouvre un flow qui
+          tournait déjà, on scroll ici pour montrer la fin de la
+          narration et la fin du fichier qui se construit. */}
+      <div ref={_bottomAnchorRef} aria-hidden="true"
+           style={{ height: 1, scrollMarginBottom: 16 }} />
     </PageShell>
   );
 }
@@ -8652,6 +8812,32 @@ function defaultParamsFor(flowId) {
 
 function ParamsForm({ flow, params, setParams, locked }) {
   const set = (k, v) => setParams(p => ({ ...p, [k]: v }));
+  // Env-aware : la case « Soumettre à LLMDrops » n'est cochable que
+  // si une clé est dispo (champ saisi OU env serveur). Sinon disabled
+  // + tooltip explicatif.
+  const _envStatus = useEnvStatus();
+  const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
+  const _canSubmit = !!params.drops_key || _envHasDrops;
+  const submitLabel = (
+    <label style={{
+      display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+      color: _canSubmit ? 'var(--ink-2)' : 'var(--ink-3)',
+      cursor: _canSubmit ? 'pointer' : 'not-allowed',
+      opacity: _canSubmit ? 1 : 0.55,
+    }}
+    title={_canSubmit
+      ? (params.drops_key
+        ? 'Le fichier sera soumis automatiquement avec la clé saisie'
+        : 'Le fichier sera soumis automatiquement avec la clé serveur (.env)')
+      : 'Renseigne la clé LLMDrops (ou configure JDM_DROPS_API_KEY côté serveur) pour activer'}>
+      <input type="checkbox"
+        checked={!!params.upload && _canSubmit}
+        disabled={!_canSubmit}
+        onChange={(e) => set('upload', e.target.checked)}
+        style={{ accentColor: 'var(--accent)' }} />
+      Soumettre à LLMDrops
+    </label>
+  );
   const wrap = (children) => (
     <div style={{ opacity: locked ? 0.55 : 1, pointerEvents: locked ? 'none' : undefined }}>
       {children}
@@ -8687,12 +8873,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label="Budget d'outils">
         <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
       </Field>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
-        <input type="checkbox" checked={!!params.upload}
-          onChange={(e) => set('upload', e.target.checked)}
-          style={{ accentColor: 'var(--accent)' }} />
-        Soumettre à LLMDrops
-      </label>
+      {submitLabel}
     </>);
   }
 
@@ -8710,14 +8891,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label="Budget d'outils">
         <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
       </Field>
-      {flow.id !== 'stats' && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!params.upload}
-            onChange={(e) => set('upload', e.target.checked)}
-            style={{ accentColor: 'var(--accent)' }} />
-          Soumettre à LLMDrops
-        </label>
-      )}
+      {flow.id !== 'stats' && submitLabel}
     </>);
   }
 
@@ -8762,12 +8936,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <Field label="Budget d'outils">
         <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
       </Field>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
-        <input type="checkbox" checked={!!params.upload}
-          onChange={(e) => set('upload', e.target.checked)}
-          style={{ accentColor: 'var(--accent)' }} />
-        Soumettre à LLMDrops
-      </label>
+      {submitLabel}
     </>);
   }
 
@@ -8796,6 +8965,12 @@ function ViewProductions() {
   // Bandeau Drops + modèle (pour soumissions)
   const [dropsKey, setDropsKey] = useState('');
   const [modelName, setModelName] = useState('claude-sonnet');
+  // Env-aware : si JDM_DROPS_API_KEY est posée côté serveur, le bouton
+  // Soumettre est dégrisé même quand l'input est vide. La clé saisie
+  // override toujours l'env (sinon impossible de tester avec une autre).
+  const _envStatus = useEnvStatus();
+  const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
+  const _canSubmit = !!dropsKey || _envHasDrops;
 
   const isAdmin = typeof window !== 'undefined' && window.__JDM_ADMIN__;
 
@@ -8968,8 +9143,14 @@ function ViewProductions() {
       {/* Bandeau actions */}
       <Card padding={16} style={{ marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, alignItems: 'end' }}>
-          <Field label="Clé LLMDrops (override env)">
-            <Input value={dropsKey} onChange={setDropsKey} placeholder="optionnel…" mono />
+          <Field label={
+            _envHasDrops
+              ? 'Clé LLMDrops (override .env)'
+              : 'Clé LLMDrops'
+          }>
+            <Input type="password"
+              value={dropsKey} onChange={setDropsKey}
+              placeholder={_envHasDrops ? '— configurée côté serveur —' : 'vide = pas de clé'} mono />
           </Field>
           <Field label="Nom modèle (filename uploadé)">
             <Input value={modelName} onChange={setModelName} placeholder="claude-sonnet" mono />
@@ -9000,6 +9181,7 @@ function ViewProductions() {
         onDownload={downloadOne}
         onSubmit={() => submitSelected(false)}
         onDelete={() => deleteSelected(false)}
+        canSubmit={_canSubmit}
         busy={busy} isAdmin={isAdmin}
       />
 
@@ -9031,6 +9213,7 @@ function ViewProductions() {
               files={oldies} archived={true}
               selected={selectedOldies} setSelected={setSelectedOldies}
               onToggle={toggle(selectedOldies, setSelectedOldies)}
+              canSubmit={_canSubmit}
               onPreview={openPreview}
               onDownload={downloadOne}
               onSubmit={() => submitSelected(true)}
@@ -9127,7 +9310,7 @@ function ViewProductions() {
 
 function ProductionsSection({ title, files, archived, selected, setSelected,
                               onToggle, onPreview, onDownload, onSubmit,
-                              onDelete, busy, isAdmin }) {
+                              onDelete, canSubmit = true, busy, isAdmin }) {
   // Select-all : si tous sont sélectionnés → clear, sinon → tout sélectionner.
   // Tri-état visuel : empty / indeterminate / checked.
   const allSelected = files.length > 0 && selected.size === files.length;
@@ -9186,7 +9369,10 @@ function ProductionsSection({ title, files, archived, selected, setSelected,
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <Button size="sm" onClick={onSubmit}
-            disabled={busy || selected.size === 0}>
+            disabled={busy || selected.size === 0 || !canSubmit}
+            title={!canSubmit
+              ? 'Renseigne la clé LLMDrops (ou configure JDM_DROPS_API_KEY côté serveur) pour activer la soumission'
+              : 'Soumettre les fichiers sélectionnés au LLMDrops JDM'}>
             📤 Soumettre {selected.size > 0 ? `(${selected.size})` : ''}
           </Button>
           <span className="admin-only">

@@ -17,6 +17,12 @@ function ViewProductions() {
   // Bandeau Drops + modèle (pour soumissions)
   const [dropsKey, setDropsKey] = useState('');
   const [modelName, setModelName] = useState('claude-sonnet');
+  // Env-aware : si JDM_DROPS_API_KEY est posée côté serveur, le bouton
+  // Soumettre est dégrisé même quand l'input est vide. La clé saisie
+  // override toujours l'env (sinon impossible de tester avec une autre).
+  const _envStatus = useEnvStatus();
+  const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
+  const _canSubmit = !!dropsKey || _envHasDrops;
 
   const isAdmin = typeof window !== 'undefined' && window.__JDM_ADMIN__;
 
@@ -189,8 +195,14 @@ function ViewProductions() {
       {/* Bandeau actions */}
       <Card padding={16} style={{ marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, alignItems: 'end' }}>
-          <Field label="Clé LLMDrops (override env)">
-            <Input value={dropsKey} onChange={setDropsKey} placeholder="optionnel…" mono />
+          <Field label={
+            _envHasDrops
+              ? 'Clé LLMDrops (override .env)'
+              : 'Clé LLMDrops'
+          }>
+            <Input type="password"
+              value={dropsKey} onChange={setDropsKey}
+              placeholder={_envHasDrops ? '— configurée côté serveur —' : 'vide = pas de clé'} mono />
           </Field>
           <Field label="Nom modèle (filename uploadé)">
             <Input value={modelName} onChange={setModelName} placeholder="claude-sonnet" mono />
@@ -221,6 +233,7 @@ function ViewProductions() {
         onDownload={downloadOne}
         onSubmit={() => submitSelected(false)}
         onDelete={() => deleteSelected(false)}
+        canSubmit={_canSubmit}
         busy={busy} isAdmin={isAdmin}
       />
 
@@ -252,6 +265,7 @@ function ViewProductions() {
               files={oldies} archived={true}
               selected={selectedOldies} setSelected={setSelectedOldies}
               onToggle={toggle(selectedOldies, setSelectedOldies)}
+              canSubmit={_canSubmit}
               onPreview={openPreview}
               onDownload={downloadOne}
               onSubmit={() => submitSelected(true)}
@@ -348,7 +362,7 @@ function ViewProductions() {
 
 function ProductionsSection({ title, files, archived, selected, setSelected,
                               onToggle, onPreview, onDownload, onSubmit,
-                              onDelete, busy, isAdmin }) {
+                              onDelete, canSubmit = true, busy, isAdmin }) {
   // Select-all : si tous sont sélectionnés → clear, sinon → tout sélectionner.
   // Tri-état visuel : empty / indeterminate / checked.
   const allSelected = files.length > 0 && selected.size === files.length;
@@ -407,7 +421,10 @@ function ProductionsSection({ title, files, archived, selected, setSelected,
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <Button size="sm" onClick={onSubmit}
-            disabled={busy || selected.size === 0}>
+            disabled={busy || selected.size === 0 || !canSubmit}
+            title={!canSubmit
+              ? 'Renseigne la clé LLMDrops (ou configure JDM_DROPS_API_KEY côté serveur) pour activer la soumission'
+              : 'Soumettre les fichiers sélectionnés au LLMDrops JDM'}>
             📤 Soumettre {selected.size > 0 ? `(${selected.size})` : ''}
           </Button>
           <span className="admin-only">

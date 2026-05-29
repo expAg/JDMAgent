@@ -1501,6 +1501,39 @@ def health():
 
 
 # ────────────────────────────────────────────────────────────────────
+# Env keys status — quels secrets sont présents en env vars côté serveur
+# ────────────────────────────────────────────────────────────────────
+# Permet au front de savoir SI une clé est configurée (sans la révéler),
+# pour dégriser le bouton "Soumettre" / la case "Soumettre auto" même
+# quand le champ d'input est vide. Le backend utilisera l'env si le
+# champ est vide.
+@app.get("/api/env-status")
+def api_env_status():
+    """Renvoie pour chaque clé d'env utilisée par l'app : `{set: bool}`.
+    Ne révèle JAMAIS la valeur — juste sa présence/absence."""
+    keys = [
+        "JDM_DROPS_API_KEY",  # soumission LLMDrops
+        "ANTHROPIC_API_KEY",  # Claude BYOK
+        "OPENAI_API_KEY",     # GPT BYOK
+        # Pool Gemini : on regarde GOOGLE_API_KEY simple OU GOOGLE_API_KEYS
+        # (CSV multi-clés). Présent si au moins une est non vide.
+    ]
+    status = {}
+    for k in keys:
+        v = os.environ.get(k, "").strip()
+        status[k] = {"set": bool(v)}
+    gemini_set = (
+        bool(os.environ.get("GOOGLE_API_KEY", "").strip())
+        or any(
+            bool(x.strip())
+            for x in os.environ.get("GOOGLE_API_KEYS", "").split(",")
+        )
+    )
+    status["GOOGLE_API_KEY"] = {"set": gemini_set}
+    return {"env": status}
+
+
+# ────────────────────────────────────────────────────────────────────
 # Productions — liste / download / submit / delete (port app.py)
 # ────────────────────────────────────────────────────────────────────
 PRODUCTIONS_DIR = Path("/tmp/jdm_outputs")
