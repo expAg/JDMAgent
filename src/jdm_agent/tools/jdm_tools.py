@@ -1962,27 +1962,54 @@ def write_submission_file(
         _p.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
-    # ANTI-ÉCRASEMENT : si un fichier au même nom existe déjà, on suffixe
-    # _2, _3, _4… avant l'extension. Sauf si le path est celui géré par
-    # l'auto-append (cf. guard plus bas qui no-op cet appel de toute façon).
+
+    # ── REDIRECT MODE ──────────────────────────────────────────────
+    # Si jarvis a posé un canonical en mode redirect (flows annot /
+    # audit / err / stat), on IGNORE complètement le `path` passé par
+    # le LLM et on overwrite ce canonical. Garantie structurelle zéro
+    # fragmentation : peu importe ce que le LLM tente, ça atterrit là.
+    # Court-circuit AVANT l'anti-écrasement (qui n'a pas de sens en
+    # redirect : c'est précisément l'overwrite répété qu'on autorise).
     try:
-        from jdm_agent.enrich import get_consolidation_output_path as _g
-        _is_auto_path = (_g() is not None
-                         and str(_Path(_g()).resolve()) == str(_p.resolve()))
+        from jdm_agent.enrich import get_redirect_output_path as _get_redirect
+        _redirect = _get_redirect()
     except Exception:
-        _is_auto_path = False
-    if not _is_auto_path and _p.exists():
-        _stem, _ext = _p.stem, _p.suffix
-        _i = 2
-        while True:
-            _candidate = _p.with_name(f"{_stem}_{_i}{_ext}")
-            if not _candidate.exists():
-                _p = _candidate
-                break
-            _i += 1
-            if _i > 999:  # safety, on stoppe à 999 collisions
-                break
-    path = str(_p.resolve())
+        _redirect = None
+    if _redirect:
+        _p = _Path(_redirect)
+        try:
+            _p.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        path = str(_p.resolve())
+        _skip_anti_overwrite = True
+    else:
+        _skip_anti_overwrite = False
+    # ANTI-ÉCRASEMENT : si un fichier au même nom existe déjà, on suffixe
+    # _2, _3, _4… avant l'extension. Sauf si :
+    #   - le path est celui géré par l'auto-append enrich (no-op poli
+    #     dans le guard plus bas), ou
+    #   - on est en redirect mode (overwrite répété du canonical, c'est
+    #     précisément ce qu'on veut).
+    if not _skip_anti_overwrite:
+        try:
+            from jdm_agent.enrich import get_consolidation_output_path as _g
+            _is_auto_path = (_g() is not None
+                             and str(_Path(_g()).resolve()) == str(_p.resolve()))
+        except Exception:
+            _is_auto_path = False
+        if not _is_auto_path and _p.exists():
+            _stem, _ext = _p.stem, _p.suffix
+            _i = 2
+            while True:
+                _candidate = _p.with_name(f"{_stem}_{_i}{_ext}")
+                if not _candidate.exists():
+                    _p = _candidate
+                    break
+                _i += 1
+                if _i > 999:  # safety, on stoppe à 999 collisions
+                    break
+        path = str(_p.resolve())
 
     # Classement par clés — auto-détection : pas de mode explicite.
     # Tout est dict (Gemini exige items: {...} pour les arrays JSON Schema,
