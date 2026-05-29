@@ -2202,12 +2202,29 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
   const tools = m.toolsCalled || 0;
   const narration = (store && store.narrationHTML) || '';
 
-  // iter REEL : 1 (run initial) + nombre de relances de persistance
-  // detectees dans la narration. Le backend pousse "🔁 Relance automatique
-  // N" via _add_line lors de chaque persistance_relances++. On compte ces
-  // markers — c'est la vraie metrique d'iteration de l'agent.
-  const relances = (narration.match(/🔁 Relance automatique/g) || []).length;
-  const iter = Math.max(1, 1 + relances);
+  // iter = TENTATIVE REELLE de l'agent. On detecte chaque "retour au
+  // debut du flow" en parcourant la sequence des tool calls dans la
+  // narration LLM et en croisant avec FLOW_TOOL_STEPS[flow.id] :
+  //   - le 1er appel a un tool de step 0  →  attempt = 1
+  //   - chaque fois qu'on revient a step 0 alors qu'on etait passe par
+  //     un step >= 1  →  attempt += 1 (= nouvelle tentative)
+  // Cas concret annot : workflow (step 0) → lookup_term (step 0) →
+  // get_relations (step 1) → lookup_term (step 0 → +1 tentative) →
+  // get_relations (step 1) → write_submission (step 2) → 2 tentatives.
+  let iter = 0;
+  if (narration) {
+    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+    const reAll = /`(\w+)\(/g;
+    let prevStep = -1, mm;
+    while ((mm = reAll.exec(narration)) !== null) {
+      const s = fts[mm[1]];
+      if (s === undefined) continue;
+      // Transition step >=1 → step 0  OU  toute premiere entree en step 0
+      if (s === 0 && (prevStep === -1 || prevStep >= 1)) iter++;
+      prevStep = s;
+    }
+  }
+  if (iter < 1 && (isRunning || tools > 0)) iter = 1;
 
   // Y reel : si l'utilisateur a fixe un budget numerique, c'est Y. Sinon
   // pas de Y montre (juste "iter X").
