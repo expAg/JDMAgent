@@ -3006,7 +3006,19 @@ function JToolDialog({ flow, tool, onClose }) {
     desc: ready ? 'Outil non documenté.' : 'Chargement du catalogue…',
     docstring: '—', prompt: '—', cli: tool, output: '—',
   };
-  const a = flow.accent;
+  // Two notions de flow distinctes :
+  //   - `flow` (prop)         : flow d'ORIGINE depuis lequel le dialog a ete
+  //                             ouvert. Garde la pastille « ACTUEL » comme
+  //                             reperage contextuel.
+  //   - `selectedFlowId` / `selectedFlow` : flow actuellement VIEWE dans
+  //                             le dialog. Defaut = flow.id ; change quand
+  //                             l'utilisateur clique sur une autre carte
+  //                             dans « Inscription dans les sequences ».
+  // Tous les rendus dependants d'un flow (Prompt agreged, step highlight,
+  // accent CSS) utilisent selectedFlow.
+  const [selectedFlowId, setSelectedFlowId] = useState(flow.id);
+  const selectedFlow = JARVIS_FLOWS.find(f => f.id === selectedFlowId) || flow;
+  const a = selectedFlow.accent;
   const kindColor = { 'API JDM': 'var(--jdm-cyan)', 'LLM': 'var(--jdm-violet)', 'logique': 'var(--jdm-orange)' }[doc.kind] || a;
 
   // Every flow whose sequence calls this tool (souvent plus d'une).
@@ -3019,12 +3031,15 @@ function JToolDialog({ flow, tool, onClose }) {
   // doc disponible cote catalogue (chargement en cours), on liste leur
   // nom avec un placeholder pour ne pas masquer leur presence.
   const flowPrompt = (() => {
-    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+    // Utilise selectedFlow (= flow VIEWE dans le dialog), pas flow (=
+    // flow d'ORIGINE). Permet la navigation : cliquer sur une autre
+    // carte dans « Inscription » switch le prompt agreged sur ce flow.
+    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[selectedFlow.id]) || {};
     const ordered = Object.keys(fts).sort((a, b) => (fts[a] - fts[b]));
     if (ordered.length === 0) return doc.prompt;
     const parts = [
-      `# PROMPT AGREGED — flow « ${flow.title} » (${flow.id})`,
-      `# Etapes : ${flow.steps.map((s, k) => `[${k}] ${s.n}`).join(' → ')}`,
+      `# PROMPT AGREGED — flow « ${selectedFlow.title} » (${selectedFlow.id})`,
+      `# Etapes : ${selectedFlow.steps.map((s, k) => `[${k}] ${s.n}`).join(' → ')}`,
       `# ${ordered.length} tools concatenes ci-dessous dans l'ordre d'execution.`,
       `# C'est ce que voit le LLM comme contexte agent pour ce flow.`,
       '',
@@ -3032,7 +3047,7 @@ function JToolDialog({ flow, tool, onClose }) {
     for (const t of ordered) {
       const d = docs[t];
       const step = fts[t];
-      const stepName = (flow.steps[step] && flow.steps[step].n) || '';
+      const stepName = (selectedFlow.steps[step] && selectedFlow.steps[step].n) || '';
       parts.push(`## [step ${step}${stepName ? ' · ' + stepName : ''}] ${t}()`);
       parts.push('');
       if (d) {
@@ -3119,20 +3134,66 @@ function JToolDialog({ flow, tool, onClose }) {
             <div style={{ display: 'grid', gap: 10 }}>
               {usages.map(u => {
                 const si = (FLOW_TOOL_STEPS[u.id] || {})[tool];
-                const isCurrent = u.id === flow.id;
+                // Distinction nette : `isOriginFlow` = flow depuis lequel le
+                // dialog a ete OUVERT (garde la pastille « actuel », pas
+                // d'highlight). `isSelected` = flow actuellement VIEWE dans
+                // le dialog (= alimente le Prompt tab) → highlight visuel.
+                const isOriginFlow = u.id === flow.id;
+                const isSelected   = u.id === selectedFlowId;
                 const uc = u.accent;
                 return (
-                  <div key={u.id} style={{
-                    padding: '10px 12px', borderRadius: 'var(--radius)',
-                    background: isCurrent ? `color-mix(in srgb, ${uc} 7%, var(--bg-elev))` : 'var(--bg-elev)',
-                    border: '1px solid ' + (isCurrent ? `color-mix(in srgb, ${uc} 38%, transparent)` : 'var(--line-soft)'),
-                  }}>
+                  <button key={u.id} type="button"
+                    onClick={() => setSelectedFlowId(u.id)}
+                    className="focus-ring"
+                    title={isSelected
+                      ? `Flow viewé — Prompt + step ci-dessous concernent « ${u.title} »`
+                      : `Cliquer pour voir le Prompt agreged + l'étape de « ${u.title} »`}
+                    style={{
+                      width: '100%', textAlign: 'left', cursor: 'pointer',
+                      padding: '10px 12px', borderRadius: 'var(--radius)',
+                      background: isSelected ? `color-mix(in srgb, ${uc} 14%, var(--bg-elev))` : 'var(--bg-elev)',
+                      border: '1px solid ' + (isSelected ? `color-mix(in srgb, ${uc} 55%, transparent)` : 'var(--line-soft)'),
+                      boxShadow: isSelected ? `0 0 0 1px color-mix(in srgb, ${uc} 35%, transparent), 0 6px 18px -10px ${uc}` : 'none',
+                      transition: 'background .18s, border-color .18s, box-shadow .25s',
+                      fontFamily: 'inherit',
+                    }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: uc, flexShrink: 0 }} />
-                      <span className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 14.5, fontWeight: 600, color: 'var(--ink)', letterSpacing: '-0.01em' }}>{u.title}</span>
+                      <span style={{
+                        width: 8, height: 8, borderRadius: '50%', background: uc, flexShrink: 0,
+                        opacity: isSelected ? 1 : 0.6,
+                      }} />
+                      <span className="display" style={{
+                        fontFamily: 'var(--font-display)', fontSize: 14.5, fontWeight: 600,
+                        color: isSelected ? 'var(--ink)' : 'var(--ink-2)',
+                        letterSpacing: '-0.01em',
+                      }}>{u.title}</span>
                       <span className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{u.kicker}</span>
-                      {isCurrent && (
-                        <span className="mono" style={{ fontSize: 9, padding: '2px 7px', borderRadius: 999, background: `color-mix(in srgb, ${uc} 15%, transparent)`, color: uc, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>actuel</span>
+                      {isOriginFlow && (
+                        <span className="mono" style={{
+                          fontSize: 9, padding: '2px 7px', borderRadius: 999,
+                          // Pastille « actuel » TOUJOURS presente sur le flow
+                          // d'origine — meme si on a clique ailleurs. Quand
+                          // elle n'est PLUS le flow viewé, on l'attenue (border
+                          // pointillé, fond plus discret).
+                          background: isSelected
+                            ? `color-mix(in srgb, ${uc} 22%, transparent)`
+                            : 'transparent',
+                          border: isSelected
+                            ? '1px solid transparent'
+                            : `1px dashed color-mix(in srgb, ${uc} 50%, transparent)`,
+                          color: uc,
+                          textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600,
+                        }}>actuel</span>
+                      )}
+                      {isSelected && !isOriginFlow && (
+                        // Indicateur « viewé » sur un flow autre que l'origine
+                        // — pour signaler que c'est le flow qui alimente le
+                        // Prompt sans ambiguïté.
+                        <span className="mono" style={{
+                          fontSize: 9, padding: '2px 7px', borderRadius: 999,
+                          background: uc, color: 'var(--bg)',
+                          textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700,
+                        }}>viewé</span>
                       )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: si != null ? 7 : 0 }}>
@@ -3156,7 +3217,7 @@ function JToolDialog({ flow, tool, onClose }) {
                         Étape <strong style={{ color: 'var(--ink-2)' }}>« {u.steps[si].n} »</strong> — {u.steps[si].d}.
                       </div>
                     )}
-                  </div>
+                  </button>
                 );
               })}
             </div>
