@@ -11960,12 +11960,20 @@ function JarvisRunRail({ flow, onPick }) {
 
 // ───── Status badge ─────
 function StatusBadge({ state, accent }) {
-  const styles = {
-    idle:    { label: 'En attente', color: 'var(--ink-3)', dot: false },
-    running: { label: 'En cours',   color: accent,         dot: true  },
-    paused:  { label: 'En pause',   color: 'var(--jdm-orange)', dot: false },
-    done:    { label: 'Terminé',    color: 'var(--jdm-green)',  dot: false },
-  }[state];
+  const STYLES = {
+    idle:      { label: 'En attente', color: 'var(--ink-3)',       dot: false },
+    running:   { label: 'En cours',   color: accent,               dot: true  },
+    paused:    { label: 'En pause',   color: 'var(--jdm-orange)',  dot: false },
+    done:      { label: 'Terminé',    color: 'var(--jdm-green)',   dot: false },
+    error:     { label: 'Erreur',     color: 'var(--jdm-magenta)', dot: false },
+    cancelled: { label: 'Annulé',     color: 'var(--ink-3)',       dot: false },
+    aborted:   { label: 'Interrompu', color: 'var(--ink-3)',       dot: false },
+  };
+  // Fallback : si un nouveau statut backend arrive sans entrée dans STYLES,
+  // on retombe sur 'idle' pour ne JAMAIS crasher le render (vu en prod
+  // quand une erreur Google API mettait state='error', non couvert → null
+  // → styles.color crash).
+  const styles = STYLES[state] || STYLES.idle;
   return (
     <div style={{
       display: 'inline-flex', alignItems: 'center', gap: 8,
