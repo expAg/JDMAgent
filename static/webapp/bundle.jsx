@@ -7566,12 +7566,24 @@ const JarvisStore = {
               }));
             }
             if (typeof d.file_preview === 'string') cur.filePreview = d.file_preview;
-            if (d.file_path && d.file_path !== cur.filePath) {
+            if (d.file_path) {
+              // cur.filePath = toujours updaté (suit le dernier path actif :
+              // canonical_path en cours d'auto_append OU dernier path écrit par
+              // le LLM — backend alterne entre les deux).
               cur.filePath = d.file_path;
-              cur.log = [...cur.log, {
-                t: ts(), tag: '[file]', kind: 'accept',
-                msg: `Fichier : ${d.file_path}`,
-              }];
+              // Le LOG ne push qu'une seule entrée par path UNIQUE — sinon
+              // on voit alterner [file] enrichment_submission.enrich /
+              // [file] jdm_*.enrich à chaque tick parce que le backend
+              // yield les deux sources (canonical vs path LLM) en boucle.
+              const fileMsg = `Fichier : ${d.file_path}`;
+              const alreadyLogged = cur.log.some(
+                l => l.tag === '[file]' && l.msg === fileMsg
+              );
+              if (!alreadyLogged) {
+                cur.log = [...cur.log, {
+                  t: ts(), tag: '[file]', kind: 'accept', msg: fileMsg,
+                }];
+              }
             }
             break;
           }
@@ -9634,8 +9646,37 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
     });
   }
 
+  // ─── Compteurs Tentatives / Termes / Tokens (réutilisent la narration) ──
+  // - nbAttempted = nombre d'appels `validate_candidate` (= 1 triplet
+  //   tenté = 1 appel). Source = toolSeq déjà parcouru ci-dessus.
+  // - nbTerms     = nombre de termes UNIQUES vus dans `data-triplet="t|r|t"`
+  //   sur les divs jdm-narration (1er champ).
+  // - Rejected pour enrich : recalculé = nbAttempted - accepted (= consolidés).
+  //   Le calcul d'origine basé sur filePreview restait à 0 pour enrich
+  //   car le .enrich ne contient QUE les consolidés (les rejets ne sont
+  //   pas écrits) → cube de stats incorrect en supervision.
+  let nbAttempted = 0;
+  for (const name of toolSeq) {
+    if (name === 'validate_candidate') nbAttempted++;
+  }
+  const _terms = new Set();
+  if (narration) {
+    const re2 = /data-triplet="([^|"]+)/g;
+    let mm2;
+    while ((mm2 = re2.exec(narration)) !== null) {
+      const t0 = (mm2[1] || '').trim();
+      if (t0) _terms.add(t0);
+    }
+  }
+  const nbTerms = _terms.size;
+  if (flow.id === 'enrich' && nbAttempted > 0) {
+    rejected = Math.max(0, nbAttempted - accepted);
+  }
+  const tokens = m.tokens || 0;
+
   return { iter, span, tools, accepted, rejected, produced, pct, recent, stepIdx,
-           isRunning, headline: (store && store.headline) || (latest && latest.headline) || '' };
+           isRunning, nbAttempted, nbTerms, tokens,
+           headline: (store && store.headline) || (latest && latest.headline) || '' };
 }
 
 // One live "monitor" card for a flux — the heart of the dashboard.
@@ -9756,39 +9797,46 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
         })}
       </div>
 
-      {/* iter X / Y : X = 1 + relances de persistance (parses depuis la
-          narration LLM, "🔁 Relance automatique" markers). Y =
-          target_count s'il est defini, sinon budget cap, sinon rien. */}
+      {/* Tent. (nb triplets passés à validate_candidate) / Term. (nb termes
+          distincts vus dans data-triplet de la narration). Plus parlant que
+          le "iter X/Y" précédent qui comptait les retours à step 0 et donnait
+          un compteur peu lisible. La progress bar reste basée sur live.pct
+          (= produced / target_count) qui est inchangée. */}
       <div style={{ padding: '0 15px 12px' }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between',
           fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-3)', marginBottom: 5,
         }}>
           <span>
-            iter <strong style={{ color: 'var(--ink)' }}>{live.iter}</strong>
-            {live.span && <> / {live.span}</>}
+            Tent. <strong style={{ color: 'var(--ink)' }}>{live.nbAttempted || 0}</strong>
+            <span style={{ margin: '0 6px', color: 'var(--line)' }}>·</span>
+            Term. <strong style={{ color: 'var(--ink)' }}>{live.nbTerms || 0}</strong>
           </span>
           <span style={{ color: a }}>{flow.produces}</span>
         </div>
         <div style={{ height: 5, borderRadius: 999, background: 'var(--bg-elev)', overflow: 'hidden' }}>
           <div style={{
-            width: `${live.pct != null ? live.pct : Math.min(100, live.iter * 8)}%`,
+            width: `${live.pct != null ? live.pct : Math.min(100, (live.nbAttempted || 0) * 8)}%`,
             height: '100%', background: a, borderRadius: 999,
             transition: 'width .6s cubic-bezier(.4,0,.2,1)',
           }} />
         </div>
       </div>
 
-      {/* 3 mini-metriques : acceptés (vert), rejetés (magenta), outils.
-          - enrich : acceptes = consolidation registry, rejetes = signalements (rare).
-          - autres : acceptes = items "ok", rejetes = items "flagged/signalement". */}
+      {/* 4 mini-metriques : acceptés (vert), rejetés (magenta), tokens, outils.
+          - acceptés/rejetés : alimentés par nbAttempted - accepted pour enrich
+            (avant : rejetés restait à 0 car le .enrich ne contient que les
+            consolidés).
+          - tokens : estimation depuis store.metrics.tokens (tokens_estimate
+            backend). */}
       <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1,
+        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1,
         background: 'var(--line-soft)',
         borderTop: '1px solid var(--line-soft)', borderBottom: '1px solid var(--line-soft)',
       }}>
         <JMini label="acceptes" value={live.accepted} color="var(--jdm-green)" />
         <JMini label="rejetes"  value={live.rejected} color="var(--jdm-magenta)" />
+        <JMini label="tokens"   value={fmtTokens(live.tokens || 0)} />
         <JMini label="outils"   value={live.tools} />
       </div>
 
@@ -10829,11 +10877,16 @@ function JSectionNav({ activeSection, onSelect, hidden }) {
         overflowX: 'auto', whiteSpace: 'nowrap',
         scrollbarWidth: 'none',
       }} className="jpanel-scroll">
+        {/* « Sections » reste flush left, les pills sont centrés via
+            les 2 spacers flex:1 de part et d'autre. Au-dessous d'une
+            certaine largeur, le scroll horizontal prend le relais
+            (overflowX: auto) — pas de débordement visuel. */}
         <span className="mono" style={{
           flexShrink: 0, fontSize: 9.5, color: 'var(--ink-3)',
           textTransform: 'uppercase', letterSpacing: '0.1em',
           marginRight: 4,
         }}>Sections</span>
+        <div style={{ flex: 1, minWidth: 8 }} aria-hidden="true" />
         {J_SECTIONS.map((p, i) => {
           const active = activeSection === p.id;
           return (
@@ -10870,6 +10923,8 @@ function JSectionNav({ activeSection, onSelect, hidden }) {
             </button>
           );
         })}
+        {/* spacer droit (= miroir du gauche) pour finir le centrage des pills */}
+        <div style={{ flex: 1, minWidth: 8 }} aria-hidden="true" />
       </div>
     </nav>
   );
@@ -11062,11 +11117,12 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const [submitMsg, setSubmitMsg] = useState('');
 
   // Vue alternative du panneau GAUCHE (Narration LLM) :
-  //   'narration' (défaut, markdown HTML rendu — pensées + tool calls
-  //   formatés par le backend) ↔ 'log' (timeline mono-fontée avec
-  //   timestamps + tags colorés). Le toggle apparaît dans le header
-  //   du panneau Narration. Le panneau droit (ItemCard) reste constant.
-  const [leftView, setLeftView] = useState('narration');
+  //   'log' (défaut, timeline mono-fontée avec timestamps + tags colorés
+  //   — donne le suivi factuel des events) ↔ 'narration' (markdown HTML
+  //   rendu, pensées + tool calls formatés par le backend). Le toggle
+  //   apparaît dans le header du panneau. Le panneau droit (ItemCard)
+  //   reste constant.
+  const [leftView, setLeftView] = useState('log');
 
   // Pool status pour griser les Gemini blown dans le dropdown modèle.
   React.useEffect(() => {
