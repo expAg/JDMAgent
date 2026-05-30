@@ -8444,7 +8444,12 @@ function ViewJarvis() {
   return (
     <>
       <style>{JRING_CSS}</style>
-      <JSectionNav activeSection={activeSection} onSelect={goToId} hidden={navHidden} />
+      {/* Rail sticky bottom = sections (Config / Supervision / Répertoire).
+          On le cache automatiquement quand un panneau de flux est ouvert
+          pour ne pas se superposer au `JarvisRunRail` (rail des flux
+          actifs) qui vit DANS la vue Run et a la même position bottom. */}
+      <JSectionNav activeSection={activeSection} onSelect={goToId}
+        hidden={navHidden || panelIndex >= sectionCount} />
 
       <div style={{
         position: 'relative',
@@ -10055,6 +10060,8 @@ function useToolDocs() {
 const FLOW_TOOL_STEPS = {
   enrich: {
     enrichment_workflow: 0,
+    pick_random_term: 0,
+    exists: 0,
     list_existing_for_enrichment: 0,
     disambiguate: 0,
     validate_candidate: 1,
@@ -10066,6 +10073,7 @@ const FLOW_TOOL_STEPS = {
   },
   audit: {
     audit_workflow: 0,
+    pick_random_term: 0,
     disambiguate: 0,
     exists: 0,
     get_relations_of_type: 1,
@@ -10074,13 +10082,19 @@ const FLOW_TOOL_STEPS = {
   },
   gap: {
     gap_detection_workflow: 0,
+    pick_random_term: 0,
     exists: 0,
     detect_gaps: 1,
     list_existing_for_enrichment: 1,
     get_relations_of_type: 1,
   },
   signalement: {
+    // Le tool backend est `error_detection_workflow` (renommé). On garde
+    // signalement_workflow ici comme alias pour les anciennes traces ; les
+    // nouvelles passent par error_detection_workflow.
+    error_detection_workflow: 0,
     signalement_workflow: 0,
+    pick_random_term: 0,
     exists: 0,
     get_relations_of_type: 1,
     verify_claim: 1,
@@ -10088,12 +10102,14 @@ const FLOW_TOOL_STEPS = {
   },
   stats: {
     stats_workflow: 0,
+    pick_random_term: 0,
     exists: 0,
     list_existing_for_enrichment: 1,
     get_relations_of_type: 1,
   },
   annotation: {
     annotation_workflow: 0,
+    pick_random_term: 0,
     exists: 0,
     disambiguate: 0,
     get_relations_of_type: 1,
@@ -10791,67 +10807,70 @@ function JArrow({ color }) {
   );
 }
 
-// ─── Sommaire horizontal — the three top-level Jarvis sections ───
+// ─── Bottom sticky rail — the three top-level Jarvis sections ───
+// Style aligné sur JarvisRunRail (rail de la vue Run) : fond opaque
+// avec blur, border-top, pills compacts, position fixed bottom 0.
 function JSectionNav({ activeSection, onSelect, hidden }) {
-  const containerRef = useRef(null);
-  const itemRefs = useRef({});
-  const [indicator, setIndicator] = useState({ x: 0, w: 0, ready: false });
-  useEffect(() => {
-    const activeEl = itemRefs.current[activeSection];
-    const cont = containerRef.current;
-    if (!activeEl || !cont) return;
-    const cr = cont.getBoundingClientRect();
-    const ir = activeEl.getBoundingClientRect();
-    setIndicator({ x: ir.left - cr.left + cont.scrollLeft, w: ir.width, ready: true });
-  }, [activeSection]);
-
   return (
-    <nav ref={containerRef} aria-label="Sections Jarvis" style={{
-      position: 'fixed', top: 72, left: '50%',
-      transform: hidden ? 'translateX(-50%) translateY(-160%)' : 'translateX(-50%) translateY(0)',
+    <nav aria-label="Sections Jarvis" style={{
+      position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40,
+      transform: hidden ? 'translateY(110%)' : 'translateY(0)',
       opacity: hidden ? 0 : 1,
       pointerEvents: hidden ? 'none' : 'auto',
       transition: 'transform .32s cubic-bezier(.4,0,.2,1), opacity .24s ease',
-      display: 'flex', alignItems: 'center', gap: 2, padding: 5,
-      maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
-      background: 'var(--bg-card)', border: '1px solid var(--line)',
-      borderRadius: 999, boxShadow: 'var(--shadow)',
-      backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
-      zIndex: 40, scrollbarWidth: 'none',
+      borderTop: '1px solid var(--line-soft)',
+      background: 'color-mix(in srgb, var(--bg) 92%, transparent)',
+      backdropFilter: 'blur(6px)',
+      WebkitBackdropFilter: 'blur(6px)',
     }}>
-      <span aria-hidden="true" style={{
-        position: 'absolute', left: indicator.x, width: indicator.w,
-        top: 5, bottom: 5, background: 'var(--accent)', borderRadius: 999,
-        opacity: indicator.ready ? 1 : 0,
-        transition: 'left 0.42s cubic-bezier(0.4,0,0.2,1), width 0.42s cubic-bezier(0.4,0,0.2,1), opacity 0.18s',
-        zIndex: 0,
-      }} />
-      {J_SECTIONS.map((p, i) => {
-        const active = activeSection === p.id;
-        return (
-          <button key={p.id}
-            ref={el => { if (el) itemRefs.current[p.id] = el; }}
-            type="button" onClick={() => onSelect(p.id)}
-            aria-label={`Aller à ${p.label}`} aria-current={active ? 'page' : undefined}
-            style={{
-              position: 'relative', zIndex: 1,
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '9px 18px', background: 'transparent', border: 'none',
-              borderRadius: 999, cursor: 'pointer',
-              color: active ? 'var(--bg)' : 'var(--ink-3)',
-              fontFamily: 'var(--font-mono)', fontSize: 11.5,
-              textTransform: 'uppercase', letterSpacing: '0.1em',
-              fontWeight: active ? 600 : 400, whiteSpace: 'nowrap',
-              transition: 'color 0.32s 0.05s',
-            }}>
-            <span style={{
-              fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 13,
-              opacity: active ? 0.9 : 0.5, fontWeight: 500, letterSpacing: 0, textTransform: 'none',
-            }}>{String(i + 1).padStart(2, '0')}</span>
-            <span>{p.label}</span>
-          </button>
-        );
-      })}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 14px',
+        overflowX: 'auto', whiteSpace: 'nowrap',
+        scrollbarWidth: 'none',
+      }} className="jpanel-scroll">
+        <span className="mono" style={{
+          flexShrink: 0, fontSize: 9.5, color: 'var(--ink-3)',
+          textTransform: 'uppercase', letterSpacing: '0.1em',
+          marginRight: 4,
+        }}>Sections</span>
+        {J_SECTIONS.map((p, i) => {
+          const active = activeSection === p.id;
+          return (
+            <button key={p.id} type="button" onClick={() => onSelect(p.id)}
+              aria-label={`Aller à ${p.label}`} aria-current={active ? 'page' : undefined}
+              className="focus-ring"
+              style={{
+                flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 7,
+                padding: '5px 11px',
+                background: active ? 'color-mix(in srgb, var(--accent) 12%, var(--bg-card))' : 'var(--bg-card)',
+                border: '1px solid ' + (active ? 'color-mix(in srgb, var(--accent) 55%, transparent)' : 'var(--line-soft)'),
+                borderRadius: 999, cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+                color: active ? 'var(--accent)' : 'var(--ink-2)',
+                transition: 'background .15s, border-color .15s, color .15s',
+              }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: 'var(--accent)', opacity: active ? 1 : 0.45,
+              }} />
+              <span style={{
+                fontFamily: 'var(--font-display)', fontStyle: 'italic',
+                fontSize: 11, opacity: active ? 0.9 : 0.55, fontWeight: 500,
+                letterSpacing: 0,
+              }}>{String(i + 1).padStart(2, '0')}</span>
+              <span style={{ color: 'inherit' }}>{p.label}</span>
+              {active && (
+                <span className="mono" style={{
+                  fontSize: 8.5, padding: '1px 5px', borderRadius: 3,
+                  background: 'var(--accent)', color: 'var(--bg)',
+                  textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600,
+                }}>actuel</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 }
