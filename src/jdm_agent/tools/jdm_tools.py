@@ -292,7 +292,7 @@ def get_parts(term: str, min_weight: Optional[float] = None, limit: Optional[int
 
 @tool
 def get_characteristics(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
-    """Renvoie les caractéristiques (`r_carac`) d'un terme.
+    """Renvoie les caractéristiques (`r_carac`) d'un terme — la CIBLE DOIT être un ADJECTIF.
 
     Characteristic (`r_carac`) — attributs qualificatifs typiques. La CIBLE
     d'un triplet r_carac DOIT être un ADJECTIF (« liquide », « blanche »,
@@ -566,12 +566,13 @@ def get_telic_role(noun: str, min_weight: Optional[float] = None, limit: Optiona
 
 @tool
 def get_process_agents(process_noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
-    """Renvoie les AGENTS typiques d'un PROCESSUS exprimé par un nom (`r_processus>agent`).
+    """Renvoie les AGENTS typiques d'un PROCESSUS — la SOURCE DOIT être un prédicat nominal (NOM décrivant une action).
 
-    Équivalent nominal de get_agents : pour les verbes à l'infinitif, utilise
-    plutôt get_agents (qui interroge r_agent).
-    Le terme source DOIT être un nom déverbal de processus / d'événement
-    (lecture, nettoyage, enseignement, chasse, opération, ...).
+    Prédicat nominal (`r_processus>agent`) — équivalent nominal de
+    get_agents : pour les verbes à l'infinitif, utilise plutôt get_agents
+    (qui interroge r_agent). La SOURCE DOIT être un NOM décrivant une
+    action ou un processus (lecture, nettoyage, enseignement, chasse,
+    opération, ...).
     (ex.: nettoyage | r_processus>agent | technicien de surface ;
      enseignement | r_processus>agent | professeur ;
      chirurgie | r_processus>agent | chirurgien).
@@ -581,10 +582,11 @@ def get_process_agents(process_noun: str, min_weight: Optional[float] = None, li
 
 @tool
 def get_process_patients(process_noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
-    """Renvoie les PATIENTS typiques d'un PROCESSUS exprimé par un nom (`r_processus>patient`).
+    """Renvoie les PATIENTS typiques d'un PROCESSUS — la SOURCE DOIT être un prédicat nominal (NOM décrivant une action).
 
-    Équivalent nominal de get_patients. Le terme source DOIT être un nom
-    déverbal de processus.
+    Prédicat nominal (`r_processus>patient`) — équivalent nominal de
+    get_patients. La SOURCE DOIT être un NOM décrivant une action ou un
+    processus.
     (ex.: découpe | r_processus>patient | viande ;
      soin | r_processus>patient | malade ;
      récolte | r_processus>patient | blé).
@@ -594,10 +596,11 @@ def get_process_patients(process_noun: str, min_weight: Optional[float] = None, 
 
 @tool
 def get_process_instruments(process_noun: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
-    """Renvoie les INSTRUMENTS typiques d'un PROCESSUS exprimé par un nom (`r_processus>instr`).
+    """Renvoie les INSTRUMENTS typiques d'un PROCESSUS — la SOURCE DOIT être un prédicat nominal (NOM décrivant une action).
 
-    Équivalent nominal de get_instruments. Le terme source DOIT être un nom
-    déverbal de processus.
+    Prédicat nominal (`r_processus>instr`) — équivalent nominal de
+    get_instruments. La SOURCE DOIT être un NOM décrivant une action ou
+    un processus.
     (ex.: découpe | r_processus>instr | couteau ;
      transport | r_processus>instr | camion ;
      communication | r_processus>instr | téléphone).
