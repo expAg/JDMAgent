@@ -679,9 +679,9 @@ def get_triplet_annotations(subject: str, relation: str, target: str) -> list[di
     extraire les annotations (cf. relation_definitions.md §20).
 
     Args:
-        subject:  le terme source du triplet (ex. "chat")
-        relation: la relation JDM (ex. "r_isa", "r_has_part")
-        target:   le terme cible (ex. "mammifère")
+        subject:  le terme source du triplet
+        relation: la relation JDM (ex. r_xxx)
+        target:   le terme cible
 
     Renvoie [] si le triplet n'existe pas dans JDM ou n'a aucune annotation.
     Sinon liste de {kind, value, w} :
@@ -890,7 +890,7 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
 
     Args:
         term: terme source (forme générique ou raffinée `avocat>116477>66699`).
-        relation_name: relation JDM (`r_isa`, `r_has_part`, `r_lieu`…).
+        relation_name: relation JDM (`r_isa`, `r_set>item`, `r_make`, `r_lieu`, `r_require`…).
 
     Renvoie {term, relation, count, targets, exclusion_set} où
     `exclusion_set` est la liste plate des cibles déjà présentes
@@ -1159,9 +1159,9 @@ def enrichment_workflow() -> dict:
             "Tout ce que tu énonces (relation, triplet, verdict, gap) provient "
             "d'un appel d'outil JDM réel — pas de simulation.",
             "Les noms de relations s'orthographient PRÉCISÉMENT comme JDM les "
-            "définit (r_isa, r_anto, r_has_part, r_object>mater, r_has_conseq, "
-            "etc.) ; pas d'invention depuis ta mémoire — utilise `list_relation_types` "
-            "si tu as un doute.",
+            "définit (r_anto, r_object>mater, r_sentiment, r_manner, r_hypo, "
+            "r_has_conseq, etc.) ; pas d'invention depuis ta mémoire — "
+            "utilise `list_relation_types` si tu as un doute.",
             "DIVERSITÉ avant volume : varie les relations ET les termes "
             "(sors des animaux, plantes, taxonomies scolaires — JDM y est "
             "déjà très dense). Une relation rare bien remplie vaut mieux "
