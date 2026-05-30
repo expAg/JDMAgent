@@ -202,16 +202,13 @@ class JDMClient:
         """Vrai uniform sampling sur l'espace ID de JeuxDeMots.
 
         On tire des IDs au hasard dans [id_min, id_max] et on garde le
-        premier qui ressemble a un VRAI terme du lexique (type == 1, nom
-        non vide, pas de chars techniques `: > # _ |`, niveau de
-        popularite >= min_level pour eviter les ghosts/test entries).
+        premier qui ressemble a un VRAI terme du lexique : type == 1,
+        nom non vide, pas de chars techniques `: # _ | \\ /`, niveau de
+        popularite >= min_level. Les raffinements (`avocat>116477>66699`,
+        contenant `>`) sont AUTORISES — c'est au caller (cf. tool
+        pick_random_term) d'exposer la forme decodee en plus du brut.
 
-        Pas d'ad-hoc wordlist, pas de pretrained bias : ECHANTILLON
-        UNIFORME sur la KB francaise reelle. Le LLM n'a aucun pouvoir
-        sur ce qui sort.
-
-        Renvoie None si max_tries epuises sans hit (statistiquement rare :
-        ~20-30% des IDs sont valides → 25 tries → P(echec) ~ 10^-5).
+        Renvoie None si max_tries epuises sans hit.
         """
         import random as _random
         for _ in range(max_tries):
@@ -224,7 +221,8 @@ class JDMClient:
                 continue
             if not n.name or len(n.name.strip()) < 2:
                 continue
-            if any(ch in n.name for ch in (':', '>', '#', '_', '|', '\\', '/')):
+            # NB: `>` retire de la blacklist — les raffinements sont OK.
+            if any(ch in n.name for ch in (':', '#', '_', '|', '\\', '/')):
                 continue
             if getattr(n, 'level', 0) is None or float(getattr(n, 'level', 0)) < min_level:
                 continue

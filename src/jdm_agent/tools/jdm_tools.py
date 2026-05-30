@@ -170,14 +170,30 @@ def pick_random_term() -> dict:
     que l'utilisateur te demande de « choisir un mot au hasard », « tirer
     aléatoirement », ou que tu n'as pas de terme imposé.
 
-    Renvoie {"term": "<nom>"} ou {"error": "..."} si rien n'a pu être
-    tiré.
+    Renvoie :
+      - terme simple : {"term": "<forme lisible>"}
+      - raffinement  : {"term": "<forme lisible>", "term_id": "<brut>"}
+        (ex. {"term": "avocat (personne, juriste)",
+              "term_id": "avocat>116477>66699"})
+        → utilise `term_id` quand tu rappelles un outil sur CE sens
+          précis, `term` pour citer/afficher.
+      - échec : {"error": "..."}.
     """
     c = _client()
     n = c.random_term()
     if n is None:
         return {"error": "tirage aleatoire echoue (max_tries epuises ou JDM injoignable)"}
-    return {"term": n.name}
+    try:
+        dec = c.decode_node_name(n.name)
+        decoded = dec.get("decoded") or n.name
+        is_ref = bool(dec.get("is_refinement"))
+    except Exception:
+        decoded = n.name
+        is_ref = False
+    out = {"term": decoded}
+    if is_ref:
+        out["term_id"] = n.name
+    return out
 
 
 @tool
