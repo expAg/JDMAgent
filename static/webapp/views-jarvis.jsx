@@ -923,10 +923,11 @@ const BUDGET_OPTS = [
 ];
 
 function defaultParamsFor(flowId) {
-  // Defaults alignés sur la branche deploy-self / app.py :
-  // term vide partout (= tirage au hasard côté backend), budget illimité,
-  // thinking=false (Jarvis = robustesse > raisonnement), upload=false,
-  // auto_switch=false (= mode B : abort + bouton Continuer).
+  // Defaults : term vide partout (= tirage au hasard via pick_random_term),
+  // budget illimité, thinking=true (raisonnement activé par défaut sur tous
+  // les flows — meilleur taux de consolidation, l'utilisateur peut décocher
+  // dans le ParamsForm si latence prioritaire), upload=false, auto_switch=false
+  // (= mode B : abort + bouton Continuer).
   //
   // Le `model` et `autoSubmit` sont pré-remplis depuis JConfigPanel
   // (window.__JDM_JARVIS_CONFIG__, persisté en localStorage). L'utilisateur
@@ -939,7 +940,7 @@ function defaultParamsFor(flowId) {
   const common = {
     model: cfg.llm || 'gemini-3.1-flash-lite',
     api_key: '', drops_key: '',
-    use_thinking: false,
+    use_thinking: true,
     budget_label: 'illimité',
     auto_switch: false,
     temperature: _temp,

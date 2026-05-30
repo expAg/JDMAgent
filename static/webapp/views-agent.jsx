@@ -87,8 +87,12 @@ function ViewAgent() {
   // `overrideMsg` permet au bouton ↻ de re-soumettre une question
   // précédente sans passer par le state input (qui est async).
   const send = async (overrideMsg) => {
-    const effectiveMsg = (overrideMsg !== undefined ? overrideMsg : input);
-    if (!effectiveMsg.trim() || streaming) return;
+    // Défense : `onClick={send}` passe un SyntheticEvent React → on n'utilise
+    // l'override que si c'est vraiment une string. Sinon (event, undefined,
+    // null...) on retombe sur l'input courant.
+    const isStringOverride = typeof overrideMsg === 'string';
+    const effectiveMsg = isStringOverride ? overrideMsg : input;
+    if (!effectiveMsg || !effectiveMsg.trim() || streaming) return;
     const userMsg = { role: 'user', content: effectiveMsg };
     const historySnapshot = convo.map(m => ({
       role: m.role,
@@ -97,7 +101,7 @@ function ViewAgent() {
     const assistantStub = { role: 'assistant', thoughts: [], tools: [], content: '', error: '' };
     setConvo([...convo, userMsg, assistantStub]);
     const msg = effectiveMsg;
-    if (overrideMsg === undefined) setInput('');
+    if (!isStringOverride) setInput('');
     setStreaming(true);
 
     // Helper : update le dernier message (assistant) en place.
