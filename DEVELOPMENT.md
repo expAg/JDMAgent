@@ -303,7 +303,7 @@ après le premier tour. Temps observé :
 
 | Opération | HTTP calls (1er appel) | Cached |
 |---|---|---|
-| `lookup_term` | 1 | 0 |
+| `exists` | 1 | 0 |
 | `get_synonyms` (terme simple) | 1 | 0 |
 | `disambiguate` (avec refinements à décoder) | 1 + N (N = nb d'IDs distincts) | 0 |
 | `verify_claim` (r_isa supportée directe) | 1 | 0 |

@@ -1383,7 +1383,7 @@ def _build_tools_catalog() -> list[dict]:
 
     Renvoie : [{name, description, kind, signature, args, returns, examples}]
     - kind dérivé du nom : workflow → 'workflow', verify_claim/infer → 'logique',
-      lookup_term/get_* → 'API JDM', write_submission_file/submit_to_jdm → 'IO',
+      exists/get_* → 'API JDM', write_submission_file/submit_to_jdm → 'IO',
       defaut → 'LLM'.
     - args dérivés de args_schema (Pydantic) : {name, type, required, desc}.
     """
@@ -1396,7 +1396,7 @@ def _build_tools_catalog() -> list[dict]:
                     "consolidate_candidate"}:
             return "logique"
         if name.startswith("get_") or name in {
-            "lookup_term", "disambiguate", "list_relation_types",
+            "exists", "pick_random_term", "disambiguate", "list_relation_types",
             "list_existing_for_enrichment", "describe_relation",
             "detect_gaps",
         }:

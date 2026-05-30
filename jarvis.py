@@ -607,7 +607,7 @@ TOOL_NARRATION: dict[str, dict] = {
             f"→ {len(d.get('senses') or d.get('refinements') or []) or '?'} sens trouvés."
         )),
     },
-    "lookup_term": {
+    "exists": {
         "start": lambda a: f"📖 Je vérifie l'existence de « {_hi(_truncate(a.get('term')))} » dans JDM…",
         "done": lambda c: _format_done(c, lambda d: (
             "→ trouvé." if d.get("found") or d.get("id") else "→ inconnu."

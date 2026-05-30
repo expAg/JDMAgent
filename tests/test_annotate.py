@@ -390,11 +390,14 @@ def test_iteration_block_unbounded_no_target_falls_back():
 
 def test_build_annotation_prompt_uses_iteration_block():
     """Le pré-prompt annotation doit contenir un bloc d'itération non
-    vide et la mention de carte blanche en l'absence de terme."""
+    vide et pointer vers `pick_random_term` en l'absence de terme.
+    (L'ancienne mention « carte blanche / TOUT le lexique » a été
+    retirée : elle alimentait le mode collapse — on délègue le tirage
+    à l'outil dédié backend-side.)"""
     from jarvis import build_annotation_prompt
     p = build_annotation_prompt(term="", relation=None, top_k=8,
                                 target_count=10, budget_label="25")
-    assert "carte blanche" in p.lower() or "TOUT le lexique" in p
+    assert "pick_random_term" in p
     assert "10" in p
     # Mention de la sélectivité (mieux vaut peu et pertinent)
     assert "selectivit" in p.lower().replace("é", "e") or \

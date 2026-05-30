@@ -77,7 +77,7 @@ def test_is_budgeted_excludes_workflow_tools():
 
 
 def test_is_budgeted_includes_regular_tools():
-    assert is_budgeted("lookup_term") is True
+    assert is_budgeted("exists") is True
     assert is_budgeted("get_synonyms") is True
     assert is_budgeted("validate_candidate") is True
     assert is_budgeted("write_submission_file") is True
@@ -97,7 +97,7 @@ def test_wrapping_passes_through_without_context():
     def real_func(x):
         calls.append(x)
         return f"OK:{x}"
-    t = _FakeTool("lookup_term", real_func)
+    t = _FakeTool("exists", real_func)
     apply_budget_wrapping([t])
     # Sans contexte budget → exécution libre
     assert t.func("a") == "OK:a"
@@ -108,7 +108,7 @@ def test_wrapping_passes_through_without_context():
 def test_wrapping_returns_sentinel_when_budget_exhausted():
     def real_func(x):
         return f"OK:{x}"
-    t = _FakeTool("lookup_term", real_func)
+    t = _FakeTool("exists", real_func)
     apply_budget_wrapping([t])
     with budget_context(limit=2) as b:
         assert t.func(1) == "OK:1"
@@ -132,7 +132,7 @@ def test_wrapping_skips_workflow_tools():
     def regular_func():
         return "result"
     wf = _FakeTool("audit_workflow", workflow_func)
-    rg = _FakeTool("lookup_term", regular_func)
+    rg = _FakeTool("exists", regular_func)
     apply_budget_wrapping([wf, rg])
     with budget_context(limit=1) as b:
         # workflow tool : appelé 5 fois sans consommer
@@ -148,7 +148,7 @@ def test_wrapping_is_idempotent():
     """Double wrapping ne double pas le compteur."""
     def real_func():
         return "ok"
-    t = _FakeTool("lookup_term", real_func)
+    t = _FakeTool("exists", real_func)
     apply_budget_wrapping([t])
     apply_budget_wrapping([t])  # 2e appel idempotent
     with budget_context(limit=2) as b:

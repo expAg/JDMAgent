@@ -120,14 +120,9 @@ RÈGLES :
 
 14. TIRAGE ALÉATOIRE D'UN TERME. À chaque fois que tu as besoin d'un
     « mot au hasard » (détection de trous sans terme, exploration libre,
-    relance variée, etc.), appelle `pick_random_term()` — JAMAIS de
-    tirage à la main. L'outil fait du vrai uniform sampling sur les ~5M
-    IDs JDM ; si tu choisis toi-même, tu retombes sur le cluster
-    « symphonie / sérénité / télétravail / ébéniste / alchimiste » (mode
-    collapse de ton corpus d'entraînement) — exactement ce qu'on cherche
-    à éviter. Si `pick_random_term()` renvoie un terme qui ne te convient
-    pas (ex. : pas polysémique alors que le flow l'exige), rappelle-le —
-    chaque tirage est indépendant et uniform.
+    relance variée, etc.), appelle `pick_random_term()`. Si le terme
+    renvoyé ne te convient pas (ex. : pas polysémique alors que le flow
+    l'exige), rappelle-le — chaque tirage est indépendant et uniform.
 
 15. BUDGET D'APPELS D'OUTILS. Certains flows (notamment Jarvis ›
     Enrichissement) imposent un budget de N appels d'outils maximum. Si

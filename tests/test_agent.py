@@ -39,7 +39,7 @@ def test_build_jdm_agent_compiles_and_lists_tools():
 def test_all_tools_listed():
     names = {t.name for t in ALL_TOOLS}
     expected = {
-        "lookup_term", "get_synonyms", "get_antonyms",
+        "exists", "get_synonyms", "get_antonyms",
         "get_hypernyms", "get_hyponyms", "get_parts",
         "get_characteristics", "get_relations_of_type",
         "get_relations_between", "disambiguate", "list_relation_types",

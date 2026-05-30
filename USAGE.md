@@ -29,7 +29,7 @@ tu disposes de **24 outils** invocables par conversation.
 
 | Outil | Quand l'utiliser | Exemple |
 |---|---|---|
-| `lookup_term(term)` | Vérifier qu'un mot existe + voir son ID/poids | « JDM connaît-il "métavers" ? » |
+| `exists(term)` | Vérifier qu'un mot existe + voir son ID/poids | « JDM connaît-il "métavers" ? » |
 | `get_synonyms(term)` | Reformulation, dictionnaire de synonymes | « synonymes de voiture » |
 | `get_antonyms(term)` | Antonymes | « contraire de "chaud" » |
 | `get_hypernyms(term)` | Catégorisation montante (« qu'est-ce qu'un X ? ») | « qu'est-ce qu'un chat ? » |

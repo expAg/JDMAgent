@@ -275,7 +275,9 @@ def test_enrich_relation_optional():
 def test_enrich_empty_term_triggers_random_pick():
     p = build_enrich_prompt("")
     assert "ENRICHIR un terme" in p or "hasard" in p
-    assert "lookup_term" in p  # vérif d'existence via lookup_term
+    # Le prompt doit pointer vers pick_random_term (outil dédié) plutôt
+    # que demander au LLM de tirer lui-même + faire exists() derrière.
+    assert "pick_random_term" in p
 
 
 def test_audit_empty_term_triggers_random_polysemous_pick():

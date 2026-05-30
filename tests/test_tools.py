@@ -19,7 +19,7 @@ from jdm_agent.tools.jdm_tools import (
     get_relations_of_type,
     get_synonyms,
     list_relation_types,
-    lookup_term,
+    exists,
     set_default_client,
 )
 
@@ -68,22 +68,22 @@ def patched_client(tmp_path):
 
 
 @respx.mock
-def test_lookup_term(patched_client):
+def test_exists_tool(patched_client):
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
     respx.get(f"{BASE}/v0/node_by_name/chat").mock(return_value=httpx.Response(200, json=NODE_CHAT))
-    out = lookup_term.invoke({"term": "chat"})
+    out = exists.invoke({"term": "chat"})
     assert out["name"] == "chat"
     assert out["id"] == 150
     assert "weight" in out
 
 
 @respx.mock
-def test_lookup_term_unknown(patched_client):
+def test_exists_tool_unknown(patched_client):
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
     respx.get(f"{BASE}/v0/node_by_name/zzzzz").mock(return_value=httpx.Response(404, json={}))
-    out = lookup_term.invoke({"term": "zzzzz"})
+    out = exists.invoke({"term": "zzzzz"})
     assert "error" in out
 
 
@@ -212,7 +212,7 @@ def test_all_tools_have_unique_names():
     names = [t.name for t in ALL_TOOLS]
     assert len(names) == len(set(names))
     # Sanity sur quelques outils-clés.
-    for n in ("get_synonyms", "lookup_term", "get_agents", "get_patients",
+    for n in ("get_synonyms", "exists", "get_agents", "get_patients",
               "get_instruments", "get_consequences", "get_actions_of",
               "get_uses_with", "get_domain_members"):
         assert n in names, f"{n} missing"
@@ -342,7 +342,7 @@ def test_validate_candidate_tool(patched_client):
 
 
 @respx.mock
-def test_lookup_term_includes_decoded(patched_client):
+def test_exists_tool_includes_decoded(patched_client):
     respx.get(f"{BASE}/v0/relations_types").mock(return_value=httpx.Response(200, json=REL_TYPES))
     respx.get(f"{BASE}/v0/nodes_types").mock(return_value=httpx.Response(200, json=NODE_TYPES))
     respx.get(f"{BASE}/v0/node_by_name/avocat%3E116477%3E66699").mock(return_value=httpx.Response(200, json={
@@ -354,7 +354,7 @@ def test_lookup_term_includes_decoded(patched_client):
     respx.get(f"{BASE}/v0/node_by_id/66699").mock(return_value=httpx.Response(200, json={
         "id": 66699, "name": "juriste", "type": 1, "w": 911,
     }))
-    out = lookup_term.invoke({"term": "avocat>116477>66699"})
+    out = exists.invoke({"term": "avocat>116477>66699"})
     assert out["name"] == "avocat>116477>66699"
     assert out["decoded"] == "avocat (personne, juriste)"
 

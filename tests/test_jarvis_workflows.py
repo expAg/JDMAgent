@@ -102,11 +102,11 @@ def test_audit_workflow_focuses_on_non_premier_sens():
 
 def test_audit_workflow_handles_no_term():
     """Le nouveau flow audit doit accepter qu'on lui demande sans terme :
-    il tire alors un mot polysémique au hasard."""
+    il délègue alors le tirage à `pick_random_term()` (uniform sampling
+    backend, anti mode-collapse) au lieu de demander au LLM de tirer."""
     result = audit_workflow.invoke({})
     full = " ".join(s["description"] for s in result["steps"])
-    # Mention du tirage au hasard
-    assert "hasard" in full or "TIRE" in full or "tire" in full
+    assert "pick_random_term" in full
 
 
 def test_error_detection_workflow_mentions_judgment():

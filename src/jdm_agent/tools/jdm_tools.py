@@ -180,7 +180,9 @@ def pick_random_term() -> dict:
     récupérant le nœud correspondant — la queue de distribution est
     vraiment respectée.
 
-    Renvoie {id, name, decoded, type, weight} comme `lookup_term`, ou
+    Renvoie {id, name, decoded, type, weight} — le terme tiré EXISTE
+    déjà dans JDM par construction (on est parti de son id), tu n'as
+    DONC PAS besoin de l'appeler avec `exists` derrière. Renvoie
     {error} si rien n'a pu être tiré (réseau down / KB injoignable).
     """
     c = _client()
@@ -195,8 +197,14 @@ def pick_random_term() -> dict:
 
 
 @tool
-def lookup_term(term: str) -> dict:
-    """Cherche un terme dans JeuxDeMots et renvoie ses informations de base.
+def exists(term: str) -> dict:
+    """Vérifie qu'un terme existe dans JeuxDeMots et renvoie ses infos de base.
+
+    Tu n'as PAS besoin d'appeler cet outil quand le terme vient déjà d'un
+    autre outil JDM (ex: `pick_random_term`, `disambiguate`, `get_*`) — par
+    construction il existe alors déjà. Appelle-moi UNIQUEMENT quand tu pars
+    d'un terme externe (utilisateur, ton propre vocabulaire) et que tu as
+    un doute sur sa présence dans JDM.
 
     Renvoie {id, name, decoded, type, weight} ou {error} si le terme n'existe pas.
     Si le terme est un refinement (ex: "avocat>116477>66699"), `name` reste
@@ -390,7 +398,7 @@ def get_relations_between(term1: str, term2: str, min_weight: Optional[float] = 
             c.node_by_name(t)
         except Exception:
             return [{
-                "error": f"Terme « {t} » inconnu de JDM — vérifie l'orthographe ou utilise lookup_term pour confirmer.",
+                "error": f"Terme « {t} » inconnu de JDM — vérifie l'orthographe ou utilise `exists` pour confirmer.",
                 "missing": t,
                 "term1": term1,
                 "term2": term2,
@@ -1407,14 +1415,14 @@ def gap_detection_workflow() -> dict:
                 "order": 1,
                 "name": "Vérifier que le terme existe",
                 "description": (
-                    "Appelle `lookup_term(term)`. Si KO, dis-le et arrête. "
+                    "Appelle `exists(term)`. Si KO, dis-le et arrête. "
                     "Si le terme est polysémique (plusieurs sens forts), "
                     "demande à l'utilisateur (ou choisis par défaut le "
                     "sens dominant) AVANT de continuer — un gap sur un "
                     "sens raffiné est plus exploitable qu'un gap sur "
                     "le terme générique."
                 ),
-                "tool": "lookup_term",
+                "tool": "exists",
             },
             {
                 "order": 2,
@@ -2479,7 +2487,7 @@ def build_subgraph_visualization(
 
 ALL_TOOLS: list[StructuredTool] = [
     pick_random_term,
-    lookup_term,
+    exists,
     get_synonyms,
     get_antonyms,
     get_hypernyms,
