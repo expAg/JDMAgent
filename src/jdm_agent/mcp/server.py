@@ -29,6 +29,7 @@ import logging
 from fastmcp import FastMCP
 
 from jdm_agent.client import JDMClient
+from jdm_agent.enrich.validators import exclusion_context
 from jdm_agent.tools.jdm_tools import ALL_TOOLS, set_default_client
 
 
@@ -114,10 +115,20 @@ def main() -> int:
     logging.basicConfig(level=args.log_level.upper(), format="[%(name)s] %(message)s")
     server = build_server()
 
-    if args.transport == "stdio":
-        server.run()  # transport par défaut stdio
-    else:
-        server.run(transport=args.transport, host=args.host, port=args.port)
+    # Active le registry de consolidation pour TOUTE la duree du
+    # serveur MCP. Sans ce wrap, `validate_candidate` appelle
+    # `register_consolidation` qui voit `_CONSOLIDATION_REGISTRY is None`
+    # (= aucun `exclusion_context` actif) et fait un no-op silencieux ;
+    # ensuite `write_submission_file` en mode triplets `.enrich` rejette
+    # TOUS les triplets comme « absents du registry d'inference », forcant
+    # le LLM a contourner via le mode RAW (qui bypass la verification
+    # « preuve d'inference »). Le wrap reste ouvert tant que `server.run()`
+    # ne retourne pas — le cleanup naturel se fait a l'arret du process.
+    with exclusion_context():
+        if args.transport == "stdio":
+            server.run()  # transport par défaut stdio
+        else:
+            server.run(transport=args.transport, host=args.host, port=args.port)
     return 0
 
 
