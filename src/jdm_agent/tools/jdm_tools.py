@@ -165,16 +165,10 @@ def _lim(v: Optional[int], default: int) -> int:
 # ---------- Tools ----------
 
 @tool
-def pick_random_term(min_level: Optional[float] = None) -> dict:
+def pick_random_term() -> dict:
     """Tire un terme au hasard dans JeuxDeMots. Appelle-moi à chaque fois
     que l'utilisateur te demande de « choisir un mot au hasard », « tirer
     aléatoirement », ou que tu n'as pas de terme imposé.
-
-    Args:
-        min_level: niveau MINIMUM de popularité JDM exigé. Défaut 60
-            (filtre les nœuds ghost/test peu renseignés). Monte (ex.
-            150–200) pour des termes très courants ; baisse (ex. 20–40)
-            pour autoriser des termes plus rares / pointus / spécialisés.
 
     Renvoie :
       - terme simple : {"term": "<forme lisible>"}
@@ -186,10 +180,7 @@ def pick_random_term(min_level: Optional[float] = None) -> dict:
       - échec : {"error": "..."}.
     """
     c = _client()
-    kwargs = {}
-    if min_level is not None:
-        kwargs["min_level"] = float(min_level)
-    n = c.random_term(**kwargs)
+    n = c.random_term()
     if n is None:
         return {"error": "tirage aleatoire echoue (max_tries epuises ou JDM injoignable)"}
     try:
