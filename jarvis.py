@@ -1155,7 +1155,7 @@ def build_annotation_prompt(
     elif term:
         parts.append(
             f"Je veux ANNOTER sémantiquement les triplets JDM du terme "
-            f"« {term} »."
+            f"« {term} » sur des relations variées."
         )
     elif rels:
         parts.append(
