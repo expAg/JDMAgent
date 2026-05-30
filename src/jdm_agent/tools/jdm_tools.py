@@ -2139,53 +2139,37 @@ def write_submission_file(
             dict_items.append(t)
         # Dict avec d'autres clés ou clés vides : ignoré silencieusement.
 
-    # ── GARDE-FOU .enrich : reroute RAW → TRIPLETS cote Python ──────
-    # Pour un .enrich, le mode RAW bypass le check registry
-    # d'inférence — c'est exactement le pattern qu'un LLM utilise pour
-    # contourner « skipped_no_inference_proof ». On parse nous-memes
-    # ses lignes pipe-formatees vers le mode TRIPLETS canonique pour
-    # forcer le check registry. Determinisme cote Python > consigne au
-    # LLM (qui peut bypasser via mode RAW).
-    #
-    # Format attendu : « term | relation | target | annotation < explication > »
-    # (cf. write_submission ligne canonique). On tolere :
-    #   - 3 parts : term/relation/target sans annotation/explication
-    #   - 4 parts : la 4e contient « annotation < explication > » ou
-    #     juste annotation
+    # ── GARDE-FOU .enrich : intercept RAW → 3 champs (term, rel, target) ──
+    # Pour un .enrich, le mode RAW (items {"line": "..."}) bypass le
+    # lookup registry d'inférence — c'est exactement comment un LLM
+    # contourne « skipped_no_inference_proof ». On INTERCEPTE en
+    # extrayant les 3 premiers champs du pipe (term | relation | target)
+    # et on les pousse en mode TRIPLETS. L'annotation et l'explication
+    # ne sont PAS parsées : le chemin TRIPLETS existant fait le lookup
+    # `get_consolidation(t, r, tg)` qui fournit l'explication formelle
+    # du registry (et skip si absent). Le LLM choisit QUI soumettre,
+    # Python remplit QUOI écrire — zéro hallucination de contenu.
     _enrich_rerouted = 0
     _enrich_unparsable: list[str] = []
     if str(path).lower().endswith(".enrich") and str_lines:
-        import re as _re
-        _kept_lines: list[str] = []
         for line in str_lines:
             stripped = (line or "").strip()
             if not stripped or stripped.startswith("#"):
-                # commentaires / headers / blanks : drop silencieusement
-                # pour .enrich (le tool re-emet son propre header).
                 continue
-            parts = [p.strip() for p in stripped.split("|")]
-            if len(parts) < 3 or not parts[0] or not parts[1] or not parts[2]:
+            parts = stripped.split("|", 3)
+            if (len(parts) < 3
+                    or not parts[0].strip()
+                    or not parts[1].strip()
+                    or not parts[2].strip()):
                 _enrich_unparsable.append(line)
                 continue
-            term_p, rel_p, tgt_p = parts[0], parts[1], parts[2]
-            annot_p = ""
-            expl_p = ""
-            if len(parts) >= 4:
-                rest = parts[3]
-                m = _re.search(r"<\s*(.*?)\s*>\s*$", rest)
-                if m:
-                    expl_p = m.group(1).strip()
-                    annot_p = rest[: m.start()].strip()
-                else:
-                    annot_p = rest
             dict_items.append({
-                "term": term_p, "relation": rel_p, "target": tgt_p,
-                "annotation": annot_p, "explanation": expl_p,
+                "term": parts[0].strip(),
+                "relation": parts[1].strip(),
+                "target": parts[2].strip(),
             })
             _enrich_rerouted += 1
-        # Pour .enrich, on REJETTE toute ligne brute restante (non parsable).
-        # Le LLM doit passer en mode TRIPLETS canonique pour ces lignes.
-        str_lines = _kept_lines  # vide : on force le chemin TRIPLETS
+        str_lines = []  # vide : on force le chemin TRIPLETS
 
     # Garde-fou : rien à écrire → AUCUN fichier créé, on signale au LLM.
     # NB : on garde-fou AVANT l'accumulation redirect — un appel vide est
