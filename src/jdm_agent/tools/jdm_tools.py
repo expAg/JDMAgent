@@ -2139,6 +2139,54 @@ def write_submission_file(
             dict_items.append(t)
         # Dict avec d'autres clés ou clés vides : ignoré silencieusement.
 
+    # ── GARDE-FOU .enrich : reroute RAW → TRIPLETS cote Python ──────
+    # Pour un .enrich, le mode RAW bypass le check registry
+    # d'inférence — c'est exactement le pattern qu'un LLM utilise pour
+    # contourner « skipped_no_inference_proof ». On parse nous-memes
+    # ses lignes pipe-formatees vers le mode TRIPLETS canonique pour
+    # forcer le check registry. Determinisme cote Python > consigne au
+    # LLM (qui peut bypasser via mode RAW).
+    #
+    # Format attendu : « term | relation | target | annotation < explication > »
+    # (cf. write_submission ligne canonique). On tolere :
+    #   - 3 parts : term/relation/target sans annotation/explication
+    #   - 4 parts : la 4e contient « annotation < explication > » ou
+    #     juste annotation
+    _enrich_rerouted = 0
+    _enrich_unparsable: list[str] = []
+    if str(path).lower().endswith(".enrich") and str_lines:
+        import re as _re
+        _kept_lines: list[str] = []
+        for line in str_lines:
+            stripped = (line or "").strip()
+            if not stripped or stripped.startswith("#"):
+                # commentaires / headers / blanks : drop silencieusement
+                # pour .enrich (le tool re-emet son propre header).
+                continue
+            parts = [p.strip() for p in stripped.split("|")]
+            if len(parts) < 3 or not parts[0] or not parts[1] or not parts[2]:
+                _enrich_unparsable.append(line)
+                continue
+            term_p, rel_p, tgt_p = parts[0], parts[1], parts[2]
+            annot_p = ""
+            expl_p = ""
+            if len(parts) >= 4:
+                rest = parts[3]
+                m = _re.search(r"<\s*(.*?)\s*>\s*$", rest)
+                if m:
+                    expl_p = m.group(1).strip()
+                    annot_p = rest[: m.start()].strip()
+                else:
+                    annot_p = rest
+            dict_items.append({
+                "term": term_p, "relation": rel_p, "target": tgt_p,
+                "annotation": annot_p, "explanation": expl_p,
+            })
+            _enrich_rerouted += 1
+        # Pour .enrich, on REJETTE toute ligne brute restante (non parsable).
+        # Le LLM doit passer en mode TRIPLETS canonique pour ces lignes.
+        str_lines = _kept_lines  # vide : on force le chemin TRIPLETS
+
     # Garde-fou : rien à écrire → AUCUN fichier créé, on signale au LLM.
     # NB : on garde-fou AVANT l'accumulation redirect — un appel vide est
     # un appel vide, on ne le matérialise pas comme un overwrite no-op.
@@ -2343,7 +2391,23 @@ def write_submission_file(
             out["skipped_count"] = len(skipped_no_proof)
             out["skipped_note"] = (
                 "Triplets non écrits car absents du registry d'inférence. "
-                "Re-passe-les par consolidate_candidate avant write_submission_file."
+                "Re-passe-les par validate_candidate(inference_effort=2) "
+                "avant write_submission_file."
+            )
+        if _enrich_rerouted:
+            out["rerouted_from_raw"] = _enrich_rerouted
+            out["rerouted_note"] = (
+                "Lignes RAW reroutees automatiquement en mode TRIPLETS "
+                "(.enrich impose la verification de preuve d'inference). "
+                "A l'avenir passe directement en mode TRIPLETS : "
+                "{term, relation, target, annotation, explanation}."
+            )
+        if _enrich_unparsable:
+            out["unparsable_lines"] = _enrich_unparsable
+            out["unparsable_note"] = (
+                f"{len(_enrich_unparsable)} ligne(s) RAW non parsables au "
+                "format `term | relation | target | annotation < explication >` "
+                "— ignorees. Passe-les en mode TRIPLETS canonique."
             )
 
     if upload:
