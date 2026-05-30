@@ -307,8 +307,14 @@ def get_parts(term: str, min_weight: Optional[float] = None, limit: Optional[int
 def get_characteristics(term: str, min_weight: Optional[float] = None, limit: Optional[int] = None) -> list[dict]:
     """Renvoie les caractéristiques (`r_carac`) d'un terme.
 
-    Characteristic (`r_carac`) — attributs ou adjectifs qualificatifs typiques
-    (ex.: eau | r_carac | liquide ; neige | r_carac | blanche).
+    Characteristic (`r_carac`) — attributs qualificatifs typiques. La CIBLE
+    d'un triplet r_carac DOIT être un ADJECTIF (« liquide », « blanche »,
+    « rapide », « bruyant »...), pas un nom commun ni un verbe ni une
+    catégorie. Si tu hésites entre r_carac et une autre relation parce
+    que la cible n'est pas un adjectif, c'est que ce n'est PAS r_carac
+    (ex. : pour une partie → r_has_part ; pour une classe → r_isa).
+    Exemples : eau | r_carac | liquide ; neige | r_carac | blanche ;
+    moteur | r_carac | bruyant.
     """
     c = _client()
     rid = c.relation_type_id("r_carac")
@@ -1169,10 +1175,10 @@ def enrichment_workflow() -> dict:
             "définit (r_isa, r_anto, r_has_part, r_object>mater, r_has_conseq, "
             "etc.) ; pas d'invention depuis ta mémoire — utilise `list_relation_types` "
             "si tu as un doute.",
-            "DIVERSITÉ avant volume : varie les relations (au-delà de "
-            "r_isa/r_has_part/r_carac) ET les termes (sors des animaux, "
-            "plantes, taxonomies scolaires — JDM y est déjà très dense). "
-            "Une r_telic_role rare bien remplie vaut mieux qu'une 10ᵉ r_isa.",
+            "DIVERSITÉ avant volume : varie les relations ET les termes "
+            "(sors des animaux, plantes, taxonomies scolaires — JDM y est "
+            "déjà très dense). Une relation rare bien remplie vaut mieux "
+            "qu'une 10ᵉ sur un type sur-exploité.",
             "PERTINENCE > consolidation : un triplet vrai par héritage d'une "
             "classe générique (personne, individu, être humain, animal, "
             "chose, objet…) est trivial et n'apporte rien à JDM. Si la "
@@ -1769,9 +1775,7 @@ def annotation_workflow() -> dict:
                 "order": 2,
                 "name": "Récupérer triplets + annotations JDM existantes",
                 "description": (
-                    "Pour chaque relation cible (ou liste par défaut : "
-                    "r_isa, r_has_part, r_carac, r_telic_role, r_lieu, "
-                    "r_anto, r_syn), appelle :\n\n"
+                    "Pour chaque relation cible, appelle :\n\n"
                     "  `get_relations_of_type(term, relation, limit=8, "
                     "with_annotations=True)`\n\n"
                     "Top-8 par poids suffit pour annoter, plus = bruit. "
