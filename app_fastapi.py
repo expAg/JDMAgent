@@ -892,7 +892,13 @@ async def api_agent_stream(req: AgentRequest):
             return "\n\n".join(live)
 
         def render_with_pending() -> str:
-            return render_live() + "\n\n*⏳ Génération en cours…*"
+            # NB : on ne suffixe PLUS "⏳ Génération en cours…" ici. L'UI
+            # affiche déjà un indicateur de streaming compact en bas
+            # (views-agent.jsx, contrôlé par le state `streaming`) — un
+            # second indicateur en gros dans le corps du message faisait
+            # doublon. On garde la fonction pour ne pas toucher aux 4
+            # callsites en aval.
+            return render_live()
 
         def render_final() -> str:
             """Markdown FINAL — réponse en haut, raisonnement collapsible en bas.
