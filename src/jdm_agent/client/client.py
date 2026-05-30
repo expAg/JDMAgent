@@ -197,7 +197,7 @@ class JDMClient:
         id_max: int = 5_000_000,
         id_min: int = 1,
         max_tries: int = 25,
-        min_level: float = 50.0,
+        min_level: float = 60.0,
     ) -> Optional[Node]:
         """Vrai uniform sampling sur l'espace ID de JeuxDeMots.
 
