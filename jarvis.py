@@ -1624,18 +1624,20 @@ def run_jarvis_flow(
             _ext, _canon_mode = ".enrich", None
         canonical_path = f"/tmp/jdm_outputs/jdm_{_ts}_{_hash}{_ext}"
 
-        # Snapshot du dossier de sortie pour le cleanup filet en finally.
-        # On notera tout fichier nouveau qui n'est PAS canonical_path à la
-        # fin du run et on le supprimera. Avec le mode redirect en place,
-        # cette liste devrait être vide en pratique — c'est juste un
-        # filet pour les régressions futures.
-        try:
-            from pathlib import Path as _PathSnap
-            _outputs_dir = _PathSnap("/tmp/jdm_outputs")
-            _outputs_dir.mkdir(parents=True, exist_ok=True)
-            _pre_run_files = {p.resolve() for p in _outputs_dir.iterdir() if p.is_file()}
-        except Exception:
-            _pre_run_files = set()
+        # PAS de snapshot pre-run + PAS de cleanup filet en finally.
+        # Historiquement on snapshotait /tmp/jdm_outputs ici puis on
+        # supprimait dans le finally tout fichier qui n'était pas le
+        # canonical et qui n'existait pas au snapshot. Bug structurel
+        # de concurrence : avec 2+ runs Jarvis en parallèle, le cleanup
+        # d'un run A supprimait le canonical d'un run B (créé entre le
+        # snapshot de A et le finally de A — donc absent du snapshot de
+        # A et ≠ canonical de A). Résultat : aperçu UI affichait HTTP
+        # 404 sur des fichiers qui avaient bien existé.
+        # Le cleanup est de toute façon inutile en l'état : le SEUL
+        # écrivain dans /tmp/jdm_outputs est `write_submission_file`
+        # qui détourne vers canonical en mode redirect/auto_append, et
+        # le flow `gap` (mode None) n'écrit rien. Le LLM ne peut donc
+        # techniquement pas créer d'orphelin.
 
         # Yield initial : user message + assistant placeholder, pas encore de fichier
         yield (
@@ -2520,31 +2522,10 @@ def run_jarvis_flow(
         # disparaît automatiquement à la sortie de `_rctx_ctx.__exit__`
         # (la ContextVar est restorée à sa valeur précédente, le rctx
         # tombe hors scope, GC). Aucune fuite cross-run possible.
-        # CLEANUP FILET — supprime tout fichier créé pendant ce run dans
-        # /tmp/jdm_outputs qui n'est PAS le canonical. Avec le mode
-        # redirect en place, ne devrait jamais matcher (le LLM ne peut
-        # pas créer de fichier ailleurs). C'est juste un filet pour les
-        # régressions futures / les cas exotiques (legacy mode sans
-        # canonical, gap flow, etc.).
-        try:
-            from pathlib import Path as _PathClean
-            _canonical_resolved = _PathClean(canonical_path).resolve()
-            _outputs_dir2 = _PathClean("/tmp/jdm_outputs")
-            if _outputs_dir2.is_dir():
-                for _f in _outputs_dir2.iterdir():
-                    if not _f.is_file():
-                        continue
-                    _fr = _f.resolve()
-                    if _fr == _canonical_resolved:
-                        continue
-                    if _fr in _pre_run_files:
-                        continue  # existait avant ce run, pas notre affaire
-                    try:
-                        _f.unlink()
-                    except OSError:
-                        pass
-        except Exception:
-            pass
+        # PAS de cleanup filet (supprimé : causait un bug de concurrence
+        # cross-runs, cf. commentaire au calcul de canonical_path plus
+        # haut). Garantie anti-orphelin portée par write_submission_file
+        # qui ne peut écrire qu'au canonical en mode redirect/auto_append.
         # Ferme manuellement le run_context_active ouvert avant le
         # while persistance (cf. __enter__ plus haut). Restore la
         # ContextVar à sa valeur précédente — un autre flow Jarvis qui
