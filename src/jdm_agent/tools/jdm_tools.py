@@ -180,20 +180,17 @@ def pick_random_term() -> dict:
     récupérant le nœud correspondant — la queue de distribution est
     vraiment respectée.
 
-    Renvoie {id, name, decoded, type, weight} — le terme tiré EXISTE
-    déjà dans JDM par construction (on est parti de son id), tu n'as
-    DONC PAS besoin de l'appeler avec `exists` derrière. Renvoie
-    {error} si rien n'a pu être tiré (réseau down / KB injoignable).
+    Renvoie {"term": "<nom>"} — juste le nom du terme tiré, rien d'autre.
+    Le terme EXISTE déjà dans JDM par construction (on est parti de son
+    id), tu n'as DONC PAS besoin de l'appeler avec `exists` derrière.
+    Renvoie {"error": "..."} si rien n'a pu être tiré (réseau down /
+    KB injoignable).
     """
     c = _client()
     n = c.random_term()
     if n is None:
         return {"error": "tirage aleatoire echoue (max_tries epuises ou JDM injoignable)"}
-    dec = c.decode_node_name(n.name)
-    return {
-        "id": n.id, "name": n.name, "decoded": dec["decoded"],
-        "type": n.type, "weight": n.w,
-    }
+    return {"term": n.name}
 
 
 @tool
