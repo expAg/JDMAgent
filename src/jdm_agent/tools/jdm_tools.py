@@ -182,7 +182,11 @@ def pick_random_term() -> dict:
     c = _client()
     n = c.random_term()
     if n is None:
-        return {"error": "tirage aleatoire echoue (max_tries epuises ou JDM injoignable)"}
+        # Le tirage n'a rien retourné — peut arriver ponctuellement
+        # (IDs choisis tombés sur des nœuds rejetés par les filtres
+        # internes, ou hiccup réseau passager). Pas un vrai échec :
+        # on invite simplement à rappeler.
+        return {"retry": "rappelle `pick_random_term()` — tirage ponctuellement infructueux, le suivant aboutira."}
     try:
         dec = c.decode_node_name(n.name)
         decoded = dec.get("decoded") or n.name
