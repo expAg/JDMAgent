@@ -172,6 +172,7 @@ function _emptyJarvisRun(flowId) {
     headline: '',
     log: [],
     metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+    submitted: false,  // passé à true par JarvisRun quand l'upload LLMDrops succès
     accepted: [],
     narrationHTML: '',
     filePreview: '',
@@ -255,6 +256,7 @@ const JarvisStore = {
       filePath: null,
       headline: '',
       metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+      submitted: false,
       _prevConsolidatedCount: 0,
       _startTime: Date.now(),
       runId: null,
@@ -2184,6 +2186,9 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   // Reste fictif (cosmetique) ; ne change pas les chiffres reels.
   const [tick, setTick] = useState(0);
   const rootRef = useRef(null);
+  // Path du fichier en cours de preview (= modal ouvert). null = fermé.
+  // Set par le badge statut de chaque card via prop onPreview.
+  const [previewPath, setPreviewPath] = useState(null);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 1400);
     return () => clearInterval(id);
@@ -2231,12 +2236,17 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   // Live computed pour CHAQUE flow dans l'ordre canonique du catalogue.
   // Sert au KPI strip aggrege ET au tri d'affichage (en cours d'abord).
   const live = flows.map((f, i) => computeFlowLive(f, i, tick, serverRuns, localActiveSet));
-  // Ordre d'affichage : flux EN COURS en haut, AU REPOS apres.
+  // Ordre d'affichage : en cours → soumis → terminé → en attente.
   // L'ordre intra-bucket suit l'ordre canonique du catalogue JARVIS_FLOWS.
+  const _bucket = (l) => {
+    if (l.isRunning) return 0;
+    if (l.submitted) return 1;
+    if (l.isDone) return 2;
+    return 3;
+  };
   const orderedIdx = flows.map((_, i) => i).sort((a, b) => {
-    const aRun = live[a].isRunning ? 0 : 1;
-    const bRun = live[b].isRunning ? 0 : 1;
-    if (aRun !== bRun) return aRun - bRun;
+    const ba = _bucket(live[a]); const bb = _bucket(live[b]);
+    if (ba !== bb) return ba - bb;
     return a - b;
   });
   // Aggregats reels : iter cumule (sum des iter detectes par flux),
@@ -2314,6 +2324,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
             <JFlowDashCard key={f.id} flow={f} num={i + 1} live={live[i]}
               onOpen={() => onPick(f.id)}
               onLaunch={() => onLaunch(f.id)}
+              onPreview={(p) => setPreviewPath(p)}
               onStart={() => {
                 // Demarre le flow IMMEDIATEMENT avec defaults (term/relation
                 // vides → tirage random cote backend) sans naviguer. La card
@@ -2333,6 +2344,90 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
       {/* Légende « Clic sur le cercle / la carte » retirée — le rail
           sticky bottom (JSectionNav) prend sa place visuelle en bas de
           la console et reste toujours visible. */}
+
+      {/* Modal preview — ouvert par clic sur le badge 'soumis'/'terminé'
+          d'une card. Sert le contenu via /api/productions/file (= même
+          endpoint que la page Productions). */}
+      {previewPath && (
+        <FilePreviewModal path={previewPath} onClose={() => setPreviewPath(null)} />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de preview d'un fichier produit (.enrich/.audit/.err/.stat) ──
+// Réutilise l'endpoint /api/productions/file (= même source que la page
+// Productions). Path en entrée = path absolu (ex: /tmp/jdm_outputs/X.enrich) ;
+// on extrait juste le basename pour la query string.
+function FilePreviewModal({ path, onClose }) {
+  const [content, setContent] = useState('… chargement …');
+  const [err, setErr] = useState('');
+  const name = (path || '').split(/[\\/]/).slice(-1)[0] || '';
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`api/productions/file?name=${encodeURIComponent(name)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        if (!alive) return;
+        setContent(d.content || '(vide)');
+      } catch (e) {
+        if (!alive) return;
+        setErr(String(e && e.message ? e.message : e));
+        setContent('');
+      }
+    })();
+    return () => { alive = false; };
+  }, [name]);
+  const onBackdropClick = (e) => { if (e.target === e.currentTarget) onClose(); };
+  const isHtml = name.toLowerCase().endsWith('.html');
+  return (
+    <div onClick={onBackdropClick} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20,
+    }}>
+      <div style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)',
+        maxWidth: 920, width: '100%',
+        maxHeight: '88vh', display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          padding: '14px 18px',
+          borderBottom: '1px solid var(--line-soft)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{name}</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Button size="sm" variant="secondary"
+              onClick={() => {
+                window.open(`api/productions/download?name=${encodeURIComponent(name)}`, '_blank');
+              }}>Télécharger</Button>
+            <Button size="sm" variant="ghost" onClick={onClose}>×</Button>
+          </div>
+        </div>
+        {err ? (
+          <div style={{
+            padding: 18, color: 'var(--jdm-magenta)',
+            fontFamily: 'var(--font-mono)', fontSize: 12,
+          }}>Erreur : {err}</div>
+        ) : isHtml ? (
+          <iframe title={name} srcDoc={content}
+            sandbox="allow-scripts allow-same-origin"
+            style={{ flex: 1, width: '100%', border: 0, minHeight: 500, background: 'var(--bg)' }} />
+        ) : (
+          <pre style={{
+            margin: 0, padding: 18, overflow: 'auto',
+            fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
+            color: 'var(--ink)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            flex: 1,
+          }}>{content}</pre>
+        )}
+      </div>
     </div>
   );
 }
@@ -2592,11 +2687,25 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
     ok: e.kind !== 'reject',
   }));
   // Ordre dans la zone : tentatives en haut (plus pertinent pour le suivi
-  // factuel) puis events système discrets en bas.
+  // factuel) puis events système discrets en bas. Dans chaque sous-bloc,
+  // le PLUS RÉCENT EST EN HAUT (reverse après slice — sinon les anciens
+  // collent au header et les nouveaux disparaissent en bas de la zone
+  // étroite quand le run produit beaucoup).
+  feedTries.reverse();
+  feedLog.reverse();
   const feed = [...feedTries, ...feedLog];
+
+  // submitted = run a poussé un fichier au LLMDrops avec succès
+  // (set par JarvisRun après réponse positive de /api/productions/submit).
+  // done = run terminé (sans soumission). isRunning = run en cours.
+  // → 4 statuts UI possibles : 'running' / 'submitted' / 'done' / 'idle'.
+  const submitted = !!(store && store.submitted);
+  const isDone = !!(store && store.status === 'done');
+  const filePath = (store && store.filePath) || null;
 
   return { iter, span, tools, accepted, rejected, produced, pct, recent, stepIdx,
            isRunning, nbAttempted, nbTerms, tokens, feed,
+           submitted, isDone, filePath,
            headline: (store && store.headline) || (latest && latest.headline) || '' };
 }
 
@@ -2608,7 +2717,7 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
 //              de page. Utilise par le ring click pour permettre de
 //              demarrer un flow grise depuis Supervision en gardant le
 //              tableau de bord visible.
-function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
+function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
   const tint = (p) => `color-mix(in srgb, ${a} ${p}%, transparent)`;
@@ -2666,29 +2775,73 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>{flow.title}</div>
         </div>
-        {/* badge "en cours" / "au repos" selon l'etat reel du run */}
-        {live.isRunning ? (
-          <span style={{
+        {/* Badge statut — 4 cas : en cours / soumis / terminé / au repos.
+            Quand statut est "soumis" ou "terminé" ET qu'un fichier a été
+            produit (live.filePath), le badge devient cliquable et ouvre
+            le preview. Stop propagation pour ne pas relancer le flow
+            (= onClick parent de la card). */}
+        {(() => {
+          const _stopProp = (e) => { e.stopPropagation(); e.preventDefault(); };
+          const _canPreview = !!live.filePath && (live.submitted || live.isDone);
+          const _onClickBadge = (e) => {
+            if (!_canPreview) return;
+            _stopProp(e);
+            if (typeof onPreview === 'function') onPreview(live.filePath);
+          };
+          const _commonStyle = {
             display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
             padding: '4px 9px', borderRadius: 999,
-            border: `1px solid ${tint(45)}`, background: tint(8), color: a,
             fontFamily: 'var(--font-mono)', fontSize: 9.5,
             textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600,
-          }}>
-            <span className="pulse-dot" style={{ background: a }} /> en cours
-          </span>
-        ) : (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
-            padding: '4px 9px', borderRadius: 999,
-            border: '1px solid var(--line-soft)', background: 'var(--bg-elev)',
-            color: 'var(--ink-3)',
-            fontFamily: 'var(--font-mono)', fontSize: 9.5,
-            textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500,
-          }}>
-            au repos
-          </span>
-        )}
+            cursor: _canPreview ? 'pointer' : 'default',
+          };
+          if (live.isRunning) {
+            return (
+              <span style={{
+                ..._commonStyle,
+                border: `1px solid ${tint(45)}`, background: tint(8), color: a,
+              }}>
+                <span className="pulse-dot" style={{ background: a }} /> en cours
+              </span>
+            );
+          }
+          if (live.submitted) {
+            return (
+              <span onClick={_onClickBadge}
+                title={_canPreview ? 'Voir le fichier produit' : ''}
+                style={{
+                  ..._commonStyle,
+                  border: '1px solid var(--jdm-green)',
+                  background: 'color-mix(in srgb, var(--jdm-green) 10%, transparent)',
+                  color: 'var(--jdm-green)',
+                }}>
+                soumis{_canPreview && <span style={{ opacity: 0.7, fontWeight: 400 }}>·voir</span>}
+              </span>
+            );
+          }
+          if (live.isDone) {
+            return (
+              <span onClick={_onClickBadge}
+                title={_canPreview ? 'Voir le fichier produit' : 'Flow terminé (pas de fichier)'}
+                style={{
+                  ..._commonStyle, fontWeight: 500,
+                  border: '1px solid var(--line-soft)',
+                  background: 'var(--bg-elev)', color: 'var(--ink-2)',
+                }}>
+                terminé{_canPreview && <span style={{ opacity: 0.6, fontWeight: 400 }}>·voir</span>}
+              </span>
+            );
+          }
+          return (
+            <span style={{
+              ..._commonStyle, fontWeight: 500,
+              border: '1px solid var(--line-soft)', background: 'var(--bg-elev)',
+              color: 'var(--ink-3)',
+            }}>
+              en attente
+            </span>
+          );
+        })()}
       </div>
 
       {/* Step pipeline — etape active highlightee. Detection REELLE :
@@ -4821,6 +4974,10 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                             if (res.ok) {
                               setSubmitState('done');
                               setSubmitMsg(`✓ uploadé sous ${res.uploaded_as || name} (HTTP ${res.status_code || '?'})`);
+                              // Persiste dans le store pour que la card
+                              // Supervision affiche le statut "SOUMIS"
+                              // après unmount + sticky entre runs.
+                              try { JarvisStore.patch(flow.id, { submitted: true }); } catch {}
                             } else {
                               setSubmitState('error');
                               setSubmitMsg(`✗ ${res.error || 'échec inconnu'}`);
@@ -5017,8 +5174,9 @@ function StatusBadge({ state, accent }) {
   const STYLES = {
     idle:      { label: 'En attente', color: 'var(--ink-3)',       dot: false },
     running:   { label: 'En cours',   color: accent,               dot: true  },
-    paused:    { label: 'En pause',   color: 'var(--jdm-orange)',  dot: false },
+    submitted: { label: 'Soumis',     color: 'var(--jdm-green)',   dot: false },
     done:      { label: 'Terminé',    color: 'var(--jdm-green)',   dot: false },
+    paused:    { label: 'En pause',   color: 'var(--jdm-orange)',  dot: false },
     error:     { label: 'Erreur',     color: 'var(--jdm-magenta)', dot: false },
     cancelled: { label: 'Annulé',     color: 'var(--ink-3)',       dot: false },
     aborted:   { label: 'Interrompu', color: 'var(--ink-3)',       dot: false },
