@@ -9695,33 +9695,72 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
   const tokens = m.tokens || 0;
 
   // ─── Feed pour la zone « flux en direct » de la card Supervision ──────
-  // Mix log brut + triplets validés (qui ont aussi leur entry [ok] dans
-  // le log via le delta-push handler 'jarvis'), dans l'ordre chronologique
-  // d'apparition. On garde les 6 dernières entries (tronque visuellement
-  // à la zone) :
-  //   - entry tag [ok] + triplet → rendu format triplet pretty
-  //   - sinon → rendu format log mono compact (timestamp + tag + msg)
-  const _log = (store && store.log) || [];
-  const _feedSlice = _log.slice(-6);
-  const feed = _feedSlice.map((e, idx) => {
-    if (e.tag === '[ok]' && e.triplet) {
-      return {
-        kind: 'item',
-        key: 'f' + idx + ':' + (e.t || ''),
-        label: e.msg,
-        tag: e.triplet.schema || '✓',
-        ok: true,
-      };
+  // Source unique = même que la vue Log temps réel : la NARRATION HTML
+  // (data-tool="..." + data-triplet="t|r|tg" sur chaque div). On extrait
+  // les derniers TOOL CALLS avec leur triplet (= tentatives factuelles
+  // affichées exactement comme dans le Log temps réel : `→ t|r|tg  tool`).
+  // En complément, on garde 1-2 derniers events log pour le contexte
+  // système ([start]/[file]/[done]/[err]).
+  //
+  // Teinture verte : si le triplet a fini par être consolidé (présent
+  // dans `accepted`), on tinte la ligne — même règle visuelle que la
+  // vue Log complète, cohérence garantie.
+  const _validatedSet = new Set();
+  if (Array.isArray(items)) {
+    for (const it of items) {
+      if (it.type === 'consolidated' || it.type === 'audit_signalement') {
+        const tk = (it.subject || '').trim().toLowerCase();
+        const rk = (it.relation || '').trim().toLowerCase();
+        const gk = (it.target || '').trim().toLowerCase();
+        if (tk && rk && gk) _validatedSet.add(`${tk}|${rk}|${gk}`);
+      }
     }
+  }
+  // Parse narration pour extraire les tool calls (skip results, skip
+  // tools sans triplet — workflow init, write_submission_file).
+  const _tries = [];
+  if (narration) {
+    const reTry = /<div\s+class="jdm-narration"\s+data-tool="(\w+)"\s*(data-triplet="([^"]*)")?\s*(data-result="1")?[^>]*>/g;
+    let mt;
+    while ((mt = reTry.exec(narration)) !== null) {
+      const isResult = !!mt[4];
+      const triplet = mt[3] || '';
+      if (isResult || !triplet) continue;
+      _tries.push({ tool: mt[1], triplet });
+    }
+  }
+  const _recentTries = _tries.slice(-5);
+  const feedTries = _recentTries.map((t, idx) => {
+    const parts = t.triplet.split('|');
+    const tNorm = (parts[0] || '').trim().toLowerCase();
+    const rNorm = (parts[1] || '').trim().toLowerCase();
+    const gNorm = (parts[2] || '').trim().toLowerCase();
+    const isValidated = (tNorm && rNorm && gNorm)
+      && _validatedSet.has(`${tNorm}|${rNorm}|${gNorm}`);
     return {
-      kind: 'log',
-      key: 'f' + idx + ':' + (e.t || ''),
-      t: e.t || '',
-      tag: e.tag || '',
-      msg: e.msg || '',
-      ok: e.kind !== 'reject',
+      kind: 'try',
+      key: 'tr' + idx + ':' + t.triplet,
+      triplet: t.triplet,
+      tool: t.tool,
+      validated: isValidated,
     };
   });
+  // 2 derniers events log pour le contexte système (filtre les bruits :
+  // garde [start], [file], [done], [err], [stop] ; drop le reste).
+  const _log = (store && store.log) || [];
+  const _sysTagsOK = new Set(['[start]', '[file]', '[done]', '[err]', '[stop]', '[resume]']);
+  const _sysLog = _log.filter(e => _sysTagsOK.has(e.tag)).slice(-2);
+  const feedLog = _sysLog.map((e, idx) => ({
+    kind: 'log',
+    key: 'lg' + idx + ':' + (e.t || ''),
+    t: e.t || '',
+    tag: e.tag || '',
+    msg: e.msg || '',
+    ok: e.kind !== 'reject',
+  }));
+  // Ordre dans la zone : tentatives en haut (plus pertinent pour le suivi
+  // factuel) puis events système discrets en bas.
+  const feed = [...feedTries, ...feedLog];
 
   return { iter, span, tools, accepted, rejected, produced, pct, recent, stepIdx,
            isRunning, nbAttempted, nbTerms, tokens, feed,
@@ -9914,7 +9953,38 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
               {live.isRunning ? 'En attente du 1er event…' : 'Aucun event encore.'}
             </div>
           ) : live.feed.map((e) => (
-            e.kind === 'item' ? (
+            e.kind === 'try' ? (
+              // Tentative de tool call (= ligne du Log temps réel) :
+              // `→ triplet  tool_name`. Teinte verte + liseré gauche
+              // si le triplet a fini par être validé (= dans accepted).
+              <div key={e.key} className="fade-up" style={{
+                display: 'flex', alignItems: 'baseline', gap: 6,
+                paddingTop: 2, paddingBottom: 2,
+                paddingLeft: 8, paddingRight: 8,
+                background: e.validated
+                  ? 'color-mix(in srgb, var(--jdm-green) 9%, transparent)'
+                  : 'transparent',
+                borderLeft: e.validated
+                  ? '2px solid var(--jdm-green)'
+                  : '2px solid transparent',
+                borderRadius: '0 3px 3px 0',
+                fontFamily: 'var(--font-mono)', fontSize: 10,
+                minWidth: 0,
+                transition: 'background .25s, border-color .25s',
+              }}>
+                <span style={{ flexShrink: 0, color: a, opacity: 0.7 }}>→</span>
+                <span style={{
+                  flex: '1 1 auto', minWidth: 0, color: 'var(--ink)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }} title={e.triplet}>{e.triplet}</span>
+                <span style={{
+                  flex: '0 1 auto', minWidth: 0,
+                  color: 'var(--ink-3)', fontSize: 9, lineHeight: 1.3,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  maxWidth: 110,
+                }} title={e.tool}>{e.tool}</span>
+              </div>
+            ) : e.kind === 'item' ? (
               // Triplet validé : format pretty avec ✓ vert + tag schema
               <div key={e.key} className="fade-up" style={{
                 display: 'flex', alignItems: 'center', gap: 6,
@@ -9939,14 +10009,14 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
                 )}
               </div>
             ) : (
-              // Log brut : timestamp + tag + msg mono compact
+              // Log système : timestamp + tag + msg mono compact (pied de page)
               <div key={e.key} className="fade-up" style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '3px 8px',
-                fontFamily: 'var(--font-mono)', fontSize: 10,
-                color: 'var(--ink-3)', minWidth: 0,
+                fontFamily: 'var(--font-mono)', fontSize: 9.5,
+                color: 'var(--ink-3)', minWidth: 0, opacity: 0.75,
               }}>
-                <span style={{ flexShrink: 0, opacity: 0.7 }}>{e.t}</span>
+                <span style={{ flexShrink: 0 }}>{e.t}</span>
                 <span style={{
                   flexShrink: 0,
                   color: e.tag === '[err]' ? 'var(--jdm-magenta)'
@@ -9955,7 +10025,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
                     : 'var(--ink-3)',
                 }}>{e.tag}</span>
                 <span style={{
-                  flex: '1 1 auto', minWidth: 0, color: 'var(--ink-2)',
+                  flex: '1 1 auto', minWidth: 0, color: 'var(--ink-3)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }} title={e.msg}>{e.msg}</span>
               </div>
