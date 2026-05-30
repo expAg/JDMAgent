@@ -9955,7 +9955,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
           title={onStart ? `Lancer "${flow.title}" maintenant (defaults)` : `(Re)lancer "${flow.title}"`}
           aria-label={`Lancer ${flow.title}`}
           style={{ flexShrink: 0 }}>
-          <JLoopRing accent={a} num={num} steps={flow.steps.length} delay={num * 0.3} size={50} />
+          <JLoopRing accent={a} num={num} steps={flow.steps.length} delay={num * 0.3} size={50} icon="power" />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="mono" style={{
@@ -10273,7 +10273,12 @@ function useRingStyle() {
   return s;
 }
 
-function JLoopRing({ accent, num, steps, delay, size = 60 }) {
+// `icon` optionnel : si fourni (ex. 'power'), remplace le numéro par
+// une icône SVG centrée. Utilisé dans les cartes Supervision pour
+// rendre l'intention « cliquer = allumer le flow » immédiate. `num`
+// reste passé pour la couleur/animation (delay) — il n'est juste pas
+// rendu visuellement.
+function JLoopRing({ accent, num, steps, delay, size = 60, icon }) {
   const ringStyle = useRingStyle();
   const c = `color-mix(in srgb, ${accent} 50%, var(--ink-3) 50%)`;   // desaturated
   const cx = 32, cy = 32, R = 20;
@@ -10356,9 +10361,20 @@ function JLoopRing({ accent, num, steps, delay, size = 60 }) {
           {arcGroup}
         </g>
         {marks}
-        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
-          fill={c}
-          style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontWeight: 600, fontSize: 17 }}>{num}</text>
+        {icon === 'power' ? (
+          // Icône power : arc ouvert en haut + barre verticale centrée.
+          // Dimensionnée pour le viewBox 64x64 standard du ring (R=21).
+          <g transform={`translate(${cx} ${cy})`}
+             stroke={c} strokeWidth="2.2" fill="none"
+             strokeLinecap="round" strokeLinejoin="round">
+            <path d="M -6 -3 A 7.5 7.5 0 1 0 6 -3" />
+            <line x1="0" y1="-9" x2="0" y2="-1.5" />
+          </g>
+        ) : (
+          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+            fill={c}
+            style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontWeight: 600, fontSize: 17 }}>{num}</text>
+        )}
       </svg>
     </span>
   );
