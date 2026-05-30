@@ -166,25 +166,12 @@ def _lim(v: Optional[int], default: int) -> int:
 
 @tool
 def pick_random_term() -> dict:
-    """Tire un terme au hasard dans JeuxDeMots — UNIFORM SAMPLING vrai
-    sur l'espace des IDs JDM (~5M nœuds). Appelle-moi à chaque fois que
-    l'utilisateur te demande de « choisir un mot au hasard », « tirer
+    """Tire un terme au hasard dans JeuxDeMots. Appelle-moi à chaque fois
+    que l'utilisateur te demande de « choisir un mot au hasard », « tirer
     aléatoirement », ou que tu n'as pas de terme imposé.
 
-    POURQUOI un outil dédié : si tu choisis toi-même, tu retombes
-    systématiquement sur le cluster « symphonie / sérénité / télétravail
-    / ébéniste / alchimiste / harmonie / frugalité / mélancolie » — c'est
-    du mode collapse classique (sur-représentation des listes « beaux
-    mots français » dans ton corpus d'entraînement). Cet outil
-    court-circuite ton biais en tirant un ID au hasard puis en
-    récupérant le nœud correspondant — la queue de distribution est
-    vraiment respectée.
-
-    Renvoie {"term": "<nom>"} — juste le nom du terme tiré, rien d'autre.
-    Le terme EXISTE déjà dans JDM par construction (on est parti de son
-    id), tu n'as DONC PAS besoin de l'appeler avec `exists` derrière.
-    Renvoie {"error": "..."} si rien n'a pu être tiré (réseau down /
-    KB injoignable).
+    Renvoie {"term": "<nom>"} ou {"error": "..."} si rien n'a pu être
+    tiré.
     """
     c = _client()
     n = c.random_term()
