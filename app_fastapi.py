@@ -854,9 +854,21 @@ async def api_agent_stream(req: AgentRequest):
             if role == "user":
                 lc_messages.append(HumanMessage(content=content))
             elif role == "assistant":
-                # Nettoie les blocs annexes du markdown cumulatif
+                # Nettoie les blocs annexes du markdown cumulatif AVANT
+                # de réinjecter au LLM :
+                #   - "\n\n<details>"   : le résumé serveur du raisonnement
+                #     (sinon le LLM le mime au tour suivant et génère un
+                #     faux <details> dans sa nouvelle réponse — cause du
+                #     bug « 2 blocs RAISONNEMENT séparés »).
+                #   - "\n\n*⏳"          : suffixe pending (legacy).
+                #   - "\n\n<div class=\"jdm-narration\"" : narration LIVE
+                #     non encapsulée (cas anciens).
                 ans = content
-                for marker in ("\n\n*⏳", "\n\n<div class=\"jdm-narration\""):
+                for marker in (
+                    "\n\n<details>",
+                    "\n\n*⏳",
+                    "\n\n<div class=\"jdm-narration\"",
+                ):
                     ans = ans.split(marker, 1)[0]
                 ans = ans.strip()
                 if ans:
@@ -871,7 +883,11 @@ async def api_agent_stream(req: AgentRequest):
         # NB : pendant le stream, on affiche TOUT inline pour suivre.
         # À la FIN, on bascule sur un rendu "réponse seule + <details>"
         # (cf. app.py chat_with_agent ligne ~1495).
-        progress: list[str] = ["*🧠 Réflexion en cours…*"]
+        # Plus de prologue "🧠 Réflexion en cours…" : il faisait doublon
+        # avec l'indicateur React `streaming` (ainsi que l'animation de
+        # l'icône JDMMark côté UI). Le LLM commence à streamer dans la
+        # seconde, l'attente n'a pas besoin de message texte.
+        progress: list[str] = []
         current_text = ""
         current_thinking = ""
         use_thinking_flag = bool(req.use_thinking)
@@ -932,10 +948,11 @@ async def api_agent_stream(req: AgentRequest):
             )
             return final + details
 
-        # 4) Premier yield immédiat — l'utilisateur voit "Réflexion en cours…"
+        # 4) Premier yield immédiat — text vide, l'UI montre l'animation
+        # JDMMark + indicator React le temps que les premiers tokens arrivent.
         yield {
             "event": "text",
-            "data": json.dumps({"text": render_with_pending()}, ensure_ascii=False),
+            "data": json.dumps({"text": ""}, ensure_ascii=False),
         }
 
         try:

@@ -167,6 +167,9 @@ function ViewAgent() {
 
   return (
     <PageShell>
+      {/* Animation de l'icône JDMMark pendant le streaming. Une rotation
+          lente (1.8s) reste sobre et sert d'indicateur visuel passif. */}
+      <style>{`@keyframes jdm-mark-spin { to { transform: rotate(360deg); } }`}</style>
       <SectionTitle
         kicker="Module · chat LLM + outils JDM"
         title="Chatbot LLM"
@@ -209,6 +212,7 @@ function ViewAgent() {
               {convo.map((m, i) => (
                 <Message key={i} m={m}
                   onResend={m.role === 'user' ? () => resendUserMessage(m.content) : null}
+                  isStreaming={streaming && i === convo.length - 1 && m.role === 'assistant'}
                 />
               ))}
               {streaming && (
@@ -378,7 +382,7 @@ function handleEvent(ev, patchLast) {
 
 // ─── Rendu d'un message ────────────────────────────────────────
 
-function Message({ m, onResend }) {
+function Message({ m, onResend, isStreaming = false }) {
   if (m.role === 'user') {
     return <UserMessage content={m.content} onResend={onResend} />;
   }
@@ -390,6 +394,9 @@ function Message({ m, onResend }) {
         background: 'var(--bg-elev)',
         border: '1px solid var(--line)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
+        // Animation : pendant que le LLM réfléchit ou streame, l'icône
+        // tourne sur elle-même (remplace le texte « Réflexion en cours »).
+        animation: isStreaming ? 'jdm-mark-spin 1.8s linear infinite' : 'none',
       }}>
         <JDMMark size={18} />
       </div>
