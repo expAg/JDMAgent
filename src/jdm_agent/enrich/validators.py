@@ -423,10 +423,23 @@ def register_consolidation(term: str, relation: str, target: str,
         with ctx.lock:
             key = _norm_consolidation_key(term, relation, target)
             is_new = key not in ctx.consolidation_registry
-            ctx.consolidation_registry[key] = {
-                "explanation": (explanation or "").strip(),
-                "schema": (schema or "").strip(),
-            }
+            # Le 1er register pour cette clé normalisee gagne — on PRESERVE
+            # ses formes originales (term/relation/target avec accents et
+            # casse intacts). Indispensable car la cle elle-meme est
+            # normalisee (NFKD + suppression diacritiques + lowercase) pour
+            # le dedup, mais l'ecriture vers JDM doit garder la forme
+            # canonique francaise (« régionale », « salée », « tomates »).
+            if is_new:
+                ctx.consolidation_registry[key] = {
+                    "term": term, "relation": relation, "target": target,
+                    "explanation": (explanation or "").strip(),
+                    "schema": (schema or "").strip(),
+                }
+            else:
+                # Update l'explication/schema mais GARDE les formes
+                # originales du 1er enregistrement (pas d'overwrite).
+                ctx.consolidation_registry[key]["explanation"] = (explanation or "").strip()
+                ctx.consolidation_registry[key]["schema"] = (schema or "").strip()
         if is_new:
             _append_consolidation_to_file(term, relation, target, explanation,
                                           run_context=run_context)
@@ -437,10 +450,15 @@ def register_consolidation(term: str, relation: str, target: str,
             return
         key = _norm_consolidation_key(term, relation, target)
         is_new = key not in _CONSOLIDATION_REGISTRY
-        _CONSOLIDATION_REGISTRY[key] = {
-            "explanation": (explanation or "").strip(),
-            "schema": (schema or "").strip(),
-        }
+        if is_new:
+            _CONSOLIDATION_REGISTRY[key] = {
+                "term": term, "relation": relation, "target": target,
+                "explanation": (explanation or "").strip(),
+                "schema": (schema or "").strip(),
+            }
+        else:
+            _CONSOLIDATION_REGISTRY[key]["explanation"] = (explanation or "").strip()
+            _CONSOLIDATION_REGISTRY[key]["schema"] = (schema or "").strip()
         if is_new:
             _append_consolidation_to_file(term, relation, target, explanation)
 
@@ -474,13 +492,26 @@ def count_consolidations(run_context: Optional[RunContext] = None) -> int:
 
 
 def list_consolidations(run_context: Optional[RunContext] = None) -> list[dict]:
-    """Renvoie la LISTE des triplets consolidés. Liste vide hors contexte."""
+    """Renvoie la LISTE des triplets consolidés. Liste vide hors contexte.
+
+    IMPORTANT : les `term/relation/target` rendus sont les FORMES
+    ORIGINALES (accents + casse intacts) telles qu'enregistrees au 1er
+    register_consolidation. La cle interne du registry est normalisee
+    (NFKD + sans diacritiques + lowercase) pour le dedup, mais on lit
+    les valeurs originales depuis la value pour ne pas perdre les
+    accents francais essentiels a la soumission JDM.
+    """
     ctx = _active_ctx(run_context)
     if ctx is not None:
         with ctx.lock:
             return [
                 {
-                    "term": k[0], "relation": k[1], "target": k[2],
+                    # Fallback sur la clé normalisée si la value n'a pas
+                    # encore le champ (compat ascendante avec d'anciens
+                    # registries en mémoire pré-fix).
+                    "term": v.get("term", k[0]),
+                    "relation": v.get("relation", k[1]),
+                    "target": v.get("target", k[2]),
                     "explanation": v.get("explanation", ""),
                     "schema": v.get("schema", ""),
                 }
@@ -491,7 +522,9 @@ def list_consolidations(run_context: Optional[RunContext] = None) -> list[dict]:
             return []
         return [
             {
-                "term": k[0], "relation": k[1], "target": k[2],
+                "term": v.get("term", k[0]),
+                "relation": v.get("relation", k[1]),
+                "target": v.get("target", k[2]),
                 "explanation": v.get("explanation", ""),
                 "schema": v.get("schema", ""),
             }
