@@ -115,6 +115,8 @@ RÈGLES :
     relance variée, etc.), appelle `pick_random_term()`. Si le terme
     renvoyé ne te convient pas (ex. : pas polysémique alors que le flow
     l'exige), rappelle-le — chaque tirage est indépendant et uniform.
+    Lorsque tu te sens vraiment bloqué, plutôt que de forcer, change de
+    terme et de relations.
 
 15. BUDGET D'APPELS D'OUTILS. Certains flows (notamment Jarvis ›
     Enrichissement) imposent un budget de N appels d'outils maximum. Si
