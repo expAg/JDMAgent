@@ -828,6 +828,27 @@ def validate_candidate(term: str, relation: str, target: str,
     out = cand.model_dump(mode="json")
     ready = cand.is_valid() and cand.is_consolidated()
     out["ready_for_submission"] = ready
+
+    # Decode du term et du target pour que le LLM ne lise pas le brut
+    # opaque (`pomme>37201`) dans les echos et les messages next_step /
+    # prefetch_reminder.
+    def _dec(name: str) -> str:
+        try:
+            d = c.decode_node_name(name)
+            return d.get("decoded") or name
+        except Exception:
+            return name
+    term_dec = _dec(cand.term)
+    target_dec = _dec(cand.target)
+    # Suffixe « [= forme lisible] » UNIQUEMENT si differe du brut
+    # (= c'etait bien un raffinement). Garde le brut visible pour
+    # rappels de tools sur ce sens specifique.
+    def _lbl(name: str, dec: str) -> str:
+        return f"{name} [= {dec}]" if dec and dec != name else name
+    term_label = _lbl(cand.term, term_dec)
+    out["term_decoded"] = term_dec
+    out["target_decoded"] = target_dec
+
     if ready:
         out["next_step"] = (
             "PRÊT — inclure dans le fichier de soumission au format "
@@ -838,7 +859,7 @@ def validate_candidate(term: str, relation: str, target: str,
         out["next_step"] = (
             f"À REJETER (duplicate) : {cand.validation_note} — "
             "⚠️ ATTENTION : un duplicate ici, c'est que tu N'AS PAS pré-fetché "
-            f"`{cand.term} | {cand.relation} | ?` avant de proposer (ou que "
+            f"`{term_label} | {cand.relation} | ?` avant de proposer (ou que "
             "ton pré-fetch a été tronqué par un outil de consultation). "
             "ARRÊTE ton batch maintenant, appelle "
             f"`list_existing_for_enrichment(term='{cand.term}', "
@@ -859,8 +880,9 @@ def validate_candidate(term: str, relation: str, target: str,
     # le flux. Le LLM le voit à chaque appel, c'est conçu pour qu'il ne
     # « tourne en rond » jamais — même s'il a oublié de pré-fetcher au début.
     out["prefetch_reminder"] = (
-        f"As-tu appelé `list_existing_for_enrichment(term='{cand.term}', "
-        f"relation_name='{cand.relation}')` AVANT de proposer ? Si non OU "
+        f"As-tu appelé `list_existing_for_enrichment(term='{cand.term}'"
+        + (f" [= {term_dec}]" if term_dec != cand.term else "")
+        + f", relation_name='{cand.relation}')` AVANT de proposer ? Si non OU "
         "si tu as utilisé get_synonyms/get_parts/etc. (qui tronquent), "
         "fais-le maintenant — c'est l'outil dédié au pré-fetch exhaustif, "
         "il renvoie `exclusion_set` complet sans seuil de poids ni limite "
@@ -919,8 +941,16 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
             _key = _norm_key(term, relation_name)
             if _key in _reg:
                 cached_set = sorted(_reg[_key])
+                # decode du term cote cache aussi
+                try:
+                    from jdm_agent.tools.jdm_tools import _client as _c
+                    _dec_cache = _c().decode_node_name(term)
+                    _td_cache = _dec_cache.get("decoded") or term
+                except Exception:
+                    _td_cache = term
                 return {
                     "term": term,
+                    "term_decoded": _td_cache,
                     "relation": relation_name,
                     "count": len(cached_set),
                     "exclusion_set": cached_set,
@@ -937,10 +967,20 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
         pass  # registry pas dispo → comportement normal
 
     c = _client()
+    # Decode du term passe en input. Si c'est un raffinement
+    # (`pomme>37201`), on expose `term_decoded` = « pomme (fruit) » a cote
+    # du brut pour que le LLM ne lise pas une chaine opaque dans les
+    # echos / messages d'erreur.
+    try:
+        _dec = c.decode_node_name(term)
+        term_decoded = _dec.get("decoded") or term
+    except Exception:
+        term_decoded = term
+
     rid = c.relation_type_id(relation_name)
     if rid is None:
         return {
-            "term": term, "relation": relation_name,
+            "term": term, "term_decoded": term_decoded, "relation": relation_name,
             "error": f"Relation inconnue : {relation_name!r}. "
                      "Vérifie le nom via `list_relation_types`.",
             "count": 0, "targets": [], "exclusion_set": [],
@@ -953,7 +993,7 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
                                min_weight=MIN_W, limit=LIMIT_CAP)
     except Exception as e:
         return {
-            "term": term, "relation": relation_name,
+            "term": term, "term_decoded": term_decoded, "relation": relation_name,
             "error": f"Échec du pré-fetch : {e}",
             "count": 0, "targets": [], "exclusion_set": [],
         }
@@ -974,6 +1014,7 @@ def list_existing_for_enrichment(term: str, relation_name: str) -> dict:
 
     return {
         "term": term,
+        "term_decoded": term_decoded,
         "relation": relation_name,
         "count": len(targets),
         "targets": targets,         # triplets complets avec polarité / poids
