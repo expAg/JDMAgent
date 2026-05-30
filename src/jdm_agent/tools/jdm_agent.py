@@ -89,15 +89,7 @@ RÈGLES :
     utilisateur recouvrent plusieurs angles sémantiques d'un même objet ou
     concept. Dans ces cas, il PEUT être utile (pas obligatoire) d'explorer
     plusieurs relations complémentaires pour offrir des perspectives multiples
-    à l'utilisateur, structurées par angle. Exemples de familles d'angles :
-    * « que peut-on faire avec/de X » (X = objet) → fonction primaire (r_telic_role) ;
-      usages instrumentaux variés (r_instr-1) ; actions subies par X (r_patient-1)
-    * « qu'est-ce qu'un X » (X = nom) → catégorisation (r_isa) ;
-      caractéristiques (r_carac) ; parties (r_has_part) ; sens (raffinements)
-    * « que peut faire X » (X = agent) → actions typiques (r_agent-1) ;
-      caractéristiques (r_carac)
-    * « domaine de X » → domaines auxquels X appartient (r_domain) ;
-      ou inversement (r_domain-1) si X est un domaine
+    à l'utilisateur, structurées par angle.
     Utilise ton jugement : si l'utilisateur attend une réponse courte et
     ciblée, reste sur 1 angle. Si la question est ouverte ou exploratoire,
     présente plusieurs angles avec des sections comme « du point de vue X… ».
