@@ -1391,6 +1391,8 @@ def run_jarvis_flow(
     resume_state: Optional[dict] = None,
     flow_id: Optional[str] = None,
     temperature: Optional[float] = None,
+    pool_active: bool = False,
+    run_id: Optional[str] = None,
 ) -> Generator[tuple, None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -1531,7 +1533,16 @@ def run_jarvis_flow(
                 # sur l'env GOOGLE_API_KEY brut = CSV des 4 clés non
                 # parsé = INVALID_KEY garanti.
                 if model in GEMINI_MODELS:
-                    current_gemini_key = pick_unblown_gemini_key(model)
+                    # Pool actif + run_id fourni → check-out d'une clé
+                    # via pool_lease (acquire_key cherche d'abord une
+                    # clé libre = load 0, sinon load-min). Garantit
+                    # l'isolation entre runs parallèles.
+                    # Sinon → comportement historique sticky.
+                    if pool_active and run_id:
+                        from jdm_agent.pool_lease import acquire_key
+                        current_gemini_key = acquire_key(model, run_id, _app)
+                    else:
+                        current_gemini_key = pick_unblown_gemini_key(model)
                     # Fallback : pool vide → env GOOGLE_API_KEY (mais
                     # _parse_google_keys → 1ère du CSV, pas CSV brut).
                     if not current_gemini_key:
@@ -2494,6 +2505,16 @@ def run_jarvis_flow(
             _current_file_path(), _read_file_preview(_current_file_path()),
         )
     finally:
+        # Pool lease : si une clé a été check-out via acquire_key au
+        # démarrage (pool_active=True), on la release ici pour qu'elle
+        # redevienne dispo pour un autre run. release_key est idempotent
+        # (no-op si pas de lease).
+        if pool_active and run_id:
+            try:
+                from jdm_agent.pool_lease import release_key
+                release_key(run_id)
+            except Exception:
+                pass
         # Note : pas besoin de `set_canonical_output_path(None)` ici.
         # Le canonical est posé sur `rctx`, pas sur les globals — il
         # disparaît automatiquement à la sortie de `_rctx_ctx.__exit__`

@@ -1235,6 +1235,12 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
             auto_switch_on_perday=bool(p.get("auto_switch", False)),
             resume_state=p.get("resume_state"),
             flow_id=flow_id,
+            # Pool lease per-run : si activé via la config Jarvis, chaque
+            # run prend une clé Gemini distincte (load-min) pour éviter
+            # que 2 runs parallèles se battent sur le même quota PerMin.
+            # Le run_id est l'UUID interne du bg-run (cf. _new_run).
+            pool_active=bool(p.get("pool_active", False)),
+            run_id=run.get("run_id"),
         )
         try:
             from jdm_agent.enrich import count_consolidations, list_consolidations

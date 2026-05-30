@@ -8142,13 +8142,23 @@ function defaultParamsFor(flowId) {
   // default (0.3), on l'envoie au backend. Sinon undefined → defaults
   // par-modele cote serveur (jdm_temperature env var, sinon 1.5-1.7).
   const _temp = (typeof cfg.temperature === 'number') ? cfg.temperature : undefined;
+  // Pool gratuit actif : check-out d'une clé Gemini distincte par run via
+  // pool_lease.py (backend). Quand actif, gemini-3.1-flash-lite est le
+  // modèle pertinent (gratuit, multi-clés possibles). Si l'utilisateur a
+  // sauvé un modèle non-gemini dans cfg.llm, on le force vers le pool.
+  const _poolActive = cfg.poolActive !== false;  // défaut true
+  const _isGemini = (m) => typeof m === 'string' && m.startsWith('gemini');
+  const _modelPick = (_poolActive && !_isGemini(cfg.llm))
+    ? 'gemini-3.1-flash-lite'
+    : (cfg.llm || 'gemini-3.1-flash-lite');
   const common = {
-    model: cfg.llm || 'gemini-3.1-flash-lite',
+    model: _modelPick,
     api_key: '', drops_key: '',
     use_thinking: true,
     budget_label: 'illimité',
     auto_switch: false,
     temperature: _temp,
+    pool_active: _poolActive,
   };
   // `upload` = soumission auto du fichier au LLMDrops (mappe cfg.autoSubmit).
   const autoUpload = cfg.autoSubmit === true;
@@ -8611,6 +8621,11 @@ const JCONFIG_DEFAULTS = {
   llm: 'gemini-3.1-flash-lite', temperature: 0.3, globalConf: 50,
   humanReview: false, autoSubmit: true, logLevel: 'detaille',
   storageDir: '~/jdm/exports', exportFormat: 'jdm', keepHistory: true,
+  // Pool gratuit actif : check-out / check-in d'une clé Gemini par run
+  // (cf. pool_lease.py côté backend). Évite que 2 runs parallèles se
+  // partagent le même quota PerMinute. Quand actif, gemini-3.1-flash-lite
+  // est forcé par défaut (modèle gratuit du pool).
+  poolActive: true,
 };
 
 function useJarvisConfig() {
@@ -8793,6 +8808,9 @@ function JConfigPanel({ onAccueil }) {
           <JCfgGroup title="Modèle & inférence">
             <JCfgRow label="Modèle LLM" stack>
               <Select value={cfg.llm} onChange={(v) => set('llm', v)} options={llmList} />
+            </JCfgRow>
+            <JCfgRow label="Pool gratuit actif" hint="Chaque run prend une clé Gemini distincte du pool (load-min sinon). Force gemini-3.1-flash-lite par défaut.">
+              <JToggle checked={cfg.poolActive !== false} onChange={(v) => set('poolActive', v)} />
             </JCfgRow>
             <JCfgRow label="Température" hint="Créativité de la génération de candidats." stack>
               <Slider value={Math.round(cfg.temperature * 100)} onChange={(v) => set('temperature', v / 100)} min={0} max={100} step={5} suffix="%" />
