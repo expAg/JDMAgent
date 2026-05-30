@@ -2400,7 +2400,15 @@ function FilePreviewModal({ path, onClose }) {
   }, [name]);
   const onBackdropClick = (e) => { if (e.target === e.currentTarget) onClose(); };
   const isHtml = name.toLowerCase().endsWith('.html');
-  return (
+  // Portail vers document.body : le rail-pager horizontal a un
+  // `transform: translate3d(...)` qui crée un containing block pour
+  // les `position: fixed` de tous ses descendants. Sans portail, le
+  // backdrop couvre bien tout (car inset:0 du rail = 600% du viewport)
+  // mais la card centrée par flex se positionne au centre du RAIL,
+  // pas du viewport — donc rendue HORS écran quand on n'est pas au
+  // panel central. Le portail rend le modal directement sous <body>,
+  // hors de toute hiérarchie transformée → fixed se réfère au viewport.
+  return ReactDOM.createPortal((
     <div onClick={onBackdropClick} style={{
       position: 'fixed', inset: 0, zIndex: 200,
       background: 'rgba(0,0,0,0.45)',
@@ -2447,7 +2455,7 @@ function FilePreviewModal({ path, onClose }) {
         )}
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // KPI tile for the dashboard's top strip.
