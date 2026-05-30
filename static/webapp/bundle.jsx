@@ -7564,6 +7564,30 @@ const JarvisStore = {
                 label: `${c.term} | ${c.relation} | ${c.target}`,
                 score: '✓',
               }));
+              // Push une entry log [ok] par NOUVEAU triplet (= delta avec
+              // le compteur précédent). Permet à la zone « flux en direct »
+              // de la Supervision d'afficher chaque consolidation au format
+              // triplet pretty, à côté des autres events système ([file],
+              // [start], etc.). Le _loggedAcceptedCount est strictement
+              // monotone : si d.consolidated diminue (reset), on ne push
+              // rien et on baisse le compteur sans bruit.
+              const _prevLogged = cur._loggedAcceptedCount || 0;
+              const nbNew = d.consolidated.length - _prevLogged;
+              if (nbNew > 0) {
+                const newOnes = d.consolidated.slice(_prevLogged);
+                for (const c of newOnes) {
+                  cur.log = [...cur.log, {
+                    t: ts(), tag: '[ok]', kind: 'accept',
+                    msg: `${c.term} | ${c.relation} | ${c.target}`,
+                    triplet: {
+                      term: c.term, relation: c.relation, target: c.target,
+                      schema: c.schema || '',
+                      explanation: c.explanation || '',
+                    },
+                  }];
+                }
+              }
+              cur._loggedAcceptedCount = d.consolidated.length;
             }
             if (typeof d.file_preview === 'string') cur.filePreview = d.file_preview;
             if (d.file_path) {
@@ -8457,11 +8481,13 @@ function ViewJarvis() {
     <>
       <style>{JRING_CSS}</style>
       {/* Rail sticky bottom = sections (Config / Supervision / Répertoire).
-          On le cache automatiquement quand un panneau de flux est ouvert
-          pour ne pas se superposer au `JarvisRunRail` (rail des flux
-          actifs) qui vit DANS la vue Run et a la même position bottom. */}
+          TOUJOURS visible sur Config/Supervision/Répertoire (pas de hide
+          au scroll — il prend la place de l'ancienne légende du bas et
+          doit rester ancré). Caché uniquement quand on est sur un panneau
+          de flux (= vue Run) pour laisser place au JarvisRunRail qui vit
+          DEDANS avec la même position bottom. */}
       <JSectionNav activeSection={activeSection} onSelect={goToId}
-        hidden={navHidden || panelIndex >= sectionCount} />
+        hidden={panelIndex >= sectionCount} />
 
       <div style={{
         position: 'relative',
@@ -9471,15 +9497,9 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         })}
       </div>
 
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, marginTop: 16,
-        fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-3)', flexWrap: 'wrap',
-      }}>
-        <span style={{ display: 'inline-flex', width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />
-        Clic sur le <strong style={{ color: 'var(--ink-2)' }}>cercle</strong> = (re)lancer le flux
-        <span style={{ color: 'var(--line)' }}>{'|'}</span>
-        clic sur la <strong style={{ color: 'var(--ink-2)' }}>carte</strong> = ouvrir le detail
-      </div>
+      {/* Légende « Clic sur le cercle / la carte » retirée — le rail
+          sticky bottom (JSectionNav) prend sa place visuelle en bas de
+          la console et reste toujours visible. */}
     </div>
   );
 }
@@ -9674,8 +9694,37 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
   }
   const tokens = m.tokens || 0;
 
+  // ─── Feed pour la zone « flux en direct » de la card Supervision ──────
+  // Mix log brut + triplets validés (qui ont aussi leur entry [ok] dans
+  // le log via le delta-push handler 'jarvis'), dans l'ordre chronologique
+  // d'apparition. On garde les 6 dernières entries (tronque visuellement
+  // à la zone) :
+  //   - entry tag [ok] + triplet → rendu format triplet pretty
+  //   - sinon → rendu format log mono compact (timestamp + tag + msg)
+  const _log = (store && store.log) || [];
+  const _feedSlice = _log.slice(-6);
+  const feed = _feedSlice.map((e, idx) => {
+    if (e.tag === '[ok]' && e.triplet) {
+      return {
+        kind: 'item',
+        key: 'f' + idx + ':' + (e.t || ''),
+        label: e.msg,
+        tag: e.triplet.schema || '✓',
+        ok: true,
+      };
+    }
+    return {
+      kind: 'log',
+      key: 'f' + idx + ':' + (e.t || ''),
+      t: e.t || '',
+      tag: e.tag || '',
+      msg: e.msg || '',
+      ok: e.kind !== 'reject',
+    };
+  });
+
   return { iter, span, tools, accepted, rejected, produced, pct, recent, stepIdx,
-           isRunning, nbAttempted, nbTerms, tokens,
+           isRunning, nbAttempted, nbTerms, tokens, feed,
            headline: (store && store.headline) || (latest && latest.headline) || '' };
 }
 
@@ -9840,10 +9889,13 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
         <JMini label="outils"   value={live.tools} />
       </div>
 
-      {/* Stream live des derniers items. Le chip a droite (la place du
-          "1.00" du design) montre un TAG CONTEXTUEL REEL : schema pour
-          enrich, category pour annot, verdict pour audit, JDM≠LLM pour
-          signalement, etc. — pas un score fabrique. */}
+      {/* Flux en direct = log temps réel (timestamps + tags) MIX avec les
+          triplets validés au format pretty quand l'entry porte un `triplet`
+          (= [ok] poussée par le handler delta-aware). Source unifiée :
+          live.feed (cf. computeFlowLive). Avant : on n'affichait que les
+          items recent → la zone restait « En attente du 1er résultat » tant
+          qu'aucun triplet n'avait été validé, même si plein d'events
+          [start]/[file] passaient. */}
       <div style={{ padding: '10px 15px 6px', flex: 1 }}>
         <div className="mono" style={{
           fontSize: 9.5, color: 'var(--ink-3)',
@@ -9851,39 +9903,63 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart }) {
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
           {live.isRunning && <span className="pulse-dot" style={{ background: a, width: 5, height: 5 }} />}
-          {live.isRunning ? 'flux en direct' : 'derniers items'}
+          {live.isRunning ? 'flux en direct' : 'derniers events'}
         </div>
         <div style={{ display: 'grid', gap: 4, minHeight: 78 }}>
-          {live.recent.length === 0 ? (
+          {(!live.feed || live.feed.length === 0) ? (
             <div style={{
               color: 'var(--ink-3)', fontSize: 11, fontStyle: 'italic',
               padding: '10px 0', textAlign: 'center',
             }}>
-              {live.isRunning ? 'En attente du 1er resultat…' : 'Aucun resultat encore.'}
+              {live.isRunning ? 'En attente du 1er event…' : 'Aucun event encore.'}
             </div>
-          ) : live.recent.map(({ key, label, tag, ok }) => (
-            <div key={key} className="fade-up" style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '5px 8px', borderRadius: 'var(--radius)',
-              background: 'var(--bg-elev)', border: '1px solid var(--line-soft)',
-              fontFamily: 'var(--font-mono)', fontSize: 10.5,
-              minWidth: 0,
-            }}>
-              <span style={{ flexShrink: 0, color: ok ? 'var(--jdm-green)' : 'var(--jdm-magenta)' }}>{ok ? '✓' : '!'}</span>
-              <span style={{
-                flex: '1 1 auto', minWidth: 0, color: 'var(--ink)',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }} title={label}>{label}</span>
-              {tag && (
+          ) : live.feed.map((e) => (
+            e.kind === 'item' ? (
+              // Triplet validé : format pretty avec ✓ vert + tag schema
+              <div key={e.key} className="fade-up" style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 8px', borderRadius: 'var(--radius)',
+                background: 'var(--bg-elev)', border: '1px solid var(--line-soft)',
+                fontFamily: 'var(--font-mono)', fontSize: 10.5,
+                minWidth: 0,
+              }}>
+                <span style={{ flexShrink: 0, color: 'var(--jdm-green)' }}>✓</span>
                 <span style={{
-                  flex: '0 1 auto', minWidth: 0,
-                  color: 'var(--ink-3)', fontSize: 9, lineHeight: 1.3,
-                  padding: '1px 5px', borderRadius: 3,
-                  background: 'var(--bg-card)', border: '1px solid var(--line-soft)',
-                  maxWidth: 72, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }} title={String(tag)}>{tag}</span>
-              )}
-            </div>
+                  flex: '1 1 auto', minWidth: 0, color: 'var(--ink)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }} title={e.label}>{e.label}</span>
+                {e.tag && (
+                  <span style={{
+                    flex: '0 1 auto', minWidth: 0,
+                    color: 'var(--ink-3)', fontSize: 9, lineHeight: 1.3,
+                    padding: '1px 5px', borderRadius: 3,
+                    background: 'var(--bg-card)', border: '1px solid var(--line-soft)',
+                    maxWidth: 72, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }} title={String(e.tag)}>{e.tag}</span>
+                )}
+              </div>
+            ) : (
+              // Log brut : timestamp + tag + msg mono compact
+              <div key={e.key} className="fade-up" style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '3px 8px',
+                fontFamily: 'var(--font-mono)', fontSize: 10,
+                color: 'var(--ink-3)', minWidth: 0,
+              }}>
+                <span style={{ flexShrink: 0, opacity: 0.7 }}>{e.t}</span>
+                <span style={{
+                  flexShrink: 0,
+                  color: e.tag === '[err]' ? 'var(--jdm-magenta)'
+                    : e.tag === '[file]' ? a
+                    : e.tag === '[done]' ? 'var(--jdm-green)'
+                    : 'var(--ink-3)',
+                }}>{e.tag}</span>
+                <span style={{
+                  flex: '1 1 auto', minWidth: 0, color: 'var(--ink-2)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }} title={e.msg}>{e.msg}</span>
+              </div>
+            )
           ))}
         </div>
       </div>
