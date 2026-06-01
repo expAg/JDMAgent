@@ -546,12 +546,127 @@ const BANNER_KEY = 'jdm_jarvis_banner_collapsed';
    Indépendant du mode (autonome/manuel) : c'est un overlay fixe à droite,
    refermable. Champ de saisie + bouton envoyer en bas. Tente d'utiliser
    window.claude.complete si dispo, sinon réponse locale gracieuse. */
+/* ── Store de conversation — singleton module-level ────────────────────
+   La discussion (msgs) et la requête en cours vivent ICI, pas dans le
+   composant ChatPanel. Conséquence : fermer/rouvrir le panneau ne perd
+   ni l'historique ni le stream en cours — le fetch SSE continue en tâche
+   de fond et met à jour le store même panneau fermé ; à la réouverture,
+   ChatPanel ré-affiche l'état courant. Persistance EN MÉMOIRE uniquement
+   (pas de disque) : un rechargement de page repart à zéro, voulu. */
+const JarvisChatStore = (function () {
+  const GREETING = { who: 'bot', text: "Bonjour 👋 Je suis Jarvis. Pose-moi une question sur tes flux, tes triplets ou le graphe JDM." };
+  let msgs = [GREETING];
+  let busy = false;
+  const listeners = new Set();
+  const emit = () => { listeners.forEach((fn) => { try { fn(); } catch (e) {} }); };
+
+  const stripHtml = (s) => (s || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const applyConfigPatch = (p) => {
+    if (!p || !p.key) return;
+    try {
+      const raw = localStorage.getItem('jdm_jarvis_config');
+      const c = raw ? JSON.parse(raw) : {};
+      c[p.key] = p.value;
+      localStorage.setItem('jdm_jarvis_config', JSON.stringify(c));
+      window.__JDM_JARVIS_CONFIG__ = c;
+      window.dispatchEvent(new CustomEvent('__jdm_jarvis_config_changed'));
+    } catch (e) {}
+  };
+
+  const parseSSE = (raw) => {
+    let event = 'message';
+    const dataLines = [];
+    for (const line of raw.split(/\r?\n/)) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+    }
+    let data = null;
+    if (dataLines.length) { try { data = JSON.parse(dataLines.join('\n')); } catch (e) {} }
+    return { event, data };
+  };
+
+  const setBot = (txt) => {
+    const next = msgs.slice();
+    for (let i = next.length - 1; i >= 0; i--) {
+      if (next[i].who === 'bot') { next[i] = { who: 'bot', text: txt }; break; }
+    }
+    msgs = next; emit();
+  };
+
+  async function send(text) {
+    text = (text || '').trim();
+    if (!text || busy) return;
+    const history = msgs.map((m) => ({
+      role: m.who === 'me' ? 'user' : 'assistant', content: m.text || '',
+    }));
+    let cfg = {};
+    try {
+      cfg = window.__JDM_JARVIS_CONFIG__
+        || JSON.parse(localStorage.getItem('jdm_jarvis_config') || '{}') || {};
+    } catch (e) { cfg = {}; }
+    msgs = [...msgs, { who: 'me', text }, { who: 'bot', text: '' }];
+    busy = true; emit();
+    let lastText = '';
+    try {
+      const res = await fetch('api/jarvis/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history, config: cfg }),
+      });
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      const handle = (ev) => {
+        if (!ev) return;
+        if (ev.event === 'text' && ev.data && typeof ev.data.text === 'string') {
+          lastText = stripHtml(ev.data.text); setBot(lastText || '…');
+        } else if (ev.event === 'config_patch' && ev.data) {
+          applyConfigPatch(ev.data);
+        } else if (ev.event === 'error' && ev.data) {
+          setBot('⚠️ ' + (ev.data.text || 'Erreur du moteur de discussion.'));
+        }
+      };
+      const re = /\r\n\r\n|\n\n|\r\r/;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let mm;
+        while ((mm = re.exec(buf)) !== null) {
+          handle(parseSSE(buf.slice(0, mm.index)));
+          buf = buf.slice(mm.index + mm[0].length);
+        }
+      }
+      if (buf.trim()) handle(parseSSE(buf));
+      if (!lastText) setBot('…');
+    } catch (e) {
+      setBot("Désolé, la connexion au moteur de discussion a échoué. Réessaie dans un instant.");
+    } finally {
+      busy = false; emit();
+    }
+  }
+
+  return {
+    get: () => ({ msgs, busy }),
+    subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    send,
+    reset: () => { msgs = [GREETING]; busy = false; emit(); },
+  };
+})();
+
 function ChatPanel({ dark, onClose }) {
-  const [msgs, setMsgs] = useState([
-    { who: 'bot', text: "Bonjour 👋 Je suis Jarvis. Pose-moi une question sur tes flux, tes triplets ou le graphe JDM." },
-  ]);
+  // S'abonne au store singleton — l'état réel (msgs/busy) y vit, donc il
+  // survit à la fermeture/réouverture et le stream continue en fond.
+  const [, _force] = React.useReducer((x) => x + 1, 0);
+  useEffect(() => JarvisChatStore.subscribe(_force), []);
+  const { msgs, busy } = JarvisChatStore.get();
   const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
   const [railH, setRailH] = useState(0);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
@@ -590,114 +705,13 @@ function ChatPanel({ dark, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const send = useCallback(async () => {
+  // Délègue au store : la requête vit hors du composant (tâche de fond).
+  const send = useCallback(() => {
     const text = draft.trim();
-    if (!text || busy) return;
+    if (!text) return;
     setDraft('');
-    // Snapshot de l'historique AVANT d'ajouter le nouveau message (envoyé
-    // au backend). msgs = [{who:'me'|'bot', text}].
-    const historySnapshot = msgs.map((m) => ({
-      role: m.who === 'me' ? 'user' : 'assistant',
-      content: m.text || '',
-    }));
-    setMsgs((m) => [...m, { who: 'me', text }]);
-    setBusy(true);
-
-    // Config courante (localStorage / miroir) transmise au backend pour
-    // que l'outil get_config la voie ; set_config renverra des patches.
-    let cfg = {};
-    try {
-      cfg = window.__JDM_JARVIS_CONFIG__
-        || JSON.parse(localStorage.getItem('jdm_jarvis_config') || '{}') || {};
-    } catch (e) { cfg = {}; }
-
-    // Strip des balises HTML de narration pour l'affichage texte de la
-    // bulle (le panneau rend en texte brut, pas en HTML).
-    const stripHtml = (s) => (s || '')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    // Applique un patch de config émis par le robot (tool set_config).
-    const applyConfigPatch = (p) => {
-      if (!p || !p.key) return;
-      try {
-        const raw = localStorage.getItem('jdm_jarvis_config');
-        const c = raw ? JSON.parse(raw) : {};
-        c[p.key] = p.value;
-        localStorage.setItem('jdm_jarvis_config', JSON.stringify(c));
-        window.__JDM_JARVIS_CONFIG__ = c;
-        window.dispatchEvent(new CustomEvent('__jdm_jarvis_config_changed'));
-      } catch (e) {}
-    };
-
-    // Bulle bot vide qu'on remplit au fil du stream (toujours la dernière).
-    setMsgs((m) => [...m, { who: 'bot', text: '' }]);
-    const setBot = (txt) => setMsgs((m) => {
-      const next = m.slice();
-      for (let i = next.length - 1; i >= 0; i--) {
-        if (next[i].who === 'bot') { next[i] = { who: 'bot', text: txt }; break; }
-      }
-      return next;
-    });
-
-    const parseSSE = (raw) => {
-      let event = 'message';
-      const dataLines = [];
-      for (const line of raw.split(/\r?\n/)) {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
-      }
-      let data = null;
-      if (dataLines.length) { try { data = JSON.parse(dataLines.join('\n')); } catch (e) {} }
-      return { event, data };
-    };
-
-    try {
-      const res = await fetch('api/jarvis/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history: historySnapshot, config: cfg }),
-      });
-      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buf = '';
-      let lastText = '';
-      const handle = (ev) => {
-        if (!ev) return;
-        if (ev.event === 'text' && ev.data && typeof ev.data.text === 'string') {
-          lastText = stripHtml(ev.data.text);
-          setBot(lastText || '…');
-        } else if (ev.event === 'config_patch' && ev.data) {
-          applyConfigPatch(ev.data);
-        } else if (ev.event === 'error' && ev.data) {
-          setBot('⚠️ ' + (ev.data.text || 'Erreur du moteur de discussion.'));
-        }
-      };
-      const flush = () => {
-        const re = /\r\n\r\n|\n\n|\r\r/;
-        let mm;
-        while ((mm = re.exec(buf)) !== null) {
-          handle(parseSSE(buf.slice(0, mm.index)));
-          buf = buf.slice(mm.index + mm[0].length);
-        }
-      };
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        flush();
-      }
-      if (buf.trim()) handle(parseSSE(buf));
-      if (!lastText) setBot('…');
-    } catch (e) {
-      setBot("Désolé, la connexion au moteur de discussion a échoué. Réessaie dans un instant.");
-    } finally {
-      setBusy(false);
-    }
-  }, [draft, busy, msgs]);
+    JarvisChatStore.send(text);
+  }, [draft]);
 
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
