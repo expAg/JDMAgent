@@ -643,7 +643,7 @@ const BANNER_KEY = 'jdm_jarvis_banner_collapsed';
    ChatPanel ré-affiche l'état courant. Persistance EN MÉMOIRE uniquement
    (pas de disque) : un rechargement de page repart à zéro, voulu. */
 const JarvisChatStore = (function () {
-  const GREETING = { who: 'bot', text: "Coucou, moi c'est Jarvis 🤖✨ Antenne dressée, prêt à t'aider ! Demande-moi tes flux, tes triplets, le graphe JDM… ou lance-moi un défi 👀" };
+  const GREETING = { who: 'bot', text: "Bonjour 👋 Je suis Jarvis. Pose-moi une question sur tes flux, tes triplets ou le graphe JDM." };
   let msgs = [GREETING];
   let busy = false;
   const listeners = new Set();
