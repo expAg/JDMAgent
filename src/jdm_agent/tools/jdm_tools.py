@@ -2564,6 +2564,16 @@ def build_subgraph_visualization(
     from jdm_agent.viz.subgraph import build_subgraph as _build
     if output not in ("html", "json", "live"):
         return {"error": f"output doit valoir 'live', 'html' ou 'json', reçu {output!r}"}
+    # GARDE-FOU DÉTERMINISTE : le LLM fourre parfois la relation / le sens
+    # raffiné DANS le terme (ex. "avorton (repris>171870, :r2710837)" ou
+    # "avorton>453050>774267"). Un tel terme ne se résout pas → graphe vide.
+    # On extrait le LEMME DE BASE côté Python (avant le 1er '>' ou '(') au
+    # lieu de compter sur une consigne. Les termes multi-mots propres
+    # ("plat asiatique") n'ont ni '>' ni '(' → intacts. La relation se passe
+    # via le paramètre `relations`, pas dans le terme.
+    _term_in = (term or "").strip()
+    _term_clean = _term_in.split(">", 1)[0].split("(", 1)[0].strip().strip(",").strip()
+    term = _term_clean or _term_in
     # "live" = données nodes/edges (rendu interactif côté client) = "json"
     # côté build_subgraph. On garde la marque format pour l'aval.
     _build_output = "json" if output in ("live", "json") else "html"
@@ -2586,6 +2596,21 @@ def build_subgraph_visualization(
         )
         if isinstance(res, dict) and "error" not in res:
             res["format"] = output  # "live" | "json" | "html"
+            # Signale au LLM si on a nettoyé le terme (transparence).
+            if _term_clean and _term_clean != _term_in:
+                res["term_sanitized"] = {"from": _term_in, "to": _term_clean}
+            # Garde-fou anti-hallucination : si le graphe est quasi vide
+            # (juste le terme racine, aucun voisin), préviens le LLM pour
+            # qu'il N'affirme PAS qu'il y a des voisins et qu'il élargisse.
+            _stats = res.get("stats") or {}
+            if int(_stats.get("n_nodes", 0)) <= 1 or int(_stats.get("n_edges", 0)) == 0:
+                res["note"] = (
+                    "Graphe QUASI VIDE : aucun voisin trouvé. N'affirme PAS qu'il "
+                    "est entouré de voisins. Le `term` doit être un LEMME SIMPLE "
+                    "(ex. 'avorton') — ne mets JAMAIS la relation ni un sens "
+                    "raffiné dedans ; la relation se passe via le paramètre "
+                    "`relations`. Essaie en laissant les relations par défaut."
+                )
         return res
     except Exception as e:
         return {"error": f"echec construction sous-graphe pour {term!r} : {e}"}
