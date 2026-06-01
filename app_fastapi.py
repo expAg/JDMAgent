@@ -183,6 +183,57 @@ class TermRequest(BaseModel):
     term: str
 
 
+def _inject_iframe_css(html: str) -> str:
+    """Injecte le CSS d'override pour afficher un sous-graphe HTML dans une
+    iframe : fond transparent (hérite du thème parent), layout flex pour que
+    #net prenne l'espace restant, header/legend adoucis. Idempotent-ish."""
+    transparent_css = (
+        "<style id='__jdm-skin-override'>"
+        "html,body{background:transparent!important;color:inherit!important;"
+        "height:100%!important;overflow:hidden!important}"
+        "body{display:flex!important;flex-direction:column!important}"
+        "header{background:rgba(128,128,128,0.08)!important;"
+        "border-bottom-color:rgba(128,128,128,0.25)!important;"
+        "color:inherit!important;flex:0 0 auto!important}"
+        "#net{background:transparent!important;"
+        "flex:1 1 auto!important;height:auto!important;min-height:0!important}"
+        ".legend{background:rgba(128,128,128,0.08)!important;"
+        "border-top-color:rgba(128,128,128,0.25)!important;"
+        "color:inherit!important;flex:0 0 auto!important}"
+        "</style>"
+    )
+    if html and "__jdm-skin-override" not in html and "</head>" in html:
+        return html.replace("</head>", transparent_css + "</head>", 1)
+    return html
+
+
+def _read_produced_viz_html(tool_output_content: str) -> Optional[str]:
+    """Récupère le HTML que l'outil build_subgraph_visualization a DÉJÀ
+    écrit (html_path dans sa sortie), le lit et lui injecte le CSS iframe.
+    None si pas de html_path exploitable / fichier introuvable.
+    Évite de reconstruire le graphe : on affiche exactement ce que l'agent
+    a produit."""
+    if not tool_output_content:
+        return None
+    path = None
+    try:
+        d = json.loads(tool_output_content)
+        if isinstance(d, dict):
+            path = d.get("html_path")
+    except Exception:
+        m = _re.search(r"['\"]html_path['\"]\s*:\s*['\"]([^'\"]+)['\"]",
+                       tool_output_content)
+        if m:
+            path = m.group(1)
+    if not path:
+        return None
+    try:
+        html = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return _inject_iframe_css(html)
+
+
 def _viz_payload_from_tool_input(args: dict) -> Optional[dict]:
     """Mappe les arguments de l'outil build_subgraph_visualization vers le
     payload attendu par /api/subgraph (rendu inline iframe). None si pas
@@ -496,30 +547,7 @@ def api_subgraph(req: SubgraphRequest) -> dict[str, Any]:
             finally:
                 try: tmppath.unlink()
                 except Exception: pass
-            # Override CSS injecté :
-            # 1. fond transparent partout (l'iframe parent affiche son
-            #    thème paper/lab)
-            # 2. layout flex sur body → #net prend l'espace restant
-            #    APRÈS header + legend, pas calc(100vh - 110px) qui
-            #    dépasse de la zone visible et tronque la légende
-            # 3. couleurs adoucies pour header/legend (héritage parent)
-            transparent_css = (
-                "<style id='__jdm-skin-override'>"
-                "html,body{background:transparent!important;color:inherit!important;"
-                "height:100%!important;overflow:hidden!important}"
-                "body{display:flex!important;flex-direction:column!important}"
-                "header{background:rgba(128,128,128,0.08)!important;"
-                "border-bottom-color:rgba(128,128,128,0.25)!important;"
-                "color:inherit!important;flex:0 0 auto!important}"
-                "#net{background:transparent!important;"
-                "flex:1 1 auto!important;height:auto!important;min-height:0!important}"
-                ".legend{background:rgba(128,128,128,0.08)!important;"
-                "border-top-color:rgba(128,128,128,0.25)!important;"
-                "color:inherit!important;flex:0 0 auto!important}"
-                "</style>"
-            )
-            if "</head>" in html:
-                html = html.replace("</head>", transparent_css + "</head>", 1)
+            html = _inject_iframe_css(html)
             return {
                 "format": "html",
                 "root": term,
@@ -1074,10 +1102,17 @@ async def api_agent_stream(req: AgentRequest):
                                 f'<div class="jdm-narration">✓ <em>{name}</em> renvoie {len(content)} chars · '
                                 f'<code>{html_escape(preview)}</code></div>'
                             )
-                        # Viz inline (iframe via /api/subgraph) — cf. chat mascotte.
-                        if name == "build_subgraph_visualization" and _pending_viz:
-                            yield {"event": "viz",
-                                   "data": json.dumps(_pending_viz, ensure_ascii=False)}
+                        # Viz inline — affiche le HTML produit par l'outil
+                        # (sinon fallback params). Cf. chat mascotte.
+                        if name == "build_subgraph_visualization":
+                            _viz_html = _read_produced_viz_html(content)
+                            term = (_pending_viz or {}).get("term", "")
+                            if _viz_html:
+                                yield {"event": "viz", "data": json.dumps(
+                                    {"term": term, "html": _viz_html}, ensure_ascii=False)}
+                            elif _pending_viz:
+                                yield {"event": "viz",
+                                       "data": json.dumps(_pending_viz, ensure_ascii=False)}
                             _pending_viz = None
                         yield {
                             "event": "text",
@@ -1234,12 +1269,20 @@ async def api_jarvis_chat(req: JarvisChatRequest):
                         narrated_done = _narrate_tool_result(name, content)
                         if narrated_done:
                             progress.append(f'<div class="jdm-narration">{narrated_done}</div>')
-                        # Visualisation : émet un event `viz` que le front
-                        # rend en iframe inline (via /api/subgraph). Évite
-                        # le lien de fichier mort que le LLM inventerait.
-                        if name == "build_subgraph_visualization" and _pending_viz:
-                            yield {"event": "viz",
-                                   "data": json.dumps(_pending_viz, ensure_ascii=False)}
+                        # Visualisation : on affiche EXACTEMENT le HTML que
+                        # l'outil a déjà produit (html_path dans sa sortie),
+                        # sans reconstruire le graphe. Si introuvable, on
+                        # retombe sur les params (le front refera via
+                        # /api/subgraph). Event `viz` rendu en iframe inline.
+                        if name == "build_subgraph_visualization":
+                            _viz_html = _read_produced_viz_html(content)
+                            term = (_pending_viz or {}).get("term", "")
+                            if _viz_html:
+                                yield {"event": "viz", "data": json.dumps(
+                                    {"term": term, "html": _viz_html}, ensure_ascii=False)}
+                            elif _pending_viz:
+                                yield {"event": "viz",
+                                       "data": json.dumps(_pending_viz, ensure_ascii=False)}
                             _pending_viz = None
                         # Émet les patches de config dès qu'un set_config a tourné.
                         for ev in emit_config_patches():

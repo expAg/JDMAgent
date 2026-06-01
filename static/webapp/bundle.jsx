@@ -7115,9 +7115,12 @@ function handleEvent(ev, patchLast) {
 // Bulle viz inline (Chatbot) — même endpoint /api/subgraph que l'onglet
 // Sous-graphe. Affiche le graphe interactif dans une iframe, sans lien.
 function AgentVizBubble({ viz }) {
-  const [html, setHtml] = useState('');
+  // viz.html = HTML déjà produit par l'outil (affiché tel quel). Sinon
+  // fallback : reconstruction via /api/subgraph avec les params.
+  const [html, setHtml] = useState(viz && viz.html ? viz.html : '');
   const [err, setErr] = useState('');
   React.useEffect(() => {
+    if (viz && viz.html) { setHtml(viz.html); return; }
     let alive = true;
     (async () => {
       try {

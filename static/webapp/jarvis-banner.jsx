@@ -686,9 +686,13 @@ const JarvisChatStore = (function () {
    /api/subgraph (même endpoint que l'onglet Sous-graphe, CSS adapté à
    l'iframe) et l'affiche dans une iframe. Évite tout lien/fichier. */
 function VizBubble({ viz }) {
-  const [html, setHtml] = useState('');
+  // Cas idéal : le backend a déjà fourni le HTML produit par l'outil
+  // (viz.html) → on l'affiche tel quel, zéro reconstruction. Sinon
+  // (fallback) on refait via /api/subgraph avec les params.
+  const [html, setHtml] = useState(viz && viz.html ? viz.html : '');
   const [err, setErr] = useState('');
   useEffect(() => {
+    if (viz && viz.html) { setHtml(viz.html); return; }
     let alive = true;
     (async () => {
       try {
