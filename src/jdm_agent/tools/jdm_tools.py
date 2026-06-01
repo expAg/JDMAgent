@@ -2097,26 +2097,28 @@ def write_submission_file(
     # Classement par clés — auto-détection : pas de mode explicite.
     # Tout est dict (Gemini exige items: {...} pour les arrays JSON Schema,
     # donc on évite list[Union] qui passe mal). On distingue par les clés.
-    # GUARD : si un auto-append est actif (cf. validators.set_consolidation_output_path)
-    # ET que le path cible est le path d'auto-append actif, on SKIP entièrement
-    # l'écriture — sinon write_text() écraserait l'historique append accumulé
-    # depuis le 1er triplet consolidé. Le LLM peut continuer à appeler ce tool
-    # par habitude / par sécurité, c'est un no-op poli pour .enrich quand
-    # l'auto-append gère déjà le fichier.
+    # GUARD : si un auto-append est actif (flow enrich), on SKIP TOUTE
+    # écriture, QUEL QUE SOIT le path passé par le LLM. Le canonical
+    # (run_id.enrich) contient déjà tout l'historique (register_consolidation
+    # streame chaque triplet). Si le LLM passe un autre nom (ex.
+    # "Kakinada.enrich"), on NE crée PAS ce 2e fichier — c'était la cause
+    # du DOUBLON (canonical + fichier nommé par le LLM) depuis le retrait
+    # du cleanup-filet. On renvoie le path CANONICAL pour que l'agent/l'UI
+    # référencent le bon fichier.
     try:
         from jdm_agent.enrich import get_consolidation_output_path as _get_auto_path
         _auto_path = _get_auto_path()
-        if _auto_path and str(_Path(_auto_path).resolve()) == str(_Path(path).resolve()):
+        if _auto_path:
             from jdm_agent.enrich import count_consolidations as _cc
             return {
-                "path": path,
+                "path": str(_Path(_auto_path).resolve()),
                 "count": _cc(),
                 "mode": "auto_append",
                 "note": (
-                    "Pas d'écriture redondante : ce path est géré par "
-                    "l'auto-append (register_consolidation écrit chaque "
-                    "triplet en temps réel). Le fichier est déjà à jour "
-                    "avec les triplets consolidés du registry."
+                    "Aucune écriture séparée : ce flux écrit en temps réel "
+                    "dans le fichier canonique (register_consolidation). Le "
+                    "path retourné EST le fichier final, déjà à jour. Ne "
+                    "tente pas de réécrire sous un autre nom."
                 ),
             }
     except Exception:
