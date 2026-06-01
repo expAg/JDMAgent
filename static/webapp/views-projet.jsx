@@ -2040,21 +2040,23 @@ function QTTermAndRelation({ config, form, setForm, onNavigate }) {
 
 // ───────── Expandable briefs grid (Sous le capot) ─────────
 // Le détail s'ouvre IMMÉDIATEMENT SOUS LA RANGÉE de la carte cliquée
-// — pas après toutes les cartes. Astuce CSS Grid : on rend le détail
-// DANS le map (donc dans la grille), avec `gridColumn: 1 / -1` pour
-// qu'il occupe toute la largeur. L'auto-placement du Grid pousse le
-// détail à la rangée suivant celle de la carte (peu importe combien
-// de colonnes le viewport autorise — auto-fit). Effet : la rangée
-// contenant la carte cliquée est suivie immédiatement du panneau
-// déplié, en pleine largeur, puis les cartes suivantes reprennent à
-// la rangée d'après.
+// — les autres cartes de cette rangée RESTENT à côté de la carte
+// cliquée. Le détail est injecté APRÈS la dernière carte de la rangée
+// concernée, occupe toute la largeur via `gridColumn: 1 / -1`.
+//
+// Comme le nombre de colonnes dépend du viewport (auto-fit), on le
+// mesure dynamiquement après layout : pour chaque card, on lit son
+// `offsetTop` ; les cards qui partagent le même top forment la 1ʳᵉ
+// rangée — le compte donne `cols`. Re-mesuré à chaque resize via
+// ResizeObserver.
 function ExpandableBriefsGrid({ briefs, goto }) {
   const [expandedIdx, setExpandedIdx] = useState(null);
-  // `slotIdx` = index où afficher le détail dans la grille, même
+  // `slotIdx` = index de la CARTE qui a déclenché l'ouverture, gardé
   // pendant la fermeture animée (sinon le détail saute hors layout
   // dès qu'on ferme). BriefDetailPanel appelle `onClosed` à la fin
   // de sa transition de fermeture pour qu'on reset le slot.
   const [slotIdx, setSlotIdx] = useState(null);
+  const [cols, setCols] = useState(1);  // nb de cards par rangée, mesuré post-layout
   const expanded = expandedIdx == null ? null : briefs[expandedIdx];
   const toggle = (i) => {
     if (expandedIdx === i) {
@@ -2067,6 +2069,35 @@ function ExpandableBriefsGrid({ briefs, goto }) {
   };
   const cardRefs = useRef({});
   const detailRef = useRef(null);
+  const gridRef = useRef(null);
+
+  // Mesure du nombre de colonnes effectives. Lit offsetTop de chaque
+  // card ; toutes celles qui partagent le top de la 1ʳᵉ card sont en
+  // rangée 1 → compteur = nb de cols. Robuste aux changements de
+  // viewport (ResizeObserver) et aux changements de longueur de
+  // briefs.
+  React.useLayoutEffect(() => {
+    const measure = () => {
+      const els = briefs.map((_, i) => cardRefs.current[i]).filter(Boolean);
+      if (!els.length) return;
+      const top0 = els[0].offsetTop;
+      const c = els.filter(el => el.offsetTop === top0).length;
+      if (c > 0 && c !== cols) setCols(c);
+    };
+    measure();
+    const grid = gridRef.current;
+    if (!grid || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(grid);
+    return () => ro.disconnect();
+  }, [briefs.length, cols]);
+
+  // Index APRÈS lequel insérer le détail : dernière carte de la rangée
+  // contenant `slotIdx`. Clampé au dernier index valide pour les
+  // rangées incomplètes (ex. 5 briefs / 4 cols → dernière rangée = idx 4).
+  const detailInsertAfterIdx = slotIdx == null
+    ? -1
+    : Math.min(briefs.length - 1, (Math.floor(slotIdx / Math.max(1, cols)) + 1) * cols - 1);
 
   useEffect(() => {
     if (expandedIdx == null) return;
@@ -2090,7 +2121,7 @@ function ExpandableBriefsGrid({ briefs, goto }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 24 }}>
-      <div style={{
+      <div ref={gridRef} style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
         gap: 12,
@@ -2140,7 +2171,7 @@ function ExpandableBriefsGrid({ briefs, goto }) {
                   color: 'var(--ink-2)', lineHeight: 1.55,
                 }}>{b.body}</p>
               </div>
-              {slotIdx === i && renderDetail}
+              {detailInsertAfterIdx === i && renderDetail}
             </React.Fragment>
           );
         })}
