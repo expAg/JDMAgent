@@ -1926,6 +1926,9 @@ def api_jarvis_list_runs():
                     "finished_at": r.get("finished_at"),
                     "stats": r.get("stats") or {},
                     "origin": r.get("origin", "ui"),
+                    # Cible réelle du run (pour la barre de progression côté
+                    # client — sinon elle retombe sur le défaut du flux).
+                    "target_count": (r.get("params") or {}).get("target_count"),
                 }
                 for r in _JARVIS_RUNS.values()
             ]

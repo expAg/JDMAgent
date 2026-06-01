@@ -7568,12 +7568,12 @@ const flowIcon = (id) => FLOW_ICON[id] || '🦾';
 // Brief ULTRA court (une ligne) de ce que fait l'agent — affiché sur les
 // cartes de lancement vides pour orienter d'un coup d'œil.
 const FLOW_BRIEF = {
-  enrich:      'Propose et consolide de nouveaux triplets.',
-  audit:       'Vérifie sens par sens la légitimité des relations.',
-  gap:         'Repère les trous de couverture d’un terme.',
-  signalement: 'Flag les triplets suspects pour un mainteneur.',
-  stats:       'Mesure la couverture par terme et par relation.',
-  annotation:  'Annote les triplets (constitutif / contrastif…).',
+  enrich:      'Propose de nouveaux triplets pour un terme, les valide via JDM (factcheck + inférence) et consolide ceux qui passent dans un .enrich prêt pour LLMDrops.',
+  audit:       'Pour un terme polysémique, vérifie sens par sens quelles relations sont légitimes, contrastives ou à corriger. Produit un .audit en deux sections (verdicts + META).',
+  gap:         'Inventorie les relations d’un terme et repère les trous de couverture (manquantes, faibles, négatives) pour cibler l’enrichissement. Sortie : rapport de trous.',
+  signalement: 'Parcourt les triplets d’un terme et flag ceux qui paraissent suspects (jugement linguistique), avec catégorie et justification. Produit un .err pour un mainteneur.',
+  stats:       'Mesure la couverture d’un terme et/ou d’une relation : totaux, positifs/négatifs, poids, distribution — avec quelques observations clés en prose.',
+  annotation:  'Annote les triplets d’un terme (constitutif / contrastif / exception…) et signale les désaccords avec JDM. Produit un fichier .annot.',
 };
 
 // Tête de robot Jarvis — réplique du dessin MiniRobot de la bannière
@@ -7606,6 +7606,56 @@ function JRobotHead({ size = 30, title }) {
         <circle cx="45.5" cy="37.5" r="1.4" fill="#fff" opacity="0.85" />
       </g>
     </svg>
+  );
+}
+
+
+// Bouton « 📤 Soumettre » / « ✓ Soumis » réutilisable (vue per-run, preview
+// fichier, carte terminée). POST /api/productions/submit avec le basename ;
+// clé LLMDrops prise côté serveur (.env JDM_DROPS_API_KEY) — donc grisé tant
+// que ni clé serveur ni clé fournie. `submitted` initial vient du run/fichier ;
+// devient ✓ après succès. `compact` = pastille icône-only pour les cartes.
+function FileSubmitButton({ filePath, flowId, submitted, onDone, compact }) {
+  const _envStatus = useEnvStatus();
+  const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
+  const [state, setState] = useState('idle');   // idle | sending | error
+  const [done, setDone] = useState(!!submitted);
+  React.useEffect(() => { setDone(!!submitted); }, [submitted]);
+  if (!filePath || !SUBMITTABLE_FLOWS.has(flowId)) return null;
+  const fileName = filePath.split(/[\\/]/).slice(-1)[0];
+  const canSubmit = _envHasDrops;
+  const submit = async (e) => {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (!canSubmit || state === 'sending' || done) return;
+    setState('sending');
+    try {
+      const r = await fetch('api/productions/submit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: [fileName], archived: false, api_key: '', model_name: '' }),
+      });
+      const data = await r.json();
+      const res = (data.results || [])[0] || {};
+      if (res.ok) { setDone(true); setState('idle'); onDone && onDone(); }
+      else { setState('error'); setTimeout(() => setState('idle'), 6000); }
+    } catch { setState('error'); setTimeout(() => setState('idle'), 6000); }
+  };
+  if (done) {
+    return (
+      <Button size="sm" variant="ghost" disabled
+        title="Déjà soumis au LLMDrops JDM"
+        style={{ color: 'var(--jdm-green)', opacity: 1 }}>✓ Soumis</Button>
+    );
+  }
+  const label = state === 'sending' ? '⏳ Envoi…' : state === 'error' ? '✗ Échec' : '📤 Soumettre';
+  return (
+    <Button size="sm" variant="ghost"
+      disabled={!canSubmit || state === 'sending'}
+      onClick={submit}
+      title={canSubmit
+        ? 'Soumettre ce fichier au LLMDrops JDM (clé serveur)'
+        : 'Configure JDM_DROPS_API_KEY côté serveur pour activer la soumission'}>
+      {compact ? (state === 'sending' ? '⏳' : state === 'error' ? '✗' : '📤') : label}
+    </Button>
   );
 }
 
@@ -7763,6 +7813,10 @@ const JarvisStore = {
   async start(flowId, { params, isResume, resumeState }) {
     const cur = this.get(flowId);
     if (cur.status === 'running') return;
+    // Mémorise les params du run (notamment target_count) pour que la
+    // barre de progression / le label X/Y reflètent la VRAIE cible
+    // demandée, pas le défaut du flux.
+    cur.params = params || {};
     if (!isResume) {
       this._resetRunData(cur);
     } else {
@@ -10026,7 +10080,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           const f = spec.flow;
           if (spec.isLaunch) {
             return <JLaunchCard key={'launch-' + f.id} flow={f}
-              onDetail={() => onLaunch(f.id)}
+              onDetail={() => onPick(f.id)}
               onStart={() => {
                 // Démarre le flux IMMÉDIATEMENT avec les defaults (term vide
                 // → tirage random côté backend) sans naviguer : la carte
@@ -10111,6 +10165,11 @@ function FilePreviewModal({ path, onClose }) {
   }, [name]);
   const onBackdropClick = (e) => { if (e.target === e.currentTarget) onClose(); };
   const isHtml = name.toLowerCase().endsWith('.html');
+  // Déduit le flow depuis l'extension du fichier pour proposer la soumission
+  // LLMDrops (un .err vient du flow 'signalement', .stat de 'stats', etc.).
+  const _ext = (name.toLowerCase().match(/\.([a-z]+)$/) || [])[1] || '';
+  const _flowForExt = { enrich: 'enrich', audit: 'audit', err: 'signalement',
+                        stat: 'stats', annot: 'annotation' }[_ext] || '';
   // Portail vers document.body : le rail-pager horizontal a un
   // `transform: translate3d(...)` qui crée un containing block pour
   // les `position: fixed` de tous ses descendants. Sans portail, le
@@ -10139,7 +10198,8 @@ function FilePreviewModal({ path, onClose }) {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{name}</div>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <FileSubmitButton filePath={path} flowId={_flowForExt} />
             <Button size="sm" variant="secondary"
               onClick={() => {
                 window.open(`api/productions/download?name=${encodeURIComponent(name)}`, '_blank');
@@ -10459,8 +10519,8 @@ function RunDetailModal({ runId, onClose, onPreview }) {
                 </div>
                 {fileName && (
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <Button size="sm" variant="ghost"
-                      onClick={() => onPreview && onPreview(filePath)}>Voir</Button>
+                    <FileSubmitButton filePath={filePath} flowId={flowId}
+                      submitted={r.submitted} />
                     <Button size="sm" variant="ghost"
                       onClick={() => {
                         const url = `api/productions/download?name=${encodeURIComponent(fileName)}`;
@@ -10675,7 +10735,12 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
   // pas de Y montre (juste "iter X").
   const dp = (typeof defaultParamsFor === 'function' && defaultParamsFor(flow.id)) || {};
   const budgetCap = dp.budget_label && /^\d+$/.test(String(dp.budget_label)) ? parseInt(dp.budget_label, 10) : null;
-  const target = dp.target_count || null;
+  // Cible RÉELLE du run (pas le défaut du flux) : priorité au run serveur
+  // (target_count exposé par /api/jarvis/runs), puis aux params du store
+  // local (UI), enfin au défaut. Corrige la barre qui restait bloquée à 3.
+  const target = (latest && latest.target_count)
+    || (store && store.params && store.params.target_count)
+    || dp.target_count || null;
   // span = ce qui sert au "X / Y" du label iter X/Y. On prefere
   // target_count (le user a dit "je veux N items") sur budgetCap.
   const span = target || budgetCap || null;
@@ -10978,6 +11043,14 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>{flow.title}</div>
         </div>
+        {/* Soumettre (compact) — carte terminée, fichier produit, pas encore
+            soumis : permet de pousser au LLMDrops directement depuis la carte
+            (à côté du badge « terminé·voir »). */}
+        {live.isDone && !live.submitted && live.filePath && SUBMITTABLE_FLOWS.has(flow.id) && (
+          <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }}>
+            <FileSubmitButton filePath={live.filePath} flowId={flow.id} compact />
+          </div>
+        )}
         {/* Badge statut — 4 cas : en cours / soumis / terminé / au repos.
             Quand statut est "soumis" ou "terminé" ET qu'un fichier a été
             produit (live.filePath), le badge devient cliquable et ouvre
@@ -11107,10 +11180,11 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
           - tokens : estimation depuis store.metrics.tokens (tokens_estimate
             backend). */}
       <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1,
+        display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 1,
         background: 'var(--line-soft)',
         borderTop: '1px solid var(--line-soft)', borderBottom: '1px solid var(--line-soft)',
       }}>
+        <JMini label="cible"    value={live.span != null ? live.span : '—'} color={a} />
         <JMini label="acceptes" value={live.accepted} color="var(--jdm-green)" />
         <JMini label="rejetes"  value={live.rejected} color="var(--jdm-magenta)" />
         <JMini label="tokens"   value={fmtTokens(live.tokens || 0)} />
