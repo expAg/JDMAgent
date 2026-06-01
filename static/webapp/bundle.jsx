@@ -7556,6 +7556,59 @@ const JPANEL_BASIS = `${100 / J_PANELS.length}%`;
 const SUBMITTABLE_FLOWS = new Set(['enrich', 'audit', 'signalement',
                                     'stats', 'annotation']);
 
+// Icône emoji par flux (même set que l'onglet Aide : brin d'herbe pour
+// l'enrichissement, trou pour la détection de trous, etc.). Source unique
+// d'identité visuelle des flux dans la console.
+const FLOW_ICON = {
+  enrich: '🌱', audit: '🔍', gap: '🕳️',
+  signalement: '⚠️', stats: '📊', annotation: '🏷️',
+};
+const flowIcon = (id) => FLOW_ICON[id] || '🦾';
+
+// Brief ULTRA court (une ligne) de ce que fait l'agent — affiché sur les
+// cartes de lancement vides pour orienter d'un coup d'œil.
+const FLOW_BRIEF = {
+  enrich:      'Propose et consolide de nouveaux triplets.',
+  audit:       'Vérifie sens par sens la légitimité des relations.',
+  gap:         'Repère les trous de couverture d’un terme.',
+  signalement: 'Flag les triplets suspects pour un mainteneur.',
+  stats:       'Mesure la couverture par terme et par relation.',
+  annotation:  'Annote les triplets (constitutif / contrastif…).',
+};
+
+// Tête de robot Jarvis — réplique du dessin MiniRobot de la bannière
+// (jarvis-banner.jsx), embarquée ici car le bundle ne peut pas importer le
+// composant de la bannière (scope isolé). `size` = côté en px. Sert
+// d'étiquette sur les cartes lancées hors JarvisRun (mascotte / serveur).
+function JRobotHead({ size = 30, title }) {
+  const accent = '#2BD4C0';
+  return (
+    <svg viewBox="0 0 80 74" width={size} height={Math.round(size * 74 / 80)}
+      style={{ display: 'block', overflow: 'visible' }}
+      role="img" aria-label={title || 'Jarvis'}>
+      {title && <title>{title}</title>}
+      <defs>
+        <linearGradient id="jrhbody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ffffff" /><stop offset="0.55" stopColor="#f3eee2" /><stop offset="1" stopColor="#dcd4c4" /></linearGradient>
+        <linearGradient id="jrhjdm" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#E63B7A" /><stop offset="0.25" stopColor="#F5C518" /><stop offset="0.5" stopColor="#5FB94A" /><stop offset="0.75" stopColor="#2BB8D4" /><stop offset="1" stopColor="#8A5CD4" /></linearGradient>
+        <linearGradient id="jrhvisor" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#33353f" /><stop offset="0.5" stopColor="#1a1b22" /><stop offset="1" stopColor="#0b0c10" /></linearGradient>
+      </defs>
+      <line x1="40" y1="14" x2="40" y2="6" stroke="#b8b0a0" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="40" cy="4.5" r="3" fill={accent} />
+      <rect x="14" y="14" width="52" height="48" rx="19" fill="url(#jrhbody)" stroke="rgba(40,32,22,0.14)" strokeWidth="1.4" />
+      <rect x="10" y="32" width="6" height="14" rx="3" fill="#cfc8b8" />
+      <rect x="64" y="32" width="6" height="14" rx="3" fill="#cfc8b8" />
+      <rect x="20" y="25" width="40" height="28" rx="13" fill="url(#jrhjdm)" opacity="0.95" />
+      <rect x="22" y="27" width="36" height="24" rx="11" fill="url(#jrhvisor)" />
+      <g>
+        <circle cx="33" cy="39" r="4.4" fill={accent} />
+        <circle cx="47" cy="39" r="4.4" fill={accent} />
+        <circle cx="31.5" cy="37.5" r="1.4" fill="#fff" opacity="0.85" />
+        <circle cx="45.5" cy="37.5" r="1.4" fill="#fff" opacity="0.85" />
+      </g>
+    </svg>
+  );
+}
+
 
 // ─────────────────────────────────────────────────────────────────────
 // JarvisStore — singleton qui survit aux unmounts de JarvisRun.
@@ -9973,7 +10026,19 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           const f = spec.flow;
           if (spec.isLaunch) {
             return <JLaunchCard key={'launch-' + f.id} flow={f}
-              onOpen={() => onLaunch(f.id)} />;
+              onDetail={() => onLaunch(f.id)}
+              onStart={() => {
+                // Démarre le flux IMMÉDIATEMENT avec les defaults (term vide
+                // → tirage random côté backend) sans naviguer : la carte
+                // passera « en cours » au prochain poll /api/jarvis/runs.
+                if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
+                  const dp = (typeof defaultParamsFor === 'function')
+                    ? defaultParamsFor(f.id) : {};
+                  window.__jdmJarvisStore.start(f.id, {
+                    params: dp, isResume: false, resumeState: null,
+                  }).catch(() => {});
+                }
+              }} />;
           }
           const rid = spec.run && spec.run.run_id;
           return (
@@ -10447,34 +10512,35 @@ function RunDetailModal({ runId, onClose, onPreview }) {
 }
 
 // Carte « lancer » grisée — toujours présente par flux dans la Supervision.
-// Renvoie vers la vue JarvisRun (lancement manuel) au clic. Reprend EXACTEMENT
-// l'en-tête d'une vraie carte de flux (JLoopRing à l'accent + step count,
-// kicker, titre) pour l'identité visuelle ; désaturée + bordure pointillée
-// pour signaler « emplacement de lancement » et la distinguer des runs réels.
-function JLaunchCard({ flow, onOpen }) {
+// Affiche l'icône emoji du flux (🌱 / 🔍 / 🕳️ …), son titre, un brief
+// d'une ligne, puis deux actions : « ▸ Démarrer » lance le flux DIRECTEMENT
+// en place (defaults serveur, comme avant) et « Détail → » ouvre la vue Run
+// (formulaire + paramètres). Désaturée + bordure pointillée pour signaler
+// l'emplacement de lancement.
+function JLaunchCard({ flow, onStart, onDetail }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
-  const num = (JARVIS_FLOWS.findIndex(f => f.id === flow.id) + 1) || 1;
   return (
-    <div role="button" tabIndex={0} onClick={onOpen}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+    <div
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      className="focus-ring" title={`Lancer « ${flow.title} » dans la vue Run`}
       style={{
         display: 'flex', flexDirection: 'column',
         background: 'var(--bg-card)',
         border: '1px dashed ' + (hover ? a : 'var(--line)'),
-        borderRadius: 'var(--radius-lg)', overflow: 'hidden', cursor: 'pointer',
-        opacity: hover ? 0.92 : 0.6, filter: hover ? 'none' : 'saturate(0.5)',
-        transform: hover ? 'translateY(-2px)' : 'none',
+        borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+        opacity: hover ? 1 : 0.78, filter: hover ? 'none' : 'saturate(0.7)',
         boxShadow: hover ? `0 12px 32px -18px ${a}` : 'var(--shadow-sm)',
-        transition: 'opacity .2s, filter .2s, border-color .16s, transform .18s, box-shadow .28s',
+        transition: 'opacity .2s, filter .2s, border-color .16s, box-shadow .28s',
       }}>
-      <div style={{ height: 3, background: a, opacity: 0.5 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '14px 15px 12px' }}>
-        <div style={{ flexShrink: 0 }}>
-          <JLoopRing accent={a} num={num} steps={flow.steps.length} delay={0} size={50} icon="power" />
-        </div>
+      <div style={{ height: 3, background: a, opacity: 0.55 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '14px 15px 8px' }}>
+        <div style={{
+          flexShrink: 0, width: 50, height: 50, borderRadius: 14,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 27, lineHeight: 1,
+          background: `color-mix(in srgb, ${a} 12%, transparent)`,
+          border: `1px solid color-mix(in srgb, ${a} 30%, transparent)`,
+        }}>{flowIcon(flow.id)}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="mono" style={{
             fontSize: 10, color: a, fontWeight: 600,
@@ -10487,14 +10553,36 @@ function JLaunchCard({ flow, onOpen }) {
           }}>{flow.title}</div>
         </div>
       </div>
+      {/* Brief une ligne */}
       <div style={{
-        margin: '0 15px 14px', padding: '8px 0',
+        padding: '0 16px 12px', fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.4,
+      }}>{FLOW_BRIEF[flow.id] || ''}</div>
+      {/* Actions : Démarrer (direct) + Détail (vue Run) */}
+      <div style={{
+        marginTop: 'auto', padding: '10px 14px',
         borderTop: '1px dashed var(--line)',
-        textAlign: 'center',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
       }}>
-        <span className="mono" style={{
-          fontSize: 10.5, color: a, textTransform: 'uppercase', letterSpacing: '0.1em',
-        }}>＋ Lancer dans la vue Run</span>
+        <button type="button" className="focus-ring"
+          onClick={(e) => { e.stopPropagation(); onStart && onStart(); }}
+          title={`Démarrer « ${flow.title} » maintenant (defaults)`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 13px', borderRadius: 999, cursor: 'pointer',
+            border: 'none', background: a, color: 'var(--bg)',
+            fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600,
+            textTransform: 'uppercase', letterSpacing: '0.07em',
+          }}>▸ Démarrer</button>
+        <button type="button" className="focus-ring"
+          onClick={(e) => { e.stopPropagation(); onDetail && onDetail(); }}
+          title={`Ouvrir la vue Run de « ${flow.title} »`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '6px 10px', borderRadius: 999, cursor: 'pointer',
+            border: '1px solid var(--line)', background: 'transparent', color: 'var(--ink-2)',
+            fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600,
+            textTransform: 'uppercase', letterSpacing: '0.07em',
+          }}>Détail →</button>
       </div>
     </div>
   );
@@ -10849,12 +10937,15 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
           ? 'Lancé par la mascotte Jarvis (chat)'
           : 'Lancé côté serveur'}
           style={{
-            position: 'absolute', top: -9, right: -9, zIndex: 3,
-            width: 26, height: 26, borderRadius: '50%',
+            position: 'absolute', top: -14, right: -12, zIndex: 3,
+            width: 44, height: 44, borderRadius: '50%',
             background: 'var(--bg-card)', border: `1.5px solid ${a}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: 'var(--shadow-sm)', fontSize: 14, lineHeight: 1,
-          }}>🤖</div>
+            boxShadow: 'var(--shadow-md)',
+          }}>
+          <JRobotHead size={32} title={live.origin === 'chat'
+            ? 'Lancé par la mascotte Jarvis' : 'Lancé côté serveur'} />
+        </div>
       )}
 
       {/* top hairline in the flow's colour */}
