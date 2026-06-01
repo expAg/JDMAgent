@@ -142,7 +142,7 @@ function pickThought(accent) {
 }
 
 /* ── Le robot (roam + grimaces) ─────────────────────────────────────── */
-function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr }) {
+function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, frozen }) {
   const wrapRef = useRef(null);
   const robotRef = useRef(null);
   const r = useRef({});
@@ -151,7 +151,7 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr })
   const bubblesRef = useRef([]);
   const stateRef = useRef({});
   const [expr, setExpr] = useState(manualExpr || 'baby');
-  stateRef.current = { mode, speedPct, sizePx, expressivity, freq, expr };
+  stateRef.current = { mode, speedPct, sizePx, expressivity, freq, expr, frozen };
 
   useEffect(() => {
     const wrap = wrapRef.current, robot = robotRef.current;
@@ -221,6 +221,33 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr })
       try {
         const dt = Math.min(0.045, (now - A.last) / 1000); A.last = now; A.t += dt;
         const S = stateRef.current, auto = S.mode === 'auto';
+        // GEL (chat ouvert) : le robot revient à sa position de repos et
+        // cesse toute animation tant que `frozen` est vrai. On applique une
+        // pose neutre UNE fois, puis on tient simplement la frame.
+        if (S.frozen) {
+          if (!A._frozen) {
+            A._frozen = true;
+            measureBound(); homePos();
+            A.vx = A.vy = 0; A.lean = 0; A.bob = 0; A.dir = 1;
+            A.pup.x = 0; A.pup.y = 0;
+            const sw0 = S.sizePx, sh0 = sw0 * 150 / 120;
+            robot.style.transform = `translate(${(A.x - sw0 * 0.5).toFixed(1)}px, ${(A.y - sh0 * 0.95).toFixed(1)}px)`;
+            robot.style.width = sw0 + 'px';
+            setT('lean', 'rotate(0 60 140)');
+            setT('bob', 'translate(0 0)');
+            setT('face', 'translate(60 0) scale(1 1) translate(-60 0)');
+            setT('legL', 'translate(0 0) rotate(0 50 116)');
+            setT('legR', 'translate(0 0) rotate(0 70 116)');
+            setT('armL', 'rotate(0 36 92)');
+            setT('armR', 'rotate(0 84 92)');
+            setT('ant', 'rotate(0 60 40)');
+            setT('pupils', 'translate(0 0)');
+            setT('eyes', 'translate(60 46) scale(1 1) translate(-60 -46)');
+          }
+          raf = requestAnimationFrame(tick);
+          return;
+        }
+        A._frozen = false;
         const b = wrap.getBoundingClientRect(); const W = b.width, H = b.height;
         const sw = S.sizePx, sh = sw * 150 / 120;
         const mx = 36, myTop = Math.max(sh, 62), myBot = 56;
@@ -903,6 +930,21 @@ function JarvisBanner() {
     };
   }, []);
 
+  // Quand le chat s'OUVRE : si la bannière est repliée, on la déplie (sans
+  // toucher la préférence persistée) pour que le robot apparaisse dans sa
+  // position de repos, figé (cf. prop `frozen` du Robot). Quand le chat se
+  // FERME : si on l'avait dépliée pour ça, on la replie ; sinon le robot
+  // reprend simplement son mouvement.
+  const _chatExpandedRef = useRef(false);
+  useEffect(() => {
+    if (chatOpen) {
+      if (collapsed) { _chatExpandedRef.current = true; setCollapsed(false); }
+    } else if (_chatExpandedRef.current) {
+      _chatExpandedRef.current = false;
+      setCollapsed(true);
+    }
+  }, [chatOpen, collapsed]);
+
   // reflète les changements de mode faits ailleurs (panneau Configuration,
   // autre onglet) — événement custom + storage + poll léger de sécurité.
   useEffect(() => {
@@ -1003,7 +1045,7 @@ function JarvisBanner() {
     <>
     <div className={`jb-layer ${auto ? 'jb-mode-auto' : 'jb-mode-manual'} ${dark ? 'jb-is-dark' : 'jb-is-light'}`}>
       <Robot mode={auto ? 'auto' : 'manual'} dark={dark} speedPct={92} sizePx={54}
-             expressivity={130} freq={110} manualExpr="baby" />
+             expressivity={130} freq={110} manualExpr="baby" frozen={chatOpen} />
 
       <div className="jb-ctl">
           <div className="jb-mode-toggle" role="radiogroup" aria-label="Mode d'exécution"
