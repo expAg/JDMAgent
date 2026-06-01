@@ -37,6 +37,37 @@ def get_live_runs() -> list:
         return []
 
 
+# Contrôleur de flux : start/stop de runs bg, injecté par app_fastapi
+# (qui détient la machinerie _new_run + thread + cancel). La mascotte
+# peut ainsi LANCER et ARRÊTER des flux à la demande, sans dépendre
+# d'app_fastapi (anti-circulaire).
+_flow_start = None  # (flow_id: str, params: dict) -> dict {run_id, headline}
+_flow_stop = None   # (run_id: str) -> dict {ok, status, ...}
+
+
+def set_flow_controller(start_fn, stop_fn) -> None:
+    global _flow_start, _flow_stop
+    _flow_start, _flow_stop = start_fn, stop_fn
+
+
+def start_flow(flow_id: str, params: dict) -> dict:
+    if _flow_start is None:
+        return {"error": "Lancement de flux indisponible (contrôleur non câblé)."}
+    try:
+        return _flow_start(flow_id, params or {})
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def stop_flow(run_id: str) -> dict:
+    if _flow_stop is None:
+        return {"error": "Arrêt de flux indisponible (contrôleur non câblé)."}
+    try:
+        return _flow_stop(run_id)
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 # Patches de config empilés par le tool set_config pendant un tour d'agent.
 # ContextVar pour isoler par requête de chat (chaque appel /api/jarvis/chat
 # pose sa propre liste fraîche).

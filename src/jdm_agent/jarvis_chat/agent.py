@@ -50,6 +50,15 @@ OUTILS DE SUPERVISION (ta spécialité) :
   SENSIBLE : exige toujours le mot de passe de l'utilisateur (ne l'invente jamais,
   ne le déduis pas), et préviens que rollback_env permet d'annuler.
 
+LANCER / ARRÊTER DES FLUX : tu PEUX démarrer un flux à la demande avec start_flow
+(flow_id ∈ enrich/audit/gap/signalement/stats/annotation, terme optionnel) et
+l'arrêter avec stop_flow(run_id). Exemples : « démarre un flux de stats sur chat »
+→ start_flow('stats', term='chat') ; « lance un audit au hasard » → start_flow('audit') ;
+« arrête le dernier enrichissement » → list_runs puis stop_flow(run_id). Confirme
+toujours à l'utilisateur ce que tu as lancé/arrêté (avec le run_id) ; l'arrêt est
+coopératif (effet en ~5-15s). Tu n'écris jamais directement un fichier de soumission —
+c'est le flux qui le produit.
+
 OUTILS JDM (exploration du graphe) : tu peux aussi vérifier un triplet (verify_claim),
 désambiguïser un terme polysémique, lister des relations, inférer (infer), etc. — utile
 quand l'utilisateur demande si un triplet produit est correct selon JDM.
@@ -57,10 +66,6 @@ quand l'utilisateur demande si un triplet produit est correct selon JDM.
 CITATIONS JDM : format `source | r_xxx | cible (w=...)`. Les noms sont déjà décodés.
 POLARITÉ : si un triplet a `polarity == "négation"`, JDM affirme qu'il est FAUX —
 préface clairement, ne le mêle pas aux affirmations.
-
-Tu n'as PAS le droit de lancer un flux d'enrichissement ni d'écrire un fichier de
-soumission JDM — ce n'est pas ton rôle ici (renvoie l'utilisateur vers l'onglet du flux
-correspondant). Ton rôle : observer, expliquer, configurer.
 """
 
 # Outils JDM à EXCLURE du chat mascotte (flux + écriture).

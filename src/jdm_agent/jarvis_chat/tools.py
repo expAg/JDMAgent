@@ -347,10 +347,65 @@ def rollback_env(password: str) -> dict:
     return _persist.rollback_env()
 
 
+# ───────────────────────── tools : lancer / arrêter un flux ─────────────────────────
+
+_VALID_FLOWS = {"enrich", "audit", "gap", "signalement", "stats", "annotation"}
+
+
+@tool
+def start_flow(flow_id: str, term: str = "", relation: str = "",
+               target_count: int = 0) -> dict:
+    """Démarre un flux d'agent Jarvis EN ARRIÈRE-PLAN et renvoie son run_id.
+
+    flow_id ∈ {enrich, audit, gap, signalement, stats, annotation} :
+      - enrich      : proposer + consolider de nouveaux triplets
+      - audit       : auditer la répartition des sens d'un terme
+      - gap         : détecter les trous de couverture
+      - signalement : repérer des triplets suspects
+      - stats       : statistiques sur un terme
+      - annotation  : annoter des triplets (constitutif/contrastif/…)
+
+    `term` optionnel : si vide, l'agent du flux tire un terme au hasard.
+    `relation` optionnel (ex. 'r_isa'). `target_count` optionnel (nb d'items
+    visés, 0 = défaut du flux). Le flux tourne en fond et apparaît dans la
+    supervision ; suis-le avec list_runs / get_run, arrête-le avec stop_flow.
+    """
+    fid = (flow_id or "").strip().lower()
+    if fid not in _VALID_FLOWS:
+        return {"error": f"flow_id invalide : {flow_id!r}. Attendu : {sorted(_VALID_FLOWS)}."}
+    params: dict = {}
+    if term and term.strip():
+        params["term"] = term.strip()
+    if relation and relation.strip():
+        params["relation"] = [relation.strip()]
+    if target_count and int(target_count) > 0:
+        params["target_count"] = int(target_count)
+    res = _rt.start_flow(fid, params)
+    if res.get("error"):
+        return res
+    return {"ok": True, "flow_id": fid, "run_id": res.get("run_id"),
+            "headline": res.get("headline"),
+            "note": "Flux démarré en arrière-plan. Suis-le avec get_run(run_id)."}
+
+
+@tool
+def stop_flow(run_id: str) -> dict:
+    """Arrête (annulation coopérative) un flux Jarvis en cours, par son
+    run_id (cf. list_runs). L'arrêt prend effet entre deux étapes du flux
+    (latence ~5-15s, le temps de l'appel LLM en cours). Idempotent : si le
+    run est déjà terminé, renvoie son statut sans erreur.
+    """
+    rid = (run_id or "").strip()
+    if not rid:
+        return {"error": "run_id vide."}
+    return _rt.stop_flow(rid)
+
+
 def build_supervision_tools() -> list:
     """Renvoie la liste des outils internes de supervision de la mascotte."""
     return [
         list_runs, get_run, list_productions, read_production, summarize_triplets,
+        start_flow, stop_flow,
         get_config, set_config,
         read_env, set_env, rollback_env,
     ]

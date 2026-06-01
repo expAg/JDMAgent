@@ -1611,6 +1611,44 @@ def _runs_snapshot_for_chat() -> list[dict]:
         return out
 
 
+def _chat_start_flow(flow_id: str, params: dict) -> dict:
+    """Démarre un flux Jarvis en bg (même machinerie que l'endpoint
+    /api/jarvis/{flow_id}/stream) pour le compte de la mascotte. Renvoie
+    {run_id, headline}. Lève via retour {error} si flow inconnu."""
+    p = dict(params or {})
+    # Hérite des défauts pertinents de la config courante (modèle, pool)
+    # pour que le flux lancé par le chat se comporte comme via l'UI.
+    cfg = _jchat_rt.get_config_snapshot()
+    if "model" not in p and cfg.get("llm"):
+        p["model"] = cfg["llm"]
+    if "pool_active" not in p and cfg.get("poolActive") is not None:
+        p["pool_active"] = bool(cfg["poolActive"])
+    p.setdefault("use_thinking", True)
+    p.setdefault("budget_label", "illimité")
+    try:
+        _prompt, headline = _jarvis_dispatch(flow_id, p)
+    except ValueError as e:
+        return {"error": str(e)}
+    run = _new_run(flow_id, p, headline)
+    _threading.Thread(
+        target=_drive_jarvis_flow_thread, args=(run,), daemon=True,
+        name=f"jarvis-run-{run['run_id']}",
+    ).start()
+    return {"run_id": run["run_id"], "headline": headline}
+
+
+def _chat_stop_flow(run_id: str) -> dict:
+    """Annulation coopérative d'un run (même logique que l'endpoint cancel)."""
+    with _JARVIS_RUNS_LOCK:
+        run = _JARVIS_RUNS.get(run_id)
+    if run is None:
+        return {"error": f"run_id inconnu : {run_id}"}
+    if run["status"] in ("done", "error"):
+        return {"ok": True, "status": run["status"], "note": "déjà terminé"}
+    run["cancel_requested"] = True
+    return {"ok": True, "status": run["status"], "note": "arrêt demandé (effet ~5-15s)"}
+
+
 @app.on_event("startup")
 async def _start_jarvis_cleanup_task():
     _asyncio.create_task(_cleanup_old_runs_loop())
@@ -1629,6 +1667,8 @@ async def _start_jarvis_cleanup_task():
     # donc on ne réinjecte PAS les vieux runs dans _JARVIS_RUNS (éviterait
     # de ressusciter de vieux runs dans la vue live des cartes de supervision).
     _jchat_rt.set_runs_provider(_runs_snapshot_for_chat)
+    # Câble le contrôleur de flux : la mascotte peut lancer/arrêter des flux.
+    _jchat_rt.set_flow_controller(_chat_start_flow, _chat_stop_flow)
 
 
 @app.get("/api/jarvis/runs")
