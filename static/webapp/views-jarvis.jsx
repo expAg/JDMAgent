@@ -1472,6 +1472,11 @@ function useJarvisConfig() {
   useEffect(() => {
     try { localStorage.setItem('jdm_jarvis_config', JSON.stringify(cfg)); } catch (e) {}
     window.__JDM_JARVIS_CONFIG__ = cfg;
+    // Signal aux composants externes (mascotte jarvis-banner.jsx) qui
+    // écoutent la config sans avoir accès au state React. Le banner
+    // tombe sinon sur son poll de 1.2s. Évènement zéro-payload : les
+    // consommateurs relisent localStorage / __JDM_JARVIS_CONFIG__.
+    try { window.dispatchEvent(new CustomEvent('__jdm_jarvis_config_changed')); } catch (e) {}
   }, [cfg]);
   const set = useCallback((k, v) => setCfg(c => ({ ...c, [k]: v })), []);
   const reset = useCallback(() => setCfg(JCONFIG_DEFAULTS), []);
@@ -2279,7 +2284,14 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   const activeCount = serverRuns.filter(r => r.status === 'running' || r.status === 'starting').length;
 
   return (
-    <div ref={rootRef} style={{ width: '100%', maxWidth: 1120 }}>
+    <div ref={rootRef} style={{ width: '100%', maxWidth: 1120, position: 'relative' }}>
+      {/* Mascotte Jarvis — module IIFE chargé avant bundle.jsx, exposé en
+          window.JarvisBanner. Il se place absolute/inset:0 sur ce wrapper
+          (donc on a besoin de position:relative ci-dessus) et cherche le
+          <h1> à l'intérieur pour caler le mini-robot mode replié. */}
+      {typeof window !== 'undefined' && window.JarvisBanner
+        ? React.createElement(window.JarvisBanner)
+        : null}
       {/* ── Masthead ── */}
       <div style={{
         display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',

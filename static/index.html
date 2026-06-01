@@ -517,6 +517,9 @@
 </script>
 
 <script type="text/babel" src="webapp/tweaks-panel.jsx"></script>
+<!-- Module mascotte Jarvis : IIFE qui injecte ses styles + expose
+     window.JarvisBanner. Chargé AVANT bundle.jsx (cf. handoff). -->
+<script type="text/babel" src="webapp/jarvis-banner.jsx"></script>
 <script type="text/babel" src="webapp/bundle.jsx"></script>
 
 </body>
