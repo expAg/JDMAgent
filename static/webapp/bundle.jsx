@@ -6987,7 +6987,14 @@ function ViewAgent() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault(); send();
+                      e.preventDefault(); send(); return;
+                    }
+                    // Flèche bas : rappelle le dernier message envoyé de la
+                    // session dans l'input, prêt à être renvoyé/édité.
+                    if (e.key === 'ArrowDown') {
+                      const last = [...convo].reverse().find(
+                        (m) => m.role === 'user' && (m.content || '').trim());
+                      if (last) { e.preventDefault(); setInput(last.content); }
                     }
                   }}
                   placeholder="Pose une question sur la langue française…"

@@ -820,7 +820,13 @@ function ChatPanel({ dark, onClose }) {
   }, [draft]);
 
   const onKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); return; }
+    // Flèche bas : rappelle le dernier message ENVOYÉ de la session dans
+    // l'input, prêt à être renvoyé/édité (rappel d'historique simple).
+    if (e.key === 'ArrowDown') {
+      const last = [...msgs].reverse().find((m) => m.who === 'me' && (m.text || '').trim());
+      if (last) { e.preventDefault(); setDraft(last.text); }
+    }
   };
 
   return ReactDOM.createPortal((
