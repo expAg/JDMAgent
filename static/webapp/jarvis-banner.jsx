@@ -221,33 +221,13 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
       try {
         const dt = Math.min(0.045, (now - A.last) / 1000); A.last = now; A.t += dt;
         const S = stateRef.current, auto = S.mode === 'auto';
-        // GEL (chat ouvert) : le robot revient à sa position de repos et
-        // cesse toute animation tant que `frozen` est vrai. On applique une
-        // pose neutre UNE fois, puis on tient simplement la frame.
-        if (S.frozen) {
-          if (!A._frozen) {
-            A._frozen = true;
-            measureBound(); homePos();
-            A.vx = A.vy = 0; A.lean = 0; A.bob = 0; A.dir = 1;
-            A.pup.x = 0; A.pup.y = 0;
-            const sw0 = S.sizePx, sh0 = sw0 * 150 / 120;
-            robot.style.transform = `translate(${(A.x - sw0 * 0.5).toFixed(1)}px, ${(A.y - sh0 * 0.95).toFixed(1)}px)`;
-            robot.style.width = sw0 + 'px';
-            setT('lean', 'rotate(0 60 140)');
-            setT('bob', 'translate(0 0)');
-            setT('face', 'translate(60 0) scale(1 1) translate(-60 0)');
-            setT('legL', 'translate(0 0) rotate(0 50 116)');
-            setT('legR', 'translate(0 0) rotate(0 70 116)');
-            setT('armL', 'rotate(0 36 92)');
-            setT('armR', 'rotate(0 84 92)');
-            setT('ant', 'rotate(0 60 40)');
-            setT('pupils', 'translate(0 0)');
-            setT('eyes', 'translate(60 46) scale(1 1) translate(-60 -46)');
-          }
-          raf = requestAnimationFrame(tick);
-          return;
-        }
-        A._frozen = false;
+        // GEL POSITIONNEL (chat ouvert) : le robot ne se DÉPLACE plus mais
+        // continue de s'animer sur place (clignement, regard, balancement
+        // des bras, salut, antenne…). À l'entrée du gel on le ramène UNE fois
+        // à sa position de repos ; ensuite la cible reste fixée sur lui (voir
+        // le bloc de ciblage ci-dessous) → vitesse ~0 → animations idle.
+        if (S.frozen && !A._frozen) { A._frozen = true; measureBound(); homePos(); }
+        if (!S.frozen) A._frozen = false;
         const b = wrap.getBoundingClientRect(); const W = b.width, H = b.height;
         const sw = S.sizePx, sh = sw * 150 / 120;
         const mx = 36, myTop = Math.max(sh, 62), myBot = 56;
@@ -259,7 +239,8 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
         const yMaxFor = (tx) => (tx < lb2 ? upMaxY : lowMaxY);
         const xv = (S.expressivity || 120) / 100;
 
-        if (auto) { if (A.t > A.nextWp) { A.tx = lb + Math.random() * (W - mx - lb); A.ty = myTop + Math.random() * (yMaxFor(A.tx) - myTop); A.nextWp = A.t + 0.5 + Math.random() * 1.4; } }
+        if (S.frozen) { A.tx = A.x; A.ty = A.y; }   // chat ouvert → reste sur place, mais continue à s'animer (idle)
+        else if (auto) { if (A.t > A.nextWp) { A.tx = lb + Math.random() * (W - mx - lb); A.ty = myTop + Math.random() * (yMaxFor(A.tx) - myTop); A.nextWp = A.t + 0.5 + Math.random() * 1.4; } }
         else if (A.mouse.on) { A.tx = clamp(A.mouse.x, lb, W - mx); A.ty = clamp(A.mouse.y, myTop, yMaxFor(A.tx)); }
         else { A.tx = A.x; A.ty = A.y; }   // manuel + souris hors zone → reste statique (idle : salut + clignement)
 
