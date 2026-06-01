@@ -25,7 +25,25 @@ from jdm_agent.jarvis_chat import persistence as _persist
 from jdm_agent.jarvis_chat import runtime as _rt
 
 PRODUCTIONS_DIR = Path("/tmp/jdm_outputs")
+_SUBMITTED_FILE = PRODUCTIONS_DIR / ".submitted.json"
 _ENV_PASSWORD_VAR = "EXPORT_SECRETS_PASSWORD"
+
+
+def _submitted_set() -> set:
+    """Noms de fichiers déjà soumis à LLMDrops (lit .submitted.json, même
+    format que l'app : dict {nom: ts} ou liste)."""
+    import json as _json
+    if not _SUBMITTED_FILE.exists():
+        return set()
+    try:
+        data = _json.loads(_SUBMITTED_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return set(data.keys())
+        if isinstance(data, list):
+            return set(data)
+    except Exception:
+        pass
+    return set()
 
 
 # ───────────────────────── helpers ─────────────────────────
@@ -47,7 +65,7 @@ def _merged_runs() -> list[dict]:
     return runs
 
 
-def _run_summary(r: dict) -> dict:
+def _run_summary(r: dict, submitted: set = None) -> dict:
     """Vue compacte d'un run pour list_runs."""
     stats = r.get("stats") or {}
     started = r.get("started_at")
@@ -57,6 +75,8 @@ def _run_summary(r: dict) -> dict:
         dur = round(finished - started, 1)
     elif started:
         dur = None
+    fname = _basename(r.get("last_file_path") or stats.get("file"))
+    sub = submitted if submitted is not None else _submitted_set()
     return {
         "run_id": r.get("run_id"),
         "flow_id": r.get("flow_id"),
@@ -66,7 +86,8 @@ def _run_summary(r: dict) -> dict:
         "duration_s": dur,
         "retained": stats.get("retained"),
         "attempts": stats.get("attempts"),
-        "file": _basename(r.get("last_file_path") or stats.get("file")),
+        "file": fname,
+        "submitted": (fname in sub) if fname else False,
     }
 
 
@@ -105,7 +126,8 @@ def list_runs(status: str = "", flow_id: str = "", limit: int = 20) -> dict:
         runs = [r for r in runs if (r.get("status") or "") == status]
     if flow_id:
         runs = [r for r in runs if (r.get("flow_id") or "") == flow_id]
-    out = [_run_summary(r) for r in runs[: max(1, min(100, int(limit or 20)))]]
+    sub = _submitted_set()
+    out = [_run_summary(r, sub) for r in runs[: max(1, min(100, int(limit or 20)))]]
     return {"count": len(out), "runs": out}
 
 
@@ -128,6 +150,7 @@ def get_run(run_id: str) -> dict:
             started = r.get("started_at")
             finished = r.get("finished_at")
             dur = round(finished - started, 1) if (started and finished) else None
+            fname = _basename(r.get("last_file_path") or stats.get("file"))
             return {
                 "run_id": r.get("run_id"),
                 "flow_id": r.get("flow_id"),
@@ -141,7 +164,8 @@ def get_run(run_id: str) -> dict:
                 "tokens": stats.get("tokens", 0),
                 "tools_count": stats.get("tools_count", 0),
                 "tools": stats.get("tools", {}),
-                "file": _basename(r.get("last_file_path") or stats.get("file")),
+                "file": fname,
+                "submitted": (fname in _submitted_set()) if fname else False,
                 "error_text": r.get("error_text"),
             }
     return {"error": f"Run introuvable : {run_id}. Utilise list_runs pour les ids valides."}
@@ -161,6 +185,7 @@ def list_productions(ext: str = "") -> dict:
         return {"count": 0, "files": []}
     import time as _t
     want = (ext or "").lstrip(".").lower()
+    sub = _submitted_set()
     files = []
     for p in PRODUCTIONS_DIR.iterdir():
         if not p.is_file() or p.name.startswith("."):
@@ -171,7 +196,8 @@ def list_productions(ext: str = "") -> dict:
         try:
             st = p.stat()
             files.append({"name": p.name, "ext": e or "txt",
-                          "size": st.st_size, "age_s": int(_t.time() - st.st_mtime)})
+                          "size": st.st_size, "age_s": int(_t.time() - st.st_mtime),
+                          "submitted": p.name in sub})
         except OSError:
             continue
     files.sort(key=lambda f: f["age_s"])
@@ -197,7 +223,8 @@ def read_production(name: str, max_chars: int = 6000) -> dict:
     cap = max(500, min(20000, int(max_chars or 6000)))
     truncated = len(content) > cap
     return {"name": safe, "content": content[:cap],
-            "truncated": truncated, "size": len(content)}
+            "truncated": truncated, "size": len(content),
+            "submitted": safe in _submitted_set()}
 
 
 @tool
