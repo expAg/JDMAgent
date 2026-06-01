@@ -209,7 +209,7 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr })
     homePos();
     { const sw0 = stateRef.current.sizePx, sh0 = sw0 * 150 / 120;
       robot.style.transform = `translate(${(A.x - sw0 * 0.5).toFixed(1)}px, ${(A.y - sh0 * 0.95).toFixed(1)}px)`; }
-    const reHome = () => { if (!auto && !A.mouse.on) homePos(); };
+    const reHome = () => { if (stateRef.current.mode !== 'auto' && !A.mouse.on) homePos(); };
     const bt1 = setTimeout(() => { measureBound(); reHome(); }, 300),
           bt2 = setTimeout(() => { measureBound(); reHome(); }, 1200);
     const onResizeHome = () => { measureBound(); reHome(); };

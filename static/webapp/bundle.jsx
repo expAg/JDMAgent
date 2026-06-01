@@ -9971,7 +9971,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           const rid = spec.run && spec.run.run_id;
           return (
             <JFlowDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
-              onOpen={() => { if (rid) setDetailRunId(rid); else onPick(f.id); }}
+              onOpen={() => { if (rid) setDetailRunId(rid); else onLaunch(f.id); }}
               onLaunch={() => onLaunch(f.id)}
               onPreview={(p) => setPreviewPath(p)}
               onStart={() => {
@@ -10495,8 +10495,8 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
   return (
     <div
       role="button" tabIndex={0}
-      onClick={onLaunch}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLaunch(); } }}
+      onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       className="focus-ring"
