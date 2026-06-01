@@ -1454,7 +1454,7 @@ def _make_run_id(flow_id: str, params: dict) -> str:
     return rid
 
 
-def _new_run(flow_id: str, params: dict, headline: str) -> dict:
+def _new_run(flow_id: str, params: dict, headline: str, origin: str = "ui") -> dict:
     run_id = _make_run_id(flow_id, params)
     # Snapshot des clés du registry de consolidation au moment du start.
     # Le registry est un global module-level (cf. note historique dans
@@ -1481,6 +1481,9 @@ def _new_run(flow_id: str, params: dict, headline: str) -> dict:
         "flow_id": flow_id,
         "params": params,
         "headline": headline,
+        # origine du lancement : 'ui' (vue JarvisRun) | 'chat' (mascotte).
+        # Sert au badge tête-de-robot sur les cartes lancées hors JarvisRun.
+        "origin": origin,
         "status": "starting",    # starting | running | done | error
         "events": [],            # list[{event, data}] append-only
         "subscribers": set(),    # set[asyncio.Event] notified à chaque push
@@ -1810,7 +1813,7 @@ def _chat_start_flow(flow_id: str, params: dict) -> dict:
         _prompt, headline = _jarvis_dispatch(flow_id, p)
     except ValueError as e:
         return {"error": str(e)}
-    run = _new_run(flow_id, p, headline)
+    run = _new_run(flow_id, p, headline, origin="chat")
     _threading.Thread(
         target=_drive_jarvis_flow_thread, args=(run,), daemon=True,
         name=f"jarvis-run-{run['run_id']}",
@@ -1871,6 +1874,7 @@ def api_jarvis_list_runs():
                     "started_at": r["started_at"],
                     "finished_at": r.get("finished_at"),
                     "stats": r.get("stats") or {},
+                    "origin": r.get("origin", "ui"),
                 }
                 for r in _JARVIS_RUNS.values()
             ]

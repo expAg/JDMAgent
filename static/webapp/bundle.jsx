@@ -9855,17 +9855,20 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
     const frs = _runsByFlow[f.id] || [];
     const activeR = frs.filter(r => r.status === 'running' || r.status === 'starting')
                        .sort((a, b) => (a.started_at || 0) - (b.started_at || 0));
-    if (activeR.length) {
-      for (const r of activeR) cardSpecs.push({ flow: f, run: r });
-    } else {
+    for (const r of activeR) cardSpecs.push({ flow: f, run: r });
+    if (!activeR.length) {
       const latest = frs.slice().sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0] || null;
-      cardSpecs.push({ flow: f, run: latest });
+      if (latest) cardSpecs.push({ flow: f, run: latest });  // dernier résultat
     }
+    // TOUJOURS une carte grisée « lancer » → vue JarvisRun (lancement manuel).
+    cardSpecs.push({ flow: f, run: null, isLaunch: true });
   }
-  const live = cardSpecs.map((spec, i) => computeFlowLive(
-    spec.flow, i, tick, serverRuns, localActiveSet,
-    spec.run ? { rec: ObsStore.getRun(spec.run.run_id), serverRun: spec.run } : undefined
-  ));
+  const live = cardSpecs.map((spec, i) => spec.isLaunch
+    ? { isLaunch: true, isRunning: false, isDone: false, submitted: false }
+    : computeFlowLive(
+        spec.flow, i, tick, serverRuns, localActiveSet,
+        spec.run ? { rec: ObsStore.getRun(spec.run.run_id), serverRun: spec.run } : undefined
+      ));
   // Ordre d'affichage : en cours → soumis → terminé → en attente.
   const _bucket = (l) => {
     if (l.isRunning) return 0;
@@ -9968,6 +9971,10 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         {orderedIdx.map(i => {
           const spec = cardSpecs[i];
           const f = spec.flow;
+          if (spec.isLaunch) {
+            return <JLaunchCard key={'launch-' + f.id} flow={f}
+              onOpen={() => onLaunch(f.id)} />;
+          }
           const rid = spec.run && spec.run.run_id;
           return (
             <JFlowDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
@@ -10102,6 +10109,13 @@ function FilePreviewModal({ path, onClose }) {
 // la vue de lancement (flow-keyée), donc 2 runs du même type ont chacun
 // leur détail. Portail vers document.body (cf. note FilePreviewModal :
 // le rail-pager transforme le containing block des position:fixed).
+// Vue de run détaillée — RICHE, identique au corps de JarvisRun (grille
+// métriques + double panneau narration/log + panneau d'items + télécharger).
+// Lit en LECTURE SEULE le record ObsStore (run observé, lancé hors JarvisRun :
+// mascotte/serveur). Aucun formulaire de lancement : un run précis est déjà
+// en cours/terminé. Réutilise les helpers de module (parseFilePreview,
+// renderMarkdownJarvis, ItemCard, FLOW_TOOL_STEPS, metricLabelFor…) pour un
+// rendu strictement aligné sur la vue Run.
 function RunDetailModal({ runId, onClose, onPreview }) {
   const rec = useObsRun(runId);
   React.useEffect(() => { if (runId) ObsStore.observe(runId); }, [runId]);
@@ -10110,70 +10124,359 @@ function RunDetailModal({ runId, onClose, onPreview }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+  const [leftView, setLeftView] = useState('narration');
+  const logRef = useRef(null);
   const onBackdrop = (e) => { if (e.target === e.currentTarget) onClose(); };
+
   const r = rec || {};
-  const m = r.metrics || {};
-  const log = (r.log || []).slice(-50).reverse();
-  const fileName = r.filePath ? r.filePath.split(/[\\/]/).slice(-1)[0] : null;
+  const flowId = r.flowId || '';
+  const flow = (JARVIS_FLOWS.find(f => f.id === flowId)) || JARVIS_FLOWS[0];
+  const state = r.status || 'idle';
+  const log = r.log || [];
+  const accepted = r.accepted || [];
+  const narrationHTML = r.narrationHTML || '';
+  const filePath = r.filePath || null;
+  const baseMetrics = r.metrics || {};
+  const parsed = React.useMemo(
+    () => parseFilePreview(r.filePreview || '', flowId),
+    [r.filePreview, flowId]
+  );
+  // Compteur "produits" dérivé comme dans JarvisRun (registry pour enrich,
+  // items parsés sinon).
+  const produced = flowId === 'enrich'
+    ? (baseMetrics.accepted || accepted.length || 0)
+    : parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
+  const metrics = { ...baseMetrics, produced };
+
+  // Auto-scroll du panneau gauche pendant que le run vit.
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log, narrationHTML]);
+
+  const fileName = filePath ? filePath.split(/[\\/]/).slice(-1)[0] : null;
+
   return ReactDOM.createPortal((
     <div onClick={onBackdrop} style={{
-      position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '4vh 20px', overflow: 'auto',
     }}>
-      <div style={{
-        background: 'var(--bg-card)', border: '1px solid var(--line)',
-        borderRadius: 'var(--radius-lg)', maxWidth: 760, width: '100%',
-        maxHeight: '88vh', display: 'flex', flexDirection: 'column',
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: 'var(--bg)', border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)', maxWidth: 1080, width: '100%',
+        boxShadow: 'var(--shadow-lg)',
       }}>
+        {/* En-tête */}
         <div style={{
-          padding: '14px 18px', borderBottom: '1px solid var(--line-soft)',
+          padding: '16px 20px', borderBottom: '1px solid var(--line-soft)',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
         }}>
-          <div style={{ minWidth: 0 }}>
-            <div className="display" style={{
-              fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--ink)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>{r.headline || 'Run'}</div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              {(r.status || 'idle')} · {r.flowId || ''}
+          <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 24, flexShrink: 0 }}>{flow.icon || '🦾'}</span>
+            <div style={{ minWidth: 0 }}>
+              <div className="display" style={{
+                fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--ink)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{r.headline || flow.title || 'Run'}</div>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                {state === 'running' && <span className="pulse-dot" style={{ background: flow.accent }} />}
+                {state} · {flow.title}
+                {r.submitted && <span style={{ color: 'var(--jdm-green)' }}>· soumis</span>}
+              </div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-            {r.status === 'running' && (
+            {state === 'running' && (
               <Button size="sm" variant="secondary" onClick={() => ObsStore.stopObs(runId)}>Arrêter</Button>
             )}
-            {fileName && (
-              <Button size="sm" variant="secondary"
-                onClick={() => onPreview && onPreview(r.filePath)}>Voir le fichier</Button>
-            )}
-            <Button size="sm" variant="ghost" onClick={onClose}>×</Button>
+            <Button size="sm" variant="ghost" onClick={onClose}>× Fermer</Button>
           </div>
         </div>
-        <div style={{
-          padding: '10px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 8, borderBottom: '1px solid var(--line-soft)',
-        }}>
-          <JMini label="acceptes" value={m.accepted || 0} color="var(--jdm-green)" />
-          <JMini label="outils" value={m.toolsCalled || 0} />
-          <JMini label="tokens" value={fmtTokens(m.tokens || 0)} />
-        </div>
-        <div style={{
-          flex: 1, overflow: 'auto', padding: '12px 16px',
-          fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.65,
-        }}>
-          {log.length === 0
-            ? <div style={{ color: 'var(--ink-3)' }}>… en attente d'événements …</div>
-            : log.map((l, i) => (
-              <div key={i} style={{ display: 'flex', gap: 8, color: 'var(--ink-2)' }}>
-                <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
-                <span style={{ color: 'var(--accent)', flexShrink: 0 }}>{l.tag}</span>
-                <span style={{ flex: 1, wordBreak: 'break-word' }}>{l.msg}</span>
+
+        <div style={{ padding: '16px 20px' }}>
+          {/* Grille métriques (identique JarvisRun) */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1,
+            background: 'var(--line)', border: '1px solid var(--line)',
+            borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 14,
+          }}>
+            <Metric label="Outils" value={metrics.toolsCalled || 0} sub="appels" accent={flow.accent} />
+            <Metric label="Tokens" value={fmtTokens(metrics.tokens || 0)} sub="estimés" mono />
+            <Metric label={metricLabelFor(flowId).label} value={metrics.produced}
+                    sub={metricLabelFor(flowId).sub} color="var(--jdm-green)" />
+            <Metric label="Temps" value={fmtElapsed(metrics.elapsed || 0)} sub="écoulé" mono />
+          </div>
+
+          {/* Double panneau : narration/log (gauche) + items (droite) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
+            {/* Gauche : narration LLM / log temps réel */}
+            <Card padding={0} style={{ overflow: 'hidden' }}>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '10px 14px', background: 'var(--bg-elev)',
+                borderBottom: '1px solid var(--line-soft)', gap: 8,
+              }}>
+                <div className="mono" style={{
+                  fontSize: 11, color: 'var(--ink-3)',
+                  textTransform: 'uppercase', letterSpacing: '0.1em',
+                }}>{leftView === 'log' ? 'Log temps réel' : 'Narration LLM'}</div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  {state === 'running' && <span className="pulse-dot" style={{ background: flow.accent }} />}
+                  <div style={{
+                    display: 'inline-flex', background: 'var(--bg-card)',
+                    border: '1px solid var(--line)', borderRadius: 999, padding: 2,
+                  }}>
+                    {[{ id: 'narration', label: 'Narration' }, { id: 'log', label: 'Log' }].map(t => {
+                      const active = leftView === t.id;
+                      return (
+                        <button key={t.id} type="button" onClick={() => setLeftView(t.id)}
+                          className="focus-ring" style={{
+                            padding: '3px 10px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                            background: active ? flow.accent : 'transparent',
+                            color: active ? 'var(--bg)' : 'var(--ink-3)',
+                            fontFamily: 'var(--font-mono)', fontSize: 10,
+                            textTransform: 'uppercase', letterSpacing: '0.06em',
+                            fontWeight: active ? 600 : 500, transition: 'background .18s, color .18s',
+                          }}>{t.label}</button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
-            ))}
+              <div ref={logRef} className="jdm-narration-pane" style={{
+                height: 420, overflowY: 'auto',
+                padding: leftView === 'log' ? 12 : 14, background: 'var(--bg-card)',
+                fontFamily: leftView === 'log' ? 'var(--font-mono)' : 'inherit',
+                fontSize: leftView === 'log' ? 11 : 13, lineHeight: 1.55, color: 'var(--ink)',
+              }}>
+                {!narrationHTML && log.length === 0 && (
+                  <div style={{ color: 'var(--ink-3)', textAlign: 'center', padding: '40px 0' }}>
+                    {state === 'idle' ? 'En attente du lancement…' : '—'}
+                  </div>
+                )}
+                {leftView === 'log' ? (
+                  (() => {
+                    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flowId]) || {};
+                    const _norm = (s) => (s == null ? '' : String(s)).trim().toLowerCase();
+                    const validatedSet = new Set();
+                    if (Array.isArray(accepted)) {
+                      for (const a of accepted) {
+                        const t = _norm(a.subject || a.term), rr = _norm(a.relation), tg = _norm(a.target);
+                        if (t && rr && tg) validatedSet.add(`${t}|${rr}|${tg}`);
+                      }
+                    }
+                    if (parsed && Array.isArray(parsed.items)) {
+                      for (const it of parsed.items) {
+                        if (it.type === 'consolidated' || it.type === 'audit_signalement') {
+                          const t = _norm(it.subject), rr = _norm(it.relation), tg = _norm(it.target);
+                          if (t && rr && tg) validatedSet.add(`${t}|${rr}|${tg}`);
+                        }
+                      }
+                    }
+                    const re = /<div\s+class="jdm-narration"\s+data-tool="(\w+)"\s*(data-triplet="([^"]*)")?\s*(data-result="1")?[^>]*>/g;
+                    const items = [];
+                    if (narrationHTML) {
+                      let mm;
+                      while ((mm = re.exec(narrationHTML)) !== null) {
+                        items.push({ tool: mm[1], triplet: mm[3] || '', isResult: !!mm[4] });
+                      }
+                    }
+                    const tentatives = [];
+                    let cur = null, prevStep = -1;
+                    for (const it of items) {
+                      if (it.isResult) { if (cur) cur.push(it); continue; }
+                      const s = fts[it.tool];
+                      if (s === undefined) { if (cur) cur.push(it); continue; }
+                      if (s === 0 && (prevStep === -1 || prevStep >= 1)) { cur = []; tentatives.push(cur); }
+                      if (cur) cur.push(it);
+                      prevStep = s;
+                    }
+                    if (!narrationHTML && (!log || log.length === 0)) return null;
+                    return (
+                      <>
+                        {tentatives.map((tent, ti) => (
+                          <div key={'t' + ti} style={{ marginBottom: 12 }}>
+                            <div style={{
+                              display: 'flex', alignItems: 'center', gap: 8,
+                              padding: '4px 0', marginBottom: 6,
+                              borderBottom: `1px dashed color-mix(in srgb, ${flow.accent} 35%, transparent)`,
+                              color: flow.accent, fontWeight: 600,
+                              textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10,
+                            }}>
+                              <span style={{ background: flow.accent, color: 'var(--bg)', padding: '1px 7px', borderRadius: 3, fontSize: 9.5 }}>Tentative {ti + 1}</span>
+                              <span style={{ color: 'var(--ink-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
+                                {tent.filter(x => !x.isResult).length} appel(s), {tent.filter(x => x.isResult).length} retour(s)
+                              </span>
+                            </div>
+                            {tent.filter(x => !x.isResult && x.triplet).map((it, k) => {
+                              const parts = it.triplet.split('|');
+                              const [term, rel, target] = parts;
+                              const _key = (term && rel && target)
+                                ? `${term.trim().toLowerCase()}|${rel.trim().toLowerCase()}|${target.trim().toLowerCase()}` : null;
+                              const isValidated = _key && validatedSet.has(_key);
+                              return (
+                                <div key={k} style={{
+                                  display: 'flex', gap: 8, marginBottom: 3, alignItems: 'baseline',
+                                  paddingLeft: 8, paddingRight: 8,
+                                  background: isValidated ? 'color-mix(in srgb, var(--jdm-green) 9%, transparent)' : 'transparent',
+                                  borderLeft: isValidated ? '2px solid var(--jdm-green)' : '2px solid transparent',
+                                  borderRadius: '0 3px 3px 0', paddingTop: 2, paddingBottom: 2,
+                                  transition: 'background .25s, border-color .25s',
+                                }} title={isValidated ? 'Triplet validé : passé en consolidation' : 'Triplet tenté'}>
+                                  <span style={{ flexShrink: 0, fontSize: 10, color: isValidated ? 'var(--jdm-green)' : 'var(--accent)', fontWeight: isValidated ? 700 : 400 }}>
+                                    {isValidated ? '✓' : '→'}
+                                  </span>
+                                  <span style={{ flex: 1, minWidth: 0, color: 'var(--ink)', wordBreak: 'break-word' }}>
+                                    <span style={{ fontWeight: 600 }}>{term}</span>
+                                    {rel && (<><span style={{ color: 'var(--ink-3)' }}> | </span><span style={{ color: flow.accent }}>{rel}</span></>)}
+                                    {target && (<><span style={{ color: 'var(--ink-3)' }}> | </span><span style={{ fontWeight: 600 }}>{target}</span></>)}
+                                  </span>
+                                  <span style={{ flexShrink: 0, color: 'var(--ink-3)', fontSize: 9.5 }}>{it.tool}</span>
+                                </div>
+                              );
+                            })}
+                            {tent.filter(x => !x.isResult && x.triplet).length === 0 && (
+                              <div style={{ paddingLeft: 8, fontSize: 10, color: 'var(--ink-3)', fontStyle: 'italic' }}>
+                                aucun triplet tenté ({tent.filter(x => !x.isResult).length} appel(s) sans args triplet)
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {(log || []).length > 0 && (
+                          <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--line-soft)' }}>
+                            <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>Events systeme</div>
+                            {log.map((l, i) => (
+                              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 2, alignItems: 'baseline' }}>
+                                <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                                <span style={{
+                                  flexShrink: 0, minWidth: 56,
+                                  color: l.kind === 'tool' ? 'var(--accent)' : l.kind === 'accept' ? 'var(--jdm-green)' :
+                                         l.kind === 'reject' ? 'var(--jdm-magenta)' : l.kind === 'iter' ? flow.accent : 'var(--ink-3)',
+                                }}>{l.tag}</span>
+                                <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()
+                ) : narrationHTML ? (
+                  <div className="jdm-prose" dangerouslySetInnerHTML={{ __html: renderMarkdownJarvis(narrationHTML) }} />
+                ) : (
+                  log.map((l, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 4, alignItems: 'baseline', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                      <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                      <span style={{ flexShrink: 0, minWidth: 64, color: l.kind === 'accept' ? 'var(--jdm-green)' : l.kind === 'reject' ? 'var(--jdm-magenta)' : l.kind === 'iter' ? flow.accent : 'var(--ink-3)' }}>{l.tag}</span>
+                      <span style={{ color: 'var(--ink)', wordBreak: 'break-word' }}>{l.msg}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+
+            {/* Droite : items produits + télécharger / voir */}
+            <Card padding={0} style={{ overflow: 'hidden' }}>
+              <div style={{
+                padding: '10px 14px', background: 'var(--bg-elev)',
+                borderBottom: '1px solid var(--line-soft)',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+              }}>
+                <div className="mono" style={{
+                  fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase',
+                  letterSpacing: '0.1em', flex: 1, minWidth: 0,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {panelTitleFor(flowId)} · <span style={{ color: 'var(--jdm-green)' }}>{metrics.produced}</span>
+                  {fileName && (
+                    <span style={{ color: 'var(--ink-2)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>· {fileName}</span>
+                  )}
+                </div>
+                {fileName && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <Button size="sm" variant="ghost"
+                      onClick={() => onPreview && onPreview(filePath)}>Voir</Button>
+                    <Button size="sm" variant="ghost"
+                      onClick={() => {
+                        const url = `api/productions/download?name=${encodeURIComponent(fileName)}`;
+                        const a = document.createElement('a');
+                        a.href = url; a.download = fileName;
+                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                      }}>⬇ Télécharger</Button>
+                  </div>
+                )}
+              </div>
+              <div style={{ height: 420, overflowY: 'auto', padding: 0, background: 'var(--bg-card)' }}>
+                {(() => {
+                  if (flowId === 'enrich') {
+                    if (accepted.length === 0) {
+                      return (
+                        <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
+                          {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ display: 'grid', gap: 8, padding: 12 }}>
+                        {accepted.map((a, i) => <ItemCard key={i} item={a} accent={flow.accent} />)}
+                      </div>
+                    );
+                  }
+                  if (parsed.items.length === 0) {
+                    return (
+                      <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
+                        {state === 'idle'
+                          ? 'Le panneau se remplira au fur et à mesure que le fichier est écrit.'
+                          : 'En attente des premiers résultats…'}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{ display: 'grid', gap: 8, padding: 12 }}>
+                      {parsed.items.map((it, i) => <ItemCard key={i} item={it} accent={flow.accent} />)}
+                    </div>
+                  );
+                })()}
+              </div>
+            </Card>
+          </div>
         </div>
       </div>
     </div>
   ), document.body);
+}
+
+// Carte « lancer » grisée — toujours présente par flux dans la Supervision.
+// Renvoie vers la vue JarvisRun (lancement manuel) au clic. Visuel sobre,
+// désaturé, pour bien la distinguer des cartes de run réelles.
+function JLaunchCard({ flow, onOpen }) {
+  const [hover, setHover] = useState(false);
+  const a = flow.accent;
+  return (
+    <div role="button" tabIndex={0} onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      className="focus-ring" title={`Lancer « ${flow.title} » dans la vue Run`}
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: 8, minHeight: 150, padding: '18px 16px',
+        background: 'var(--bg-elev)',
+        border: '1px dashed ' + (hover ? a : 'var(--line)'),
+        borderRadius: 'var(--radius-lg)', cursor: 'pointer',
+        opacity: hover ? 0.95 : 0.66, filter: hover ? 'none' : 'saturate(0.5)',
+        transition: 'opacity .2s, filter .2s, border-color .16s, transform .18s',
+        transform: hover ? 'translateY(-2px)' : 'none',
+      }}>
+      <span style={{ fontSize: 26, lineHeight: 1 }}>{flow.icon || '🦾'}</span>
+      <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: 'var(--ink-2)', textAlign: 'center' }}>
+        {flow.title}
+      </div>
+      <div className="mono" style={{
+        fontSize: 10, color: a, textTransform: 'uppercase', letterSpacing: '0.08em',
+        display: 'inline-flex', alignItems: 'center', gap: 5,
+      }}>＋ Lancer</div>
+    </div>
+  );
 }
 
 // KPI tile for the dashboard's top strip.
@@ -10471,9 +10774,13 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
 
   const runId = (opts && opts.serverRun && opts.serverRun.run_id)
     || (store && store.runId) || (latest && latest.run_id) || null;
+  // origine du run : 'ui' (vue JarvisRun) | 'chat' (mascotte). Sert au
+  // badge tête-de-robot sur les cartes lancées hors JarvisRun.
+  const origin = (opts && opts.serverRun && opts.serverRun.origin)
+    || (latest && latest.origin) || 'ui';
   return { iter, span, tools, accepted, rejected, produced, pct, recent, stepIdx,
            isRunning, nbAttempted, nbTerms, tokens, feed,
-           submitted, isDone, filePath, runId,
+           submitted, isDone, filePath, runId, origin,
            headline: (store && store.headline) || (latest && latest.headline) || '' };
 }
 
@@ -10511,7 +10818,23 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
         transition: 'transform .18s, border-color .16s, box-shadow .28s, opacity .25s, filter .25s',
         opacity: dimmed ? 0.62 : 1,
         filter: dimmed ? 'saturate(0.55)' : 'none',
+        position: 'relative',
       }}>
+
+      {/* Étiquette « tête de robot » sur le bord — marque les runs lancés
+          HORS JarvisRun (origin !== 'ui' : mascotte chat ou serveur). */}
+      {live.origin && live.origin !== 'ui' && (
+        <div title={live.origin === 'chat'
+          ? 'Lancé par la mascotte Jarvis (chat)'
+          : 'Lancé côté serveur'}
+          style={{
+            position: 'absolute', top: -9, right: -9, zIndex: 3,
+            width: 26, height: 26, borderRadius: '50%',
+            background: 'var(--bg-card)', border: `1.5px solid ${a}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: 'var(--shadow-sm)', fontSize: 14, lineHeight: 1,
+          }}>🤖</div>
+      )}
 
       {/* top hairline in the flow's colour */}
       <div style={{ height: 3, background: a, opacity: 0.9 }} />
