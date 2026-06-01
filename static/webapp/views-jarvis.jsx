@@ -2284,19 +2284,28 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   const activeCount = serverRuns.filter(r => r.status === 'running' || r.status === 'starting').length;
 
   return (
-    <div ref={rootRef} style={{ width: '100%', maxWidth: 1120, position: 'relative' }}>
-      {/* Mascotte Jarvis — module IIFE chargé avant bundle.jsx, exposé en
-          window.JarvisBanner. Il se place absolute/inset:0 sur ce wrapper
-          (donc on a besoin de position:relative ci-dessus) et cherche le
-          <h1> à l'intérieur pour caler le mini-robot mode replié. */}
-      {typeof window !== 'undefined' && window.JarvisBanner
-        ? React.createElement(window.JarvisBanner)
-        : null}
-      {/* ── Masthead ── */}
+    <div ref={rootRef} style={{ width: '100%', maxWidth: 1120 }}>
+      {/* ── Masthead — wrapper position:relative + min-height pour que
+            la couche jb-layer du banner (absolute/inset:0) ait de la
+            place a droite du titre pour rendre ses controles (toggle
+            Manuel/Autonome, bouton Discuter, bouton close) qui sont
+            positionnes bottom:9 right:10 du layer. Sans min-height, le
+            layer epouserait juste la hauteur du titre+texte et les
+            controles seraient ecrases. */}
       <div style={{
+        position: 'relative',
+        minHeight: 180,
         display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
         gap: 24, flexWrap: 'wrap', marginBottom: 18,
       }}>
+        {/* Mascotte Jarvis — module IIFE charge avant bundle.jsx, expose
+            window.JarvisBanner. Inclut deja en interne : robot mascotte,
+            toggle Manuel/Autonome, bouton Discuter, bouton close, mode
+            replie (mini-robot a droite du titre). On ne touche pas a la
+            logique interne — juste a son ancrage DOM. */}
+        {typeof window !== 'undefined' && window.JarvisBanner
+          ? React.createElement(window.JarvisBanner)
+          : null}
         <div>
           <div className="mono" style={{
             fontSize: 11, color: 'var(--ink-3)',
