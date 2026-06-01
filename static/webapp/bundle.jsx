@@ -2398,9 +2398,10 @@ function useShuffledAccents(n) {
 //   • modules  (Modules)        → à droite / en bas
 // Cet ordre détermine la position sur la track ; index initial = 1 (hero).
 const PANELS = [
-  { id: 'bref',     label: 'Sous le capot',  symbol: '♠' },
-  { id: 'hero',     label: 'Présentation',   symbol: '♥' },
-  { id: 'modules',  label: 'Modules',        symbol: '♦' },
+  { id: 'bref',     label: 'Sous le capot',     symbol: '♠' },
+  { id: 'hero',     label: 'Présentation',      symbol: '♥' },
+  { id: 'modules',  label: 'Modules',           symbol: '♦' },
+  { id: 'contexte', label: 'Cadre théorique',   symbol: '♣' },
 ];
 
 function ViewProjet({ goto }) {
@@ -2862,6 +2863,112 @@ function ViewProjet({ goto }) {
     },
   ];
 
+  // ── Briefs « Cadre théorique » — Panneau 4 ───────────────────────────
+  // Cinq cartes qui résument le positionnement du projet : la ressource
+  // JeuxDeMots, le projet d'agentification, et les trois enjeux clés
+  // (garde-fous symboliques, explicabilité, orchestration multi-agents).
+  // Chaque carte suit le même schéma que `briefs` (title, body, detail
+  // {kicker, lede, paragraphs, citations}) — donc rendu via le même
+  // composant ExpandableBriefsGrid.
+  const briefsContexte = [
+    {
+      title: 'Présentation de JeuxDeMots',
+      body: <>Réseau lexico-sémantique du français (LIRMM/CNRS, depuis 2007) : ~2 M nœuds, 180+ relations typées <strong>pondérées et orientées</strong>, avec des garde-fous internes (inverses, contradictions, inférences).</>,
+      detail: {
+        kicker: 'Ressource · Réseau lexico-sémantique',
+        lede: 'JDM construit une vaste base de connaissances, de sens commun comme de spécialité, à l\'aide de jeux, de la contribution collective et de mécanismes d\'inférence.',
+        paragraphs: [
+          <>Le réseau repose sur des relations typées (lexicales, sémantiques, ontologiques, rôles sémantiques, etc.), <strong>orientées et pondérées</strong> : le poids reflète la force d&apos;association entre deux termes.</>,
+          <>Deux caractéristiques le rendent particulièrement intéressant pour un usage symbolique. D&apos;abord, un <strong>poids négatif y exprime une impossibilité</strong>, et certains nœuds distinguent les différents usages d&apos;un même terme (par exemple « avocat » fruit ou justice). Ensuite, la base intègre des garde-fous internes : la redondance entre relations inverses permet de <strong>détecter automatiquement des contradictions</strong>, et un module d&apos;inférence enrichit le réseau tout en signalant les anomalies.</>,
+          <>JDM offre ainsi un substrat structuré, vérifiable et déjà partiellement auto-correcteur.</>,
+        ],
+        citations: [
+          { author: 'Lafourcade, M.', year: 2007, title: 'Making people play for Lexical Acquisition with the JeuxDeMots prototype', venue: 'SNLP\'07, Pattaya' },
+          { author: 'Lafourcade, M. & Le Brun, N.', year: 2020, title: 'JeuxDeMots : un réseau lexico-sémantique pour le français, issu de jeux et d\'inférences', venue: 'Lexique, 27, 47-86' },
+        ],
+        cta: { label: 'Site officiel JeuxDeMots →', href: 'https://www.jeuxdemots.org' },
+      },
+    },
+    {
+      title: 'Le projet d\'agentification',
+      body: <>Intégrer JDM dans une architecture <strong>neuro-symbolique</strong> où il coopère avec des IA génératives — non plus ressource consultée, mais agent actif qui <em>propose, conteste et arbitre</em>.</>,
+      detail: {
+        kicker: 'Architecture · Neuro-symbolique',
+        lede: 'Le composant neuronal (LLM) apporte la flexibilité, la couverture lexicale et la capacité langagière ; la couche symbolique (le réseau et son moteur d\'inférence) apporte la rigueur logique, la traçabilité et la correction.',
+        paragraphs: [
+          <>L&apos;idée directrice est la <strong>complémentarité des deux paradigmes</strong>. Dans ce schéma, JDM n&apos;est plus une simple ressource consultée, mais un agent actif qui propose, conteste et arbitre.</>,
+          <>Trois finalités structurent la coopération : <strong>découvrir</strong> de nouvelles connaissances, les <strong>contrôler</strong>, puis les <strong>consolider</strong>.</>,
+          <>Les trois enjeux clés de cette agentification sont détaillés dans les cartes suivantes : la sécurisation des apports des LLM, l&apos;explicabilité comme outil de diagnostic, et l&apos;orchestration des agents.</>,
+        ],
+        citations: [
+          { author: 'Magana Vsevolodovna, R. I. et al.', year: 2025, title: 'Enhancing Large Language Models through Neuro-Symbolic Integration and Ontological Reasoning', venue: 'arXiv:2504.07640' },
+        ],
+      },
+    },
+    {
+      title: 'LLM contributeurs & garde-fous symboliques',
+      body: <>Faire générer des relations candidates par un LLM est utile mais risqué. La solution : <strong>valider chaque apport par une couche symbolique</strong> — graphe de connaissances comme vérificateur d&apos;exactitude.</>,
+      detail: {
+        kicker: 'Enjeu 1 · Sécurisation',
+        lede: 'À l\'inverse des LLM, un graphe de connaissances offre une exactitude vérifiée et évite les hallucinations. Le LLM produit, le symbolique valide.',
+        paragraphs: [
+          <>L&apos;approche <strong>ATA</strong> illustre ce principe : le LLM traduit une spécification informelle en base formelle vérifiable, ce qui permet d&apos;écarter les hallucinations en amont. Un <em>raisonneur ontologique</em> peut ensuite détecter les incohérences, puis renvoyer au LLM une explication corrective dans une <strong>boucle itérative</strong>.</>,
+          <>Au niveau des relations elles-mêmes, <strong>OMNIA</strong> enchaîne génération de candidats et double validation, par plongements puis par LLM.</>,
+          <>Ce contrôle est d&apos;autant plus nécessaire dans JDM qu&apos;<strong>une erreur initiale peut s&apos;y propager par inférence</strong> en erreurs secondaires.</>,
+        ],
+        citations: [
+          { author: 'Peer, D. & Stabinger, S.', year: 2025, title: 'ATA: A Neuro-Symbolic Approach to Implement Autonomous and Trustworthy Agents', venue: 'arXiv:2510.16381' },
+          { author: 'Magana Vsevolodovna, R. I. et al.', year: 2025, title: 'Enhancing Large Language Models through Neuro-Symbolic Integration and Ontological Reasoning', venue: 'arXiv:2504.07640' },
+          { author: 'OMNIA', year: 2026, title: 'Closing the Loop by Leveraging LLMs for Knowledge Graph Completion', venue: 'arXiv:2603.11820' },
+          { author: 'Lafourcade, M. & Le Brun, N.', year: 2020, title: 'JeuxDeMots : un réseau lexico-sémantique pour le français, issu de jeux et d\'inférences', venue: 'Lexique, 27, 47-86' },
+        ],
+      },
+    },
+    {
+      title: 'Explicabilité : « trous » & « bosses »',
+      body: <>L&apos;explicabilité est l&apos;<strong>outil de diagnostic</strong> de la base. Elle révèle deux défauts : la <em>complétion</em> vise les connaissances manquantes (trous), la <em>détection d&apos;erreurs</em> les assertions fausses (bosses).</>,
+      detail: {
+        kicker: 'Enjeu 2 · Diagnostic',
+        lede: 'Un système neuro-symbolique permet de remonter à la règle exacte qui a conduit à une décision, même si la fidélité de ces explications reste un défi ouvert.',
+        paragraphs: [
+          <>Deux défauts sont bien identifiés dans la littérature : la <strong>complétion</strong> (Paulheim, 2017) cible les connaissances manquantes, et la <strong>détection d&apos;erreurs</strong> les assertions fausses. Ce sont les <em>« trous » (lacunes)</em> et les <em>« bosses » (informations présentes mais erronées ou mal classées)</em>.</>,
+          <>Leur traitement s&apos;organise en trois étapes : <strong>détecter, corriger, puis raisonner malgré l&apos;incohérence</strong>. À l&apos;inférence, un raisonneur peut tester chaque prédiction et filtrer celles qui produisent une incohérence logique.</>,
+          <>JDM amorce déjà cette boucle : l&apos;IA qui examine le réseau repère les problèmes et propose des parties pour les résoudre.</>,
+        ],
+        citations: [
+          { author: 'Herron, D., Jiménez-Ruiz, E. & Weyde, T.', year: 2025, title: 'On the Potential of Logic and Reasoning in Neurosymbolic Systems Using OWL-Based Knowledge Graphs', venue: 'Neurosymbolic AI / SAGE' },
+          { author: 'Paulheim, H.', year: 2017, title: 'Knowledge Graph Refinement: A Survey of Approaches and Evaluation Methods', venue: 'Semantic Web Journal' },
+          { author: 'Survey', year: 2025, title: 'Dealing with Inconsistency for Reasoning over Knowledge Graphs', venue: 'arXiv:2502.19023' },
+          { author: 'Lafourcade, M. & Le Brun, N.', year: 2020, title: 'JeuxDeMots : un réseau lexico-sémantique pour le français, issu de jeux et d\'inférences', venue: 'Lexique, 27, 47-86' },
+        ],
+      },
+    },
+    {
+      title: 'Collaboration, compétition, orchestration',
+      body: <>La co-construction multi-agents repose sur trois régimes : <strong>compétition, collaboration, coordination</strong>. Multiplier les agents n&apos;améliore pas mécaniquement la performance — il faut un orchestrateur.</>,
+      detail: {
+        kicker: 'Enjeu 3 · Orchestration',
+        lede: 'Les gains du multi-agents ne sont pas automatiques : multiplier les agents n\'améliore pas forcément la performance, et un débat mal structuré peut enfermer le groupe dans une erreur commune.',
+        paragraphs: [
+          <>Pour la construction de graphes, <strong>CooperKGC</strong> (Ye et al., 2023) montre qu&apos;une équipe d&apos;agents spécialisés, travaillant par tours successifs, améliore la sélection et la correction des connaissances. La compétition entre modèles doit néanmoins être encadrée : il faut <strong>écarter les associations qui amplifient les erreurs</strong>.</>,
+          <>L&apos;orchestration la plus avancée vise une <strong>synergie cognitive</strong> : dans <strong>OSC</strong> (Zhang et al., 2025), chaque agent modélise l&apos;état de ses collaborateurs et adapte ses échanges pour réduire la redondance avant de converger.</>,
+          <>Pour JDM, cela suggère trois rôles : des agents qui <strong>génèrent</strong> (découverte), des agents critiques qui <strong>mettent à l&apos;épreuve</strong> (exposition des « bosses »), et un <strong>orchestrateur symbolique</strong> qui arbitre par l&apos;inférence et les pondérations.</>,
+        ],
+        citations: [
+          { author: 'Preprint', year: 2025, title: 'Multi-Agent LLM Systems: From Emergent Collaboration to Structured Collective Intelligence', venue: 'Preprints.org 202511.1370' },
+          { author: 'Ye, H. et al.', year: 2023, title: 'Beyond Isolation: Multi-Agent Synergy for Improving Knowledge Graph Construction (CooperKGC)', venue: 'arXiv:2312.03022' },
+          { author: 'Survey', year: 2025, title: 'Multi-LLM Collaboration Strategy', venue: '2025' },
+          { author: 'Zhang, J. et al.', year: 2025, title: 'OSC: Cognitive Orchestration through Dynamic Knowledge Alignment in Multi-Agent LLM Collaboration', venue: 'arXiv:2509.04876' },
+        ],
+      },
+    },
+  ];
+
+  // Largeur de chaque panneau dans la track horizontale = 1/N de la track.
+  // Auparavant hardcodée à 33.3333% (3 panneaux). Maintenant calculée pour
+  // suivre `totalPanels` automatiquement quand on en ajoute/retire.
+  const panelBasis = `${100 / totalPanels}%`;
+
   // Pan style : on rend les DEUX navs en même temps maintenant.
   return (
     <>
@@ -2899,7 +3006,7 @@ function ViewProjet({ goto }) {
           willChange: 'transform',
         }}>
           {/* ── Panneau 1 — Sous le capot (gauche / haut) ── */}
-          <CarouselPanel>
+          <CarouselPanel flexBasis={panelBasis}>
             <div style={{
               width: '100%',
               maxWidth: 1320,
@@ -2954,7 +3061,7 @@ function ViewProjet({ goto }) {
               </div>
             </div>
           </CarouselPanel>{/* ── Panneau 2 — Présentation (centre, entrée) ── */}
-          <CarouselPanel>
+          <CarouselPanel flexBasis={panelBasis}>
             <div style={{
               width: '100%',
               maxWidth: 1320,
@@ -3021,7 +3128,7 @@ function ViewProjet({ goto }) {
           </CarouselPanel>
 
           {/* ── Panneau 3 — Modules (droite / bas) ── */}
-          <CarouselPanel>
+          <CarouselPanel flexBasis={panelBasis}>
             <div style={{
               width: '100%',
               maxWidth: 1320,
@@ -3038,7 +3145,24 @@ function ViewProjet({ goto }) {
             </div>
           </CarouselPanel>
 
-          
+          {/* ── Panneau 4 — Cadre théorique (briefs problématique projet) ── */}
+          <CarouselPanel flexBasis={panelBasis}>
+            <div style={{
+              width: '100%',
+              maxWidth: 1320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 28,
+            }}>
+              <SectionTitle
+                kicker="Cadre théorique"
+                title="Pourquoi agentifier JeuxDeMots ?"
+                desc="Cinq briefs sur la ressource, le projet d'agentification et les trois enjeux clés : sécurisation, explicabilité, orchestration."
+              />
+              <ExpandableBriefsGrid briefs={briefsContexte} goto={goto} />
+            </div>
+          </CarouselPanel>
+
         </div>
       </div>
     </>
@@ -3047,10 +3171,10 @@ function ViewProjet({ goto }) {
 
 // ─── Wrapper pour chaque panneau dans le carousel ───
 // flex 1/N de la track (en main axis), padding uniforme.
-function CarouselPanel({ children }) {
+function CarouselPanel({ children, flexBasis = '33.3333%' }) {
   return (
     <div style={{
-      flex: '0 0 33.3333%',
+      flex: `0 0 ${flexBasis}`,
       height: '100%',
       width: '100%',
       display: 'flex',
