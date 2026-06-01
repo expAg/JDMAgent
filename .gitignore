@@ -31,3 +31,7 @@ design_handoff_jdm_fastapi/
 # IDE
 .idea/
 _tmp_redesign/
+
+# Jarvis chat runtime (mascotte)
+.jarvis_runs.jsonl
+.env.runtime.json

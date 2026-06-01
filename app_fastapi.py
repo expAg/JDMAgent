@@ -92,6 +92,11 @@ from jdm_agent.viz import (
 import app as _app
 import jarvis as _jarvis
 
+# Chat de supervision Jarvis (la mascotte) : persistance des runs +
+# overlay d'env + provider injecté pour que ses outils voient bg_runs.
+from jdm_agent.jarvis_chat import persistence as _jchat_persist
+from jdm_agent.jarvis_chat import runtime as _jchat_rt
+
 # ────────────────────────────────────────────────────────────────────
 # Shared client (lazy, cached)
 # ────────────────────────────────────────────────────────────────────
@@ -210,6 +215,18 @@ class AgentRequest(BaseModel):
 class JarvisRequest(BaseModel):
     flow_id: str
     params: dict = {}
+
+
+class JarvisChatRequest(BaseModel):
+    """Requête du chat de la mascotte Jarvis (supervision)."""
+    message: str
+    history: list[dict] = []
+    # Config Jarvis courante (localStorage côté front) — transmise pour que
+    # le tool get_config la lise. set_config renvoie des patches via SSE.
+    config: dict = {}
+    # Modèle imposé : la mascotte tourne sur le pool gratuit par défaut.
+    model: str = "gemini-3.1-flash-lite"
+    api_key: str = ""
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -1051,6 +1068,135 @@ async def api_agent_stream(req: AgentRequest):
 
 
 # ────────────────────────────────────────────────────────────────────
+# Route: Chat mascotte Jarvis (supervision) — SSE token-level
+# ────────────────────────────────────────────────────────────────────
+# Même mécanique de streaming que /api/agent/stream, mais :
+#   - agent = build_jarvis_chat_agent (outils supervision + JDM lecture)
+#   - config courante injectée dans le snapshot (tool get_config)
+#   - patches de config (tool set_config) émis en events `config_patch`
+#     que le frontend applique à localStorage.jdm_jarvis_config.
+@app.post("/api/jarvis/chat")
+async def api_jarvis_chat(req: JarvisChatRequest):
+    """Token-level SSE pour le chat de la mascotte Jarvis."""
+    async def gen():
+        from langchain_core.messages import AIMessage, HumanMessage
+        from jarvis import (
+            _content_to_text, _content_to_thoughts,
+            _narrate_tool_call, _narrate_tool_result,
+        )
+        from jdm_agent.enrich.validators import exclusion_context
+        from jdm_agent.jarvis_chat.agent import build_jarvis_chat_agent
+
+        # Pose la config courante + initialise la capture de patches POUR
+        # CE tour (ContextVar → isolé par requête).
+        _jchat_rt.set_config_snapshot(req.config or {})
+        _jchat_rt.begin_config_patch_capture()
+
+        try:
+            llm = _app._build_llm(req.model, req.api_key, use_thinking=False)
+        except ValueError as e:
+            yield {"event": "error", "data": json.dumps({"text": str(e)}, ensure_ascii=False)}
+            return
+        try:
+            agent = build_jarvis_chat_agent(client=get_client(), llm=llm)
+        except Exception as e:
+            yield {"event": "error", "data": json.dumps({
+                "text": f"Build agent : {type(e).__name__}: {e}"}, ensure_ascii=False)}
+            return
+
+        lc_messages = []
+        for h in req.history or []:
+            role = h.get("role")
+            content = (h.get("content") or "").strip()
+            if not content:
+                continue
+            if role in ("user", "me"):
+                lc_messages.append(HumanMessage(content=content))
+            elif role in ("assistant", "bot"):
+                lc_messages.append(AIMessage(content=content))
+        lc_messages.append(HumanMessage(content=req.message))
+
+        progress: list[str] = []
+        current_text = ""
+
+        def html_escape(s: str) -> str:
+            return (s.replace("&", "&amp;").replace("<", "&lt;")
+                     .replace(">", "&gt;").replace("\n", "<br>"))
+
+        def render_live() -> str:
+            live = list(progress)
+            if current_text.strip():
+                live.append(current_text)
+            return "\n\n".join(live)
+
+        def emit_config_patches():
+            """Draine les patches set_config accumulés et les émet."""
+            patches = _jchat_rt.drain_config_patches()
+            for p in patches:
+                yield {"event": "config_patch",
+                       "data": json.dumps(p, ensure_ascii=False)}
+
+        yield {"event": "text", "data": json.dumps({"text": ""}, ensure_ascii=False)}
+
+        try:
+            with exclusion_context():
+                async for event in agent.astream_events(
+                    {"messages": lc_messages}, version="v2",
+                ):
+                    kind = event.get("event")
+                    if kind == "on_chat_model_stream":
+                        chunk = (event.get("data") or {}).get("chunk")
+                        if chunk is None:
+                            continue
+                        delta = _content_to_text(chunk.content)
+                        if delta:
+                            current_text += delta
+                            yield {"event": "text",
+                                   "data": json.dumps({"text": render_live()}, ensure_ascii=False)}
+                    elif kind == "on_tool_start":
+                        name = event.get("name") or "?"
+                        data = event.get("data") or {}
+                        args = data.get("input") or {}
+                        if isinstance(args, dict) and "input" in args and isinstance(args["input"], dict):
+                            args = args["input"]
+                        narrated = _narrate_tool_call(name, args if isinstance(args, dict) else {})
+                        if not narrated:
+                            narrated = f"🔧 `{name}`"
+                        if current_text.strip():
+                            progress.append(current_text)
+                        current_text = ""
+                        progress.append(f'<div class="jdm-narration">{narrated}</div>')
+                        yield {"event": "text",
+                               "data": json.dumps({"text": render_live()}, ensure_ascii=False)}
+                    elif kind == "on_tool_end":
+                        name = event.get("name") or "?"
+                        data = event.get("data") or {}
+                        out = data.get("output", "")
+                        content = _content_to_text(out.content) if hasattr(out, "content") else str(out)
+                        narrated_done = _narrate_tool_result(name, content)
+                        if narrated_done:
+                            progress.append(f'<div class="jdm-narration">{narrated_done}</div>')
+                        # Émet les patches de config dès qu'un set_config a tourné.
+                        for ev in emit_config_patches():
+                            yield ev
+                        yield {"event": "text",
+                               "data": json.dumps({"text": render_live()}, ensure_ascii=False)}
+
+            # Patches résiduels + réponse finale
+            for ev in emit_config_patches():
+                yield ev
+            yield {"event": "text",
+                   "data": json.dumps({"text": current_text.strip() or render_live()},
+                                      ensure_ascii=False)}
+            yield {"event": "done", "data": "{}"}
+        except Exception as e:
+            yield {"event": "error", "data": json.dumps({
+                "text": f"{type(e).__name__}: {e}"}, ensure_ascii=False)}
+
+    return EventSourceResponse(gen(), ping=15)
+
+
+# ────────────────────────────────────────────────────────────────────
 # Route: Jarvis stream
 # ────────────────────────────────────────────────────────────────────
 # Mapping flow_id → (prompt_builder, headline_builder).
@@ -1120,6 +1266,7 @@ import uuid as _uuid
 import threading as _threading
 import time as _time
 import asyncio as _asyncio
+import re as _re
 
 _JARVIS_RUNS: dict[str, dict] = {}
 _JARVIS_RUNS_LOCK = _threading.Lock()
@@ -1310,6 +1457,13 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
                 consolidated = []
             text_chars = sum(len(m.get("content", "") or "") for m in msgs_clean)
             tokens_estimate = text_chars // 4
+            # Stats serveur (pour le chat mascotte + persistance) : on
+            # parse la narration cumulative (data-tool) du message
+            # assistant pour compter tentatives / outils, et on reprend
+            # cc (retenus) + tokens. Stocké sur le run, écrasé à chaque
+            # chunk (la narration est cumulative donc le dernier gagne).
+            run["stats"] = _compute_run_stats(msgs_clean, cc, tokens_estimate,
+                                              last_known_fpath)
             _push_event(run, "jarvis", {
                 "messages": msgs_clean,
                 # Sticky : envoie la dernière valeur connue (cf. note plus
@@ -1330,6 +1484,66 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
         run["error_text"] = msg
     finally:
         run["finished_at"] = _time.time()
+        # Persiste le run terminé dans le journal (.jarvis_runs.jsonl) pour
+        # que la mascotte le voie même après un redémarrage serveur.
+        try:
+            _persist_run_record(run)
+        except Exception:
+            pass
+
+
+# Regex narration (mêmes attributs que jarvis.py / computeFlowLive front).
+_NARRATION_TOOL_RE = _re.compile(
+    r'<div\s+class="jdm-narration"\s+data-tool="(\w+)"([^>]*)>')
+
+
+def _compute_run_stats(msgs_clean: list, cc: int, tokens_estimate: int,
+                       file_path) -> dict:
+    """Calcule les stats d'un run depuis la narration cumulative.
+
+    - attempts    : nb d'appels validate_candidate (= triplets tentés)
+    - retained    : cc (items consolidés/retenus)
+    - tokens      : estimation tokens
+    - tools_count : nb total d'APPELS d'outils (hors retours data-result)
+    - tools       : {nom_outil: nb_appels}
+    Source = contenu du message assistant (porte les <div data-tool=...>).
+    """
+    narration = ""
+    for m in msgs_clean:
+        if m.get("role") == "assistant":
+            narration = m.get("content", "") or ""
+    tools: dict[str, int] = {}
+    attempts = 0
+    for mm in _NARRATION_TOOL_RE.finditer(narration):
+        name, attrs = mm.group(1), mm.group(2) or ""
+        if 'data-result="1"' in attrs:
+            continue  # retour de tool, pas un appel
+        tools[name] = tools.get(name, 0) + 1
+        if name == "validate_candidate":
+            attempts += 1
+    return {
+        "attempts": attempts,
+        "retained": cc,
+        "tokens": tokens_estimate,
+        "tools_count": sum(tools.values()),
+        "tools": tools,
+        "file": str(file_path) if file_path else None,
+    }
+
+
+def _persist_run_record(run: dict) -> None:
+    """Sérialise un run terminé en une ligne du journal mascotte."""
+    _jchat_persist.append_run_record({
+        "run_id": run.get("run_id"),
+        "flow_id": run.get("flow_id"),
+        "status": run.get("status"),
+        "headline": run.get("headline"),
+        "started_at": run.get("started_at"),
+        "finished_at": run.get("finished_at"),
+        "last_file_path": run.get("stats", {}).get("file"),
+        "stats": run.get("stats", {}),
+        "error_text": run.get("error_text"),
+    })
 
 
 async def _stream_run_events(run: dict):
@@ -1376,9 +1590,45 @@ async def _cleanup_old_runs_loop():
                 _JARVIS_RUNS.pop(rid, None)
 
 
+def _runs_snapshot_for_chat() -> list[dict]:
+    """Snapshot SÉRIALISABLE des runs vivants pour les outils de la
+    mascotte (pas de subscribers/loop/events bruts). Provider injecté
+    dans jarvis_chat.runtime."""
+    with _JARVIS_RUNS_LOCK:
+        out = []
+        for r in _JARVIS_RUNS.values():
+            out.append({
+                "run_id": r.get("run_id"),
+                "flow_id": r.get("flow_id"),
+                "status": r.get("status"),
+                "headline": r.get("headline"),
+                "started_at": r.get("started_at"),
+                "finished_at": r.get("finished_at"),
+                "stats": r.get("stats") or {},
+                "last_file_path": (r.get("stats") or {}).get("file"),
+                "error_text": r.get("error_text"),
+            })
+        return out
+
+
 @app.on_event("startup")
 async def _start_jarvis_cleanup_task():
     _asyncio.create_task(_cleanup_old_runs_loop())
+    # Applique l'overlay d'environnement persisté (clés API modifiées via
+    # le chat mascotte) — fait au boot pour que les modifs survivent à un
+    # redémarrage serveur.
+    try:
+        applied = _jchat_persist.apply_env_overlay()
+        if applied:
+            print(f"[jarvis_chat] overlay env appliqué : {applied}")
+    except Exception as e:
+        print(f"[jarvis_chat] overlay env échec : {e}")
+    # Câble le provider de runs vivants pour les outils de la mascotte.
+    # L'historique persisté (.jarvis_runs.jsonl) est lu indépendamment par
+    # les outils (jarvis_chat.tools._merged_runs fusionne vivant + journal),
+    # donc on ne réinjecte PAS les vieux runs dans _JARVIS_RUNS (éviterait
+    # de ressusciter de vieux runs dans la vue live des cartes de supervision).
+    _jchat_rt.set_runs_provider(_runs_snapshot_for_chat)
 
 
 @app.get("/api/jarvis/runs")
@@ -1395,6 +1645,7 @@ def api_jarvis_list_runs():
                     "headline": r["headline"],
                     "started_at": r["started_at"],
                     "finished_at": r.get("finished_at"),
+                    "stats": r.get("stats") or {},
                 }
                 for r in _JARVIS_RUNS.values()
             ]

@@ -594,25 +594,110 @@ function ChatPanel({ dark, onClose }) {
     const text = draft.trim();
     if (!text || busy) return;
     setDraft('');
+    // Snapshot de l'historique AVANT d'ajouter le nouveau message (envoyé
+    // au backend). msgs = [{who:'me'|'bot', text}].
+    const historySnapshot = msgs.map((m) => ({
+      role: m.who === 'me' ? 'user' : 'assistant',
+      content: m.text || '',
+    }));
     setMsgs((m) => [...m, { who: 'me', text }]);
     setBusy(true);
+
+    // Config courante (localStorage / miroir) transmise au backend pour
+    // que l'outil get_config la voie ; set_config renverra des patches.
+    let cfg = {};
     try {
-      let reply;
-      if (window.claude && typeof window.claude.complete === 'function') {
-        reply = await window.claude.complete(
-          "Tu es Jarvis, l'assistant du projet jdmAgent (graphe lexico-sémantique JeuxDeMots). " +
-          "Réponds de façon concise et utile, en français.\n\nUtilisateur : " + text
-        );
-      } else {
-        reply = "Je note : « " + text + " ». La connexion au moteur de discussion n'est pas encore branchée dans cet aperçu.";
+      cfg = window.__JDM_JARVIS_CONFIG__
+        || JSON.parse(localStorage.getItem('jdm_jarvis_config') || '{}') || {};
+    } catch (e) { cfg = {}; }
+
+    // Strip des balises HTML de narration pour l'affichage texte de la
+    // bulle (le panneau rend en texte brut, pas en HTML).
+    const stripHtml = (s) => (s || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    // Applique un patch de config émis par le robot (tool set_config).
+    const applyConfigPatch = (p) => {
+      if (!p || !p.key) return;
+      try {
+        const raw = localStorage.getItem('jdm_jarvis_config');
+        const c = raw ? JSON.parse(raw) : {};
+        c[p.key] = p.value;
+        localStorage.setItem('jdm_jarvis_config', JSON.stringify(c));
+        window.__JDM_JARVIS_CONFIG__ = c;
+        window.dispatchEvent(new CustomEvent('__jdm_jarvis_config_changed'));
+      } catch (e) {}
+    };
+
+    // Bulle bot vide qu'on remplit au fil du stream (toujours la dernière).
+    setMsgs((m) => [...m, { who: 'bot', text: '' }]);
+    const setBot = (txt) => setMsgs((m) => {
+      const next = m.slice();
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].who === 'bot') { next[i] = { who: 'bot', text: txt }; break; }
       }
-      setMsgs((m) => [...m, { who: 'bot', text: (reply || '').trim() || '…' }]);
+      return next;
+    });
+
+    const parseSSE = (raw) => {
+      let event = 'message';
+      const dataLines = [];
+      for (const line of raw.split(/\r?\n/)) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      let data = null;
+      if (dataLines.length) { try { data = JSON.parse(dataLines.join('\n')); } catch (e) {} }
+      return { event, data };
+    };
+
+    try {
+      const res = await fetch('api/jarvis/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history: historySnapshot, config: cfg }),
+      });
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      let lastText = '';
+      const handle = (ev) => {
+        if (!ev) return;
+        if (ev.event === 'text' && ev.data && typeof ev.data.text === 'string') {
+          lastText = stripHtml(ev.data.text);
+          setBot(lastText || '…');
+        } else if (ev.event === 'config_patch' && ev.data) {
+          applyConfigPatch(ev.data);
+        } else if (ev.event === 'error' && ev.data) {
+          setBot('⚠️ ' + (ev.data.text || 'Erreur du moteur de discussion.'));
+        }
+      };
+      const flush = () => {
+        const re = /\r\n\r\n|\n\n|\r\r/;
+        let mm;
+        while ((mm = re.exec(buf)) !== null) {
+          handle(parseSSE(buf.slice(0, mm.index)));
+          buf = buf.slice(mm.index + mm[0].length);
+        }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        flush();
+      }
+      if (buf.trim()) handle(parseSSE(buf));
+      if (!lastText) setBot('…');
     } catch (e) {
-      setMsgs((m) => [...m, { who: 'bot', text: "Désolé, une erreur est survenue. Réessaie dans un instant." }]);
+      setBot("Désolé, la connexion au moteur de discussion a échoué. Réessaie dans un instant.");
     } finally {
       setBusy(false);
     }
-  }, [draft, busy]);
+  }, [draft, busy, msgs]);
 
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
