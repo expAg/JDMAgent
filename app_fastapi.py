@@ -234,6 +234,49 @@ def _read_produced_viz_html(tool_output_content: str) -> Optional[str]:
     return _inject_iframe_css(html)
 
 
+def _flatten_subgraph_live(raw_nodes: list, raw_edges: list) -> dict:
+    """Aplatit les nodes/edges bruts (vis-network) de build_subgraph(json)
+    vers la forme légère attendue par le rendu LIVE côté client
+    (LiveAnimWrapper) : nodes {id,label,kind,depth}, edges
+    {from,to,relation,weight,negative,depth,highlight}. Même mapping que
+    l'endpoint /api/subgraph/live (factorisé)."""
+    nodes = [
+        {"id": n["id"], "label": n.get("label", n["id"]),
+         "kind": n.get("_kind", "assoc"), "depth": n.get("_depth", 0)}
+        for n in (raw_nodes or [])
+    ]
+    edges = [
+        {"from": e["from"], "to": e["to"], "relation": e.get("_relation", ""),
+         "weight": e.get("_weight", 0), "negative": bool(e.get("_negative", False)),
+         "depth": e.get("_depth", 1), "highlight": e.get("_depth", 1) == 1}
+        for e in (raw_edges or [])
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+def _viz_event_from_tool_output(content: str) -> Optional[dict]:
+    """Construit le payload de l'event `viz` à partir de la SORTIE de
+    build_subgraph_visualization (ce que l'agent a produit, pas un rebuild) :
+      - mode live/json (nodes/edges) → {format:"live", nodes, edges}
+      - mode html (html_path)        → {format:"html", html}
+    None si rien d'exploitable."""
+    if not content:
+        return None
+    d = None
+    try:
+        d = json.loads(content)
+    except Exception:
+        d = None
+    if isinstance(d, dict) and isinstance(d.get("nodes"), list):
+        flat = _flatten_subgraph_live(d.get("nodes"), d.get("edges") or [])
+        return {"format": "live", **flat}
+    # mode html : on lit le fichier produit et on injecte le CSS iframe
+    html = _read_produced_viz_html(content)
+    if html:
+        return {"format": "html", "html": html}
+    return None
+
+
 def _viz_payload_from_tool_input(args: dict) -> Optional[dict]:
     """Mappe les arguments de l'outil build_subgraph_visualization vers le
     payload attendu par /api/subgraph (rendu inline iframe). None si pas
@@ -667,31 +710,11 @@ async def api_subgraph_live(req: SubgraphLiveRequest):
             }, ensure_ascii=False)}
         return EventSourceResponse(err_gen())
 
-    raw_nodes = res.get("nodes", [])
-    raw_edges = res.get("edges", [])
-
-    # Aplatit vers la forme légère (id, label, kind, depth pour les nodes ;
-    # from/to/relation/highlight pour les edges).
-    nodes = [
-        {
-            "id": n["id"],
-            "label": n.get("label", n["id"]),
-            "kind": n.get("_kind", "assoc"),
-            "depth": n.get("_depth", 0),
-        }
-        for n in raw_nodes
-    ]
-    edges = [
-        {
-            "from": e["from"], "to": e["to"],
-            "relation": e.get("_relation", ""),
-            "weight": e.get("_weight", 0),
-            "negative": bool(e.get("_negative", False)),
-            "depth": e.get("_depth", 1),
-            "highlight": e.get("_depth", 1) == 1,  # 1er niveau = highlight
-        }
-        for e in raw_edges
-    ]
+    # Aplatit vers la forme légère LIVE (factorisé : cf. _flatten_subgraph_live,
+    # réutilisé par le rendu viz inline du chat).
+    _flat = _flatten_subgraph_live(res.get("nodes", []), res.get("edges", []))
+    nodes = _flat["nodes"]
+    edges = _flat["edges"]
 
     # ─────────────────────────────────────────────────────────────
     # Filtre par RANG (≠ filtre par poids absolu) :
@@ -1102,14 +1125,14 @@ async def api_agent_stream(req: AgentRequest):
                                 f'<div class="jdm-narration">✓ <em>{name}</em> renvoie {len(content)} chars · '
                                 f'<code>{html_escape(preview)}</code></div>'
                             )
-                        # Viz inline — affiche le HTML produit par l'outil
-                        # (sinon fallback params). Cf. chat mascotte.
+                        # Viz inline — émet ce que l'outil a produit (live
+                        # par défaut / html sur demande). Cf. chat mascotte.
                         if name == "build_subgraph_visualization":
-                            _viz_html = _read_produced_viz_html(content)
+                            _vev = _viz_event_from_tool_output(content)
                             term = (_pending_viz or {}).get("term", "")
-                            if _viz_html:
+                            if _vev:
                                 yield {"event": "viz", "data": json.dumps(
-                                    {"term": term, "html": _viz_html}, ensure_ascii=False)}
+                                    {"term": term, **_vev}, ensure_ascii=False)}
                             elif _pending_viz:
                                 yield {"event": "viz",
                                        "data": json.dumps(_pending_viz, ensure_ascii=False)}
@@ -1269,17 +1292,16 @@ async def api_jarvis_chat(req: JarvisChatRequest):
                         narrated_done = _narrate_tool_result(name, content)
                         if narrated_done:
                             progress.append(f'<div class="jdm-narration">{narrated_done}</div>')
-                        # Visualisation : on affiche EXACTEMENT le HTML que
-                        # l'outil a déjà produit (html_path dans sa sortie),
-                        # sans reconstruire le graphe. Si introuvable, on
-                        # retombe sur les params (le front refera via
-                        # /api/subgraph). Event `viz` rendu en iframe inline.
+                        # Visualisation : on émet EXACTEMENT ce que l'outil a
+                        # produit (live nodes/edges par défaut, ou html sur
+                        # demande), sans reconstruire. Fallback params si rien
+                        # d'exploitable (le front refera via /api/subgraph).
                         if name == "build_subgraph_visualization":
-                            _viz_html = _read_produced_viz_html(content)
+                            _vev = _viz_event_from_tool_output(content)
                             term = (_pending_viz or {}).get("term", "")
-                            if _viz_html:
+                            if _vev:
                                 yield {"event": "viz", "data": json.dumps(
-                                    {"term": term, "html": _viz_html}, ensure_ascii=False)}
+                                    {"term": term, **_vev}, ensure_ascii=False)}
                             elif _pending_viz:
                                 yield {"event": "viz",
                                        "data": json.dumps(_pending_viz, ensure_ascii=False)}

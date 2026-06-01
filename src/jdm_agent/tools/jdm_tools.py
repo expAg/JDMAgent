@@ -2521,7 +2521,7 @@ def build_subgraph_visualization(
     depth2_relations: Optional[list[str]] = None,
     depth3_relations: Optional[list[str]] = None,
     depth4_relations: Optional[list[str]] = None,
-    output: str = "html",
+    output: str = "live",
     output_path: Optional[str] = None,
 ) -> dict:
     """Construit un sous-graphe JDM autour d'un terme et le sérialise.
@@ -2547,23 +2547,28 @@ def build_subgraph_visualization(
                           Défaut = r_isa, r_has_part, r_carac.
         depth4_relations: relations à la profondeur 4.
                           Défaut = r_isa, r_carac.
-        output: "html" → écrit un fichier HTML autonome (vis-network) et
-                renvoie {root, stats, html_path}.
-                "json" → renvoie {root, stats, nodes, edges} prêt à embarquer
-                dans un rendu côté client.
-        output_path: chemin du fichier HTML (défaut = `<slug>_subgraph.html`
-                     dans le répertoire courant).
+        output: "live" (DÉFAUT) → graphe interactif animé rendu DIRECTEMENT
+                dans l'interface (zoom, déplacement de nœuds, survol). Renvoie
+                {root, stats, nodes, edges}. C'est le mode à privilégier.
+                "html" → écrit un fichier HTML autonome (vis-network) ;
+                renvoie {root, stats, html_path}. À ne demander que si
+                l'utilisateur veut explicitement un fichier HTML exportable.
+                "json" → identique à "live" côté données (nodes/edges bruts).
+        output_path: chemin du fichier HTML (mode html uniquement).
 
     Renvoie un dict avec :
         - root: terme racine
         - stats: {n_nodes, n_edges, n_negative, relations_used, depth}
-        - html_path (output="html") ou nodes/edges (output="json")
+        - nodes/edges (output="live"/"json") ou html_path (output="html")
     """
     from jdm_agent.viz.subgraph import build_subgraph as _build
-    if output not in ("html", "json"):
-        return {"error": f"output doit valoir 'html' ou 'json', reçu {output!r}"}
+    if output not in ("html", "json", "live"):
+        return {"error": f"output doit valoir 'live', 'html' ou 'json', reçu {output!r}"}
+    # "live" = données nodes/edges (rendu interactif côté client) = "json"
+    # côté build_subgraph. On garde la marque format pour l'aval.
+    _build_output = "json" if output in ("live", "json") else "html"
     try:
-        return _build(
+        res = _build(
             term,
             client=_client(),
             depth=depth,
@@ -2576,9 +2581,12 @@ def build_subgraph_visualization(
             top_k_depth2=top_k_depth2,
             top_k_depth3=top_k_depth3,
             top_k_depth4=top_k_depth4,
-            output=output,  # type: ignore[arg-type]
+            output=_build_output,  # type: ignore[arg-type]
             output_path=output_path,
         )
+        if isinstance(res, dict) and "error" not in res:
+            res["format"] = output  # "live" | "json" | "html"
+        return res
     except Exception as e:
         return {"error": f"echec construction sous-graphe pour {term!r} : {e}"}
 

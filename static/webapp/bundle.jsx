@@ -6724,6 +6724,9 @@ function GraphViz({ nodes, edges }) {
 }
 
 window.ViewSubgraph = ViewSubgraph;
+// Exposé pour le chat mascotte (jarvis-banner.jsx, module IIFE séparé) qui
+// rend la viz LIVE inline : window.__JdmLiveGraph(term, nodes, edges, layout).
+window.__JdmLiveGraph = LiveAnimWrapper;
 
 // === webapp/views-agent.jsx ===
 // View: Agent — conversational chat with the LLM + JDM tools (via SSE).
@@ -7115,12 +7118,14 @@ function handleEvent(ev, patchLast) {
 // Bulle viz inline (Chatbot) — même endpoint /api/subgraph que l'onglet
 // Sous-graphe. Affiche le graphe interactif dans une iframe, sans lien.
 function AgentVizBubble({ viz }) {
-  // viz.html = HTML déjà produit par l'outil (affiché tel quel). Sinon
-  // fallback : reconstruction via /api/subgraph avec les params.
+  // live : graphe natif interactif (LiveAnimWrapper, même composant que
+  // l'onglet Sous-graphe). html : iframe vis-network. params : fallback fetch.
+  const isLive = viz && viz.format === 'live' && Array.isArray(viz.nodes);
+  const Live = (typeof window !== 'undefined') ? window.__JdmLiveGraph : null;
   const [html, setHtml] = useState(viz && viz.html ? viz.html : '');
   const [err, setErr] = useState('');
   React.useEffect(() => {
-    if (viz && viz.html) { setHtml(viz.html); return; }
+    if (isLive || (viz && viz.html)) { if (viz.html) setHtml(viz.html); return; }
     let alive = true;
     (async () => {
       try {
@@ -7141,14 +7146,20 @@ function AgentVizBubble({ viz }) {
       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>
         🕸️ Sous-graphe : <strong style={{ color: 'var(--ink-2)' }}>{viz.term}</strong>
       </div>
-      {err
-        ? <div style={{ color: 'var(--jdm-magenta)', fontSize: 12 }}>⚠️ {err}</div>
-        : html
-          ? <iframe title={`viz-${viz.term}`} srcDoc={html}
-                    sandbox="allow-scripts allow-same-origin"
-                    style={{ width: '100%', height: 420, border: '1px solid var(--line)',
-                             borderRadius: 'var(--radius)', background: 'var(--bg)' }} />
-          : <div style={{ color: 'var(--ink-3)', fontSize: 12.5, padding: '14px 0' }}>… génération du graphe …</div>}
+      {isLive && Live
+        ? <div style={{ width: '100%', minHeight: 360, border: '1px solid var(--line)',
+                        borderRadius: 'var(--radius)', background: 'var(--bg)', overflow: 'hidden' }}>
+            {React.createElement(Live, { term: viz.term, nodes: viz.nodes,
+              edges: viz.edges || [], layout: 'tree' })}
+          </div>
+        : err
+          ? <div style={{ color: 'var(--jdm-magenta)', fontSize: 12 }}>⚠️ {err}</div>
+          : html
+            ? <iframe title={`viz-${viz.term}`} srcDoc={html}
+                      sandbox="allow-scripts allow-same-origin"
+                      style={{ width: '100%', height: 420, border: '1px solid var(--line)',
+                               borderRadius: 'var(--radius)', background: 'var(--bg)' }} />
+            : <div style={{ color: 'var(--ink-3)', fontSize: 12.5, padding: '14px 0' }}>… génération du graphe …</div>}
     </div>
   );
 }

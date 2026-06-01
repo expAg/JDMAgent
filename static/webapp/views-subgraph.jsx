@@ -1209,3 +1209,6 @@ function GraphViz({ nodes, edges }) {
 }
 
 window.ViewSubgraph = ViewSubgraph;
+// Exposé pour le chat mascotte (jarvis-banner.jsx, module IIFE séparé) qui
+// rend la viz LIVE inline : window.__JdmLiveGraph(term, nodes, edges, layout).
+window.__JdmLiveGraph = LiveAnimWrapper;

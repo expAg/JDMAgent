@@ -686,13 +686,17 @@ const JarvisChatStore = (function () {
    /api/subgraph (même endpoint que l'onglet Sous-graphe, CSS adapté à
    l'iframe) et l'affiche dans une iframe. Évite tout lien/fichier. */
 function VizBubble({ viz }) {
-  // Cas idéal : le backend a déjà fourni le HTML produit par l'outil
-  // (viz.html) → on l'affiche tel quel, zéro reconstruction. Sinon
-  // (fallback) on refait via /api/subgraph avec les params.
+  // 3 chemins :
+  //  - live  : graphe interactif natif (window.__JdmLiveGraph = LiveAnimWrapper
+  //            du bundle). Défaut produit par l'outil.
+  //  - html  : iframe vis-network (sur demande explicite).
+  //  - params seuls (fallback) : on refait via /api/subgraph (html).
+  const isLive = viz && viz.format === 'live' && Array.isArray(viz.nodes);
+  const Live = (typeof window !== 'undefined') ? window.__JdmLiveGraph : null;
   const [html, setHtml] = useState(viz && viz.html ? viz.html : '');
   const [err, setErr] = useState('');
   useEffect(() => {
-    if (viz && viz.html) { setHtml(viz.html); return; }
+    if (isLive || (viz && viz.html)) { if (viz.html) setHtml(viz.html); return; }
     let alive = true;
     (async () => {
       try {
@@ -714,12 +718,17 @@ function VizBubble({ viz }) {
   return (
     <div className="jb-msg jb-msg--bot jb-viz">
       <div className="jb-viz-head">🕸️ Sous-graphe : <strong>{viz.term}</strong></div>
-      {err
-        ? <div className="jb-viz-err">⚠️ {err}</div>
-        : html
-          ? <iframe title={`viz-${viz.term}`} srcDoc={html}
-                    sandbox="allow-scripts allow-same-origin" className="jb-viz-frame" />
-          : <div className="jb-viz-load">… génération du graphe …</div>}
+      {isLive && Live
+        ? <div className="jb-viz-live">
+            {React.createElement(Live, { term: viz.term, nodes: viz.nodes,
+              edges: viz.edges || [], layout: 'tree' })}
+          </div>
+        : err
+          ? <div className="jb-viz-err">⚠️ {err}</div>
+          : html
+            ? <iframe title={`viz-${viz.term}`} srcDoc={html}
+                      sandbox="allow-scripts allow-same-origin" className="jb-viz-frame" />
+            : <div className="jb-viz-load">… génération du graphe …</div>}
     </div>
   );
 }
@@ -1069,6 +1078,7 @@ const CSS = `
 .jb-viz { max-width:100%!important; width:100%; padding:10px!important; }
 .jb-viz-head { font-size:12px; color:var(--ink-2); margin-bottom:7px; }
 .jb-viz-frame { width:100%; height:340px; border:1px solid var(--line-soft); border-radius:10px; background:var(--bg); }
+.jb-viz-live { width:100%; min-height:300px; border:1px solid var(--line-soft); border-radius:10px; background:var(--bg); overflow:hidden; }
 .jb-viz-load, .jb-viz-err { font-size:12.5px; color:var(--ink-3); padding:18px 6px; text-align:center; }
 .jb-viz-err { color:var(--jdm-magenta); }
 
