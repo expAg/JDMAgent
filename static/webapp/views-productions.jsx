@@ -16,7 +16,14 @@ function ViewProductions() {
   const [actionLog, setActionLog] = useState([]);
   // Bandeau Drops + modèle (pour soumissions)
   const [dropsKey, setDropsKey] = useState('');
-  const [modelName, setModelName] = useState('claude-sonnet');
+  // Pré-rempli avec le modèle de la configuration Jarvis courante
+  // (window.__JDM_JARVIS_CONFIG__.llm) — l'utilisateur peut toujours l'éditer.
+  const [modelName, setModelName] = useState(() => {
+    try {
+      const cfg = (typeof window !== 'undefined' && window.__JDM_JARVIS_CONFIG__) || {};
+      return cfg.llm || 'gemini-3.1-flash-lite';
+    } catch (e) { return 'gemini-3.1-flash-lite'; }
+  });
   // Env-aware : si JDM_DROPS_API_KEY est posée côté serveur, le bouton
   // Soumettre est dégrisé même quand l'input est vide. La clé saisie
   // override toujours l'env (sinon impossible de tester avec une autre).
