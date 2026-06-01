@@ -170,6 +170,10 @@ def pick_random_term() -> dict:
     que l'utilisateur te demande de « choisir un mot au hasard », « tirer
     aléatoirement », ou que tu n'as pas de terme imposé.
 
+    INTERDICTION FORMELLE de choisir le terme toi-même : passe TOUJOURS par
+    cet outil. Le terme renvoyé existe déjà — NE teste PAS son existence
+    (pas de exists/lookup après).
+
     Renvoie :
       - terme simple : {"term": "<forme lisible>"}
       - raffinement  : {"term": "<forme lisible>", "term_id": "<brut>"}
