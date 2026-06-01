@@ -151,7 +151,7 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
   const bubblesRef = useRef([]);
   const stateRef = useRef({});
   const [expr, setExpr] = useState(manualExpr || 'baby');
-  stateRef.current = { mode, speedPct, sizePx, expressivity, freq, expr, frozen };
+  stateRef.current = { mode, speedPct, sizePx, expressivity, freq, expr, frozen, chatBusy };
 
   useEffect(() => {
     const wrap = wrapRef.current, robot = robotRef.current;
@@ -316,6 +316,12 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
         setT('armL', `rotate(${armLa.toFixed(1)} 36 92)`);
         setT('armR', `rotate(${armRa.toFixed(1)} 84 92)`);
         setT('ant', `rotate(${(A.lean * 0.6 + ls * 4).toFixed(2)} 60 40)`);
+        // Chat ouvert + Jarvis en écoute (pas en train de répondre) :
+        // l'antenne s'agite vivement, comme si elle captait un signal.
+        if (S.frozen && !S.chatBusy) {
+          const w = Math.sin(A.t * 7) * 16 + Math.sin(A.t * 13) * 5;
+          setT('ant', `rotate(${w.toFixed(2)} 60 40)`);
+        }
         setT('pupils', `translate(${A.pup.x.toFixed(2)} ${A.pup.y.toFixed(2)})`);
         setT('eyes', `translate(60 46) scale(1 ${eyeS.toFixed(3)}) translate(-60 -46)`);
 
@@ -411,14 +417,14 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
      tête du robot, suivie en continu (le robot ne bouge pas mais on
      recale au cas où). DOM impératif (cohérent avec les autres bulles). */
   useEffect(() => {
-    if (!frozen) return;
+    // La bulle n'apparaît QUE quand Jarvis répond (points de rédaction).
+    // En écoute, pas de bulle : c'est l'antenne qui s'agite (cf. tick).
+    if (!frozen || !chatBusy) return;
     const field = wrapRef.current;
     if (!field) return;
     const bub = document.createElement('div');
     bub.className = 'jb-robot-bubble';
-    bub.innerHTML = chatBusy
-      ? '<span class="jb-typing"><i></i><i></i><i></i></span>'
-      : '<span class="jb-ear" title="Je t\'écoute">👂</span>';
+    bub.innerHTML = '<span class="jb-typing"><i></i><i></i><i></i></span>';
     field.appendChild(bub);
     const place = () => {
       const L = live.current || { x: 80, y: 80, sh: 70, sw: 56 };
@@ -1230,9 +1236,8 @@ const CSS = `
 .jb-robot-bubble { --jbbub: rgba(22,22,28,0.93); position:absolute; transform-origin:center bottom; display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:22px; padding:7px 11px; border-radius:18px / 20px; background:var(--jbbub); box-shadow:0 8px 20px -10px rgba(0,0,0,0.6); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px); pointer-events:none; z-index:7; animation: jbBubblePop .26s cubic-bezier(.22,1,.36,1) both; }
 .jb-robot-bubble::before { content:''; position:absolute; z-index:-1; bottom:-5px; left:22%; width:10px; height:10px; border-radius:50%; background:var(--jbbub); box-shadow: -11px 4px 0 -2px var(--jbbub); }
 .jb-is-light .jb-robot-bubble { --jbbub: rgba(255,255,255,0.97); box-shadow:0 8px 20px -12px rgba(0,0,0,0.3); }
-.jb-robot-bubble .jb-ear { font-size:16px; line-height:1; }
-.jb-robot-bubble .jb-typing { display:inline-flex; align-items:center; gap:4px; }
-.jb-robot-bubble .jb-typing i { width:6px; height:6px; border-radius:50%; background:#f4efe4; display:inline-block; animation: jbTyping 1.1s ease-in-out infinite; }
+.jb-robot-bubble .jb-typing { display:inline-flex; align-items:center; gap:3px; }
+.jb-robot-bubble .jb-typing i { width:4px; height:4px; border-radius:50%; background:#f4efe4; display:inline-block; animation: jbTyping 1.1s ease-in-out infinite; }
 .jb-is-light .jb-robot-bubble .jb-typing i { background:#3a3530; }
 .jb-robot-bubble .jb-typing i:nth-child(2) { animation-delay:.18s; }
 .jb-robot-bubble .jb-typing i:nth-child(3) { animation-delay:.36s; }
