@@ -11,7 +11,8 @@ Configuration (cascade) :
 
 Le fichier est posté sous `compute_submission_filename(model_name)`,
 indépendant du nom local sur disque (le LLMDrops voit toujours un nom
-auto-descriptif type `from_claude-sonnet-4-7_automatic_submission_14h32_27-05-26.enrich`).
+auto-descriptif, horodaté date-puis-heure pour un tri chronologique, type
+`2026-05-27_14h32_automatic_submission_from_claude-sonnet-4-7.enrich`).
 """
 from __future__ import annotations
 

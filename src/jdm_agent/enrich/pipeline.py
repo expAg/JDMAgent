@@ -19,9 +19,10 @@ def compute_submission_filename(model_name: str, *,
                                 extension: str = ".enrich") -> str:
     """Nom standardisé d'un fichier de soumission LLMDrops.
 
-    Format : `{HH}h{MM}_{DD}-{MM}-{YY}_automatic_submission_from_{model_slug}{extension}`
+    Format : `{YYYY}-{MM}-{DD}_{HH}h{MM}_automatic_submission_from_{model_slug}{extension}`
 
-    L'horodatage en tête sert au tri chronologique naturel dans un dossier.
+    L'horodatage en tête (date ISO PUIS heure) garantit que le tri
+    alphabétique = tri chronologique, côté JDM comme en local.
     Le `model_name` est slugifié : espaces et caractères non-sûrs (URL/shell)
     sont remplacés par `_`, le reste est conservé (on garde les tirets et le
     point usuels des noms de modèles type `claude-opus-4-7` ou `gpt-4.1`).
@@ -48,7 +49,7 @@ def compute_submission_filename(model_name: str, *,
         ext = "." + ext
     ts = (now or datetime.now())
     return (
-        f"{ts:%Hh%M}_{ts:%d-%m-%y}_automatic_submission_from_{slug}{ext}"
+        f"{ts:%Y-%m-%d}_{ts:%Hh%M}_automatic_submission_from_{slug}{ext}"
     )
 
 

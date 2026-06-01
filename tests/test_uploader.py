@@ -16,27 +16,27 @@ from jdm_agent.enrich.uploader import DEFAULT_ENDPOINT_URL
 def test_filename_basic_format():
     now = datetime(2026, 5, 27, 14, 32, 0)
     name = compute_submission_filename("claude-opus-4-7", now=now)
-    assert name == "14h32_27-05-26_automatic_submission_from_claude-opus-4-7.enrich"
+    assert name == "2026-05-27_14h32_automatic_submission_from_claude-opus-4-7.enrich"
 
 
 def test_filename_slug_spaces_to_underscores():
     now = datetime(2026, 1, 3, 9, 5, 0)
     name = compute_submission_filename("Claude Opus 4.7", now=now)
     # Les espaces → '_', le point conservé (autorisé en filename), pas de doublon.
-    assert name == "09h05_03-01-26_automatic_submission_from_Claude_Opus_4.7.enrich"
+    assert name == "2026-01-03_09h05_automatic_submission_from_Claude_Opus_4.7.enrich"
 
 
 def test_filename_slug_strips_dangerous_chars():
     now = datetime(2026, 12, 31, 23, 59, 0)
     name = compute_submission_filename("gpt-5/turbo:beta", now=now)
     # Slashes et deux-points → '_' (sécurité URL / shell).
-    assert name == "23h59_31-12-26_automatic_submission_from_gpt-5_turbo_beta.enrich"
+    assert name == "2026-12-31_23h59_automatic_submission_from_gpt-5_turbo_beta.enrich"
 
 
 def test_filename_empty_model_falls_back():
     now = datetime(2026, 5, 27, 14, 32, 0)
     name = compute_submission_filename("", now=now)
-    assert name == "14h32_27-05-26_automatic_submission_from_unknown.enrich"
+    assert name == "2026-05-27_14h32_automatic_submission_from_unknown.enrich"
 
 
 def test_filename_only_unsafe_chars_falls_back():
