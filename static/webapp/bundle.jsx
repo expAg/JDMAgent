@@ -8001,6 +8001,159 @@ function useJarvisActiveSet() {
   return new Set(JarvisStore.activeFlowIds());
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// ObsStore — store d'OBSERVATION keyé par run_id, dédié à la SUPERVISION.
+// Indépendant de JarvisStore (qui reste keyé par flow pour la vue de
+// lancement, INCHANGÉE). Permet d'afficher PLUSIEURS runs du même type de
+// flux côté à côté, chacun avec son propre feed temps réel + détail.
+// Chaque run observé se branche sur /api/jarvis/runs/{id}/stream (catch-up
+// + live). Consume compact dédié (pas de persistance localStorage ni de
+// logique resume — c'est de la pure observation lecture seule).
+// ─────────────────────────────────────────────────────────────────────
+const _OBS_RUNS = {};
+const _OBS_LISTENERS = {};
+
+function _emptyObsRun(runId, flowId) {
+  return {
+    runId, flowId: flowId || '', status: 'idle', headline: '',
+    log: [], accepted: [], narrationHTML: '', filePreview: '', filePath: null,
+    metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
+    submitted: false,
+    _observing: false, _abortCtrl: null,
+    _prevConsolidatedCount: 0, _loggedAcceptedCount: 0,
+  };
+}
+
+const ObsStore = {
+  getRun(runId) {
+    if (!_OBS_RUNS[runId]) _OBS_RUNS[runId] = _emptyObsRun(runId);
+    return _OBS_RUNS[runId];
+  },
+  _emit(runId) {
+    const s = _OBS_LISTENERS[runId];
+    if (s) for (const cb of s) { try { cb(); } catch {} }
+    const g = _OBS_LISTENERS['*'];
+    if (g) for (const cb of g) { try { cb(); } catch {} }
+  },
+  subscribe(runId, cb) {
+    if (!_OBS_LISTENERS[runId]) _OBS_LISTENERS[runId] = new Set();
+    _OBS_LISTENERS[runId].add(cb);
+    return () => { if (_OBS_LISTENERS[runId]) _OBS_LISTENERS[runId].delete(cb); };
+  },
+  observe(runId, flowId, headline) {
+    if (!runId) return;
+    const cur = this.getRun(runId);
+    if (cur._observing) return;  // déjà branché
+    cur._observing = true;
+    cur.flowId = flowId || cur.flowId;
+    if (headline && !cur.headline) cur.headline = headline;
+    if (cur.status === 'idle') cur.status = 'running';
+    cur._abortCtrl = new AbortController();
+    this._emit(runId);
+    this._consume(runId, cur).finally(() => { cur._observing = false; });
+  },
+  stopObs(runId) {
+    if (!runId) return;
+    const cur = this.getRun(runId);
+    fetch(`api/jarvis/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }).catch(() => {});
+    cur.log = [...cur.log, { t: new Date().toTimeString().slice(0, 8),
+      tag: '[stop]', kind: 'iter', msg: "Demande d'arrêt envoyée — fin après le chunk en cours (~5-15s)." }];
+    this._emit(runId);
+  },
+  async _consume(runId, cur) {
+    const ts = () => new Date().toTimeString().slice(0, 8);
+    const emit = () => this._emit(runId);
+    try {
+      const res = await fetch(`api/jarvis/runs/${encodeURIComponent(runId)}/stream`,
+                             { signal: cur._abortCtrl.signal });
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      const onEv = (ev) => {
+        const d = ev.data || {};
+        switch (ev.event) {
+          case 'ping': case 'run_id': break;
+          case 'headline': cur.headline = d.text || cur.headline; break;
+          case 'jarvis': {
+            const msgs = d.messages || [];
+            const a = msgs.filter(m => m.role === 'assistant').slice(-1)[0];
+            if (a && a.content) {
+              cur.narrationHTML = a.content;
+              const tm = a.content.match(/class="jdm-narration"/g) || [];
+              cur.metrics = { ...cur.metrics, toolsCalled: tm.length };
+            }
+            const cc = Number(d.consolidated_count || 0);
+            if (cc !== cur._prevConsolidatedCount) {
+              cur.metrics = { ...cur.metrics, accepted: cc };
+              cur._prevConsolidatedCount = cc;
+            }
+            if (typeof d.tokens_estimate === 'number') cur.metrics = { ...cur.metrics, tokens: d.tokens_estimate };
+            if (Array.isArray(d.consolidated)) {
+              cur.accepted = d.consolidated.map(c => ({
+                type: 'consolidated', subject: c.term || '', relation: c.relation || '',
+                target: c.target || '', explanation: c.explanation || '',
+                label: `${c.term} | ${c.relation} | ${c.target}`, score: '✓' }));
+              const prev = cur._loggedAcceptedCount || 0;
+              const nbNew = d.consolidated.length - prev;
+              if (nbNew > 0) for (const c of d.consolidated.slice(prev)) cur.log = [...cur.log, {
+                t: ts(), tag: '[ok]', kind: 'accept', msg: `${c.term} | ${c.relation} | ${c.target}`,
+                triplet: { term: c.term, relation: c.relation, target: c.target, schema: c.schema || '', explanation: c.explanation || '' } }];
+              cur._loggedAcceptedCount = d.consolidated.length;
+            }
+            if (typeof d.file_preview === 'string') cur.filePreview = d.file_preview;
+            if (d.file_path) {
+              cur.filePath = d.file_path;
+              const fm = `Fichier : ${d.file_path}`;
+              if (!cur.log.some(l => l.tag === '[file]' && l.msg === fm))
+                cur.log = [...cur.log, { t: ts(), tag: '[file]', kind: 'accept', msg: fm }];
+            }
+            break;
+          }
+          case 'cancelled':
+            cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: d.text || 'Flow annulé.' }];
+            cur.status = 'done'; break;
+          case 'done':
+            if (cur.status !== 'done') { cur.log = [...cur.log, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }]; cur.status = 'done'; }
+            break;
+          case 'error':
+            cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }];
+            cur.status = 'error'; break;
+        }
+        emit();
+      };
+      const flush = () => {
+        const re = /\r\n\r\n|\n\n|\r\r/;
+        let m;
+        while ((m = re.exec(buf)) !== null) {
+          const raw = buf.slice(0, m.index); buf = buf.slice(m.index + m[0].length);
+          const ev = parseSSEEventJarvis(raw); if (ev) onEv(ev);
+        }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        flush();
+      }
+      if (buf.trim()) { const ev = parseSSEEventJarvis(buf); if (ev) onEv(ev); }
+      if (cur.status === 'running') cur.status = 'done';
+    } catch (e) {
+      if (!(cur._abortCtrl && cur._abortCtrl.signal.aborted)) {
+        cur.status = 'error';
+        cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }];
+      }
+    } finally { emit(); }
+  },
+};
+if (typeof window !== 'undefined') window.__jdmObsStore = ObsStore;
+
+function useObsRun(runId) {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => (runId ? ObsStore.subscribe(runId, force) : undefined), [runId]);
+  return runId ? ObsStore.getRun(runId) : null;
+}
+
 function ItemCard({ item, accent }) {
   // Couleur de bord par type — signal visuel rapide.
   const typeStyle = {
@@ -9623,6 +9776,8 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   // Path du fichier en cours de preview (= modal ouvert). null = fermé.
   // Set par le badge statut de chaque card via prop onPreview.
   const [previewPath, setPreviewPath] = useState(null);
+  // run_id dont on affiche le détail (modal) — clic sur une carte de run.
+  const [detailRunId, setDetailRunId] = useState(null);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 1400);
     return () => clearInterval(id);
@@ -9646,23 +9801,15 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           if (!alive) return;
           const runs = d.runs || [];
           setServerRuns(runs);
-          // ADOPTION des runs orphelins : un run lancé par la mascotte
-          // (start_flow) tourne côté serveur mais n'a JAMAIS été observé
-          // par le JarvisStore local → carte allumée mais zéro métrique /
-          // feed / détail. On se branche sur son stream pour récupérer
-          // narration + metrics, comme si on l'avait lancé d'ici.
-          if (typeof JarvisStore !== 'undefined') {
-            for (const s of runs) {
-              if ((s.status === 'running' || s.status === 'starting')
-                  && s.run_id && !adoptedRef.current.has(s.run_id)) {
-                const local = JarvisStore.get(s.flow_id);
-                // N'adopte que si ce flow n'est pas déjà en train d'observer
-                // CE run (évite de doubler un run lancé depuis l'UI).
-                if (!(local && local.status === 'running' && local.runId === s.run_id)) {
-                  adoptedRef.current.add(s.run_id);
-                  JarvisStore.attach(s.flow_id, s.run_id, s.headline).catch(() => {});
-                }
-              }
+          // OBSERVATION PAR RUN : chaque run actif (lancé d'ici, par la
+          // mascotte, ou ailleurs) est observé via ObsStore keyé par
+          // run_id → une carte par run avec son propre feed/métriques/
+          // détail (plusieurs runs du même type coexistent sans s'écraser).
+          for (const s of runs) {
+            if ((s.status === 'running' || s.status === 'starting')
+                && s.run_id && !adoptedRef.current.has(s.run_id)) {
+              adoptedRef.current.add(s.run_id);
+              ObsStore.observe(s.run_id, s.flow_id, s.headline);
             }
           }
         }
@@ -9690,18 +9837,43 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
     if (sc && sc.scrollTo) sc.scrollTo({ top: 0, behavior: 'smooth' });
   }, [active]);
 
-  // Live computed pour CHAQUE flow dans l'ordre canonique du catalogue.
-  // Sert au KPI strip aggrege ET au tri d'affichage (en cours d'abord).
-  const live = flows.map((f, i) => computeFlowLive(f, i, tick, serverRuns, localActiveSet));
+  // Re-render quand un run OBSERVÉ (ObsStore) bouge entre deux ticks.
+  const [, _obsForce] = React.useReducer(x => x + 1, 0);
+  useEffect(() => ObsStore.subscribe('*', _obsForce), []);
+
+  // ── cardSpecs : UNE CARTE PAR RUN ──────────────────────────────────
+  // Pour chaque type de flux : si ≥1 run ACTIF (running/starting), une
+  // carte par run actif (2 audits en // → 2 cartes). Sinon, une seule
+  // carte = le dernier run (terminé) ou un placeholder « en attente »
+  // (lançable). Évite de noyer la grille avec tout l'historique.
+  const _runsByFlow = {};
+  for (const r of serverRuns) {
+    if (r.flow_id) (_runsByFlow[r.flow_id] = _runsByFlow[r.flow_id] || []).push(r);
+  }
+  const cardSpecs = [];
+  for (const f of flows) {
+    const frs = _runsByFlow[f.id] || [];
+    const activeR = frs.filter(r => r.status === 'running' || r.status === 'starting')
+                       .sort((a, b) => (a.started_at || 0) - (b.started_at || 0));
+    if (activeR.length) {
+      for (const r of activeR) cardSpecs.push({ flow: f, run: r });
+    } else {
+      const latest = frs.slice().sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0] || null;
+      cardSpecs.push({ flow: f, run: latest });
+    }
+  }
+  const live = cardSpecs.map((spec, i) => computeFlowLive(
+    spec.flow, i, tick, serverRuns, localActiveSet,
+    spec.run ? { rec: ObsStore.getRun(spec.run.run_id), serverRun: spec.run } : undefined
+  ));
   // Ordre d'affichage : en cours → soumis → terminé → en attente.
-  // L'ordre intra-bucket suit l'ordre canonique du catalogue JARVIS_FLOWS.
   const _bucket = (l) => {
     if (l.isRunning) return 0;
     if (l.submitted) return 1;
     if (l.isDone) return 2;
     return 3;
   };
-  const orderedIdx = flows.map((_, i) => i).sort((a, b) => {
+  const orderedIdx = cardSpecs.map((_, i) => i).sort((a, b) => {
     const ba = _bucket(live[a]); const bb = _bucket(live[b]);
     if (ba !== bb) return ba - bb;
     return a - b;
@@ -9794,10 +9966,12 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         gap: 14,
       }}>
         {orderedIdx.map(i => {
-          const f = flows[i];
+          const spec = cardSpecs[i];
+          const f = spec.flow;
+          const rid = spec.run && spec.run.run_id;
           return (
-            <JFlowDashCard key={f.id} flow={f} num={i + 1} live={live[i]}
-              onOpen={() => onPick(f.id)}
+            <JFlowDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
+              onOpen={() => { if (rid) setDetailRunId(rid); else onPick(f.id); }}
               onLaunch={() => onLaunch(f.id)}
               onPreview={(p) => setPreviewPath(p)}
               onStart={() => {
@@ -9825,6 +9999,14 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           endpoint que la page Productions). */}
       {previewPath && (
         <FilePreviewModal path={previewPath} onClose={() => setPreviewPath(null)} />
+      )}
+
+      {/* Détail d'un run précis (clic sur sa carte) — lit ObsStore par
+          run_id : log temps réel + fichier produit. Indépendant de la vue
+          de lancement (flow-keyée). */}
+      {detailRunId && (
+        <RunDetailModal runId={detailRunId} onClose={() => setDetailRunId(null)}
+          onPreview={(p) => setPreviewPath(p)} />
       )}
     </div>
   );
@@ -9915,6 +10097,85 @@ function FilePreviewModal({ path, onClose }) {
   ), document.body);
 }
 
+// ─── Détail d'un run précis (supervision) — lit ObsStore par run_id ───
+// Log temps réel + métriques + accès au fichier produit. Indépendant de
+// la vue de lancement (flow-keyée), donc 2 runs du même type ont chacun
+// leur détail. Portail vers document.body (cf. note FilePreviewModal :
+// le rail-pager transforme le containing block des position:fixed).
+function RunDetailModal({ runId, onClose, onPreview }) {
+  const rec = useObsRun(runId);
+  React.useEffect(() => { if (runId) ObsStore.observe(runId); }, [runId]);
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const onBackdrop = (e) => { if (e.target === e.currentTarget) onClose(); };
+  const r = rec || {};
+  const m = r.metrics || {};
+  const log = (r.log || []).slice(-50).reverse();
+  const fileName = r.filePath ? r.filePath.split(/[\\/]/).slice(-1)[0] : null;
+  return ReactDOM.createPortal((
+    <div onClick={onBackdrop} style={{
+      position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div style={{
+        background: 'var(--bg-card)', border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg)', maxWidth: 760, width: '100%',
+        maxHeight: '88vh', display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          padding: '14px 18px', borderBottom: '1px solid var(--line-soft)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div className="display" style={{
+              fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--ink)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{r.headline || 'Run'}</div>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              {(r.status || 'idle')} · {r.flowId || ''}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            {r.status === 'running' && (
+              <Button size="sm" variant="secondary" onClick={() => ObsStore.stopObs(runId)}>Arrêter</Button>
+            )}
+            {fileName && (
+              <Button size="sm" variant="secondary"
+                onClick={() => onPreview && onPreview(r.filePath)}>Voir le fichier</Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={onClose}>×</Button>
+          </div>
+        </div>
+        <div style={{
+          padding: '10px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 8, borderBottom: '1px solid var(--line-soft)',
+        }}>
+          <JMini label="acceptes" value={m.accepted || 0} color="var(--jdm-green)" />
+          <JMini label="outils" value={m.toolsCalled || 0} />
+          <JMini label="tokens" value={fmtTokens(m.tokens || 0)} />
+        </div>
+        <div style={{
+          flex: 1, overflow: 'auto', padding: '12px 16px',
+          fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.65,
+        }}>
+          {log.length === 0
+            ? <div style={{ color: 'var(--ink-3)' }}>… en attente d'événements …</div>
+            : log.map((l, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, color: 'var(--ink-2)' }}>
+                <span style={{ color: 'var(--ink-3)', flexShrink: 0 }}>{l.t}</span>
+                <span style={{ color: 'var(--accent)', flexShrink: 0 }}>{l.tag}</span>
+                <span style={{ flex: 1, wordBreak: 'break-word' }}>{l.msg}</span>
+              </div>
+            ))}
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
 // KPI tile for the dashboard's top strip.
 function JKpi({ label, value, sub, color, dot }) {
   return (
@@ -9946,16 +10207,23 @@ function JKpi({ label, value, sub, color, dot }) {
 //   - tick : heartbeat 1.4s utilise UNIQUEMENT pour animer stepIdx
 //     (= l'etape "active" qui clignote sur la pipeline) et donner du
 //     mouvement aux cartes meme quand les chiffres ne bougent pas.
-function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
-  const store = (typeof JarvisStore !== 'undefined') ? JarvisStore.get(flow.id) : null;
+function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
+  // opts.rec : record d'OBSERVATION par run (ObsStore) → carte PAR RUN.
+  // opts.serverRun : le run serveur précis de cette carte.
+  // Sans opts : comportement historique (JarvisStore par flow + dernier run).
+  const store = opts && opts.rec
+    ? opts.rec
+    : ((typeof JarvisStore !== 'undefined') ? JarvisStore.get(flow.id) : null);
   const runs = (serverRuns || []).filter(r => r.flow_id === flow.id);
-  const latest = runs.sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0] || null;
+  const latest = (opts && opts.serverRun)
+    ? opts.serverRun
+    : (runs.sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0] || null);
   const isLocallyRunning = store && store.status === 'running';
   const isServerRunning = latest && (latest.status === 'running' || latest.status === 'starting');
   const isRunning = isLocallyRunning || isServerRunning;
 
   const m = (store && store.metrics) || { toolsCalled: 0, accepted: 0, tokens: 0, elapsed: 0 };
-  const tools = m.toolsCalled || 0;
+  let tools = m.toolsCalled || 0;
   const narration = (store && store.narrationHTML) || '';
 
   // Sequence des tool calls cote agent — chaque div narration porte
@@ -10100,10 +10368,20 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
     }
   }
   const nbTerms = _terms.size;
+  // FALLBACK stats serveur : pour un run terminé NON observé (rec vide,
+  // pas de narration), les compteurs live valent 0. On retombe alors sur
+  // les stats persistées du run (serverRun.stats) pour afficher les vrais
+  // chiffres sur la carte sans rouvrir un stream.
+  const _st = (latest && latest.stats) || {};
+  if (!narration) {
+    if (!nbAttempted && _st.attempts) nbAttempted = _st.attempts;
+    if (!accepted && _st.retained) accepted = _st.retained;
+    if (!tools && _st.tools_count) tools = _st.tools_count;
+  }
   if (flow.id === 'enrich' && nbAttempted > 0) {
     rejected = Math.max(0, nbAttempted - accepted);
   }
-  const tokens = m.tokens || 0;
+  const tokens = (m.tokens || 0) || (_st.tokens || 0);
 
   // ─── Feed pour la zone « flux en direct » de la card Supervision ──────
   // Source unique = même que la vue Log temps réel : la NARRATION HTML
@@ -10186,9 +10464,11 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet) {
   const isDone = !!(store && store.status === 'done');
   const filePath = (store && store.filePath) || null;
 
+  const runId = (opts && opts.serverRun && opts.serverRun.run_id)
+    || (store && store.runId) || (latest && latest.run_id) || null;
   return { iter, span, tools, accepted, rejected, produced, pct, recent, stepIdx,
            isRunning, nbAttempted, nbTerms, tokens, feed,
-           submitted, isDone, filePath,
+           submitted, isDone, filePath, runId,
            headline: (store && store.headline) || (latest && latest.headline) || '' };
 }
 
