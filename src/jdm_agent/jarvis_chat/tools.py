@@ -399,7 +399,9 @@ def start_flow(flow_id: str, term: str = "", relation: str = "",
     """
     fid = (flow_id or "").strip().lower()
     if fid not in _VALID_FLOWS:
-        return {"error": f"flow_id invalide : {flow_id!r}. Attendu : {sorted(_VALID_FLOWS)}."}
+        return {"status": "error", "ok": False,
+                "error": f"flow_id invalide : {flow_id!r}. Attendu : {sorted(_VALID_FLOWS)}.",
+                "instruction": "Dis à l'utilisateur que le flux N'A PAS démarré (flow_id invalide). N'invente pas de succès."}
     params: dict = {}
     if term and term.strip():
         params["term"] = term.strip()
@@ -408,11 +410,18 @@ def start_flow(flow_id: str, term: str = "", relation: str = "",
     if target_count and int(target_count) > 0:
         params["target_count"] = int(target_count)
     res = _rt.start_flow(fid, params)
-    if res.get("error"):
-        return res
-    return {"ok": True, "flow_id": fid, "run_id": res.get("run_id"),
-            "headline": res.get("headline"),
-            "note": "Flux démarré en arrière-plan. Suis-le avec get_run(run_id)."}
+    # Échec réel (contrôleur non câblé, dispatch invalide, exception) :
+    # statut error EXPLICITE + instruction de ne pas prétendre au succès.
+    if res.get("error") or not res.get("run_id"):
+        return {"status": "error", "ok": False,
+                "error": res.get("error") or "Démarrage impossible (aucun run_id renvoyé).",
+                "instruction": "Le flux N'A PAS démarré. Dis-le clairement à l'utilisateur "
+                               "et n'invente NI succès NI identifiant."}
+    return {"status": "started", "ok": True, "flow_id": fid,
+            "run_id": res.get("run_id"),
+            "instruction": "Le flux EST bien démarré en arrière-plan. Confirme-le à "
+                           "l'utilisateur en langage humain (type + terme), sans afficher "
+                           "le run_id. Il apparaîtra dans la supervision."}
 
 
 @tool
@@ -424,8 +433,15 @@ def stop_flow(run_id: str) -> dict:
     """
     rid = (run_id or "").strip()
     if not rid:
-        return {"error": "run_id vide."}
-    return _rt.stop_flow(rid)
+        return {"status": "error", "ok": False, "error": "run_id vide.",
+                "instruction": "Impossible d'arrêter : aucun run_id. N'invente pas d'arrêt."}
+    res = _rt.stop_flow(rid)
+    if res.get("error"):
+        return {"status": "error", "ok": False, "error": res["error"],
+                "instruction": "L'arrêt a ÉCHOUÉ. Dis-le clairement, n'invente pas un arrêt réussi."}
+    return {**res, "status": "stopping", "ok": True,
+            "instruction": "Arrêt demandé (coopératif, effet en ~5-15s). Confirme à "
+                           "l'utilisateur sans afficher le run_id."}
 
 
 def build_supervision_tools() -> list:
