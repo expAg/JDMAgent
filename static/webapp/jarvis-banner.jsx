@@ -10,6 +10,23 @@
 (function () {
 const { useRef, useEffect, useState, useCallback } = React;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* Rendu markdown des réponses du robot (gras, listes, code, titres).
+   Utilise `marked` déjà chargé globalement par index.html ; fallback
+   sur un échappement texte brut si absent. */
+function renderMd(text) {
+  const src = text || '';
+  try {
+    if (window.marked) {
+      const fn = window.marked.parse || window.marked;
+      return fn(src, { breaks: true });
+    }
+  } catch (e) {}
+  // Fallback : échappe le HTML et préserve les sauts de ligne.
+  return src
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
 const JDMC = ['#E63B7A', '#5FB94A', '#F5C518', '#2BB8D4', '#8A5CD4', '#F47B20'];
 const ri = (n) => (Math.random() * n) | 0;
 
@@ -733,7 +750,10 @@ function ChatPanel({ dark, onClose }) {
 
       <div className="jb-chat-body" ref={scrollRef}>
         {msgs.map((m, i) => (
-          <div key={i} className={`jb-msg jb-msg--${m.who}`}>{m.text}</div>
+          m.who === 'bot' && m.text
+            ? <div key={i} className="jb-msg jb-msg--bot jb-md"
+                   dangerouslySetInnerHTML={{ __html: renderMd(m.text) }} />
+            : <div key={i} className={`jb-msg jb-msg--${m.who}`}>{m.text}</div>
         ))}
         {busy && (
           <div className="jb-msg jb-msg--bot jb-msg--typing"><span></span><span></span><span></span></div>
@@ -943,6 +963,21 @@ const CSS = `
 .jb-msg { max-width:84%; padding:9px 13px; border-radius:14px; font-size:13.5px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
 .jb-msg--bot { align-self:flex-start; background:var(--bg-elev); color:var(--ink); border:1px solid var(--line-soft); border-bottom-left-radius:5px; }
 .jb-msg--me { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:5px; }
+/* Bulle bot en markdown rendu (jb-md) : on retire le pre-wrap (le HTML
+   gère les sauts) et on cadre les marges des blocs marked. */
+.jb-md { white-space:normal; }
+.jb-md > :first-child { margin-top:0; }
+.jb-md > :last-child { margin-bottom:0; }
+.jb-md p { margin:0 0 8px; }
+.jb-md ul, .jb-md ol { margin:4px 0 8px; padding-left:20px; }
+.jb-md li { margin:2px 0; }
+.jb-md code { font-family:var(--font-mono),monospace; font-size:12px; background:rgba(127,127,127,0.16); padding:1px 5px; border-radius:5px; }
+.jb-md pre { background:rgba(127,127,127,0.12); padding:9px 11px; border-radius:9px; overflow-x:auto; margin:6px 0; }
+.jb-md pre code { background:none; padding:0; }
+.jb-md strong { font-weight:600; }
+.jb-md a { color:var(--accent); }
+.jb-md h1, .jb-md h2, .jb-md h3 { font-size:14px; font-weight:600; margin:8px 0 4px; }
+
 .jb-msg--typing { display:inline-flex; gap:4px; align-items:center; padding:12px 14px; }
 .jb-msg--typing span { width:6px; height:6px; border-radius:50%; background:var(--ink-3); opacity:0.5; animation: jbTyping 1.1s ease-in-out infinite; }
 .jb-msg--typing span:nth-child(2){ animation-delay:.18s; } .jb-msg--typing span:nth-child(3){ animation-delay:.36s; }
