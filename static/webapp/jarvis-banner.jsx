@@ -142,7 +142,7 @@ function pickThought(accent) {
 }
 
 /* ── Le robot (roam + grimaces) ─────────────────────────────────────── */
-function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, frozen }) {
+function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, frozen, chatBusy }) {
   const wrapRef = useRef(null);
   const robotRef = useRef(null);
   const r = useRef({});
@@ -206,6 +206,23 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
       A.x = A.tx = Math.min(B.lb + sw0 * 0.5, fw - 30);
       A.y = A.ty = Math.max(stateRef.current.sizePx * 150 / 120 * 0.95, B.upMaxY - 2);
     };
+    // Position pour le GEL (chat ouvert) = EXACTEMENT là où se tient le
+    // mini-robot quand la bannière est fermée : juste à droite du dernier
+    // caractère du titre (gap ~14px) et centré verticalement sur la LIGNE du
+    // titre (pas posé sous le titre comme homePos). Donne un robot non collé.
+    const frozenPos = () => {
+      const fb = wrap.getBoundingClientRect();
+      const h1 = host.querySelector('h1');
+      const sw0 = stateRef.current.sizePx, sh0 = sw0 * 150 / 120;
+      if (!h1) { homePos(); return; }
+      const rg = document.createRange(); rg.selectNodeContents(h1);
+      const tb = rg.getBoundingClientRect();
+      const right = (tb.right || h1.getBoundingClientRect().right) - fb.left;
+      const midY = (tb.top + tb.bottom) / 2 - fb.top;
+      const fw = fb.width || r0.width;
+      A.x = A.tx = Math.min(right + 16 + sw0 * 0.5, fw - 24);
+      A.y = A.ty = midY + sh0 * 0.45;   // centre du robot ≈ ligne du titre
+    };
     homePos();
     { const sw0 = stateRef.current.sizePx, sh0 = sw0 * 150 / 120;
       robot.style.transform = `translate(${(A.x - sw0 * 0.5).toFixed(1)}px, ${(A.y - sh0 * 0.95).toFixed(1)}px)`; }
@@ -226,7 +243,7 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
         // des bras, salut, antenne…). À l'entrée du gel on le ramène UNE fois
         // à sa position de repos ; ensuite la cible reste fixée sur lui (voir
         // le bloc de ciblage ci-dessous) → vitesse ~0 → animations idle.
-        if (S.frozen && !A._frozen) { A._frozen = true; measureBound(); homePos(); }
+        if (S.frozen && !A._frozen) { A._frozen = true; measureBound(); frozenPos(); }
         if (!S.frozen) A._frozen = false;
         const b = wrap.getBoundingClientRect(); const W = b.width, H = b.height;
         const sw = S.sizePx, sh = sw * 150 / 120;
@@ -323,6 +340,14 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
 
   /* grimaces + pensées (mode autonome) */
   useEffect(() => {
+    // Chat ouvert (frozen) : PAS de bulles de pensée aléatoires — une bulle
+    // unique dédiée (gérée par l'effet ci-dessous) la remplace. On nettoie
+    // les pensées résiduelles.
+    if (frozen) {
+      if (wrapRef.current) wrapRef.current.querySelectorAll('.jb-thought').forEach((n) => n.remove());
+      bubblesRef.current = [];
+      return;
+    }
     if (mode !== 'auto') { setExpr(manualExpr || 'baby'); return; }
     let alive = true; const timers = [];
     const cycle = () => {
@@ -378,7 +403,40 @@ function Robot({ mode, dark, speedPct, sizePx, expressivity, freq, manualExpr, f
     return () => { alive = false; timers.forEach(clearTimeout); setExpr(manualExpr || 'baby');
       bubblesRef.current = [];
       if (wrapRef.current) wrapRef.current.querySelectorAll('.jb-thought').forEach((n) => n.remove()); };
-  }, [mode, manualExpr]);
+  }, [mode, manualExpr, frozen]);
+
+  /* Bulle UNIQUE quand le chat est ouvert (frozen) : trois points de
+     rédaction animés si Jarvis est en train de répondre (chatBusy), sinon
+     une oreille attentive (« je t'écoute »). Positionnée au-dessus de la
+     tête du robot, suivie en continu (le robot ne bouge pas mais on
+     recale au cas où). DOM impératif (cohérent avec les autres bulles). */
+  useEffect(() => {
+    if (!frozen) return;
+    const field = wrapRef.current;
+    if (!field) return;
+    const bub = document.createElement('div');
+    bub.className = 'jb-robot-bubble';
+    bub.innerHTML = chatBusy
+      ? '<span class="jb-typing"><i></i><i></i><i></i></span>'
+      : '<span class="jb-ear" title="Je t\'écoute">👂</span>';
+    field.appendChild(bub);
+    const place = () => {
+      const L = live.current || { x: 80, y: 80, sh: 70, sw: 56 };
+      const W = field.clientWidth, H = field.clientHeight;
+      const bw = bub.offsetWidth, bh = bub.offsetHeight;
+      let left = L.x - bw / 2;
+      let top = (L.y - L.sh * 0.86) - bh - 8;
+      if (top < 6) top = L.y - L.sh * 0.5;
+      left = clamp(left, 6, Math.max(6, W - bw - 6));
+      top = clamp(top, 6, Math.max(6, H - bh - 6));
+      bub.style.left = left + 'px';
+      bub.style.top = top + 'px';
+    };
+    place();
+    const t = setTimeout(place, 60);
+    const id = setInterval(place, 200);
+    return () => { clearTimeout(t); clearInterval(id); bub.remove(); };
+  }, [frozen, chatBusy]);
 
   const accent = mode === 'auto' ? '#2BD4C0' : '#FFC93C';
   const ref = (k) => (el) => { r.current[k] = el; };
@@ -887,6 +945,12 @@ function JarvisBanner() {
     try { return localStorage.getItem(BANNER_KEY) === '1'; } catch (e) { return false; }
   });
   const [chatOpen, setChatOpen] = useState(false);
+  // État « Jarvis répond » du chat (busy du store) → la bulle du robot
+  // affiche les points de rédaction quand vrai, l'oreille attentive sinon.
+  const [chatBusy, setChatBusy] = useState(false);
+  useEffect(() => JarvisChatStore.subscribe(() => {
+    try { setChatBusy(!!JarvisChatStore.get().busy); } catch (e) {}
+  }), []);
   const collapsedRef = useRef(null);
   const [restPos, setRestPos] = useState(null); // position du mini-robot (mode fermé), calée sur le titre
 
@@ -1026,7 +1090,7 @@ function JarvisBanner() {
     <>
     <div className={`jb-layer ${auto ? 'jb-mode-auto' : 'jb-mode-manual'} ${dark ? 'jb-is-dark' : 'jb-is-light'}`}>
       <Robot mode={auto ? 'auto' : 'manual'} dark={dark} speedPct={92} sizePx={54}
-             expressivity={130} freq={110} manualExpr="baby" frozen={chatOpen} />
+             expressivity={130} freq={110} manualExpr="baby" frozen={chatOpen} chatBusy={chatBusy} />
 
       <div className="jb-ctl">
           <div className="jb-mode-toggle" role="radiogroup" aria-label="Mode d'exécution"
@@ -1161,6 +1225,18 @@ const CSS = `
 .jb-thought .jb-dots { letter-spacing:1px; opacity:0.7; }
 .jb-thought svg { display:block; }
 @keyframes jbThoughtFloat { 0%{opacity:0;transform:translateY(7px) scale(0.8);} 16%{opacity:1;transform:translateY(0) scale(1);} 80%{opacity:1;transform:translateY(-8px) scale(1);} 100%{opacity:0;transform:translateY(-16px) scale(0.97);} }
+
+/* Bulle UNIQUE du robot quand le chat est ouvert (points de rédaction / oreille). */
+.jb-robot-bubble { --jbbub: rgba(22,22,28,0.93); position:absolute; transform-origin:center bottom; display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:22px; padding:7px 11px; border-radius:18px / 20px; background:var(--jbbub); box-shadow:0 8px 20px -10px rgba(0,0,0,0.6); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px); pointer-events:none; z-index:7; animation: jbBubblePop .26s cubic-bezier(.22,1,.36,1) both; }
+.jb-robot-bubble::before { content:''; position:absolute; z-index:-1; bottom:-5px; left:22%; width:10px; height:10px; border-radius:50%; background:var(--jbbub); box-shadow: -11px 4px 0 -2px var(--jbbub); }
+.jb-is-light .jb-robot-bubble { --jbbub: rgba(255,255,255,0.97); box-shadow:0 8px 20px -12px rgba(0,0,0,0.3); }
+.jb-robot-bubble .jb-ear { font-size:16px; line-height:1; }
+.jb-robot-bubble .jb-typing { display:inline-flex; align-items:center; gap:4px; }
+.jb-robot-bubble .jb-typing i { width:6px; height:6px; border-radius:50%; background:#f4efe4; display:inline-block; animation: jbTyping 1.1s ease-in-out infinite; }
+.jb-is-light .jb-robot-bubble .jb-typing i { background:#3a3530; }
+.jb-robot-bubble .jb-typing i:nth-child(2) { animation-delay:.18s; }
+.jb-robot-bubble .jb-typing i:nth-child(3) { animation-delay:.36s; }
+@keyframes jbBubblePop { from{opacity:0;transform:translateY(6px) scale(0.85);} to{opacity:1;transform:translateY(0) scale(1);} }
 
 .jb-content { position: relative; display: flex; flex-direction: column; gap: 7px; padding: 16px 24px; max-width: 64%; z-index: 3; }
 .jb-kicker { display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:500; letter-spacing:0.15em; text-transform:uppercase; }
