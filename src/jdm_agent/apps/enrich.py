@@ -66,7 +66,7 @@ def main() -> int:
     p.add_argument("--upload-model", default=None,
                    help="Nom du LLM source utilisé dans le filename uploadé "
                         "(ex. 'claude-sonnet-4-7'). Défaut: env LLM_MODEL ou "
-                        "'mcp_client'.")
+                        "'gemini-3.1-flash-lite'.")
     p.add_argument("--upload-endpoint", default=None,
                    help="URL du endpoint LLMDrops (override env JDM_DROPS_URL).")
     p.add_argument("--upload-api-key", default=None,
@@ -178,7 +178,7 @@ def main() -> int:
         if args.upload:
             from jdm_agent.enrich import submit_to_jdm
             # Détermine le nom de modèle uploadé : --upload-model > --model >
-            # env LLM_MODEL > "mcp_client" (cf. submit_to_jdm).
+            # env LLM_MODEL > "gemini-3.1-flash-lite" (cf. submit_to_jdm).
             upload_model = args.upload_model or args.model
             result = submit_to_jdm(
                 args.submission_output,

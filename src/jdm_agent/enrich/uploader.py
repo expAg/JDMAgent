@@ -7,7 +7,7 @@ pour être appelé depuis `write_submission_file` ou directement.
 Configuration (cascade) :
   - api_key      : arg `api_key` → env `JDM_DROPS_API_KEY`
   - endpoint_url : arg `endpoint_url` → env `JDM_DROPS_URL` → défaut
-  - model_name   : arg `model_name` → env `LLM_MODEL` → "mcp_client"
+  - model_name   : arg `model_name` → env `LLM_MODEL` → "gemini-3.1-flash-lite"
 
 Le fichier est posté sous `compute_submission_filename(model_name)`,
 indépendant du nom local sur disque (le LLMDrops voit toujours un nom
@@ -34,6 +34,10 @@ except Exception:
 
 
 DEFAULT_ENDPOINT_URL = "http://jeuxdemots.org/LLMDrops.php"
+# Modèle par défaut si l'appelant ne fournit pas model_name et que LLM_MODEL
+# n'est pas défini dans l'env — c'est le modèle du pool gratuit utilisé
+# partout par défaut (et non un placeholder « mcp_client » illisible).
+_DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 
 def submit_to_jdm(
@@ -49,7 +53,7 @@ def submit_to_jdm(
     Args:
         path: chemin local du fichier `.enrich` consolidé à uploader.
         api_key: clé API (override env `JDM_DROPS_API_KEY` si fournie).
-        model_name: nom du LLM source (override env `LLM_MODEL`, fallback "mcp_client").
+        model_name: nom du LLM source (override env `LLM_MODEL`, fallback "gemini-3.1-flash-lite").
         endpoint_url: URL du endpoint (override env `JDM_DROPS_URL`, fallback défaut).
         timeout: timeout HTTP en secondes.
 
@@ -74,7 +78,7 @@ def submit_to_jdm(
     # Résolution des paramètres (cascade)
     key = api_key or os.environ.get("JDM_DROPS_API_KEY") or ""
     url = endpoint_url or os.environ.get("JDM_DROPS_URL") or DEFAULT_ENDPOINT_URL
-    resolved_model = model_name or os.environ.get("LLM_MODEL") or "mcp_client"
+    resolved_model = model_name or os.environ.get("LLM_MODEL") or _DEFAULT_MODEL
     # Extension dérivée du fichier source — préserve .enrich / .audit / .err
     # pour que le mainteneur JDM voie immédiatement le type du drop.
     # Fallback .enrich si le fichier n'a pas d'extension reconnue.
