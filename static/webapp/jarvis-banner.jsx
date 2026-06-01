@@ -883,6 +883,20 @@ function JarvisBanner() {
     return () => mo.disconnect();
   }, []);
 
+  // Ouverture du panneau chat déclenchée DEPUIS AILLEURS (ex. bouton
+  // « Discuter avec Jarvis » du rail bas de la console). On écoute un event
+  // window pour ne pas avoir à remonter setChatOpen hors de la bannière.
+  useEffect(() => {
+    const openChat = () => setChatOpen(true);
+    const toggleChat = () => setChatOpen((v) => !v);
+    window.addEventListener('jdm-open-jarvis-chat', openChat);
+    window.addEventListener('jdm-toggle-jarvis-chat', toggleChat);
+    return () => {
+      window.removeEventListener('jdm-open-jarvis-chat', openChat);
+      window.removeEventListener('jdm-toggle-jarvis-chat', toggleChat);
+    };
+  }, []);
+
   // reflète les changements de mode faits ailleurs (panneau Configuration,
   // autre onglet) — événement custom + storage + poll léger de sécurité.
   useEffect(() => {

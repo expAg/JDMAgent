@@ -4939,6 +4939,33 @@ function JSectionNav({ activeSection, onSelect, hidden }) {
         })}
         {/* spacer droit (= miroir du gauche) pour finir le centrage des pills */}
         <div style={{ flex: 1, minWidth: 8 }} aria-hidden="true" />
+        {/* Bouton « Discuter avec Jarvis » flush à droite — dispatche un
+            event window écouté par la bannière (JarvisBanner) qui ouvre le
+            panneau de chat latéral. */}
+        <button type="button" className="focus-ring"
+          onClick={() => { try { window.dispatchEvent(new CustomEvent('jdm-open-jarvis-chat')); } catch (e) {} }}
+          aria-label="Discuter avec Jarvis"
+          title="Discuter avec Jarvis"
+          style={{
+            flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 7,
+            padding: '6px 13px', marginLeft: 4,
+            background: 'color-mix(in srgb, var(--accent) 12%, var(--bg-card))',
+            border: '1px solid color-mix(in srgb, var(--accent) 55%, transparent)',
+            borderRadius: 999, cursor: 'pointer',
+            fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600,
+            color: 'var(--accent)',
+            transition: 'background .15s, border-color .15s, transform .12s',
+          }}
+          onMouseDown={(e) => { e.currentTarget.style.transform = 'translateY(1px)'; }}
+          onMouseUp={(e) => { e.currentTarget.style.transform = 'none'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ flexShrink: 0 }}>
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+          </svg>
+          Discuter avec Jarvis
+        </button>
       </div>
     </nav>
   );
