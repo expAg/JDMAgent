@@ -10461,8 +10461,13 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
   // done = run terminé (sans soumission). isRunning = run en cours.
   // → 4 statuts UI possibles : 'running' / 'submitted' / 'done' / 'idle'.
   const submitted = !!(store && store.submitted);
-  const isDone = !!(store && store.status === 'done');
-  const filePath = (store && store.filePath) || null;
+  // isDone : statut du rec (obs) SINON du run serveur (latest) — sinon un
+  // run terminé non encore observé (rec vide=idle) s'affichait « en
+  // attente » au lieu de « terminé ».
+  const isDone = (store && store.status === 'done')
+    || (latest && (latest.status === 'done' || latest.status === 'error'));
+  const filePath = (store && store.filePath)
+    || (latest && latest.stats && latest.stats.file) || null;
 
   const runId = (opts && opts.serverRun && opts.serverRun.run_id)
     || (store && store.runId) || (latest && latest.run_id) || null;
