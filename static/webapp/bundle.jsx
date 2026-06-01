@@ -535,7 +535,16 @@ function SectionTitle({ kicker, title, desc, right }) {
           fontWeight: 600,
           letterSpacing: '-0.015em',
           color: 'var(--ink)',
-        }}>{title}</h1>
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 11,
+        }}>
+          {/* Icône logo JDM (sun-network) devant le titre de chaque page. */}
+          <span style={{ flexShrink: 0, display: 'inline-flex' }} aria-hidden="true">
+            <JDMMark size={30} />
+          </span>
+          <span>{title}</span>
+        </h1>
         {desc && (
           <p style={{
             margin: '8px 0 0',
