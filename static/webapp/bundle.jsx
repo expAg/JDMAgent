@@ -15148,6 +15148,21 @@ function App() {
     if (window.__jdmRoute) window.__jdmRoute.push(view, null);
   }, [view]);
 
+  // Favicon par vue : tête du robot sur l'onglet Jarvis, logo sun-network
+  // (le logo du site) partout ailleurs. On swap l'attribut href du <link>.
+  useEffect(() => {
+    const ROBOT = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Cdefs%3E%3ClinearGradient id='v' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23E63B7A'/%3E%3Cstop offset='.25' stop-color='%23F5C518'/%3E%3Cstop offset='.5' stop-color='%235FB94A'/%3E%3Cstop offset='.75' stop-color='%232BB8D4'/%3E%3Cstop offset='1' stop-color='%238A5CD4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='80' height='80' rx='17' fill='%231a1b22'/%3E%3Cline x1='40' y1='21' x2='40' y2='13' stroke='%232BD4C0' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='40' cy='10.5' r='4' fill='%232BD4C0'/%3E%3Crect x='16' y='21' width='48' height='43' rx='17' fill='%23f3eee2'/%3E%3Crect x='21' y='28' width='38' height='27' rx='12' fill='url(%23v)' opacity='.95'/%3E%3Crect x='23.5' y='30.5' width='33' height='22' rx='10' fill='%230b0c10'/%3E%3Ccircle cx='33' cy='41.5' r='5' fill='%232BD4C0'/%3E%3Ccircle cx='47' cy='41.5' r='5' fill='%232BD4C0'/%3E%3C/svg%3E";
+    const SUN = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' rx='17' fill='%231a1b22'/%3E%3Ccircle cx='40' cy='18' r='4.5' fill='%23E63B7A'/%3E%3Ccircle cx='55.6' cy='24.4' r='4.5' fill='%23F5C518'/%3E%3Ccircle cx='62' cy='40' r='4.5' fill='%235FB94A'/%3E%3Ccircle cx='55.6' cy='55.6' r='4.5' fill='%232BB8D4'/%3E%3Ccircle cx='40' cy='62' r='4.5' fill='%238A5CD4'/%3E%3Ccircle cx='24.4' cy='55.6' r='4.5' fill='%23E63B7A'/%3E%3Ccircle cx='18' cy='40' r='4.5' fill='%23F5C518'/%3E%3Ccircle cx='24.4' cy='24.4' r='4.5' fill='%235FB94A'/%3E%3Ccircle cx='40' cy='40' r='9' fill='%23c0411a'/%3E%3C/svg%3E";
+    let link = document.querySelector("link[rel='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.setAttribute('rel', 'icon');
+      link.setAttribute('type', 'image/svg+xml');
+      document.head.appendChild(link);
+    }
+    link.setAttribute('href', view === 'jarvis' ? ROBOT : SUN);
+  }, [view]);
+
   // Reconcile au boot : si des runs Jarvis tournaient encore côté
   // serveur quand l'utilisateur a fermé la tab / refresh, on s'y
   // rebranche pour récupérer la progression. Fire-and-forget.
