@@ -2318,16 +2318,18 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           }}>
             Tableau de <span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>bord</span>
           </h1>
+          {/* Description sous le titre — laisse la zone droite du masthead
+              libre pour les contrôles de la mascotte (toggle Manuel/Autonome,
+              bouton Discuter) qui se logent à droite via la couche jb-layer. */}
+          <p style={{
+            margin: '14px 0 0', maxWidth: '54ch',
+            fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-3)',
+          }}>
+            Jarvis est l'agent orchestrateur des différents agents JDM. Sur cette
+            page il est possible de configurer Jarvis et voir le détail des
+            agents individuels.
+          </p>
         </div>
-
-        <p style={{
-          margin: 0, maxWidth: '38ch',
-          fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-3)',
-        }}>
-          Six flux d'agent supervises. Chaque carte montre, en direct, ce qui
-          se passe a l'interieur du flux : etape active, metriques qui montent,
-          derniers triplets/items produits.
-        </p>
       </div>
 
       {/* ── KPI strip — agreges sur tous les flux ── */}
