@@ -392,10 +392,15 @@ def start_flow(flow_id: str, term: str = "", relation: str = "",
       - stats       : statistiques sur un terme
       - annotation  : annoter des triplets (constitutif/contrastif/…)
 
-    `term` optionnel : si vide, l'agent du flux tire un terme au hasard.
-    `relation` optionnel (ex. 'r_isa'). `target_count` optionnel (nb d'items
-    visés, 0 = défaut du flux). Le flux tourne en fond et apparaît dans la
-    supervision ; suis-le avec list_runs / get_run, arrête-le avec stop_flow.
+    `term` : LAISSE-LE VIDE ("") quand l'utilisateur ne donne pas de terme
+    précis (« lance un enrichissement », « au hasard », « n'importe quel
+    terme »…). NE tire PAS toi-même un terme, n'appelle PAS pick_random_term,
+    n'invente AUCUN terme : c'est l'AGENT DU FLUX qui fait le tirage aléatoire
+    uniforme côté serveur. Ne renseigne `term` QUE si l'utilisateur a nommé
+    un terme explicite. `relation` optionnel (ex. 'r_isa'). `target_count`
+    optionnel (nb d'items visés, 0 = défaut du flux). Le flux tourne en fond
+    et apparaît dans la supervision ; suis-le avec list_runs / get_run,
+    arrête-le avec stop_flow.
     """
     fid = (flow_id or "").strip().lower()
     if fid not in _VALID_FLOWS:

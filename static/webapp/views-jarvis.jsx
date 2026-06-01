@@ -1656,7 +1656,7 @@ function JPanel({ children }) {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'flex-start',
-      padding: '92px 28px 56px',
+      padding: '32px 28px 56px',
       overflow: 'auto',
     }}>
       {children}
@@ -4957,7 +4957,7 @@ function JSectionNav({ activeSection, onSelect, hidden }) {
             event window écouté par la bannière (JarvisBanner) qui ouvre le
             panneau de chat latéral. */}
         <button type="button" className="focus-ring"
-          onClick={() => { try { window.dispatchEvent(new CustomEvent('jdm-open-jarvis-chat')); } catch (e) {} }}
+          onClick={() => { try { window.dispatchEvent(new CustomEvent('jdm-toggle-jarvis-chat')); } catch (e) {} }}
           aria-label="Discuter avec Jarvis"
           title="Discuter avec Jarvis"
           style={{

@@ -961,6 +961,7 @@ function JarvisBanner() {
 
   if (collapsed) {
     return (
+      <>
       <div ref={collapsedRef} className={`jb-layer jb-layer--collapsed ${dark ? 'jb-is-dark' : 'jb-is-light'}`}>
         <button type="button" className={`jb-reopen ${auto ? 'jb-reopen-awake' : ''}`}
                 style={restPos ? { left: restPos.left + 'px', top: (restPos.top - 21) + 'px', right: 'auto', bottom: 'auto' } : undefined}
@@ -984,6 +985,11 @@ function JarvisBanner() {
           <MiniRobot dark={dark} awake={auto} />
         </button>
       </div>
+      {/* Le chat doit pouvoir s'ouvrir MÊME quand la bannière est repliée
+          (bouton « Discuter » du rail bas). Le panneau est donc rendu ici
+          aussi, indépendamment de l'état collapsed. */}
+      {chatOpen && <ChatPanel dark={dark} onClose={() => setChatOpen(false)} />}
+      </>
     );
   }
 
