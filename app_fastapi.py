@@ -1092,8 +1092,23 @@ async def api_jarvis_chat(req: JarvisChatRequest):
         _jchat_rt.set_config_snapshot(req.config or {})
         _jchat_rt.begin_config_patch_capture()
 
+        # Clé Gemini à OCCUPATION MINIMALE : comme les flux, le chat prend
+        # une clé du pool la moins chargée (load-min) plutôt que la clé env
+        # sticky — évite qu'une discussion monopolise la même clé qu'un flux
+        # qui tourne. Lease relâché dans le finally. Si pas de pool / pas
+        # gemini → override None (fallback env, comportement inchangé).
+        _chat_lease_id = "chat-" + _uuid.uuid4().hex[:8]
+        _gem_key = None
         try:
-            llm = _app._build_llm(req.model, req.api_key, use_thinking=False)
+            if (req.model or "").startswith("gemini-"):
+                from jdm_agent.pool_lease import acquire_key as _acq
+                _gem_key = _acq(req.model, _chat_lease_id, _app)
+        except Exception:
+            _gem_key = None
+
+        try:
+            llm = _app._build_llm(req.model, req.api_key, use_thinking=False,
+                                  gemini_key_override=_gem_key)
         except ValueError as e:
             yield {"event": "error", "data": json.dumps({"text": str(e)}, ensure_ascii=False)}
             return
@@ -1192,6 +1207,14 @@ async def api_jarvis_chat(req: JarvisChatRequest):
         except Exception as e:
             yield {"event": "error", "data": json.dumps({
                 "text": f"{type(e).__name__}: {e}"}, ensure_ascii=False)}
+        finally:
+            # Relâche la clé pool prise pour ce tour de chat.
+            if _gem_key:
+                try:
+                    from jdm_agent.pool_lease import release_key as _rel
+                    _rel(_chat_lease_id)
+                except Exception:
+                    pass
 
     return EventSourceResponse(gen(), ping=15)
 
@@ -1273,8 +1296,36 @@ _JARVIS_RUNS_LOCK = _threading.Lock()
 _JARVIS_RUN_TTL = 24 * 3600  # 24h après terminaison (done / error)
 
 
+def _slug_term(term: str) -> str:
+    """Slug sûr pour un nom de fichier : minuscules, sans accents, alnum +
+    tirets. Vide → 'hasard'."""
+    import unicodedata
+    t = (term or "").strip().lower()
+    if not t:
+        return "hasard"
+    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii")
+    t = _re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+    return (t or "hasard")[:32]
+
+
+def _make_run_id(flow_id: str, params: dict) -> str:
+    """Identité LISIBLE d'un run = stem du fichier produit.
+    Forme : `<flux>_<terme>_<JJ-MM-AA_HHhMMmSS>`. Unique (collision →
+    suffixe _2, _3…). Remplace l'ancien uuid hex incompréhensible : une
+    seule identité cohérente entre le run et son fichier."""
+    import datetime as _dt
+    slug = _slug_term((params or {}).get("term") or "")
+    ts = _dt.datetime.now().strftime("%d-%m-%y_%Hh%Mm%S")
+    base = f"{flow_id}_{slug}_{ts}"
+    with _JARVIS_RUNS_LOCK:
+        rid, i = base, 2
+        while rid in _JARVIS_RUNS:
+            rid = f"{base}_{i}"; i += 1
+    return rid
+
+
 def _new_run(flow_id: str, params: dict, headline: str) -> dict:
-    run_id = _uuid.uuid4().hex[:12]
+    run_id = _make_run_id(flow_id, params)
     # Snapshot des clés du registry de consolidation au moment du start.
     # Le registry est un global module-level (cf. note historique dans
     # validators.py expliquant pourquoi ce n'est pas un ContextVar — les

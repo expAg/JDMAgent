@@ -685,8 +685,41 @@ function ChatPanel({ dark, onClose }) {
   const { msgs, busy } = JarvisChatStore.get();
   const [draft, setDraft] = useState('');
   const [railH, setRailH] = useState(0);
+  // Largeur du panneau, élargissable au glissement de la poignée gauche.
+  // Persistée en mémoire (localStorage) pour rester stable entre ouvertures.
+  const [width, setWidth] = useState(() => {
+    try {
+      const w = parseInt(localStorage.getItem('jdm_jarvis_chat_w') || '', 10);
+      if (w >= 320 && w <= 1000) return w;
+    } catch (e) {}
+    return Math.min(380, Math.round(window.innerWidth * 0.92));
+  });
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+
+  // Drag de la poignée gauche → largeur = distance du bord droit au curseur.
+  const startResize = useCallback((e) => {
+    e.preventDefault();
+    const onMove = (ev) => {
+      const x = ev.touches ? ev.touches[0].clientX : ev.clientX;
+      const w = clamp(Math.round(window.innerWidth - x), 320,
+                      Math.round(window.innerWidth * 0.96));
+      setWidth(w);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      document.body.style.userSelect = '';
+      setWidth((w) => { try { localStorage.setItem('jdm_jarvis_chat_w', String(w)); } catch (e) {} return w; });
+    };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+  }, []);
 
   useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
   useEffect(() => {
@@ -736,7 +769,10 @@ function ChatPanel({ dark, onClose }) {
 
   return ReactDOM.createPortal((
     <div className={`jb-chat ${dark ? 'jb-is-dark' : 'jb-is-light'}`} role="dialog" aria-label="Discuter avec Jarvis"
-         style={{ bottom: railH ? railH + 'px' : 0 }}>
+         style={{ bottom: railH ? railH + 'px' : 0, width: width + 'px' }}>
+      {/* Poignée de redimensionnement (bord gauche) — glisser pour élargir. */}
+      <div className="jb-chat-resize" onMouseDown={startResize} onTouchStart={startResize}
+           role="separator" aria-label="Redimensionner le panneau" title="Glisser pour élargir" />
       <div className="jb-chat-head">
         <span className="jb-chat-bot" aria-hidden="true"><MiniRobot dark={dark} awake={true} /></span>
         <div className="jb-chat-titles">
@@ -947,6 +983,8 @@ const CSS = `
 
 /* Panneau latéral de discussion */
 .jb-chat { position:fixed; top:0; right:0; bottom:0; width:min(380px,92vw); z-index:1000; display:flex; flex-direction:column; background:var(--bg-card); border-left:1px solid var(--line); box-shadow:-18px 0 48px -24px rgba(0,0,0,0.5); pointer-events:auto; transform:translateX(0); }
+.jb-chat-resize { position:absolute; left:0; top:0; bottom:0; width:7px; cursor:ew-resize; z-index:5; background:transparent; transition: background .15s ease; }
+.jb-chat-resize:hover, .jb-chat-resize:active { background:linear-gradient(90deg, var(--accent), transparent); }
 @media (prefers-reduced-motion: no-preference) { .jb-chat { animation: jbChatIn .26s cubic-bezier(.22,1,.36,1) both; } }
 @keyframes jbChatIn { from{transform:translateX(100%);} to{transform:translateX(0);} }
 

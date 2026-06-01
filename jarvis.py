@@ -1622,7 +1622,14 @@ def run_jarvis_flow(
             _ext, _canon_mode = ".enrich", "auto_append"
         else:
             _ext, _canon_mode = ".enrich", None
-        canonical_path = f"/tmp/jdm_outputs/jdm_{_ts}_{_hash}{_ext}"
+        # Nom du fichier = IDENTITÉ DU RUN (run_id lisible : <flux>_<terme>_
+        # <date>) quand l'appelant en fournit un. Le fichier et le run
+        # partagent ainsi UN SEUL identifiant cohérent et humain. Fallback
+        # legacy (CLI, pas de run_id) : ancien schéma jdm_<ts>_<hash>.
+        if run_id:
+            canonical_path = f"/tmp/jdm_outputs/{run_id}{_ext}"
+        else:
+            canonical_path = f"/tmp/jdm_outputs/jdm_{_ts}_{_hash}{_ext}"
 
         # PAS de snapshot pre-run + PAS de cleanup filet en finally.
         # Historiquement on snapshotait /tmp/jdm_outputs ici puis on
