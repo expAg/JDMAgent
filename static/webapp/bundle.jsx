@@ -7664,10 +7664,18 @@ function FileSubmitButton({ filePath, flowId, submitted, onDone, compact, runnin
       if (!ok) return;
     }
     setState('sending');
+    // Modèle pour le nom de fichier uploadé = celui de la CONFIGURATION
+    // Jarvis courante (window.__JDM_JARVIS_CONFIG__.llm). Évite le fallback
+    // serveur générique : le drop porte le modèle réellement configuré.
+    let _model = '';
+    try {
+      const cfg = (typeof window !== 'undefined' && window.__JDM_JARVIS_CONFIG__) || {};
+      _model = cfg.llm || '';
+    } catch (e) {}
     try {
       const r = await fetch('api/productions/submit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ names: [fileName], archived: false, api_key: '', model_name: '' }),
+        body: JSON.stringify({ names: [fileName], archived: false, api_key: '', model_name: _model }),
       });
       const data = await r.json();
       const res = (data.results || [])[0] || {};
