@@ -2398,10 +2398,10 @@ function useShuffledAccents(n) {
 //   • modules  (Modules)        → à droite / en bas
 // Cet ordre détermine la position sur la track ; index initial = 1 (hero).
 const PANELS = [
-  { id: 'bref',     label: 'Sous le capot',     symbol: '♠' },
+  { id: 'contexte', label: 'Projet',            symbol: '♣' },
   { id: 'hero',     label: 'Présentation',      symbol: '♥' },
   { id: 'modules',  label: 'Modules',           symbol: '♦' },
-  { id: 'contexte', label: 'Cadre théorique',   symbol: '♣' },
+  { id: 'bref',     label: 'Sous le capot',     symbol: '♠' },
 ];
 
 function ViewProjet({ goto }) {
@@ -3005,7 +3005,7 @@ function ViewProjet({ goto }) {
             : 'none',
           willChange: 'transform',
         }}>
-          {/* ── Panneau 1 — Sous le capot (gauche / haut) ── */}
+          {/* ── Panneau 1 — Projet (briefs problématique / cadre théorique) ── */}
           <CarouselPanel flexBasis={panelBasis}>
             <div style={{
               width: '100%',
@@ -3015,50 +3015,11 @@ function ViewProjet({ goto }) {
               gap: 28,
             }}>
               <SectionTitle
-                kicker="Sous le capot"
-                title="Le projet en bref"
-                desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
+                kicker="Projet"
+                title="Pourquoi agentifier JeuxDeMots ?"
+                desc="Cinq briefs sur la ressource, le projet d'agentification et les trois enjeux clés : sécurisation, explicabilité, orchestration."
               />
-
-              <ExpandableBriefsGrid briefs={briefs} goto={goto} />
-
-              <div style={{
-                padding: 24,
-                background: 'var(--bg-elev)',
-                border: '1px solid var(--line-soft)',
-                borderRadius: 'var(--radius-lg)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 24,
-                flexWrap: 'wrap',
-              }}>
-                <div style={{ flex: 1, minWidth: 240 }}>
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    fontFamily: 'var(--font-display)',
-                    fontSize: 18, fontWeight: 600, marginBottom: 6,
-                  }}>
-                    <GitHubMark size={20} />
-                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-                      style={{ color: 'var(--ink)', textDecoration: 'none' }}>
-                      Projet open-source
-                    </a>
-                  </div>
-                  <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
-                    Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe SLICE, LIRMM/CNRS.
-                  </div>
-                  <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
-                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
-                      style={{ color: 'var(--accent)' }}>Code source</a>
-                    <span style={{ color: 'var(--ink-3)' }}>·</span>
-                    <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
-                      style={{ color: 'var(--accent)' }}>USAGE.md</a>
-                    <span style={{ color: 'var(--ink-3)' }}>·</span>
-                    <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" target="_blank" rel="noopener noreferrer"
-                      style={{ color: 'var(--accent)' }}>Notebook Colab</a>
-                  </div>
-                </div>
-              </div>
+              <ExpandableBriefsGrid briefs={briefsContexte} goto={goto} />
             </div>
           </CarouselPanel>{/* ── Panneau 2 — Présentation (centre, entrée) ── */}
           <CarouselPanel flexBasis={panelBasis}>
@@ -3145,7 +3106,7 @@ function ViewProjet({ goto }) {
             </div>
           </CarouselPanel>
 
-          {/* ── Panneau 4 — Cadre théorique (briefs problématique projet) ── */}
+          {/* ── Panneau 4 — Sous le capot (droite) ── */}
           <CarouselPanel flexBasis={panelBasis}>
             <div style={{
               width: '100%',
@@ -3155,11 +3116,50 @@ function ViewProjet({ goto }) {
               gap: 28,
             }}>
               <SectionTitle
-                kicker="Cadre théorique"
-                title="Pourquoi agentifier JeuxDeMots ?"
-                desc="Cinq briefs sur la ressource, le projet d'agentification et les trois enjeux clés : sécurisation, explicabilité, orchestration."
+                kicker="Sous le capot"
+                title="Le projet en bref"
+                desc="Quatre piliers techniques qui rendent l'agent fiable, reproductible et accessible à toute la chaîne d'outils LLM modernes."
               />
-              <ExpandableBriefsGrid briefs={briefsContexte} goto={goto} />
+
+              <ExpandableBriefsGrid briefs={briefs} goto={goto} />
+
+              <div style={{
+                padding: 24,
+                background: 'var(--bg-elev)',
+                border: '1px solid var(--line-soft)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 24,
+                flexWrap: 'wrap',
+              }}>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 18, fontWeight: 600, marginBottom: 6,
+                  }}>
+                    <GitHubMark size={20} />
+                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--ink)', textDecoration: 'none' }}>
+                      Projet open-source
+                    </a>
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+                    Données : <strong>JeuxDeMots</strong> — Mathieu Lafourcade, équipe SLICE, LIRMM/CNRS.
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
+                    <a href="https://github.com/expAg/JDMAgent" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>Code source</a>
+                    <span style={{ color: 'var(--ink-3)' }}>·</span>
+                    <a href="https://github.com/expAg/JDMAgent/blob/main/USAGE.md" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>USAGE.md</a>
+                    <span style={{ color: 'var(--ink-3)' }}>·</span>
+                    <a href="https://colab.research.google.com/github/expAg/JDMAgent/blob/main/notebooks/demo.ipynb" target="_blank" rel="noopener noreferrer"
+                      style={{ color: 'var(--accent)' }}>Notebook Colab</a>
+                  </div>
+                </div>
+              </div>
             </div>
           </CarouselPanel>
 
@@ -4398,10 +4398,32 @@ function QTTermAndRelation({ config, form, setForm, onNavigate }) {
 }
 
 // ───────── Expandable briefs grid (Sous le capot) ─────────
+// Le détail s'ouvre IMMÉDIATEMENT SOUS LA RANGÉE de la carte cliquée
+// — pas après toutes les cartes. Astuce CSS Grid : on rend le détail
+// DANS le map (donc dans la grille), avec `gridColumn: 1 / -1` pour
+// qu'il occupe toute la largeur. L'auto-placement du Grid pousse le
+// détail à la rangée suivant celle de la carte (peu importe combien
+// de colonnes le viewport autorise — auto-fit). Effet : la rangée
+// contenant la carte cliquée est suivie immédiatement du panneau
+// déplié, en pleine largeur, puis les cartes suivantes reprennent à
+// la rangée d'après.
 function ExpandableBriefsGrid({ briefs, goto }) {
   const [expandedIdx, setExpandedIdx] = useState(null);
+  // `slotIdx` = index où afficher le détail dans la grille, même
+  // pendant la fermeture animée (sinon le détail saute hors layout
+  // dès qu'on ferme). BriefDetailPanel appelle `onClosed` à la fin
+  // de sa transition de fermeture pour qu'on reset le slot.
+  const [slotIdx, setSlotIdx] = useState(null);
   const expanded = expandedIdx == null ? null : briefs[expandedIdx];
-  const toggle = (i) => setExpandedIdx(prev => prev === i ? null : i);
+  const toggle = (i) => {
+    if (expandedIdx === i) {
+      setExpandedIdx(null);
+      // slotIdx reste → BriefDetailPanel s'anime en fermeture sur place
+    } else {
+      setExpandedIdx(i);
+      setSlotIdx(i);
+    }
+  };
   const cardRefs = useRef({});
   const detailRef = useRef(null);
 
@@ -4413,6 +4435,18 @@ function ExpandableBriefsGrid({ briefs, goto }) {
     return () => cancelAnimationFrame(raf);
   }, [expandedIdx]);
 
+  const renderDetail = (
+    <div ref={detailRef} style={{ gridColumn: '1 / -1' }}>
+      <BriefDetailPanel
+        brief={expanded}
+        index={expandedIdx}
+        goto={goto}
+        onClose={() => setExpandedIdx(null)}
+        onClosed={() => setSlotIdx(null)}
+      />
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 24 }}>
       <div style={{
@@ -4423,64 +4457,58 @@ function ExpandableBriefsGrid({ briefs, goto }) {
         {briefs.map((b, i) => {
           const isOpen = expandedIdx === i;
           return (
-            <div
-              key={i}
-              ref={el => { if (el) cardRefs.current[i] = el; }}
-              onClick={() => toggle(i)}
-              onKeyDown={(e) => { if (e.key === 'Enter') toggle(i); }}
-              className="focus-ring"
-              tabIndex={0}
-              style={{
-                background: 'var(--bg-card)',
-                border: '1px solid ' + (isOpen ? 'var(--accent)' : 'var(--line)'),
-                borderRadius: 'var(--radius-lg)',
-                padding: 20,
-                cursor: 'pointer',
-                position: 'relative',
-                boxShadow: isOpen ? '0 6px 18px -10px var(--accent)' : 'none',
-                transition: 'border-color 0.18s, box-shadow 0.18s, transform 0.18s',
-                transform: isOpen ? 'translateY(-1px)' : 'none',
-              }}>
-              <div className="mono" style={{
-                fontSize: 11,
-                color: isOpen ? 'var(--accent)' : 'var(--ink-3)',
-                textTransform: 'uppercase', letterSpacing: '0.1em',
-                marginBottom: 8, fontWeight: 600,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              }}>
-                <span style={{ color: 'var(--accent)' }}>0{i + 1}</span>
-                <span style={{
-                  fontSize: 10,
+            <React.Fragment key={i}>
+              <div
+                ref={el => { if (el) cardRefs.current[i] = el; }}
+                onClick={() => toggle(i)}
+                onKeyDown={(e) => { if (e.key === 'Enter') toggle(i); }}
+                className="focus-ring"
+                tabIndex={0}
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid ' + (isOpen ? 'var(--accent)' : 'var(--line)'),
+                  borderRadius: 'var(--radius-lg)',
+                  padding: 20,
+                  cursor: 'pointer',
+                  position: 'relative',
+                  boxShadow: isOpen ? '0 6px 18px -10px var(--accent)' : 'none',
+                  transition: 'border-color 0.18s, box-shadow 0.18s, transform 0.18s',
+                  transform: isOpen ? 'translateY(-1px)' : 'none',
+                }}>
+                <div className="mono" style={{
+                  fontSize: 11,
                   color: isOpen ? 'var(--accent)' : 'var(--ink-3)',
-                  letterSpacing: '0.08em',
-                }}>{isOpen ? '— refermer' : 'déplier +'}</span>
+                  textTransform: 'uppercase', letterSpacing: '0.1em',
+                  marginBottom: 8, fontWeight: 600,
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <span style={{ color: 'var(--accent)' }}>0{i + 1}</span>
+                  <span style={{
+                    fontSize: 10,
+                    color: isOpen ? 'var(--accent)' : 'var(--ink-3)',
+                    letterSpacing: '0.08em',
+                  }}>{isOpen ? '— refermer' : 'déplier +'}</span>
+                </div>
+                <div className="display" style={{
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 18, fontWeight: 600,
+                  marginBottom: 8, color: 'var(--ink)',
+                }}>{b.title}</div>
+                <p style={{
+                  margin: 0, fontSize: 13,
+                  color: 'var(--ink-2)', lineHeight: 1.55,
+                }}>{b.body}</p>
               </div>
-              <div className="display" style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 18, fontWeight: 600,
-                marginBottom: 8, color: 'var(--ink)',
-              }}>{b.title}</div>
-              <p style={{
-                margin: 0, fontSize: 13,
-                color: 'var(--ink-2)', lineHeight: 1.55,
-              }}>{b.body}</p>
-            </div>
+              {slotIdx === i && renderDetail}
+            </React.Fragment>
           );
         })}
-      </div>
-      <div ref={detailRef}>
-        <BriefDetailPanel
-          brief={expanded}
-          index={expandedIdx}
-          goto={goto}
-          onClose={() => setExpandedIdx(null)}
-        />
       </div>
     </div>
   );
 }
 
-function BriefDetailPanel({ brief, index, goto, onClose }) {
+function BriefDetailPanel({ brief, index, goto, onClose, onClosed }) {
   // Keep last truthy brief around so the panel can finish its close animation
   // before content unmounts. Ref so the value is committed SYNCHRONOUSLY
   // — fixes the first-click case where scroll measurement would happen
@@ -4498,6 +4526,10 @@ function BriefDetailPanel({ brief, index, goto, onClose }) {
         if (!open && e.target === e.currentTarget && lastBriefRef.current) {
           lastBriefRef.current = null;
           forceRender();
+          // Signale au parent que la fermeture est terminée — sert
+          // au grid `ExpandableBriefsGrid` à retirer le slot du
+          // détail dans le DOM grid (sinon il reste en case fantôme).
+          if (typeof onClosed === 'function') onClosed();
         }
       }}
       style={{
