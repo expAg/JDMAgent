@@ -444,10 +444,71 @@ def stop_flow(run_id: str) -> dict:
                            "l'utilisateur sans afficher le run_id."}
 
 
+# ───────────────────────── tool : description des flux (lecture seule) ─────────────────────────
+
+# flow_id (UI / start_flow) → fonction workflow canonique (jdm_tools).
+_FLOW_WORKFLOWS = {
+    "enrich": "enrichment_workflow",
+    "audit": "audit_workflow",
+    "gap": "gap_detection_workflow",
+    "signalement": "error_detection_workflow",
+    "stats": "stats_workflow",
+    "annotation": "annotation_workflow",
+}
+
+
+def _condense_workflow(fid: str, full: dict, detailed: bool) -> dict:
+    """Réduit le dict workflow verbeux à l'essentiel (titre + étapes + outils).
+    `detailed=False` : juste titre + noms d'étapes (ultra compact, pour la
+    liste). `detailed=True` : + intent court + outil de chaque étape."""
+    steps_raw = full.get("steps") or []
+    if not detailed:
+        return {"flow_id": fid, "title": full.get("title"),
+                "steps": [s.get("name") for s in steps_raw]}
+    steps = [{"order": s.get("order"), "name": s.get("name"),
+              "tools": s.get("tool")} for s in steps_raw]
+    return {"flow_id": fid, "title": full.get("title"),
+            "intent": full.get("intent"), "steps": steps}
+
+
+@tool
+def describe_flows(flow_id: str = "") -> dict:
+    """Vue LECTURE SEULE des flux d'agents Jarvis : étapes et outils de chaque
+    flow. À utiliser pour EXPLIQUER fidèlement comment un agent travaille —
+    ne devine JAMAIS les étapes, lis-les ici.
+
+    - flow_id vide → résumé compact de TOUS les flux (titre + noms d'étapes).
+    - flow_id précis (enrich/audit/gap/signalement/stats/annotation) → détail
+      du flow : intention + étapes + outil de chaque étape.
+
+    N'EXÉCUTE rien : c'est purement descriptif. Pour LANCER un flux, utilise
+    start_flow.
+    """
+    from jdm_agent.tools import jdm_tools as _jt
+    fid = (flow_id or "").strip().lower()
+    if fid:
+        wf_name = _FLOW_WORKFLOWS.get(fid)
+        if not wf_name:
+            return {"error": f"flow_id invalide : {flow_id!r}. "
+                             f"Attendu : {sorted(_FLOW_WORKFLOWS)}."}
+        full = getattr(_jt, wf_name).invoke({})
+        return _condense_workflow(fid, full, detailed=True)
+    flows = []
+    for k, wf_name in _FLOW_WORKFLOWS.items():
+        try:
+            full = getattr(_jt, wf_name).invoke({})
+            flows.append(_condense_workflow(k, full, detailed=False))
+        except Exception:
+            continue
+    return {"flows": flows, "note": "Pour le détail d'un flow, rappelle "
+            "describe_flows(flow_id)."}
+
+
 def build_supervision_tools() -> list:
     """Renvoie la liste des outils internes de supervision de la mascotte."""
     return [
         list_runs, get_run, list_productions, read_production, summarize_triplets,
+        describe_flows,
         start_flow, stop_flow,
         get_config, set_config,
         read_env, set_env, rollback_env,
