@@ -657,8 +657,8 @@ function ViewProjet({ goto }) {
             }}>
               <SectionTitle
                 kicker="Projet"
-                title="Pourquoi agentifier JeuxDeMots ?"
-                desc="Cinq briefs sur la ressource, le projet d'agentification et les trois enjeux clés : sécurisation, explicabilité, orchestration."
+                title="Le projet en bref"
+                desc={"Cadre neuro-symbolique d'agentification du réseau lexico-sémantique JeuxDeMots, articulant la générativité des LLM et la validation par inférence symbolique, pour la découverte, le contrôle explicable et la consolidation coopérative d'une base de connaissances de sens commun — l'explicabilité y opérant à la fois comme garde-fou contre l'hallucination et comme instrument de diagnostic des lacunes et des erreurs du réseau."}
               />
               <ExpandableBriefsGrid briefs={briefsContexte} goto={goto} />
             </div>
