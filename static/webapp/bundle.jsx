@@ -9633,6 +9633,8 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   // les metrics live (consolidated, toolsCalled, accepted items) pour chaque
   // flow_id observe localement. On combine les deux.
   const [serverRuns, setServerRuns] = useState([]);
+  // run_ids déjà adoptés (attach) pour ne pas re-brancher en boucle.
+  const adoptedRef = useRef(new Set());
   useEffect(() => {
     if (!active) return;
     let alive = true;
@@ -9641,7 +9643,28 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         const r = await fetch('api/jarvis/runs');
         if (r.ok) {
           const d = await r.json();
-          if (alive) setServerRuns(d.runs || []);
+          if (!alive) return;
+          const runs = d.runs || [];
+          setServerRuns(runs);
+          // ADOPTION des runs orphelins : un run lancé par la mascotte
+          // (start_flow) tourne côté serveur mais n'a JAMAIS été observé
+          // par le JarvisStore local → carte allumée mais zéro métrique /
+          // feed / détail. On se branche sur son stream pour récupérer
+          // narration + metrics, comme si on l'avait lancé d'ici.
+          if (typeof JarvisStore !== 'undefined') {
+            for (const s of runs) {
+              if ((s.status === 'running' || s.status === 'starting')
+                  && s.run_id && !adoptedRef.current.has(s.run_id)) {
+                const local = JarvisStore.get(s.flow_id);
+                // N'adopte que si ce flow n'est pas déjà en train d'observer
+                // CE run (évite de doubler un run lancé depuis l'UI).
+                if (!(local && local.status === 'running' && local.runId === s.run_id)) {
+                  adoptedRef.current.add(s.run_id);
+                  JarvisStore.attach(s.flow_id, s.run_id, s.headline).catch(() => {});
+                }
+              }
+            }
+          }
         }
       } catch {}
     };
