@@ -1388,6 +1388,21 @@ _JARVIS_RUNS: dict[str, dict] = {}
 _JARVIS_RUNS_LOCK = _threading.Lock()
 _JARVIS_RUN_TTL = 24 * 3600  # 24h après terminaison (done / error)
 
+# Boucle asyncio principale, capturée au startup. Indispensable pour les
+# runs démarrés depuis un THREAD worker (ex. tool start_flow du chat
+# mascotte) : asyncio.get_event_loop() y lève RuntimeError (Py 3.12+).
+# _push_event a besoin d'un loop valide pour call_soon_threadsafe.
+_MAIN_LOOP: Optional[Any] = None
+
+
+def _resolve_loop():
+    """Loop pour un run : running loop si dispo (handler async), sinon la
+    loop principale capturée au boot. Évite le RuntimeError en thread worker."""
+    try:
+        return _asyncio.get_running_loop()
+    except RuntimeError:
+        return _MAIN_LOOP
+
 
 def _slug_term(term: str) -> str:
     """Slug sûr pour un nom de fichier : minuscules, sans accents, alnum +
@@ -1449,7 +1464,7 @@ def _new_run(flow_id: str, params: dict, headline: str) -> dict:
         "subscribers": set(),    # set[asyncio.Event] notified à chaque push
         "started_at": _time.time(),
         "finished_at": None,
-        "loop": _asyncio.get_event_loop(),
+        "loop": _resolve_loop(),
         "error_text": None,
         # Cooperative cancellation flag — vu par le bg thread entre
         # deux chunks. Posé par POST /api/jarvis/runs/{id}/cancel.
@@ -1795,6 +1810,10 @@ def _chat_stop_flow(run_id: str) -> dict:
 
 @app.on_event("startup")
 async def _start_jarvis_cleanup_task():
+    # Capture la loop principale (le startup tourne dedans) pour que les
+    # runs démarrés en thread worker (tool start_flow) aient un loop valide.
+    global _MAIN_LOOP
+    _MAIN_LOOP = _asyncio.get_running_loop()
     _asyncio.create_task(_cleanup_old_runs_loop())
     # Applique l'overlay d'environnement persisté (clés API modifiées via
     # le chat mascotte) — fait au boot pour que les modifs survivent à un
