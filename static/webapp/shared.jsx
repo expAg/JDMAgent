@@ -695,7 +695,22 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
             return (
               <button
                 key={it.id}
-                onClick={() => setActive(it.id)}
+                onClick={() => {
+                  // Reset SYSTEMATIQUE au clic d'un onglet du header : la vue
+                  // cible remonte à son panneau d'entrée (pour Jarvis =
+                  // Supervision), exactement comme la pill « N/6 flux » et la
+                  // quick-nav. Double-dispatch (avant + microtask après
+                  // setActive) pour couvrir le tout-premier mount de la vue.
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('jdm-nav-reset', { detail: { view: it.id } }));
+                  }
+                  setActive(it.id);
+                  if (typeof window !== 'undefined') {
+                    setTimeout(() => window.dispatchEvent(
+                      new CustomEvent('jdm-nav-reset', { detail: { view: it.id } })
+                    ), 0);
+                  }
+                }}
                 className="focus-ring"
                 style={{
                   padding: '8px 12px',
