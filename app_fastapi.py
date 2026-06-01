@@ -1795,20 +1795,71 @@ def _runs_snapshot_for_chat() -> list[dict]:
         return out
 
 
+def _default_flow_params(flow_id: str, cfg: dict | None) -> dict:
+    """Défauts canoniques d'un flux pour un lancement AUTONOME (mascotte /
+    serveur). Miroir DÉTERMINISTE de `defaultParamsFor` côté front
+    (views-jarvis.jsx) : c'est ce qui porte TOUTE la mécanique du flux —
+    `target_count` (relance/itération vers la cible), `vary_relations`,
+    `iterate`, `top_k`, soumission auto… Sans ça, un flux lancé hors UI
+    tournerait « à nu » (un seul passage, pas de relance). On garde une
+    SEULE source de vérité conceptuelle : les mêmes clés/valeurs que le
+    formulaire, donc un run mascotte se comporte exactement comme un run UI.
+
+    Différence ASSUMÉE avec l'UI : `auto_switch=True`. Un run serveur doit
+    être 100% autonome — sur quota PerDay il bascule silencieusement sur le
+    modèle protégé et CONTINUE, au lieu d'aborter en attendant un clic
+    « Continuer » (mode B de l'UI). « On ne doit jamais cliquer. »
+    """
+    cfg = cfg or {}
+    llm = cfg.get("llm")
+    pool_active = cfg.get("poolActive") is not False  # défaut True (comme l'UI)
+    is_gemini = isinstance(llm, str) and llm.startswith("gemini")
+    model = ("gemini-3.1-flash-lite"
+             if (pool_active and not is_gemini)
+             else (llm or "gemini-3.1-flash-lite"))
+    temp = cfg.get("temperature")
+    temperature = temp if isinstance(temp, (int, float)) else None
+    auto_upload = cfg.get("autoSubmit") is True
+    common = {
+        "model": model, "api_key": "", "drops_key": "",
+        "use_thinking": True, "budget_label": "illimité",
+        "auto_switch": True,           # autonomie serveur (cf. docstring)
+        "temperature": temperature, "pool_active": pool_active,
+        "term": "",                    # vide → tirage hasard via pick_random_term
+    }
+    if flow_id == "enrich":
+        return {**common, "relation": [], "target_count": 3,
+                "vary_relations": True, "iterate": True, "upload": auto_upload}
+    if flow_id == "audit":
+        return {**common, "relation": [], "upload": auto_upload}
+    if flow_id == "gap":
+        return {**common}
+    if flow_id == "signalement":
+        return {**common, "relation": [], "upload": auto_upload}
+    if flow_id == "stats":
+        return {**common, "relation": [], "upload": auto_upload}
+    if flow_id == "annotation":
+        return {**common, "relation": [], "top_k": 8,
+                "target_count": 10, "upload": auto_upload}
+    return common
+
+
 def _chat_start_flow(flow_id: str, params: dict) -> dict:
     """Démarre un flux Jarvis en bg (même machinerie que l'endpoint
     /api/jarvis/{flow_id}/stream) pour le compte de la mascotte. Renvoie
-    {run_id, headline}. Lève via retour {error} si flow inconnu."""
-    p = dict(params or {})
-    # Hérite des défauts pertinents de la config courante (modèle, pool)
-    # pour que le flux lancé par le chat se comporte comme via l'UI.
+    {run_id, headline}. Lève via retour {error} si flow inconnu.
+
+    CLÉ : on part des défauts canoniques complets (`_default_flow_params`)
+    pour que le flux soit STRICTEMENT identique à un lancement UI (même
+    pré-prompt enrichi par target_count/relations, même relance/itération),
+    puis on superpose UNIQUEMENT les valeurs réellement fournies par la
+    mascotte (typiquement `term`). Les None sont ignorés pour ne pas écraser
+    un défaut par un vide.
+    """
     cfg = _jchat_rt.get_config_snapshot()
-    if "model" not in p and cfg.get("llm"):
-        p["model"] = cfg["llm"]
-    if "pool_active" not in p and cfg.get("poolActive") is not None:
-        p["pool_active"] = bool(cfg["poolActive"])
-    p.setdefault("use_thinking", True)
-    p.setdefault("budget_label", "illimité")
+    base = _default_flow_params(flow_id, cfg)
+    overrides = {k: v for k, v in (params or {}).items() if v is not None}
+    p = {**base, **overrides}
     try:
         _prompt, headline = _jarvis_dispatch(flow_id, p)
     except ValueError as e:

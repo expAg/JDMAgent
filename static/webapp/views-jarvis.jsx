@@ -3036,34 +3036,55 @@ function RunDetailModal({ runId, onClose, onPreview }) {
 }
 
 // Carte « lancer » grisée — toujours présente par flux dans la Supervision.
-// Renvoie vers la vue JarvisRun (lancement manuel) au clic. Visuel sobre,
-// désaturé, pour bien la distinguer des cartes de run réelles.
+// Renvoie vers la vue JarvisRun (lancement manuel) au clic. Reprend EXACTEMENT
+// l'en-tête d'une vraie carte de flux (JLoopRing à l'accent + step count,
+// kicker, titre) pour l'identité visuelle ; désaturée + bordure pointillée
+// pour signaler « emplacement de lancement » et la distinguer des runs réels.
 function JLaunchCard({ flow, onOpen }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
+  const num = (JARVIS_FLOWS.findIndex(f => f.id === flow.id) + 1) || 1;
   return (
     <div role="button" tabIndex={0} onClick={onOpen}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       className="focus-ring" title={`Lancer « ${flow.title} » dans la vue Run`}
       style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        gap: 8, minHeight: 150, padding: '18px 16px',
-        background: 'var(--bg-elev)',
+        display: 'flex', flexDirection: 'column',
+        background: 'var(--bg-card)',
         border: '1px dashed ' + (hover ? a : 'var(--line)'),
-        borderRadius: 'var(--radius-lg)', cursor: 'pointer',
-        opacity: hover ? 0.95 : 0.66, filter: hover ? 'none' : 'saturate(0.5)',
-        transition: 'opacity .2s, filter .2s, border-color .16s, transform .18s',
+        borderRadius: 'var(--radius-lg)', overflow: 'hidden', cursor: 'pointer',
+        opacity: hover ? 0.92 : 0.6, filter: hover ? 'none' : 'saturate(0.5)',
         transform: hover ? 'translateY(-2px)' : 'none',
+        boxShadow: hover ? `0 12px 32px -18px ${a}` : 'var(--shadow-sm)',
+        transition: 'opacity .2s, filter .2s, border-color .16s, transform .18s, box-shadow .28s',
       }}>
-      <span style={{ fontSize: 26, lineHeight: 1 }}>{flow.icon || '🦾'}</span>
-      <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 14, color: 'var(--ink-2)', textAlign: 'center' }}>
-        {flow.title}
+      <div style={{ height: 3, background: a, opacity: 0.5 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '14px 15px 12px' }}>
+        <div style={{ flexShrink: 0 }}>
+          <JLoopRing accent={a} num={num} steps={flow.steps.length} delay={0} size={50} icon="power" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="mono" style={{
+            fontSize: 10, color: a, fontWeight: 600,
+            textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 3,
+          }}>{flow.kicker}</div>
+          <div className="display" style={{
+            fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600,
+            letterSpacing: '-0.01em', color: 'var(--ink)', lineHeight: 1.05,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{flow.title}</div>
+        </div>
       </div>
-      <div className="mono" style={{
-        fontSize: 10, color: a, textTransform: 'uppercase', letterSpacing: '0.08em',
-        display: 'inline-flex', alignItems: 'center', gap: 5,
-      }}>＋ Lancer</div>
+      <div style={{
+        margin: '0 15px 14px', padding: '8px 0',
+        borderTop: '1px dashed var(--line)',
+        textAlign: 'center',
+      }}>
+        <span className="mono" style={{
+          fontSize: 10.5, color: a, textTransform: 'uppercase', letterSpacing: '0.1em',
+        }}>＋ Lancer dans la vue Run</span>
+      </div>
     </div>
   );
 }
