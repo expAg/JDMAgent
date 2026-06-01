@@ -1656,7 +1656,7 @@ function JPanel({ children }) {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'flex-start',
-      padding: '32px 28px 56px',
+      padding: '6px 28px 56px',
       overflow: 'auto',
     }}>
       {children}
