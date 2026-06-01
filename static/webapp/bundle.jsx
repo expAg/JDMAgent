@@ -7615,7 +7615,7 @@ function JRobotHead({ size = 30, title }) {
 // clé LLMDrops prise côté serveur (.env JDM_DROPS_API_KEY) — donc grisé tant
 // que ni clé serveur ni clé fournie. `submitted` initial vient du run/fichier ;
 // devient ✓ après succès. `compact` = pastille icône-only pour les cartes.
-function FileSubmitButton({ filePath, flowId, submitted, onDone, compact }) {
+function FileSubmitButton({ filePath, flowId, submitted, onDone, compact, running }) {
   const _envStatus = useEnvStatus();
   const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
   const [state, setState] = useState('idle');   // idle | sending | error
@@ -7627,6 +7627,20 @@ function FileSubmitButton({ filePath, flowId, submitted, onDone, compact }) {
   const submit = async (e) => {
     if (e) { e.stopPropagation(); e.preventDefault(); }
     if (!canSubmit || state === 'sending' || done) return;
+    // IDENTIQUE à JarvisRun : si le flow tourne encore, on DEMANDE
+    // confirmation avant de soumettre un fichier partiel (ne jamais
+    // soumettre à moitié sans validation explicite de l'utilisateur).
+    if (running) {
+      const ext = flowId === 'enrich' ? 'enrich' : flowId === 'audit' ? 'audit'
+        : flowId === 'signalement' ? 'err' : flowId === 'stats' ? 'stat'
+        : flowId === 'annotation' ? 'annot' : 'txt';
+      const ok = window.confirm(
+        'Le flow n\'est pas encore terminé — le fichier .' + ext +
+        ' contient seulement les triplets produits jusqu\'à maintenant.' +
+        '\n\nSoumettre maintenant quand même ?'
+      );
+      if (!ok) return;
+    }
     setState('sending');
     try {
       const r = await fetch('api/productions/submit', {
@@ -10520,7 +10534,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
                 {fileName && (
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <FileSubmitButton filePath={filePath} flowId={flowId}
-                      submitted={r.submitted} />
+                      submitted={r.submitted} running={state === 'running'} />
                     <Button size="sm" variant="ghost"
                       onClick={() => {
                         const url = `api/productions/download?name=${encodeURIComponent(fileName)}`;
