@@ -15163,6 +15163,22 @@ function App() {
     link.setAttribute('href', view === 'jarvis' ? ROBOT : SUN);
   }, [view]);
 
+  // Titre d'onglet par route : « JDM Agent » à l'accueil, « JDM Agent - <page> »
+  // ailleurs ; Jarvis garde son identité d'orchestrateur.
+  useEffect(() => {
+    const TITLES = {
+      projet:      'JDM Agent',
+      explorer:    'JDM Agent - Explorer',
+      claim:       'JDM Agent - Claim',
+      subgraph:    'JDM Agent - Sous-graphe',
+      agent:       'JDM Agent - Chatbot',
+      productions: 'JDM Agent - Productions',
+      aide:        'JDM Agent - Aide',
+      jarvis:      'Jarvis : Orchestrateur',
+    };
+    document.title = TITLES[view] || 'JDM Agent';
+  }, [view]);
+
   // Reconcile au boot : si des runs Jarvis tournaient encore côté
   // serveur quand l'utilisateur a fermé la tab / refresh, on s'y
   // rebranche pour récupérer la progression. Fire-and-forget.
