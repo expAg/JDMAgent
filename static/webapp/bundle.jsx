@@ -7100,12 +7100,54 @@ function handleEvent(ev, patchLast) {
     case 'done':
       // Stream terminé proprement, rien à faire (UI se ferme via finally)
       break;
+    case 'viz':
+      // Visualisation de sous-graphe : rendue inline (iframe via /api/subgraph).
+      if (d && d.term) patchLast(last => { last.viz = d; });
+      break;
     case 'error':
       patchLast(last => { last.error = d.text || 'Erreur inconnue.'; });
       break;
     default:
       break;
   }
+}
+
+// Bulle viz inline (Chatbot) — même endpoint /api/subgraph que l'onglet
+// Sous-graphe. Affiche le graphe interactif dans une iframe, sans lien.
+function AgentVizBubble({ viz }) {
+  const [html, setHtml] = useState('');
+  const [err, setErr] = useState('');
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('api/subgraph', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...viz, format: 'html' }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const dd = await res.json();
+        if (!alive) return;
+        if (dd.html) setHtml(dd.html); else setErr(dd.message || 'Visualisation indisponible.');
+      } catch (e) { if (alive) setErr(String(e && e.message ? e.message : e)); }
+    })();
+    return () => { alive = false; };
+  }, [JSON.stringify(viz)]);
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>
+        🕸️ Sous-graphe : <strong style={{ color: 'var(--ink-2)' }}>{viz.term}</strong>
+      </div>
+      {err
+        ? <div style={{ color: 'var(--jdm-magenta)', fontSize: 12 }}>⚠️ {err}</div>
+        : html
+          ? <iframe title={`viz-${viz.term}`} srcDoc={html}
+                    sandbox="allow-scripts allow-same-origin"
+                    style={{ width: '100%', height: 420, border: '1px solid var(--line)',
+                             borderRadius: 'var(--radius)', background: 'var(--bg)' }} />
+          : <div style={{ color: 'var(--ink-3)', fontSize: 12.5, padding: '14px 0' }}>… génération du graphe …</div>}
+    </div>
+  );
 }
 
 // ─── Rendu d'un message ────────────────────────────────────────
@@ -7134,6 +7176,7 @@ function Message({ m, onResend, isStreaming = false }) {
             style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}
             dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.content) }} />
         )}
+        {m.viz && <AgentVizBubble viz={m.viz} />}
         {m.error && (
           <div style={{
             padding: 10,

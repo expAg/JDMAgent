@@ -645,6 +645,11 @@ const JarvisChatStore = (function () {
           lastText = stripHtml(ev.data.text); setBot(lastText || '…');
         } else if (ev.event === 'config_patch' && ev.data) {
           applyConfigPatch(ev.data);
+        } else if (ev.event === 'viz' && ev.data && ev.data.term) {
+          // Visualisation inline : bulle dédiée (iframe via /api/subgraph).
+          // Insérée APRÈS la bulle bot courante (le texte continue de la
+          // remplir au-dessus ; setBot vise toujours la dernière 'bot').
+          msgs = [...msgs, { who: 'viz', viz: ev.data }]; emit();
         } else if (ev.event === 'error' && ev.data) {
           setBot('⚠️ ' + (ev.data.text || 'Erreur du moteur de discussion.'));
         }
@@ -676,6 +681,44 @@ const JarvisChatStore = (function () {
     reset: () => { msgs = [GREETING]; busy = false; emit(); },
   };
 })();
+
+/* Bulle de visualisation inline : récupère le HTML du sous-graphe via
+   /api/subgraph (même endpoint que l'onglet Sous-graphe, CSS adapté à
+   l'iframe) et l'affiche dans une iframe. Évite tout lien/fichier. */
+function VizBubble({ viz }) {
+  const [html, setHtml] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('api/subgraph', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...viz, format: 'html' }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const d = await res.json();
+        if (!alive) return;
+        if (d.html) setHtml(d.html);
+        else setErr(d.message || 'Visualisation indisponible.');
+      } catch (e) {
+        if (alive) setErr(String(e && e.message ? e.message : e));
+      }
+    })();
+    return () => { alive = false; };
+  }, [JSON.stringify(viz)]);
+  return (
+    <div className="jb-msg jb-msg--bot jb-viz">
+      <div className="jb-viz-head">🕸️ Sous-graphe : <strong>{viz.term}</strong></div>
+      {err
+        ? <div className="jb-viz-err">⚠️ {err}</div>
+        : html
+          ? <iframe title={`viz-${viz.term}`} srcDoc={html}
+                    sandbox="allow-scripts allow-same-origin" className="jb-viz-frame" />
+          : <div className="jb-viz-load">… génération du graphe …</div>}
+    </div>
+  );
+}
 
 function ChatPanel({ dark, onClose }) {
   // S'abonne au store singleton — l'état réel (msgs/busy) y vit, donc il
@@ -786,10 +829,12 @@ function ChatPanel({ dark, onClose }) {
 
       <div className="jb-chat-body" ref={scrollRef}>
         {msgs.map((m, i) => (
-          m.who === 'bot' && m.text
-            ? <div key={i} className="jb-msg jb-msg--bot jb-md"
-                   dangerouslySetInnerHTML={{ __html: renderMd(m.text) }} />
-            : <div key={i} className={`jb-msg jb-msg--${m.who}`}>{m.text}</div>
+          m.who === 'viz'
+            ? <VizBubble key={i} viz={m.viz} />
+            : m.who === 'bot' && m.text
+              ? <div key={i} className="jb-msg jb-msg--bot jb-md"
+                     dangerouslySetInnerHTML={{ __html: renderMd(m.text) }} />
+              : <div key={i} className={`jb-msg jb-msg--${m.who}`}>{m.text}</div>
         ))}
         {busy && (
           <div className="jb-msg jb-msg--bot jb-msg--typing"><span></span><span></span><span></span></div>
@@ -1015,6 +1060,13 @@ const CSS = `
 .jb-md strong { font-weight:600; }
 .jb-md a { color:var(--accent); }
 .jb-md h1, .jb-md h2, .jb-md h3 { font-size:14px; font-weight:600; margin:8px 0 4px; }
+
+/* Bulle de visualisation : prend toute la largeur dispo, iframe haute. */
+.jb-viz { max-width:100%!important; width:100%; padding:10px!important; }
+.jb-viz-head { font-size:12px; color:var(--ink-2); margin-bottom:7px; }
+.jb-viz-frame { width:100%; height:340px; border:1px solid var(--line-soft); border-radius:10px; background:var(--bg); }
+.jb-viz-load, .jb-viz-err { font-size:12.5px; color:var(--ink-3); padding:18px 6px; text-align:center; }
+.jb-viz-err { color:var(--jdm-magenta); }
 
 .jb-msg--typing { display:inline-flex; gap:4px; align-items:center; padding:12px 14px; }
 .jb-msg--typing span { width:6px; height:6px; border-radius:50%; background:var(--ink-3); opacity:0.5; animation: jbTyping 1.1s ease-in-out infinite; }

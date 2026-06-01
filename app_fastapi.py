@@ -183,6 +183,33 @@ class TermRequest(BaseModel):
     term: str
 
 
+def _viz_payload_from_tool_input(args: dict) -> Optional[dict]:
+    """Mappe les arguments de l'outil build_subgraph_visualization vers le
+    payload attendu par /api/subgraph (rendu inline iframe). None si pas
+    de terme exploitable."""
+    if not isinstance(args, dict):
+        return None
+    term = (args.get("term") or "").strip()
+    if not term:
+        return None
+    def _lst(v):
+        return list(v) if isinstance(v, list) else []
+    return {
+        "term": term,
+        "depth": int(args.get("depth") or 1),
+        "top_k": int(args.get("top_k_per_relation") or 3),
+        "top_k_d2": int(args.get("top_k_depth2") or 3),
+        "top_k_d3": int(args.get("top_k_depth3") or 3),
+        "top_k_d4": int(args.get("top_k_depth4") or 3),
+        "relations": _lst(args.get("relations")),
+        "relations_d2": _lst(args.get("depth2_relations")),
+        "relations_d3": _lst(args.get("depth3_relations")),
+        "relations_d4": _lst(args.get("depth4_relations")),
+        "min_weight": float(args.get("min_weight") or 0),
+        "format": "html",
+    }
+
+
 class SubgraphRequest(BaseModel):
     term: str
     depth: int = 1
@@ -907,6 +934,7 @@ async def api_agent_stream(req: AgentRequest):
         progress: list[str] = []
         current_text = ""
         current_thinking = ""
+        _pending_viz = None  # params de viz capturés au on_tool_start
         use_thinking_flag = bool(req.use_thinking)
 
         def html_escape(s: str) -> str:
@@ -1003,6 +1031,9 @@ async def api_agent_stream(req: AgentRequest):
                         args = data.get("input") or {}
                         if isinstance(args, dict) and "input" in args and isinstance(args["input"], dict):
                             args = args["input"]
+                        if name == "build_subgraph_visualization":
+                            _pending_viz = _viz_payload_from_tool_input(
+                                args if isinstance(args, dict) else {})
                         narrated = _narrate_tool_call(name, args if isinstance(args, dict) else {})
                         if not narrated:
                             args_str = ", ".join(
@@ -1043,6 +1074,11 @@ async def api_agent_stream(req: AgentRequest):
                                 f'<div class="jdm-narration">✓ <em>{name}</em> renvoie {len(content)} chars · '
                                 f'<code>{html_escape(preview)}</code></div>'
                             )
+                        # Viz inline (iframe via /api/subgraph) — cf. chat mascotte.
+                        if name == "build_subgraph_visualization" and _pending_viz:
+                            yield {"event": "viz",
+                                   "data": json.dumps(_pending_viz, ensure_ascii=False)}
+                            _pending_viz = None
                         yield {
                             "event": "text",
                             "data": json.dumps({"text": render_with_pending()}, ensure_ascii=False),
@@ -1133,6 +1169,7 @@ async def api_jarvis_chat(req: JarvisChatRequest):
 
         progress: list[str] = []
         current_text = ""
+        _pending_viz = None  # params de viz capturés au on_tool_start
 
         def html_escape(s: str) -> str:
             return (s.replace("&", "&amp;").replace("<", "&lt;")
@@ -1174,6 +1211,12 @@ async def api_jarvis_chat(req: JarvisChatRequest):
                         args = data.get("input") or {}
                         if isinstance(args, dict) and "input" in args and isinstance(args["input"], dict):
                             args = args["input"]
+                        # Capture les params de visualisation pour les
+                        # émettre en `viz` (rendu inline iframe) à la fin
+                        # du tool.
+                        if name == "build_subgraph_visualization":
+                            _pending_viz = _viz_payload_from_tool_input(
+                                args if isinstance(args, dict) else {})
                         narrated = _narrate_tool_call(name, args if isinstance(args, dict) else {})
                         if not narrated:
                             narrated = f"🔧 `{name}`"
@@ -1191,6 +1234,13 @@ async def api_jarvis_chat(req: JarvisChatRequest):
                         narrated_done = _narrate_tool_result(name, content)
                         if narrated_done:
                             progress.append(f'<div class="jdm-narration">{narrated_done}</div>')
+                        # Visualisation : émet un event `viz` que le front
+                        # rend en iframe inline (via /api/subgraph). Évite
+                        # le lien de fichier mort que le LLM inventerait.
+                        if name == "build_subgraph_visualization" and _pending_viz:
+                            yield {"event": "viz",
+                                   "data": json.dumps(_pending_viz, ensure_ascii=False)}
+                            _pending_viz = None
                         # Émet les patches de config dès qu'un set_config a tourné.
                         for ev in emit_config_patches():
                             yield ev

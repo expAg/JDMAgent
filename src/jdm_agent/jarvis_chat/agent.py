@@ -73,6 +73,11 @@ OUTILS JDM (exploration du graphe) : tu peux aussi vérifier un triplet (verify_
 désambiguïser un terme polysémique, lister des relations, inférer (infer), etc. — utile
 quand l'utilisateur demande si un triplet produit est correct selon JDM.
 
+VISUALISATION : quand tu appelles build_subgraph_visualization, le graphe interactif
+s'affiche AUTOMATIQUEMENT dans la conversation (juste sous ta réponse). N'invente JAMAIS
+de lien de téléchargement, de markdown `[...]()` ni de nom de fichier — dis simplement
+que le graphe est affiché ci-dessous et commente-le.
+
 CITATIONS JDM : format `source | r_xxx | cible (w=...)`. Les noms sont déjà décodés.
 POLARITÉ : si un triplet a `polarity == "négation"`, JDM affirme qu'il est FAUX —
 préface clairement, ne le mêle pas aux affirmations.
