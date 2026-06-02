@@ -448,49 +448,26 @@ def selectable_tool_names() -> set:
     return all_tool_names() - set(WORKFLOW_TOOLS)
 
 
-def tools_mentioned_in(text: str) -> set:
-    """Outils du catalogue RÉELLEMENT cités dans un texte (workflow), repérés par
-    appel `nom(` ou backticks `` `nom` ``. Déterministe (pas de faux positifs sur
-    de la prose) — sert de filet de sécurité pour le toolset runtime."""
-    names = all_tool_names()
-    if not names or not text:
-        return set()
-    out = set()
-    for n in names:
-        if re.search(r"\b" + re.escape(n) + r"\s*\(", text) or ("`" + n + "`") in text:
-            out.add(n)
-    return out
-
-
 def exclude_tools_for_spec(spec: dict) -> set:
     """Outils JDM à retirer pour cet agent sur mesure :
     - TOUJOURS les recettes *_workflow (réservées aux natifs) ;
     - l'écriture si writes est faux ;
-    - tout ce qui n'est pas NÉCESSAIRE. L'ensemble NÉCESSAIRE = l'allow-list
-      explicite (`allowed_tools`) UNION les outils réellement cités dans le
-      workflow (`system_prompt`). Ainsi l'agent N'A PAS accès à tout le catalogue :
-      uniquement ce que sa stratégie utilise / ce qui est paramétré.
+    - tout ce qui n'est PAS dans `allowed_tools` (l'allow-list générée par
+      l'orchestrateur — section OUTILS — qui est la SOURCE DE VÉRITÉ). On ne
+      parse PAS le system_prompt : on fait confiance à cette liste.
+    Vide = tout le catalogue disponible (agent sans restriction d'outils).
     (Les FORBIDDEN_TOOLS ne sont pas dans le toolset JDM.)"""
     excl = set(WORKFLOW_TOOLS)
     if not spec.get("writes"):
         excl.add("write_submission_file")
-    names = all_tool_names()
-    if names:
-        allowed = set(spec.get("allowed_tools") or [])
-        # Une allow-list qui couvre TOUT le catalogue proposable n'est pas une
-        # vraie restriction (ancien défaut UI 34/34) → on l'ignore et on déduit
-        # du workflow ; corrige aussi les agents déjà enregistrés « tout coché ».
-        if allowed and allowed >= selectable_tool_names():
-            allowed = set()
-        mentioned = tools_mentioned_in(spec.get("system_prompt") or "")
-        # On ne restreint QUE si on a un signal réel (allow-list explicite OU
-        # outils cités dans le workflow) — sinon (aucun signal) on laisse le
-        # catalogue complet plutôt que de tout couper par erreur.
-        if allowed or mentioned:
-            needed = allowed | mentioned
+    allowed = spec.get("allowed_tools") or []
+    if allowed:
+        names = all_tool_names()
+        if names:
+            keep = set(allowed)
             if spec.get("writes"):
-                needed.add("write_submission_file")  # l'écriture est implicite
-            excl |= (names - needed)
+                keep.add("write_submission_file")  # l'écriture reste implicite
+            excl |= (names - keep)
     return excl
 
 
