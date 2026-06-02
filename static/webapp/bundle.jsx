@@ -7555,6 +7555,7 @@ function ViewChat() {
 const JARVIS_AGENTS = [
   {
     id: 'enrich',
+    consolidates: true,  // lit le registry de consolidation (vs file_preview)
     title: 'Enrichissement',
     kicker: 'Agent 1',
     desc: 'Propose de nouveaux triplets pour un terme, les valide via JDM (factcheck + inférence), garde ceux qui passent, écrit un fichier .enrich prêt pour LLMDrops.',
@@ -10417,7 +10418,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
   );
   // Compteur "produits" dérivé comme dans JarvisRun (registry pour enrich,
   // items parsés sinon).
-  const produced = agentId === 'enrich'
+  const produced = flow.consolidates
     ? (baseMetrics.accepted || accepted.length || 0)
     : parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
   const metrics = { ...baseMetrics, produced };
@@ -10682,7 +10683,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
               </div>
               <div style={{ height: 420, overflowY: 'auto', padding: 0, background: 'var(--bg-card)' }}>
                 {(() => {
-                  if (agentId === 'enrich') {
+                  if (flow.consolidates) {
                     if (accepted.length === 0) {
                       return (
                         <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
@@ -10901,13 +10902,13 @@ function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
   //   ok types (consolidated, sens) → accepted
   //   not-ok types (flagged, signalement, audit_signalement) → rejected
   let accepted = 0, rejected = 0, items = [];
-  if (flow.id === 'enrich' && Array.isArray(store && store.accepted)) {
+  if (flow.consolidates && Array.isArray(store && store.accepted)) {
     accepted = store.accepted.length;
     items = store.accepted;
   }
   if (store && store.filePreview) {
     const parsed = parseFilePreview(store.filePreview, flow.id);
-    if (flow.id !== 'enrich') {
+    if (!flow.consolidates) {
       for (const it of parsed.items) {
         if (it.type === 'flagged' || it.type === 'signalement' || it.type === 'audit_signalement') rejected++;
         else accepted++;
@@ -10946,7 +10947,7 @@ function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
   //   audit verdict → verdict (LEGITIME, CONTRASTIF, …)
   //   err flagged → category (semantique, polarite, …)
   let recent = [];
-  if (flow.id === 'enrich' && Array.isArray(items) && items.length > 0) {
+  if (flow.consolidates && Array.isArray(items) && items.length > 0) {
     recent = items.slice(-3).map((a, k) => ({
       key: 'a' + k,
       label: a.label || `${a.subject || ''} | ${a.relation || ''} | ${a.target || ''}`,
@@ -11004,7 +11005,7 @@ function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
     if (!accepted && _st.retained) accepted = _st.retained;
     if (!tools && _st.tools_count) tools = _st.tools_count;
   }
-  if (flow.id === 'enrich' && nbAttempted > 0) {
+  if (flow.consolidates && nbAttempted > 0) {
     rejected = Math.max(0, nbAttempted - accepted);
   }
   const tokens = (m.tokens || 0) || (_st.tokens || 0);
@@ -12759,7 +12760,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   // est canonique. Push direct dans le store via patch — pas de setX
   // local (le state vit là-bas).
   React.useEffect(() => {
-    if (flow.id === 'enrich') {
+    if (flow.consolidates) {
       JarvisStore.patch(flow.id, { metrics: { ...metrics, produced: metrics.accepted } });
     } else {
       const n = parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
@@ -13498,7 +13499,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   // Enrich : source registry (`accepted`) — déjà au format
                   // ItemCard (cf. mapping SSE plus haut qui pose
                   // type='consolidated' + explanation).
-                  if (flow.id === 'enrich') {
+                  if (flow.consolidates) {
                     if (accepted.length === 0) {
                       return (
                         <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>

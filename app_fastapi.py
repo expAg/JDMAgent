@@ -1520,6 +1520,26 @@ def _push_event(run: dict, event: str, data) -> None:
             pass  # loop closed, subscriber stale — ignored
 
 
+# Agents qui CONSOLIDENT (lisent le registry de consolidation au lieu de
+# parser le file_preview). Prédicat générique (vs `== "enrich"` en dur) :
+# en Phase 2 l'inventaire des AgentSpec étendra ce set aux agents sur mesure
+# dont la capacité `consolidates` est vraie.
+_CONSOLIDATING_AGENTS = {"enrich"}
+
+
+def _agent_consolidates(agent_id: str) -> bool:
+    """True si l'agent passe par la consolidation (registry) plutôt que par
+    l'écriture/parse de file_preview. Source : built-ins + specs custom."""
+    if (agent_id or "") in _CONSOLIDATING_AGENTS:
+        return True
+    try:
+        from jdm_agent.jarvis_chat import inventory as _inv
+        spec = _inv.get_agent_spec(agent_id)
+        return bool(spec and spec.get("consolidates"))
+    except Exception:
+        return False
+
+
 def _drive_jarvis_agent_thread(run: dict) -> None:
     """Exécute le flow Jarvis dans un thread, push les events dans le
     buffer. Appelé via threading.Thread (pas await) pour que ce soit
@@ -1550,10 +1570,10 @@ def _drive_jarvis_agent_thread(run: dict) -> None:
             use_thinking=bool(p.get("use_thinking", False)),
             temperature=(p.get("temperature") if isinstance(p.get("temperature"), (int, float)) else None),
             consolidation_target=(
-                p.get("target_count") if agent_id == "enrich" else None
+                p.get("target_count") if _agent_consolidates(agent_id) else None
             ),
             production_target=(
-                p.get("target_count") if agent_id != "enrich" else None
+                p.get("target_count") if not _agent_consolidates(agent_id) else None
             ),
             production_unit={
                 "enrich":      "consolidés",
