@@ -664,16 +664,22 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
         return {"status": "error", "ok": False,
                 "error": "name et strategy sont requis.",
                 "instruction": "Demande à l'utilisateur le nom et la stratégie manquants."}
-    # SOURCE UNIQUE (comme la création UI) : la `strategy` est un workflow rédigé
-    # au format TITRE/ÉTAPES/RÈGLES terminé par `DESCRIPTION:` (3 lignes carte).
-    # On sépare exactement comme l'endpoint /generate → le `brief` (description
-    # de la carte) est rempli pareil, pas de divergence UI/chat.
-    _wf, _brief = _inv.split_workflow_and_brief(strategy.strip())
+    # SOURCE UNIQUE (exactement comme la création UI) : la `strategy` est un
+    # workflow rédigé au format TITRE/ÉTAPES/RÈGLES/OUTILS/DESCRIPTION. On parse
+    # avec LE MÊME helper que l'endpoint /generate → workflow + brief (carte) +
+    # outils nécessaires. Aucune divergence UI/chat.
+    _wf, _brief, _tools = _inv.parse_generation_output(strategy.strip())
     spec = {"title": name.strip(), "template": template,
             "system_prompt": _wf, "instructions": strategy.strip(),
             "writes": bool(writes)}
     if _brief:
         spec["brief"] = _brief
+    # Outils : ceux parsés du workflow (OUTILS:) ont priorité ; sinon le param
+    # explicite allowed_tools. Filtrés au catalogue proposable.
+    _ok = _inv.selectable_tool_names()
+    _picked = _tools or (allowed_tools if isinstance(allowed_tools, list) else [])
+    if _picked:
+        spec["allowed_tools"] = [t for t in _picked if t in _ok] if _ok else list(_picked)
     fmt = (output_format or "").strip().lower().lstrip(".")
     if fmt in ("jdm", "libre", "json"):
         spec["output_format"] = fmt
@@ -681,10 +687,6 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
         spec["output_ext"] = output_ext.strip()
     elif fmt:
         spec["output_ext"] = _FORMAT_TO_EXT.get(fmt, "." + fmt)
-    if isinstance(allowed_tools, list) and allowed_tools:
-        # On ne garde que des outils PROPOSABLES (catalogue moins *_workflow).
-        ok_names = _inv.selectable_tool_names()
-        spec["allowed_tools"] = [t for t in allowed_tools if t in ok_names] if ok_names else list(allowed_tools)
     if target_count and int(target_count) > 0:
         spec["defaults"] = {"target_count": int(target_count)}
     # Normalisation (sans persister) pour l'aperçu.

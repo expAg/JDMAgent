@@ -116,17 +116,22 @@ def test_allowed_tools_restricts_catalog(tmp_path, monkeypatch):
     assert excl2 == set(inv.WORKFLOW_TOOLS)
 
 
-def test_split_workflow_and_brief(tmp_path, monkeypatch):
+def test_parse_generation_output(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
-    txt = ("TITRE : X\nÉTAPES :\n1. a\n2. b\nRÈGLES :\n- r\n\n"
+    txt = ("TITRE : X\nÉTAPES :\n1. a\n2. b\nRÈGLES :\n- r\n"
+           "OUTILS: exists, get_relations_of_type, verify_claim\n"
            "DESCRIPTION: Fait ceci.\nÉtapes clés.\nSort un .x")
-    wf, brief = inv.split_workflow_and_brief(txt)
-    assert "DESCRIPTION" not in wf
+    wf, brief, tools = inv.parse_generation_output(txt)
+    assert "DESCRIPTION" not in wf and "OUTILS" not in wf
     assert "TITRE : X" in wf and "RÈGLES" in wf
     assert brief.startswith("Fait ceci.")
-    # Pas de DESCRIPTION → brief vide, workflow inchangé.
-    wf2, brief2 = inv.split_workflow_and_brief("TITRE : Y\nÉTAPES :\n1. z")
-    assert brief2 == "" and "TITRE : Y" in wf2
+    assert tools == ["exists", "get_relations_of_type", "verify_claim"]
+    # Compat wrapper.
+    wf2, brief2 = inv.split_workflow_and_brief(txt)
+    assert wf2 == wf and brief2 == brief
+    # Sans sections → workflow brut, brief/tools vides.
+    wf3, brief3, tools3 = inv.parse_generation_output("TITRE : Y\nÉTAPES :\n1. z")
+    assert "TITRE : Y" in wf3 and brief3 == "" and tools3 == []
 
 
 def test_workflow_generation_prompt(tmp_path, monkeypatch):
@@ -140,6 +145,7 @@ def test_workflow_generation_prompt(tmp_path, monkeypatch):
     assert "exists" in meta and "get_relations" in meta  # outils dispo cités
     assert "TITRE" in meta and "ÉTAPES" in meta and "RÈGLES" in meta
     assert "DESCRIPTION" in meta             # résumé carte généré par le LLM
+    assert "OUTILS" in meta                  # le LLM choisit les outils nécessaires
 
 
 def test_instructions_persisted(tmp_path, monkeypatch):

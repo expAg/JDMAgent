@@ -219,20 +219,37 @@ def _normalize_spec(spec: dict) -> dict:
     return s
 
 
-def split_workflow_and_brief(text: str) -> tuple[str, str]:
-    """Sépare un workflow rédigé par l'orchestrateur en (workflow, brief).
+def parse_generation_output(text: str) -> tuple[str, str, list]:
+    """Découpe la sortie de génération en (workflow, brief, outils).
 
-    Le workflow se termine par une section `DESCRIPTION:` (3 lignes pour la
-    carte). SOURCE UNIQUE utilisée à la fois par l'endpoint UI (/generate) ET
-    par l'outil chat `create_specialist_agent` → aucune divergence possible."""
-    wf = (text or "").strip()
-    brief = ""
+    Format attendu :
+        TITRE / ÉTAPES / RÈGLES
+        OUTILS: a, b, c          (outils nécessaires choisis par le LLM)
+        DESCRIPTION: …           (3 lignes courtes pour la carte)
+
+    SOURCE UNIQUE utilisée à la fois par l'endpoint UI (/generate) ET par l'outil
+    chat `create_specialist_agent` → aucune divergence possible (pas de drift)."""
+    t = (text or "").strip()
+    brief, tools = "", []
     for marker in ("DESCRIPTION:", "DESCRIPTION :"):
-        idx = wf.rfind(marker)
+        idx = t.rfind(marker)
         if idx >= 0:
-            brief = wf[idx + len(marker):].strip()
-            wf = wf[:idx].strip()
+            brief = t[idx + len(marker):].strip()
+            t = t[:idx].strip()
             break
+    for marker in ("OUTILS:", "OUTILS :", "TOOLS:"):
+        idx = t.rfind(marker)
+        if idx >= 0:
+            raw = t[idx + len(marker):].strip().splitlines()[0] if t[idx + len(marker):].strip() else ""
+            t = t[:idx].strip()
+            tools = [x.strip().strip("`") for x in re.split(r"[,\n;]+", raw) if x.strip()]
+            break
+    return t, brief, tools
+
+
+def split_workflow_and_brief(text: str) -> tuple[str, str]:
+    """Compat : (workflow, brief). Délègue à parse_generation_output."""
+    wf, brief, _ = parse_generation_output(text)
     return wf, brief
 
 
@@ -253,9 +270,13 @@ def build_workflow_generation_prompt(spec: dict) -> str:
         "json": "JSON structuré",
         "libre": "texte/rapport libre",
     }.get(fmt, fmt)
-    tools = s.get("allowed_tools") or []
-    tools_line = (", ".join(tools) if tools
-                  else "tout le catalogue JDM disponible (sauf les *_workflow)")
+    # Catalogue PROPOSABLE (sans *_workflow) : on le donne au LLM pour qu'il
+    # CHOISISSE les outils nécessaires (section OUTILS), au lieu de tout prendre.
+    try:
+        catalog = sorted(selectable_tool_names())
+    except Exception:
+        catalog = []
+    catalog_line = ", ".join(catalog) if catalog else "(catalogue JDM standard)"
     caps = []
     caps.append("CONSOLIDE chaque candidat par inférence" if s["consolidates"]
                 else "ne consolide pas")
@@ -271,21 +292,21 @@ def build_workflow_generation_prompt(spec: dict) -> str:
         f"- Esprit du template : {tpl['skeleton']}\n"
         f"- Format de sortie : {fmt_hint}\n"
         f"- Capacités : {' ; '.join(caps)}\n"
-        f"- Outils que l'agent SAIT utiliser (UNIQUEMENT ceux-ci, JAMAIS de "
-        f"*_workflow) : {tools_line}\n\n"
-        "Rends le workflow (pas de préambule, pas de ```), au format :\n"
+        f"- Catalogue d'outils disponibles (CHOISIS uniquement ceux dont l'agent "
+        f"a besoin, JAMAIS de *_workflow) : {catalog_line}\n\n"
+        "Rends le workflow (pas de préambule, pas de ```), EXACTEMENT au format :\n"
         "TITRE : <titre court>\n"
         "ÉTAPES : 3 à 5 grandes phases SYNTHÉTIQUES (comme les agents natifs : "
-        "« Proposition », « Validation », « Consolidation »). UNE ligne par phase, "
-        "format `Nom — courte description` où Nom = 1 à 3 mots :\n"
+        "« Proposition », « Validation », « Consolidation »). PAS de micro-étapes. "
+        "UNE ligne par phase, format `Nom — courte description`, Nom = 1 à 3 mots :\n"
         "1. <Nom> — <description brève (≤ 12 mots)>\n"
         "2. …\n"
         "RÈGLES :\n"
         "- <garde-fou / critère d'arrêt / qualité>\n"
-        "\n"
-        "Puis, TOUT À LA FIN, une section préfixée exactement `DESCRIPTION:` "
-        "donnant en 3 lignes max, pour la carte de l'agent : ce qu'il fait, ses "
-        "étapes clés, sa sortie.\n"
+        "OUTILS: <liste, séparée par des virgules, des SEULS outils du catalogue "
+        "ci-dessus dont l'agent a besoin (3 à 8 en général ; PAS de *_workflow)>\n"
+        "DESCRIPTION: <description COURTE, 3 lignes max, pour la carte : ce que "
+        "fait l'agent, ses étapes clés, sa sortie>\n"
     )
 
 

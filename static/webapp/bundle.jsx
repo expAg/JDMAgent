@@ -8843,9 +8843,13 @@ function defaultParamsFor(agentId) {
   const _tc = (_spec && _spec.defaults && _spec.defaults.target_count)
     || (_spec && _spec.consolidates ? 3 : 0);
   const _writes = !_spec || _spec.writes !== false;
+  // upload par défaut : la case « Soumettre automatiquement » du formulaire de
+  // création (spec.defaults.upload) prime ; sinon le réglage global autoSubmit.
+  const _up = (_spec && _spec.defaults && typeof _spec.defaults.upload === 'boolean')
+    ? _spec.defaults.upload : autoUpload;
   return {
     ...common, term: '', relation: [], target_count: _tc,
-    ...(_writes ? { upload: autoUpload } : {}),
+    ...(_writes ? { upload: _up } : {}),
   };
 }
 
@@ -10260,13 +10264,17 @@ function useCustomAgentFlows() {
 function _startCustomAgent(flow) {
   if (typeof window === 'undefined' || !window.__jdmJarvisStore) return;
   const cfg = (window.__JDM_JARVIS_CONFIG__) || {};
+  const _d = (flow._spec && flow._spec.defaults) || {};
+  // upload : case « Soumettre automatiquement » du formulaire (defaults.upload)
+  // prime ; sinon réglage global autoSubmit.
+  const _up = (typeof _d.upload === 'boolean') ? _d.upload : (cfg.autoSubmit === true);
   const params = {
     term: '', relation: [],
     model: cfg.llm || 'gemini-3.1-flash-lite',
     use_thinking: true, budget_label: 'illimité',
     pool_active: cfg.poolActive !== false,
     auto_switch: false,
-    upload: cfg.autoSubmit === true,
+    upload: flow.writes !== false ? _up : false,
     target_count: (flow._defaults && flow._defaults.target_count) || 0,
   };
   window.__jdmJarvisStore.start(flow.id, { params, isResume: false, resumeState: null }).catch(() => {});
@@ -10308,6 +10316,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   const [ext, setExt] = React.useState(_isEdit ? (editSpec.output_ext || '') : '');
   const [extTouched, setExtTouched] = React.useState(_isEdit && !!editSpec.output_ext);
   const [target, setTarget] = React.useState(_isEdit ? ((editSpec.defaults && editSpec.defaults.target_count) || 0) : 0);
+  // Soumission auto par défaut au lancement (case du formulaire de création).
+  const [autoSubmit, setAutoSubmit] = React.useState(
+    _isEdit ? !!(editSpec.defaults && editSpec.defaults.upload) : false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
   const [genLoading, setGenLoading] = React.useState(false);
@@ -10378,7 +10389,10 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
       brief: description.trim(),
     };
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
-    if (target > 0) spec.defaults = { target_count: Number(target) };
+    const _def = {};
+    if (target > 0) _def.target_count = Number(target);
+    if (writes && autoSubmit) _def.upload = true;  // soumission auto par défaut
+    if (Object.keys(_def).length) spec.defaults = _def;
     // On persiste TOUJOURS la sélection d'outils (même « tout ») pour que la
     // fiche détail puisse les afficher comme les natifs. « tout » → l'exclusion
     // backend ne retire rien de plus que les *_workflow.
@@ -10403,6 +10417,13 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         setWorkflow(d.workflow);
         // Description (carte) rédigée par le LLM en 3 lignes.
         if (d.brief) setDescription(d.brief);
+        // Outils PRÉ-CHARGÉS selon ce que le LLM a jugé nécessaire (au lieu de
+        // tout le catalogue). On garde ceux qui existent dans les options.
+        if (Array.isArray(d.tools) && d.tools.length) {
+          const valid = new Set(toolOpts.map(o => o.value));
+          const picked = d.tools.filter(t => !valid.size || valid.has(t));
+          if (picked.length) setAllowedTools(picked);
+        }
       }
       else { setWorkflow(d.fallback || strategy.trim()); if (d.error) setMsg('⚠ génération indisponible (' + d.error + ') — workflow = instructions brutes, éditable.'); }
     } catch (e) { setWorkflow(strategy.trim()); setMsg('⚠ ' + (e.message || e)); }
@@ -10505,9 +10526,16 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
             style={{ accentColor: 'var(--accent)' }} />
           Produit un fichier de soumission (sinon résultat en réponse seulement)
         </label>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)', margin: '-8px 0 14px', lineHeight: 1.4 }}>
-          Comme les autres agents : le fichier n'est <strong>soumis à JDM</strong>
-          {' '}que si « Soumettre » est coché au lancement (jamais d'envoi automatique).
+        {writes && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '-4px 0 6px' }}>
+            <input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)}
+              style={{ accentColor: 'var(--accent)' }} />
+            Soumettre automatiquement à JDM (valeur par défaut au lancement)
+          </label>
+        )}
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', margin: '-2px 0 14px', lineHeight: 1.4 }}>
+          La soumission auto est la <strong>valeur par défaut</strong> du lancement ;
+          elle reste décochable à chaque run (et nécessite une clé LLMDrops).
         </div>
 
         {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}

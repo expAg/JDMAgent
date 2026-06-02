@@ -1906,7 +1906,9 @@ def _default_agent_params(agent_id: str, cfg: dict | None) -> dict:
         elif d.get("target_count"):
             out["target_count"] = int(d["target_count"])
         if spec.get("writes"):
-            out["upload"] = auto_upload
+            # Case « Soumettre automatiquement » du formulaire (defaults.upload)
+            # prime ; sinon le réglage global autoSubmit.
+            out["upload"] = bool(d["upload"]) if isinstance(d.get("upload"), bool) else auto_upload
         return out
     return common
 
@@ -2077,10 +2079,13 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         full = (_content_to_text(raw) or "").strip()
         if not full:
             return {"ok": False, "error": "génération vide", "fallback": _fallback}
-        # SOURCE UNIQUE : sépare DESCRIPTION (carte) du workflow (même helper que
-        # l'outil chat create_specialist_agent → pas de divergence).
-        workflow, brief = _inv.split_workflow_and_brief(full)
-        return {"ok": True, "workflow": workflow, "brief": brief, "meta_prompt": meta}
+        # SOURCE UNIQUE : sépare workflow / DESCRIPTION (carte) / OUTILS (même
+        # helper que l'outil chat create_specialist_agent → aucune divergence).
+        workflow, brief, tools = _inv.parse_generation_output(full)
+        sel = _inv.selectable_tool_names()
+        tools = [t for t in tools if t in sel] if sel else tools
+        return {"ok": True, "workflow": workflow, "brief": brief, "tools": tools,
+                "meta_prompt": meta}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}
     finally:

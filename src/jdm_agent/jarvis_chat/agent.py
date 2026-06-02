@@ -92,15 +92,18 @@ Choisis le `template` le plus proche (list_agent_templates) et pré-sélectionne
 les `allowed_tools` pertinents. RÉDIGE la `strategy` EXACTEMENT comme un nouveau
 `*_workflow`, dans CE format (OBLIGATOIRE) :
   TITRE : <titre court>
-  ÉTAPES : (3 à 5 phases SYNTHÉTIQUES, format `Nom — description` ; Nom = 1 à 3 mots)
+  ÉTAPES : (3 à 5 phases SYNTHÉTIQUES, PAS de micro-étapes ; format `Nom —
+  description` ; Nom = 1 à 3 mots — comme les natifs Proposition/Validation/…)
   1. <Nom> — <description brève>
   2. …
   RÈGLES :
   - <garde-fou / critère d'arrêt>
-  DESCRIPTION: <3 lignes max pour la CARTE : ce que fait l'agent, ses étapes
-  clés, sa sortie>
-La section `DESCRIPTION:` est OBLIGATOIRE (elle devient le texte de la carte —
-même mécanique que la création par formulaire, AUCUNE divergence). Puis appelle
+  OUTILS: <liste, séparée par des virgules, des SEULS outils dont l'agent a
+  besoin (3 à 8 ; appelle list_jdm_tools pour les voir ; JAMAIS de *_workflow)>
+  DESCRIPTION: <description COURTE, 3 lignes max, pour la CARTE : ce que fait
+  l'agent, ses étapes clés, sa sortie>
+Les sections `OUTILS:` et `DESCRIPTION:` sont OBLIGATOIRES (mêmes fonction et
+parsing que la création par formulaire — AUCUNE divergence UI/chat). Puis appelle
 create_specialist_agent. TOUJOURS en deux temps : d'abord SANS confirm (tu
 obtiens un APERÇU que tu montres à l'utilisateur), et seulement après son accord
 avec confirm=True. Une fois créé, l'agent est dans l'inventaire (Répertoire) et
