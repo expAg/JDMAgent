@@ -11305,11 +11305,10 @@ function JLaunchCard({ flow, onStart, onDetail, onLaunch }) {
       <div style={{ height: 3, background: a, opacity: 0.55 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '14px 15px 8px' }}>
         <div style={{
-          flexShrink: 0, width: 50, height: 50, borderRadius: 14,
+          flexShrink: 0, width: 50, height: 50,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 27, lineHeight: 1,
-          background: `color-mix(in srgb, ${a} 12%, transparent)`,
-          border: `1px solid color-mix(in srgb, ${a} 30%, transparent)`,
+          fontSize: 34, lineHeight: 1,
+          background: 'transparent', border: 'none',
         }}>{agentIcon(flow.id)}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="mono" style={{
