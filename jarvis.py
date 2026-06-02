@@ -1597,35 +1597,14 @@ def run_jarvis_agent(
         import time as _time_mod
         _ts = _time_mod.strftime("%Y%m%d_%H%M%S")
         _hash = hashlib.sha1((prompt or "").encode("utf-8")).hexdigest()[:6]
-        # Extension + mode du canonical par agent_id :
-        #   - enrich      → .enrich, mode auto_append (streaming +
-        #     crash-safety via register_consolidation)
-        #   - annotation  → .annot,  mode redirect  (overwrite canonical)
-        #   - audit       → .audit,  mode redirect
-        #   - signalement → .err,    mode redirect
-        #   - stats       → .stat,   mode redirect
-        #   - gap         → pas de canonical (flow de découverte, ne
-        #     produit pas de fichier)
-        #   - agent_id None : compat legacy. Si consolidation_target est
-        #     set → enrich auto_append. Sinon, pas de canonical (le LLM
-        #     contrôle, anti-écrasement actif comme avant).
-        _flow_canonical_spec = {
-            "enrich":      (".enrich", "auto_append"),
-            "annotation":  (".annot",  "redirect"),
-            "audit":       (".audit",  "redirect"),
-            "signalement": (".err",    "redirect"),
-            "stats":       (".stat",   "redirect"),
-            "gap":         (".gap",    None),  # ext sentinelle, pas de canonical
-        }
+        # Extension + mode du canonical : FOURNIS PAR L'APPELANT via le spec
+        # inventaire (natif ET sur mesure — source unique, plus de table codée
+        # par agent_id ici). Fallbacks legacy uniquement pour les appels CLI
+        # sans spec (output_ext None).
         if output_ext is not None:
-            # Override explicite (agents SUR MESURE : extension/format choisis
-            # par l'utilisateur via le spec, pas dans la table des built-ins).
             _ext, _canon_mode = output_ext, canonical_mode
-        elif agent_id is not None:
-            _ext, _canon_mode = _flow_canonical_spec.get(agent_id, (".enrich", None))
         elif consolidation_target is not None:
-            # Legacy : pas de agent_id mais on a consolidation_target → enrich.
-            _ext, _canon_mode = ".enrich", "auto_append"
+            _ext, _canon_mode = ".enrich", "auto_append"   # legacy enrich
         else:
             _ext, _canon_mode = ".enrich", None
         # Nom du fichier = IDENTITÉ DU RUN (run_id lisible : <flux>_<terme>_

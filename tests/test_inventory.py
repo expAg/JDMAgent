@@ -60,6 +60,31 @@ def test_writes_false_excludes_write_tool_and_no_canonical(tmp_path, monkeypatch
     assert "write_submission_file" in inv.exclude_tools_for_spec(spec)
 
 
+def test_unified_pipeline_native_and_custom(tmp_path, monkeypatch):
+    """Natifs ET sur mesure passent par le MÊME constructeur de prompt et la
+    MÊME fonction d'exclusion (pipeline unique, pas de fork)."""
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    # 1) build_preprompt_for_spec marche pour un natif (délègue au build_*_prompt)
+    #    ET un custom (assemblage générique) — même fonction.
+    nat = inv.get_agent_spec("enrich")
+    assert nat and nat.get("builtin") and nat.get("prompt_builder")
+    p_nat = inv.build_preprompt_for_spec(nat, {"term": "chat", "target_count": 3,
+                                               "budget_label": "illimité"})
+    assert "enrichment_workflow" in p_nat and "chat" in p_nat
+    cust = inv.save_agent_spec({"title": "C", "template": "libre",
+                                "system_prompt": "STRAT_X", "writes": False})
+    p_cust = inv.build_preprompt_for_spec(cust, {"term": "chien"})
+    assert "STRAT_X" in p_cust and "chien" in p_cust
+    # 2) exclude : un NATIF garde tout le catalogue (incl. son *_workflow) ;
+    #    un CUSTOM n'a jamais les *_workflow.
+    assert inv.exclude_tools_for_spec(nat) == set()
+    assert "enrichment_workflow" not in inv.exclude_tools_for_spec(nat)
+    assert "enrichment_workflow" in inv.exclude_tools_for_spec(cust)
+    # 3) consolidates piloté par le spec pour les deux.
+    assert inv.get_agent_spec("enrich")["consolidates"] is True
+    assert inv.get_agent_spec("audit")["consolidates"] is False
+
+
 def test_workflow_tools_always_excluded_for_custom(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
     # Même un agent qui ÉCRIT (writes=True) n'a JAMAIS les recettes *_workflow.

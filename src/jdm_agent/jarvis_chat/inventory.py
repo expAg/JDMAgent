@@ -49,48 +49,73 @@ ALLOWED_OUTPUT_EXTS = {".enrich", ".audit", ".err", ".stat", ".annot", ".txt", "
 FORBIDDEN_TOOLS = {"start_agent", "stop_agent", "set_env", "rollback_env"}
 
 # ───────────────────────── Built-ins (source de vérité capacités) ──────────
+# Chaque natif est un SPEC COMPLET (source de vérité unique) consommé par le
+# MÊME pipeline que les sur-mesure. `prompt_builder` = nom de la fonction
+# `build_*_prompt` (jarvis.py) qui produit son pré-prompt EXACT (zéro régression :
+# on délègue au builder existant au lieu de réécrire la stratégie). `workflow_tool`
+# = sa recette canonique (autorisée pour CE natif). `defaults` = params de
+# lancement (repris des anciennes branches `_default_agent_params`).
+# `display_template` ∈ {consolidant, explorateur} pilote l'affichage.
 _BUILTINS: dict[str, dict] = {
     "enrich": {
         "id": "enrich", "title": "Enrichissement", "icon": "🌱",
         "accent": "var(--jdm-magenta)", "kicker": "Agent 1",
         "brief": "Propose et consolide de nouveaux triplets.",
         "consolidates": True, "writes": True,
-        "output_ext": ".enrich", "canonical_mode": "auto_append",
+        "output_ext": ".enrich", "output_format": "jdm", "canonical_mode": "auto_append",
+        "prompt_builder": "build_enrich_prompt", "workflow_tool": "enrichment_workflow",
+        "display_template": "consolidant", "production_unit": "consolidés",
+        "defaults": {"target_count": 3, "vary_relations": True, "iterate": True},
     },
     "audit": {
         "id": "audit", "title": "Audit sémantique", "icon": "🔍",
         "accent": "var(--jdm-cyan)", "kicker": "Agent 2",
         "brief": "Vérifie sens par sens la légitimité des relations.",
         "consolidates": False, "writes": True,
-        "output_ext": ".audit", "canonical_mode": "redirect",
+        "output_ext": ".audit", "output_format": "jdm", "canonical_mode": "redirect",
+        "prompt_builder": "build_audit_prompt", "workflow_tool": "audit_workflow",
+        "display_template": "explorateur", "production_unit": "verdicts",
+        "defaults": {},
     },
     "gap": {
         "id": "gap", "title": "Détection de trous", "icon": "🕳️",
         "accent": "var(--jdm-green)", "kicker": "Agent 3",
         "brief": "Repère les trous de couverture d'un terme.",
         "consolidates": False, "writes": False,
-        "output_ext": ".gap", "canonical_mode": None,
+        "output_ext": ".gap", "output_format": "json", "canonical_mode": None,
+        "prompt_builder": "build_gap_prompt", "workflow_tool": "gap_detection_workflow",
+        "display_template": "explorateur", "production_unit": "trous",
+        "defaults": {},
     },
     "signalement": {
         "id": "signalement", "title": "Signalement", "icon": "⚠️",
         "accent": "var(--jdm-orange)", "kicker": "Agent 4",
         "brief": "Flag les triplets suspects pour un mainteneur.",
         "consolidates": False, "writes": True,
-        "output_ext": ".err", "canonical_mode": "redirect",
+        "output_ext": ".err", "output_format": "jdm", "canonical_mode": "redirect",
+        "prompt_builder": "build_signalement_prompt", "workflow_tool": "error_detection_workflow",
+        "display_template": "explorateur", "production_unit": "suspects",
+        "defaults": {},
     },
     "stats": {
         "id": "stats", "title": "Stats", "icon": "📊",
         "accent": "var(--jdm-violet)", "kicker": "Agent 5",
         "brief": "Mesure la couverture par terme et par relation.",
         "consolidates": False, "writes": True,
-        "output_ext": ".stat", "canonical_mode": "redirect",
+        "output_ext": ".stat", "output_format": "jdm", "canonical_mode": "redirect",
+        "prompt_builder": "build_stats_prompt", "workflow_tool": "stats_workflow",
+        "display_template": "explorateur", "production_unit": "lignes",
+        "defaults": {},
     },
     "annotation": {
         "id": "annotation", "title": "Annotation sémantique", "icon": "🏷️",
         "accent": "var(--jdm-yellow)", "kicker": "Agent 6",
         "brief": "Annote les triplets (constitutif / contrastif…).",
         "consolidates": False, "writes": True,
-        "output_ext": ".annot", "canonical_mode": "redirect",
+        "output_ext": ".annot", "output_format": "jdm", "canonical_mode": "redirect",
+        "prompt_builder": "build_annotation_prompt", "workflow_tool": "annotation_workflow",
+        "display_template": "explorateur", "production_unit": "annotations",
+        "defaults": {"top_k": 8, "target_count": 10},
     },
 }
 
@@ -224,6 +249,16 @@ def _normalize_spec(spec: dict) -> dict:
                       for x in st if isinstance(x, dict) and str(x.get("n", "")).strip()]
     else:
         s["steps"] = []
+    # display_template : pilote l'affichage carte/log/ItemCard. Décidé à la
+    # création selon `consolidates` (consolidant = tentatives+retenus comme
+    # enrich ; explorateur = log d'exploration + items produits). Surchargeable.
+    dt = s.get("display_template")
+    if dt not in ("consolidant", "explorateur"):
+        dt = "consolidant" if s["consolidates"] else "explorateur"
+    s["display_template"] = dt
+    # production_unit : libellé des items pour les compteurs (affichage).
+    s["production_unit"] = (s.get("production_unit")
+                            or ("consolidés" if s["consolidates"] else "items"))
     return s
 
 
@@ -461,7 +496,10 @@ def selectable_tool_names() -> set:
 
 
 def exclude_tools_for_spec(spec: dict) -> set:
-    """Outils JDM à retirer pour cet agent sur mesure :
+    """Outils JDM à retirer pour CE spec (natif OU sur mesure) :
+    - NATIF (`builtin`) : aucune exclusion — il a le catalogue complet, y
+      compris SA recette `*_workflow` (comportement historique inchangé).
+    - SUR MESURE :
     - TOUJOURS les recettes *_workflow (réservées aux natifs) ;
     - l'écriture si writes est faux ;
     - tout ce qui n'est PAS dans `allowed_tools` (l'allow-list générée par
@@ -469,6 +507,8 @@ def exclude_tools_for_spec(spec: dict) -> set:
       parse PAS le system_prompt : on fait confiance à cette liste.
     Vide = tout le catalogue disponible (agent sans restriction d'outils).
     (Les FORBIDDEN_TOOLS ne sont pas dans le toolset JDM.)"""
+    if spec.get("builtin"):
+        return set()  # natif : catalogue complet (incl. son *_workflow)
     excl = set(WORKFLOW_TOOLS)
     if not spec.get("writes"):
         excl.add("write_submission_file")
@@ -484,10 +524,29 @@ def exclude_tools_for_spec(spec: dict) -> set:
 
 
 def build_preprompt_for_spec(spec: dict, params: dict) -> str:
-    """Assemble le PRÉ-PROMPT (message de tâche) d'un agent sur mesure :
-    stratégie du spec + cadrage des params (terme/hasard, cible, itération,
-    écriture). Réutilise les helpers canoniques de jarvis.py."""
+    """CONSTRUCTEUR DE PRÉ-PROMPT UNIQUE pour TOUS les agents (natifs + sur mesure).
+
+    - Natif : le spec porte `prompt_builder` = nom d'une fonction `build_*_prompt`
+      de jarvis.py → on la délègue avec les params filtrés à sa signature (prompt
+      EXACT, zéro régression).
+    - Sur mesure : assemblage générique (system_prompt + cadrage portée/cible/
+      itération/format/upload).
+    """
     p = dict(params or {})
+    # ── Chemin NATIF : délégation au builder canonique (même params filtrés que
+    #    l'ancien _jarvis_dispatch). ─────────────────────────────────────────
+    builder_name = spec.get("prompt_builder")
+    if builder_name:
+        try:
+            import inspect
+            import jarvis as _j
+            fn = getattr(_j, builder_name, None)
+            if fn is not None:
+                sig = inspect.signature(fn)
+                accepted = {k: v for k, v in p.items() if k in sig.parameters}
+                return fn(**accepted)
+        except Exception:
+            pass  # fallback assemblage générique ci-dessous
     term = (p.get("term") or "").strip()
     parts: list[str] = [spec.get("system_prompt") or ""]
     # Terme : fourni, ou tirage côté agent (instruction canonique partagée).

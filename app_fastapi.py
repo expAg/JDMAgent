@@ -1350,44 +1350,21 @@ def _term_or_random(p: dict) -> str:
 
 
 def _jarvis_dispatch(agent_id: str, params: dict) -> tuple[str, str]:
-    """Construit (prompt, headline) pour un flow donné. Lève ValueError
-    si le flow est inconnu."""
-    import inspect
-    from jarvis import (
-        build_enrich_prompt, build_audit_prompt, build_gap_prompt,
-        build_signalement_prompt, build_stats_prompt,
-        build_annotation_prompt,
-    )
-    BUILDERS = {
-        "enrich":      (build_enrich_prompt,      lambda p: f"🌱 Enrichir {_term_or_random(p)}"),
-        "audit":       (build_audit_prompt,       lambda p: f"🔍 Auditer {_term_or_random(p)}"),
-        "gap":         (build_gap_prompt,         lambda p: f"🕳️ Détecter les trous sur {_term_or_random(p)}"),
-        "signalement": (build_signalement_prompt, lambda p: f"⚠️ Signaler les triplets suspects de {_term_or_random(p)}"),
-        "stats":       (build_stats_prompt,       lambda p: f"📊 Stats sur {_term_or_random(p)}"),
-        "annotation":  (build_annotation_prompt,  lambda p: f"🏷️ Annoter {_term_or_random(p)}"),
-    }
-    if agent_id not in BUILDERS:
-        # Agent SUR MESURE (inventaire) : pré-prompt assemblé depuis le spec
-        # (stratégie + cadrage params) au lieu d'un builder natif.
-        try:
-            from jdm_agent.jarvis_chat import inventory as _inv
-            spec = _inv.get_agent_spec(agent_id)
-        except Exception:
-            spec = None
-        if spec and not spec.get("builtin"):
-            prompt = _inv.build_preprompt_for_spec(spec, params or {})
-            headline = f"{spec.get('icon', '🤖')} {spec.get('title', agent_id)} · {_term_or_random(params or {})}"
-            return prompt, headline
+    """Construit (prompt, headline) pour N'IMPORTE quel agent de l'inventaire
+    (natif OU sur mesure) — UN SEUL chemin. Lève ValueError si l'id est inconnu.
+
+    Le pré-prompt vient TOUJOURS de `build_preprompt_for_spec(spec, params)` :
+    pour un natif il délègue au `build_*_prompt` référencé par le spec (prompt
+    exact), pour un custom il assemble génériquement."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    spec = _inv.get_agent_spec(agent_id)
+    if not spec:
         raise ValueError(
             f"agent_id inconnu : {agent_id!r}. "
-            f"Attendu : {sorted(BUILDERS)} ou un agent sur mesure de l'inventaire."
+            f"Attendu : un agent de l'inventaire ({sorted(_inv._BUILTINS)} ou sur mesure)."
         )
-    builder, headline_fn = BUILDERS[agent_id]
-    # Garde seulement les params acceptés par la signature du builder.
-    sig = inspect.signature(builder)
-    accepted = {k: v for k, v in (params or {}).items() if k in sig.parameters}
-    prompt = builder(**accepted)
-    headline = headline_fn(params or {})
+    prompt = _inv.build_preprompt_for_spec(spec, params or {})
+    headline = f"{spec.get('icon', '🤖')} {spec.get('title', agent_id)} · {_term_or_random(params or {})}"
     return prompt, headline
 
 
@@ -1532,17 +1509,10 @@ def _push_event(run: dict, event: str, data) -> None:
 
 
 # Agents qui CONSOLIDENT (lisent le registry de consolidation au lieu de
-# parser le file_preview). Prédicat générique (vs `== "enrich"` en dur) :
-# en Phase 2 l'inventaire des AgentSpec étendra ce set aux agents sur mesure
-# dont la capacité `consolidates` est vraie.
-_CONSOLIDATING_AGENTS = {"enrich"}
-
-
 def _agent_consolidates(agent_id: str) -> bool:
     """True si l'agent passe par la consolidation (registry) plutôt que par
-    l'écriture/parse de file_preview. Source : built-ins + specs custom."""
-    if (agent_id or "") in _CONSOLIDATING_AGENTS:
-        return True
+    l'écriture/parse de file_preview. SOURCE UNIQUE : `spec.consolidates` de
+    l'inventaire (natifs ET sur mesure) — aucun id codé en dur."""
     try:
         from jdm_agent.jarvis_chat import inventory as _inv
         spec = _inv.get_agent_spec(agent_id)
@@ -1565,18 +1535,13 @@ def _drive_jarvis_agent_thread(run: dict) -> None:
         # 2) Build prompt
         prompt, headline = _jarvis_dispatch(agent_id, p)
         run["status"] = "running"
-        # Spec inventaire : pour un agent SUR MESURE on filtre le toolset
-        # (retire l'écriture si writes=False) et on impose son extension/format
-        # de sortie. Pour un natif, _excl=None + output_ext=None → toolset
-        # complet + table des canonical built-ins (comportement inchangé).
-        _spec = None
-        try:
-            from jdm_agent.jarvis_chat import inventory as _inv
-            _spec = _inv.get_agent_spec(agent_id)
-        except Exception:
-            _spec = None
-        _is_custom = bool(_spec and not _spec.get("builtin"))
-        _excl = _inv.exclude_tools_for_spec(_spec) if _is_custom else None
+        # Spec inventaire = SOURCE UNIQUE pour TOUS (natifs ET sur mesure) :
+        # toolset (exclude), extension/mode de sortie canonique, unité de prod.
+        # Natif → exclude_tools_for_spec renvoie set() (catalogue complet) et le
+        # spec porte output_ext/canonical_mode → même mécanique, un seul chemin.
+        from jdm_agent.jarvis_chat import inventory as _inv
+        _spec = _inv.get_agent_spec(agent_id) or {}
+        _excl = _inv.exclude_tools_for_spec(_spec) if _spec else None
         _base_build_agent = (_app.build_jdm_agent if hasattr(_app, "build_jdm_agent")
                              else __import__("jdm_agent.tools.jdm_agent",
                                              fromlist=["build_jdm_agent"]).build_jdm_agent)
@@ -1603,14 +1568,7 @@ def _drive_jarvis_agent_thread(run: dict) -> None:
             production_target=(
                 p.get("target_count") if not _agent_consolidates(agent_id) else None
             ),
-            production_unit={
-                "enrich":      "consolidés",
-                "annotation":  "annotations",
-                "audit":       "verdicts",
-                "signalement": "suspects",
-                "gap":         "trous",
-                "stats":       "lignes",
-            }.get(agent_id, "items"),
+            production_unit=_spec.get("production_unit", "items"),
             auto_switch_on_perday=bool(p.get("auto_switch", False)),
             resume_state=p.get("resume_state"),
             agent_id=agent_id,
@@ -1620,8 +1578,8 @@ def _drive_jarvis_agent_thread(run: dict) -> None:
             # Le run_id est l'UUID interne du bg-run (cf. _new_run).
             pool_active=bool(p.get("pool_active", False)),
             run_id=run.get("run_id"),
-            output_ext=(_spec.get("output_ext") if _is_custom else None),
-            canonical_mode=(_spec.get("canonical_mode") if _is_custom else None),
+            output_ext=_spec.get("output_ext"),
+            canonical_mode=_spec.get("canonical_mode"),
         )
         try:
             from jdm_agent.enrich import count_consolidations, list_consolidations
@@ -1877,40 +1835,22 @@ def _default_agent_params(agent_id: str, cfg: dict | None) -> dict:
         "temperature": temperature, "pool_active": pool_active,
         "term": "",                    # vide → tirage hasard via pick_random_term
     }
-    if agent_id == "enrich":
-        return {**common, "relation": [], "target_count": 3,
-                "vary_relations": True, "iterate": True, "upload": auto_upload}
-    if agent_id == "audit":
-        return {**common, "relation": [], "upload": auto_upload}
-    if agent_id == "gap":
-        return {**common}
-    if agent_id == "signalement":
-        return {**common, "relation": [], "upload": auto_upload}
-    if agent_id == "stats":
-        return {**common, "relation": [], "upload": auto_upload}
-    if agent_id == "annotation":
-        return {**common, "relation": [], "top_k": 8,
-                "target_count": 10, "upload": auto_upload}
-    # Agent SUR MESURE : défauts dérivés du spec (target si consolide, upload
-    # si écriture). Garde la même mécanique autonome que les natifs.
+    # UN SEUL chemin (natif ET sur mesure) : common + defaults du spec
+    # (target_count/vary_relations/iterate/top_k…, repris des anciennes branches
+    # natives) + upload si l'agent écrit. Aucun id codé en dur.
     try:
         from jdm_agent.jarvis_chat import inventory as _inv
-        spec = _inv.get_agent_spec(agent_id)
+        spec = _inv.get_agent_spec(agent_id) or {}
     except Exception:
-        spec = None
-    if spec and not spec.get("builtin"):
-        out = {**common, "relation": []}
-        d = spec.get("defaults") or {}
-        if spec.get("consolidates"):
-            out["target_count"] = int(d.get("target_count", 3))
-        elif d.get("target_count"):
-            out["target_count"] = int(d["target_count"])
-        if spec.get("writes"):
-            # Case « Soumettre automatiquement » du formulaire (defaults.upload)
-            # prime ; sinon le réglage global autoSubmit.
-            out["upload"] = bool(d["upload"]) if isinstance(d.get("upload"), bool) else auto_upload
-        return out
-    return common
+        spec = {}
+    out = {**common, "relation": []}
+    d = spec.get("defaults") or {}
+    out.update(d)
+    if spec.get("writes"):
+        # Case « Soumettre automatiquement » (defaults.upload) prime ; sinon le
+        # réglage global autoSubmit.
+        out["upload"] = bool(d["upload"]) if isinstance(d.get("upload"), bool) else auto_upload
+    return out
 
 
 def _chat_start_agent(agent_id: str, params: dict) -> dict:

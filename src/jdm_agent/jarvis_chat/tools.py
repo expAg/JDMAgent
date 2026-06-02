@@ -374,23 +374,25 @@ def rollback_env(password: str) -> dict:
     return _persist.rollback_env()
 
 
-# ───────────────────────── tools : lancer / arrêter un flux ─────────────────────────
-
-_VALID_FLOWS = {"enrich", "audit", "gap", "signalement", "stats", "annotation"}
+# ───────────────────────── tools : lancer / arrêter un agent ─────────────────────────
+# (la validation des ids se fait via l'inventaire — natifs + sur mesure.)
 
 
 @tool
 def start_agent(agent_id: str, term: str = "", relation: str = "",
                target_count: int = 0) -> dict:
-    """Démarre un flux d'agent Jarvis EN ARRIÈRE-PLAN et renvoie son run_id.
+    """Démarre un agent Jarvis EN ARRIÈRE-PLAN et renvoie son run_id.
 
-    agent_id ∈ {enrich, audit, gap, signalement, stats, annotation} :
+    `agent_id` = N'IMPORTE quel agent de l'INVENTAIRE (natif OU sur mesure) —
+    utilise `describe_flows()` / `list_specialist_agents()` pour voir les ids.
+    Natifs :
       - enrich      : proposer + consolider de nouveaux triplets
       - audit       : auditer la répartition des sens d'un terme
       - gap         : détecter les trous de couverture
       - signalement : repérer des triplets suspects
       - stats       : statistiques sur un terme
       - annotation  : annoter des triplets (constitutif/contrastif/…)
+    Sur mesure : leur id slugifié (ex. `extracteur_concepts`).
 
     `term` : LAISSE-LE VIDE ("") quand l'utilisateur ne donne pas de terme
     précis (« lance un enrichissement », « au hasard », « n'importe quel
@@ -402,11 +404,14 @@ def start_agent(agent_id: str, term: str = "", relation: str = "",
     et apparaît dans la supervision ; suis-le avec list_runs / get_run,
     arrête-le avec stop_agent.
     """
-    fid = (agent_id or "").strip().lower()
-    if fid not in _VALID_FLOWS:
+    fid = (agent_id or "").strip()
+    # Validation par l'INVENTAIRE (natifs ET sur mesure) — un seul registre.
+    from jdm_agent.jarvis_chat import inventory as _inv
+    if not _inv.get_agent_spec(fid):
+        _ids = sorted(s["id"] for s in _inv.list_agent_specs())
         return {"status": "error", "ok": False,
-                "error": f"agent_id invalide : {agent_id!r}. Attendu : {sorted(_VALID_FLOWS)}.",
-                "instruction": "Dis à l'utilisateur que le flux N'A PAS démarré (agent_id invalide). N'invente pas de succès."}
+                "error": f"agent_id invalide : {agent_id!r}. Attendu un agent de l'inventaire : {_ids}.",
+                "instruction": "Dis à l'utilisateur que l'agent N'A PAS démarré (agent_id invalide). N'invente pas de succès."}
     params: dict = {}
     if term and term.strip():
         params["term"] = term.strip()
@@ -449,17 +454,8 @@ def stop_agent(run_id: str) -> dict:
                            "l'utilisateur sans afficher le run_id."}
 
 
-# ───────────────────────── tool : description des flux (lecture seule) ─────────────────────────
-
-# agent_id (UI / start_agent) → fonction workflow canonique (jdm_tools).
-_FLOW_WORKFLOWS = {
-    "enrich": "enrichment_workflow",
-    "audit": "audit_workflow",
-    "gap": "gap_detection_workflow",
-    "signalement": "error_detection_workflow",
-    "stats": "stats_workflow",
-    "annotation": "annotation_workflow",
-}
+# ───────────────────────── tool : description des agents (lecture seule) ─────────────────────────
+# La recette workflow d'un natif vient de son spec inventaire (`workflow_tool`).
 
 
 def _condense_workflow(fid: str, full: dict, detailed: bool) -> dict:
@@ -482,31 +478,47 @@ def describe_flows(agent_id: str = "") -> dict:
     flow. À utiliser pour EXPLIQUER fidèlement comment un agent travaille —
     ne devine JAMAIS les étapes, lis-les ici.
 
-    - agent_id vide → résumé compact de TOUS les flux (titre + noms d'étapes).
-    - agent_id précis (enrich/audit/gap/signalement/stats/annotation) → détail
-      du flow : intention + étapes + outil de chaque étape.
+    - agent_id vide → résumé compact de TOUS les agents de l'inventaire (natifs
+      ET sur mesure).
+    - agent_id précis → détail de l'agent : pour un natif, son flux canonique
+      (intention + étapes + outil) ; pour un sur mesure, son spec (titre +
+      étapes-résumé + stratégie).
 
-    N'EXÉCUTE rien : c'est purement descriptif. Pour LANCER un flux, utilise
-    start_agent.
+    N'EXÉCUTE rien : c'est purement descriptif. Pour LANCER un agent, utilise
+    start_agent (qui accepte AUSSI les agents sur mesure de l'inventaire).
     """
     from jdm_agent.tools import jdm_tools as _jt
-    fid = (agent_id or "").strip().lower()
+    from jdm_agent.jarvis_chat import inventory as _inv
+
+    def _describe_spec(spec, detailed):
+        """Décrit un agent à partir de son spec : natif → recette *_workflow ;
+        sur mesure → étapes-résumé + stratégie."""
+        fid = spec["id"]
+        wf_name = spec.get("workflow_tool")
+        if wf_name and hasattr(_jt, wf_name):
+            try:
+                return _condense_workflow(fid, getattr(_jt, wf_name).invoke({}), detailed)
+            except Exception:
+                pass
+        steps = [s.get("n") for s in (spec.get("steps") or [])]
+        base = {"agent_id": fid, "title": spec.get("title"), "steps": steps,
+                "builtin": bool(spec.get("builtin"))}
+        if detailed:
+            base["intent"] = spec.get("brief")
+            base["strategy"] = spec.get("system_prompt")
+        return base
+
+    fid = (agent_id or "").strip()
     if fid:
-        wf_name = _FLOW_WORKFLOWS.get(fid)
-        if not wf_name:
-            return {"error": f"agent_id invalide : {agent_id!r}. "
-                             f"Attendu : {sorted(_FLOW_WORKFLOWS)}."}
-        full = getattr(_jt, wf_name).invoke({})
-        return _condense_workflow(fid, full, detailed=True)
-    flows = []
-    for k, wf_name in _FLOW_WORKFLOWS.items():
-        try:
-            full = getattr(_jt, wf_name).invoke({})
-            flows.append(_condense_workflow(k, full, detailed=False))
-        except Exception:
-            continue
-    return {"flows": flows, "note": "Pour le détail d'un flow, rappelle "
-            "describe_flows(agent_id)."}
+        spec = _inv.get_agent_spec(fid)
+        if not spec:
+            _ids = sorted(s["id"] for s in _inv.list_agent_specs())
+            return {"error": f"agent_id invalide : {agent_id!r}. Attendu : {_ids}."}
+        return _describe_spec(spec, detailed=True)
+    flows = [_describe_spec(s, detailed=False) for s in _inv.list_agent_specs()]
+    return {"flows": flows, "note": "Pour le détail d'un agent, rappelle "
+            "describe_flows(agent_id). start_agent fonctionne aussi pour les "
+            "agents sur mesure."}
 
 
 @tool
