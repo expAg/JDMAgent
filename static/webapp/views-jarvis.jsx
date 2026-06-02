@@ -2609,15 +2609,15 @@ function JLibrary({ list, onPick, onLaunch }) {
 // diagramme de boucle. Renvoie null si rien d'exploitable.
 function _parseWorkflowSteps(sp) {
   if (!sp || typeof sp !== 'string') return null;
-  let body = sp;
-  // Isole la section ÉTAPES (jusqu'au 1er en-tête suivant : RÈGLES, DESCRIPTION,
-  // ATTENTION, NOTES, SORTIE…).
-  const mStart = sp.match(/[ÉE]TAPES?\s*:?/i);
-  if (mStart) {
-    body = sp.slice(mStart.index + mStart[0].length);
-    const mEnd = body.match(/(R[ÈE]GLES?|DESCRIPTION|ATTENTION|NOTES?|SORTIE|REMARQUES?)\s*:/i);
-    if (mEnd) body = body.slice(0, mEnd.index);
-  }
+  // On EXIGE une vraie section « ÉTAPES » (format workflow généré). Sinon
+  // (instructions brutes de l'utilisateur, prose libre…) → null → on retombe
+  // sur les étapes génériques propres, AU LIEU de parser n'importe quelle liste
+  // numérotée et de produire des « étapes » verbeuses ou des règles parasites.
+  const mStart = sp.match(/[ÉE]TAPES?\s*:/i);
+  if (!mStart) return null;
+  let body = sp.slice(mStart.index + mStart[0].length);
+  const mEnd = body.match(/(R[ÈE]GLES?|DESCRIPTION|ATTENTION|NOTES?|SORTIE|REMARQUES?|CONTRAINTES?)\s*:/i);
+  if (mEnd) body = body.slice(0, mEnd.index);
   // Lignes numérotées « 1. … » / « 1) … ».
   const items = [];
   const re = /(?:^|\n)\s*(\d+)[.)]\s+([^\n]+)/g;
