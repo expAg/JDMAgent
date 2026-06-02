@@ -139,6 +139,7 @@ def build_jdm_agent(
     llm: Optional[Any] = None,
     enrich_docstrings: bool = True,
     debug: bool = False,
+    exclude_tools: Optional[set] = None,
 ):
     """Construit un agent LangChain (LangGraph compilé) pour JDM.
 
@@ -161,6 +162,11 @@ def build_jdm_agent(
     retiré du toolset pour empêcher les fuites cross-flow.
     """
     tools = build_jdm_tools(client=client, enrich_docstrings=enrich_docstrings)
+    if exclude_tools:
+        # Agents SUR MESURE : on peut retirer des outils (ex. l'écriture
+        # `write_submission_file` quand le spec a writes=False). Les built-ins
+        # passent exclude_tools=None → toolset complet, comportement inchangé.
+        tools = [t for t in tools if getattr(t, "name", "") not in exclude_tools]
     if llm is None:
         llm = get_llm()
     return create_agent(model=llm, tools=tools, system_prompt=SYSTEM_PROMPT, debug=debug)

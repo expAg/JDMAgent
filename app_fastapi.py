@@ -1367,9 +1367,20 @@ def _jarvis_dispatch(agent_id: str, params: dict) -> tuple[str, str]:
         "annotation":  (build_annotation_prompt,  lambda p: f"🏷️ Annoter {_term_or_random(p)}"),
     }
     if agent_id not in BUILDERS:
+        # Agent SUR MESURE (inventaire) : pré-prompt assemblé depuis le spec
+        # (stratégie + cadrage params) au lieu d'un builder natif.
+        try:
+            from jdm_agent.jarvis_chat import inventory as _inv
+            spec = _inv.get_agent_spec(agent_id)
+        except Exception:
+            spec = None
+        if spec and not spec.get("builtin"):
+            prompt = _inv.build_preprompt_for_spec(spec, params or {})
+            headline = f"{spec.get('icon', '🤖')} {spec.get('title', agent_id)} · {_term_or_random(params or {})}"
+            return prompt, headline
         raise ValueError(
             f"agent_id inconnu : {agent_id!r}. "
-            f"Attendu : {sorted(BUILDERS)}."
+            f"Attendu : {sorted(BUILDERS)} ou un agent sur mesure de l'inventaire."
         )
     builder, headline_fn = BUILDERS[agent_id]
     # Garde seulement les params acceptés par la signature du builder.
@@ -1554,6 +1565,25 @@ def _drive_jarvis_agent_thread(run: dict) -> None:
         # 2) Build prompt
         prompt, headline = _jarvis_dispatch(agent_id, p)
         run["status"] = "running"
+        # Spec inventaire : pour un agent SUR MESURE on filtre le toolset
+        # (retire l'écriture si writes=False) et on impose son extension/format
+        # de sortie. Pour un natif, _excl=None + output_ext=None → toolset
+        # complet + table des canonical built-ins (comportement inchangé).
+        _spec = None
+        try:
+            from jdm_agent.jarvis_chat import inventory as _inv
+            _spec = _inv.get_agent_spec(agent_id)
+        except Exception:
+            _spec = None
+        _is_custom = bool(_spec and not _spec.get("builtin"))
+        _excl = _inv.exclude_tools_for_spec(_spec) if _is_custom else None
+        _base_build_agent = (_app.build_jdm_agent if hasattr(_app, "build_jdm_agent")
+                             else __import__("jdm_agent.tools.jdm_agent",
+                                             fromlist=["build_jdm_agent"]).build_jdm_agent)
+
+        def _build_agent(client=None, llm=None):
+            return _base_build_agent(client=client, llm=llm, exclude_tools=_excl)
+
         # 3) Drive run_jarvis_agent
         sync_gen = _jarvis.run_jarvis_agent(
             prompt=prompt,
@@ -1563,9 +1593,7 @@ def _drive_jarvis_agent_thread(run: dict) -> None:
             budget_label=str(p.get("budget_label", "illimité")),
             drops_key=p.get("drops_key", ""),
             build_llm_fn=_app._build_llm,
-            build_agent_fn=_app.build_jdm_agent if hasattr(_app, "build_jdm_agent")
-                          else __import__("jdm_agent.tools.jdm_agent",
-                                          fromlist=["build_jdm_agent"]).build_jdm_agent,
+            build_agent_fn=_build_agent,
             get_client_fn=_app.get_client,
             use_thinking=bool(p.get("use_thinking", False)),
             temperature=(p.get("temperature") if isinstance(p.get("temperature"), (int, float)) else None),
@@ -1592,6 +1620,8 @@ def _drive_jarvis_agent_thread(run: dict) -> None:
             # Le run_id est l'UUID interne du bg-run (cf. _new_run).
             pool_active=bool(p.get("pool_active", False)),
             run_id=run.get("run_id"),
+            output_ext=(_spec.get("output_ext") if _is_custom else None),
+            canonical_mode=(_spec.get("canonical_mode") if _is_custom else None),
         )
         try:
             from jdm_agent.enrich import count_consolidations, list_consolidations
@@ -1861,6 +1891,23 @@ def _default_agent_params(agent_id: str, cfg: dict | None) -> dict:
     if agent_id == "annotation":
         return {**common, "relation": [], "top_k": 8,
                 "target_count": 10, "upload": auto_upload}
+    # Agent SUR MESURE : défauts dérivés du spec (target si consolide, upload
+    # si écriture). Garde la même mécanique autonome que les natifs.
+    try:
+        from jdm_agent.jarvis_chat import inventory as _inv
+        spec = _inv.get_agent_spec(agent_id)
+    except Exception:
+        spec = None
+    if spec and not spec.get("builtin"):
+        out = {**common, "relation": []}
+        d = spec.get("defaults") or {}
+        if spec.get("consolidates"):
+            out["target_count"] = int(d.get("target_count", 3))
+        elif d.get("target_count"):
+            out["target_count"] = int(d["target_count"])
+        if spec.get("writes"):
+            out["upload"] = auto_upload
+        return out
     return common
 
 
@@ -1953,6 +2000,39 @@ def api_jarvis_list_runs():
                 for r in _JARVIS_RUNS.values()
             ]
         }
+
+
+# ────────────────────────────────────────────────────────────────────
+# Inventaire des agents (natifs + sur mesure) — CRUD
+# ────────────────────────────────────────────────────────────────────
+@app.get("/api/jarvis/agents")
+def api_jarvis_list_agents() -> dict[str, Any]:
+    """Tous les agents de l'inventaire (6 natifs + sur mesure persistés)."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    return {"agents": _inv.list_agent_specs(), "templates": _inv.AGENT_TEMPLATES}
+
+
+class AgentSpecRequest(BaseModel):
+    spec: dict
+
+
+@app.post("/api/jarvis/agents")
+def api_jarvis_save_agent(req: AgentSpecRequest) -> dict[str, Any]:
+    """Crée / écrase un agent SUR MESURE (refuse d'écraser un natif)."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    try:
+        saved = _inv.save_agent_spec(req.spec or {})
+        return {"ok": True, "spec": saved}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+@app.delete("/api/jarvis/agents/{agent_id}")
+def api_jarvis_delete_agent(agent_id: str) -> dict[str, Any]:
+    """Supprime un agent SUR MESURE de l'inventaire."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    ok = _inv.delete_agent_spec(agent_id)
+    return {"ok": ok, "error": None if ok else "Agent introuvable ou natif (non supprimable)."}
 
 
 # Catalogue d'outils mis en cache au premier hit — l'introspection

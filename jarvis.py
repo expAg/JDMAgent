@@ -1393,6 +1393,8 @@ def run_jarvis_agent(
     temperature: Optional[float] = None,
     pool_active: bool = False,
     run_id: Optional[str] = None,
+    output_ext: Optional[str] = None,
+    canonical_mode: Optional[str] = None,
 ) -> Generator[tuple, None, None]:
     """Générateur qui pilote un agent avec budget pour un sous-onglet
     Jarvis, et yield des tuples (messages_chatbot, file_path, file_preview)
@@ -1615,7 +1617,11 @@ def run_jarvis_agent(
             "stats":       (".stat",   "redirect"),
             "gap":         (".gap",    None),  # ext sentinelle, pas de canonical
         }
-        if agent_id is not None:
+        if output_ext is not None:
+            # Override explicite (agents SUR MESURE : extension/format choisis
+            # par l'utilisateur via le spec, pas dans la table des built-ins).
+            _ext, _canon_mode = output_ext, canonical_mode
+        elif agent_id is not None:
             _ext, _canon_mode = _flow_canonical_spec.get(agent_id, (".enrich", None))
         elif consolidation_target is not None:
             # Legacy : pas de agent_id mais on a consolidation_target → enrich.
