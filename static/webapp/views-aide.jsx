@@ -18,11 +18,11 @@ const TABS_TABLE = [
   { icon: '⚖️', name: 'Claim checker', what: 'SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet. Déterministe.', key: 'Aucune' },
   { icon: '🕸️', name: 'Sous-graphe',   what: 'Visualisation vis-network interactive du voisinage.',              key: 'Aucune' },
   { icon: '🤖', name: 'Agent',         what: 'Chat libre avec un agent LLM qui utilise les outils JDM.',         key: 'Gemini gratuit · BYOK Claude/GPT' },
-  { icon: '🦾', name: 'Jarvis',        what: 'Flux guidés par formulaires (5 sous-onglets).',                    key: 'Gemini · LLMDrops si soumission' },
+  { icon: '🦾', name: 'Jarvis',        what: 'Agents guidés par formulaires (5 sous-onglets).',                    key: 'Gemini · LLMDrops si soumission' },
   { icon: '🛠️', name: 'Aide',          what: 'Ce document.',                                                      key: '—' },
 ];
 
-const JARVIS_FLOWS_HELP = [
+const JARVIS_AGENTS_HELP = [
   { id: 'enrich',      icon: '🌱', accent: 'var(--jdm-green)',   name: 'Enrichissement', wf: 'enrichment_workflow()',
     desc: 'Propose et consolide de nouveaux triplets pour un terme. Form : terme, relation cible (optionnelle), nombre cible, varier les relations, itérer jusqu\'au but, soumettre. Output : chatbot + fichier .enrich.' },
   { id: 'audit',       icon: '🔍', accent: 'var(--jdm-cyan)',    name: 'Audit',          wf: 'audit_workflow()',
@@ -362,7 +362,7 @@ function ViewAide() {
             gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
             gap: 12, marginBottom: 48,
           }}>
-            {JARVIS_FLOWS_HELP.map(f => (
+            {JARVIS_AGENTS_HELP.map(f => (
               <div key={f.id} style={{
                 background: 'var(--bg-card)',
                 border: '1px solid var(--line)',

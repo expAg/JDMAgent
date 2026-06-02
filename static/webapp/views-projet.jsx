@@ -182,7 +182,7 @@ function ViewProjet({ goto }) {
     { label: 'Termes JDM',   value: '2M+',    sub: 'JeuxDeMots'    },
     { label: 'Relations',    value: '180+',   sub: 'types typées'  },
     { label: 'Outils MCP',   value: '35',     sub: 'LangChain · FastMCP' },
-    { label: 'Flux Jarvis',  value: '5',      sub: 'guidés'        },
+    { label: 'Agents Jarvis',  value: '5',      sub: 'guidés'        },
   ];
 
   // Features
@@ -190,13 +190,13 @@ function ViewProjet({ goto }) {
     {
       id: 'jarvis',
       title: '🤖 Jarvis',
-      kind: '5 flux',
+      kind: '5 agents',
       primary: true,
-      desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
+      desc: 'Agents guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
       example: 'enrichissement → 17 triplets consolidés',
       detail: {
         lede: 'Cinq workflows agentiques guidés par formulaire — pas de prompt à écrire, l\'enchaînement outils + LLM + consolidation est canonique.',
-        body: 'Chaque flux suit un workflow déterministe (defined-in-code) avec un budget de tokens, un budget d\'outils et un critère d\'arrêt. Le LLM ne décide jamais seul de continuer ; il propose, le moteur consolide ou rejette.',
+        body: 'Chaque agent suit un workflow déterministe (defined-in-code) avec un budget de tokens, un budget d\'outils et un critère d\'arrêt. Le LLM ne décide jamais seul de continuer ; il propose, le moteur consolide ou rejette.',
         quickTry: {
           kind: 'select-and-term',
           options: [
@@ -245,7 +245,7 @@ function ViewProjet({ goto }) {
       },
     },
     {
-      id: 'agent',
+      id: 'chatbot',
       title: '💬 Chatbot LLM',
       kind: 'LLM · BYOK',
       desc: 'Conversation avec un agent (Gemini hébergé gratuit, ou BYOK Claude/GPT) qui n\'utilise QUE les outils JDM et cite ses sources.',
@@ -265,7 +265,7 @@ function ViewProjet({ goto }) {
             { value: 'llama-4-70b',           label: 'Llama 4 70B · local' },
           ],
           defaultModel: 'gemini-3.1-flash-lite',
-          // Quick-try Chatbot : appel SSE /api/agent/stream, capture les
+          // Quick-try Chatbot : appel SSE /api/chatbot/stream, capture les
           // premiers chunks de la réponse (~10s max) puis ferme.
           mock: async (q, model) => {
             const ctrl = new AbortController();
@@ -718,7 +718,7 @@ function ViewProjet({ goto }) {
                   </p>
                   <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
                     <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
-                    <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
+                    <Button variant="secondary" onClick={() => goto('chatbot')}>Discuter avec JDM</Button>
                     <Button variant="secondary" onClick={() => goto('subgraph')}>Visualiser</Button>
                     <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
                   </div>

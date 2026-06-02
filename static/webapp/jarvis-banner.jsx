@@ -643,7 +643,7 @@ const BANNER_KEY = 'jdm_jarvis_banner_collapsed';
    ChatPanel ré-affiche l'état courant. Persistance EN MÉMOIRE uniquement
    (pas de disque) : un rechargement de page repart à zéro, voulu. */
 const JarvisChatStore = (function () {
-  const GREETING = { who: 'bot', text: "Bonjour 👋 Je suis Jarvis. Pose-moi une question sur tes flux, tes triplets ou le graphe JDM." };
+  const GREETING = { who: 'bot', text: "Bonjour 👋 Je suis Jarvis. Pose-moi une question sur tes agents, tes triplets ou le graphe JDM." };
   let msgs = [GREETING];
   let busy = false;
   const listeners = new Set();
@@ -860,7 +860,7 @@ function ChatPanel({ dark, onClose }) {
   useEffect(() => {
     const measure = () => {
       let h = 0;
-      const rails = document.querySelectorAll('nav[aria-label="Sections Jarvis"], nav[aria-label="Navigation entre flux"]');
+      const rails = document.querySelectorAll('nav[aria-label="Sections Jarvis"], nav[aria-label="Navigation entre agents"]');
       rails.forEach((r) => {
         const rect = r.getBoundingClientRect();
         // rail visible et ancré en bas de l'écran

@@ -623,7 +623,7 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
     { id: 'explorer',    label: 'Explorer' },
     { id: 'claim',       label: 'Claim checker' },
     { id: 'subgraph',    label: 'Sous-graphe' },
-    { id: 'agent',       label: 'Chatbot LLM' },
+    { id: 'chatbot',     label: 'Chatbot LLM' },
     { id: 'jarvis',      label: 'Jarvis' },
     { id: 'chat',        label: 'Chat' },
     { id: 'productions', label: 'Productions' },
@@ -767,7 +767,7 @@ const CLI_COMMANDS = {
   agent:       { cmd: 'python -m jdm_agent.apps.qa_cli --provider gemini --model gemini-3.1-flash-lite',
                  hint: 'REPL chat LLM avec outils JDM. ANTHROPIC_API_KEY / GOOGLE_API_KEY dans l\'env.' },
   jarvis:      { cmd: 'python -m jdm_agent.apps.enrich --terms voiture --consolidate --inference-effort 1',
-                 hint: 'Flux Enrichissement complet — proposer, valider, consolider, écrire le .enrich.' },
+                 hint: 'Agent Enrichissement complet — proposer, valider, consolider, écrire le .enrich.' },
   productions: { cmd: 'ls /tmp/jdm_outputs/ && cat /tmp/jdm_outputs/*.enrich | head -20',
                  hint: 'Liste les fichiers produits (.enrich/.annot/.audit/.err/.stat).' },
   aide:        { cmd: 'python -m jdm_agent.apps.enrich --help',
@@ -924,8 +924,8 @@ const REMOTE_COMMANDS = {
                  hint: 'POST /api/subgraph — nodes/edges JSON ou HTML (format="html").',
                  runner: _runSubgraph },
   agent:       { lang: 'python',
-                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/agent/stream",\n        json={"message": "quels sens de voiture ?",\n              "model": "gemini-3.1-flash-lite"}) as r:\n    for line in r.iter_lines():\n        if line.startswith("data:"): print(line[5:].strip())',
-                 hint: 'POST /api/agent/stream — SSE streaming (events: chunk, tool, done).',
+                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/chatbot/stream",\n        json={"message": "quels sens de voiture ?",\n              "model": "gemini-3.1-flash-lite"}) as r:\n    for line in r.iter_lines():\n        if line.startswith("data:"): print(line[5:].strip())',
+                 hint: 'POST /api/chatbot/stream — SSE streaming (events: chunk, tool, done).',
                  runner: _runAgentStream },
   jarvis:      { lang: 'python',
                  cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/jarvis/enrich/stream",\n        json={"params": {"term": "voiture", "target_count": 20,\n                          "iterate": True, "budget_label": "50"}}) as r:\n    for line in r.iter_lines():\n        if line.startswith("event:"): print(line)',
@@ -1477,13 +1477,13 @@ function ThemeSwitcher({ theme, setTheme }) {
 // ───────── Flux en cours pill — sticky en haut, polling léger ─────
 // Affiche `X/N flux en cours` où X = runs actifs (status=running)
 // retournés par GET /api/jarvis/runs et N = nombre de flows distincts
-// (configuré globalement par JARVIS_FLOWS_TOTAL). Gradient de couleur :
+// (configuré globalement par JARVIS_AGENTS_TOTAL). Gradient de couleur :
 //   0%   → vert  (var(--jdm-green))      tout dispo
 //   50%  → jaune (var(--jdm-yellow))     mi-charge
 //   100% → rouge (var(--jdm-magenta))    tous pris, file d'attente
 // Recharge toutes les 5s pendant qu'on a au moins un run actif (pour
 // suivre le pulse), 30s sinon (économe quand idle).
-const JARVIS_FLOWS_TOTAL = 6;  // enrich + audit + gap + signalement + stats + annotation
+const JARVIS_AGENTS_TOTAL = 6;  // enrich + audit + gap + signalement + stats + annotation
 
 function _interpolateColor(c1, c2, t) {
   // c1, c2 = [r, g, b] ; t in [0,1]
@@ -1541,8 +1541,8 @@ function ProductionsCountPill() {
   // l'ancien `max(local, server)` empêchait la décroissance immédiate
   // au stop (serveur lag 15s + bg thread cancellation 5-15s).
   const active = localActive > 0 ? localActive : (serverActive ?? 0);
-  const label = `${active}/${JARVIS_FLOWS_TOTAL}`;
-  const load = Math.min(1, active / JARVIS_FLOWS_TOTAL);
+  const label = `${active}/${JARVIS_AGENTS_TOTAL}`;
+  const load = Math.min(1, active / JARVIS_AGENTS_TOTAL);
   const [r, g, b] = _loadGradientRGB(load);
   const accentRGB = `rgb(${r}, ${g}, ${b})`;
   const fillRGBA = `rgba(${r}, ${g}, ${b}, 0.14)`;
@@ -1560,7 +1560,7 @@ function ProductionsCountPill() {
       }}
       title={
         active == null ? 'Chargement…'
-        : `${active} flux Jarvis actuellement en cours sur ${JARVIS_FLOWS_TOTAL} disponibles · clic pour ouvrir Supervision`
+        : `${active} agents Jarvis actuellement en cours sur ${JARVIS_AGENTS_TOTAL} disponibles · clic pour ouvrir Supervision`
       }
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -1581,7 +1581,7 @@ function ProductionsCountPill() {
       onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
       <span className="pulse-dot" style={{ background: dotRGB }} />
       <span>{label}</span>
-      <span style={{ opacity: 0.65, fontWeight: 400, textTransform: 'lowercase' }}>flux</span>
+      <span style={{ opacity: 0.65, fontWeight: 400, textTransform: 'lowercase' }}>agents</span>
     </button>
   );
 }
@@ -2557,7 +2557,7 @@ function ViewProjet({ goto }) {
     { label: 'Termes JDM',   value: '2M+',    sub: 'JeuxDeMots'    },
     { label: 'Relations',    value: '180+',   sub: 'types typées'  },
     { label: 'Outils MCP',   value: '35',     sub: 'LangChain · FastMCP' },
-    { label: 'Flux Jarvis',  value: '5',      sub: 'guidés'        },
+    { label: 'Agents Jarvis',  value: '5',      sub: 'guidés'        },
   ];
 
   // Features
@@ -2565,13 +2565,13 @@ function ViewProjet({ goto }) {
     {
       id: 'jarvis',
       title: '🤖 Jarvis',
-      kind: '5 flux',
+      kind: '5 agents',
       primary: true,
-      desc: 'Flux guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
+      desc: 'Agents guidés par formulaires (zéro prompt à taper) : Enrichissement (.enrich), Audit (.audit), Détection de trous, Signalement (.err), Statistiques.',
       example: 'enrichissement → 17 triplets consolidés',
       detail: {
         lede: 'Cinq workflows agentiques guidés par formulaire — pas de prompt à écrire, l\'enchaînement outils + LLM + consolidation est canonique.',
-        body: 'Chaque flux suit un workflow déterministe (defined-in-code) avec un budget de tokens, un budget d\'outils et un critère d\'arrêt. Le LLM ne décide jamais seul de continuer ; il propose, le moteur consolide ou rejette.',
+        body: 'Chaque agent suit un workflow déterministe (defined-in-code) avec un budget de tokens, un budget d\'outils et un critère d\'arrêt. Le LLM ne décide jamais seul de continuer ; il propose, le moteur consolide ou rejette.',
         quickTry: {
           kind: 'select-and-term',
           options: [
@@ -2620,7 +2620,7 @@ function ViewProjet({ goto }) {
       },
     },
     {
-      id: 'agent',
+      id: 'chatbot',
       title: '💬 Chatbot LLM',
       kind: 'LLM · BYOK',
       desc: 'Conversation avec un agent (Gemini hébergé gratuit, ou BYOK Claude/GPT) qui n\'utilise QUE les outils JDM et cite ses sources.',
@@ -2640,7 +2640,7 @@ function ViewProjet({ goto }) {
             { value: 'llama-4-70b',           label: 'Llama 4 70B · local' },
           ],
           defaultModel: 'gemini-3.1-flash-lite',
-          // Quick-try Chatbot : appel SSE /api/agent/stream, capture les
+          // Quick-try Chatbot : appel SSE /api/chatbot/stream, capture les
           // premiers chunks de la réponse (~10s max) puis ferme.
           mock: async (q, model) => {
             const ctrl = new AbortController();
@@ -3093,7 +3093,7 @@ function ViewProjet({ goto }) {
                   </p>
                   <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
                     <Button onClick={() => goto('jarvis')}>Jarvis →</Button>
-                    <Button variant="secondary" onClick={() => goto('agent')}>Discuter avec JDM</Button>
+                    <Button variant="secondary" onClick={() => goto('chatbot')}>Discuter avec JDM</Button>
                     <Button variant="secondary" onClick={() => goto('subgraph')}>Visualiser</Button>
                     <Button variant="secondary" onClick={() => goto('explorer')}>Explorer</Button>
                   </div>
@@ -6763,9 +6763,9 @@ function ViewAgent() {
   // SANS envoyer (le user clique Envoyer lui-même). Lu une seule fois
   // au mount, puis le payload est nettoyé.
   const _pending = (typeof window !== 'undefined'
-                    && window.__jdmPendingPayload?.agent) || null;
+                    && window.__jdmPendingPayload?.chatbot) || null;
   if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
-    delete window.__jdmPendingPayload.agent;
+    delete window.__jdmPendingPayload.chatbot;
   }
   const [model, setModel] = useState(_pending?.model || 'gemini-3.1-flash-lite');
   const [thinking, setThinking] = useState(true);
@@ -6829,7 +6829,7 @@ function ViewAgent() {
     });
   }, [poolStatus]);
 
-  // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
+  // Send : POST /api/chatbot/stream, parse SSE en flux, accumule sur le
   // dernier message assistant (créé vide juste avant le fetch).
   // `overrideMsg` permet au bouton ↻ de re-soumettre une question
   // précédente sans passer par le state input (qui est async).
@@ -7487,7 +7487,7 @@ function ViewChat() {
       <SectionTitle
         kicker="Orchestrateur"
         title="Jarvis · Chat"
-        desc="Discute avec l'orchestrateur en plein écran : il supervise les agents, lance des flux, explique le graphe JDM. Même conversation que le volet latéral (le fil continue en fond)." />
+        desc="Discute avec l'orchestrateur en plein écran : il supervise et lance les agents, explique le graphe JDM. Même conversation que le volet latéral (le fil continue en fond)." />
 
       {!store ? (
         <div style={{ color: 'var(--ink-3)', padding: '48px 0', textAlign: 'center' }}>
@@ -7547,16 +7547,16 @@ function ViewChat() {
 // Skin-aware (uses --bg, --bg-card, --line, --accent, --jdm-* vars).
 
 // Catalogue des 6 flux JDM réels (mapping vers les sous-commandes
-// /api/jarvis/{flow_id}/stream du backend). Conserve la structure
+// /api/jarvis/{agent_id}/stream du backend). Conserve la structure
 // attendue par le design (id/title/kicker/desc/accent/loopOf/produces/
-// category/tags/steps). Les TOOL_DOCS / FLOW_TOOL_STEPS / FLOW_FAKES
+// category/tags/steps). Les TOOL_DOCS / AGENT_TOOL_STEPS / FLOW_FAKES
 // restent fictifs en l'état (à câbler en phase 2 sur le vrai registre
 // d'outils + SSE backend ; cf. handoff README §6).
-const JARVIS_FLOWS = [
+const JARVIS_AGENTS = [
   {
     id: 'enrich',
     title: 'Enrichissement',
-    kicker: 'Flux 1',
+    kicker: 'Agent 1',
     desc: 'Propose de nouveaux triplets pour un terme, les valide via JDM (factcheck + inférence), garde ceux qui passent, écrit un fichier .enrich prêt pour LLMDrops.',
     accent: 'var(--jdm-magenta)',
     loopOf: 'proposition → validation → consolidation',
@@ -7572,7 +7572,7 @@ const JARVIS_FLOWS = [
   {
     id: 'audit',
     title: 'Audit sémantique',
-    kicker: 'Flux 2',
+    kicker: 'Agent 2',
     desc: 'Pour un terme polysémique, vérifie sens par sens quelles relations sont légitimes, contrastives, à corriger. Produit un fichier .audit deux sections (verdicts + META).',
     accent: 'var(--jdm-cyan)',
     loopOf: 'sens → triplet → verdict',
@@ -7588,7 +7588,7 @@ const JARVIS_FLOWS = [
   {
     id: 'gap',
     title: 'Détection de trous',
-    kicker: 'Flux 3',
+    kicker: 'Agent 3',
     desc: 'Identifie les relations manquantes ou faiblement couvertes pour un terme — pour relancer l\'enrichissement de façon ciblée. Sortie : rapport JSON.',
     accent: 'var(--jdm-green)',
     loopOf: 'parcours → diagnostic → trous',
@@ -7604,7 +7604,7 @@ const JARVIS_FLOWS = [
   {
     id: 'signalement',
     title: 'Signalement',
-    kicker: 'Flux 4',
+    kicker: 'Agent 4',
     desc: 'Scanne un terme à la recherche de triplets suspects (incohérences, polarité douteuse, annotations oubliées). Produit un fichier .err.',
     accent: 'var(--jdm-orange)',
     loopOf: 'inventaire → flag → catégorisation',
@@ -7620,7 +7620,7 @@ const JARVIS_FLOWS = [
   {
     id: 'stats',
     title: 'Stats',
-    kicker: 'Flux 5',
+    kicker: 'Agent 5',
     desc: 'Compte les relations, leur poids, leur distribution par terme et par relation. Renvoie un récapitulatif structuré (.stat).',
     accent: 'var(--jdm-violet)',
     loopOf: 'inventaire → agrégation',
@@ -7635,7 +7635,7 @@ const JARVIS_FLOWS = [
   {
     id: 'annotation',
     title: 'Annotation sémantique',
-    kicker: 'Flux 6',
+    kicker: 'Agent 6',
     desc: 'Annote les triplets existants selon la taxonomie 4 catégories (constitutif / contrastif / non spécifique / exception). L\'annotation qualifie le LIEN, pas l\'objet. Produit un fichier .annot deux sections (annotations + signalement des désaccords avec JDM existant).',
     accent: 'var(--jdm-yellow)',
     loopOf: 'triplet → jugement → catégorie',
@@ -7663,7 +7663,7 @@ const J_SECTIONS = [
 // (reachable from the Accueil / Supervision cards).
 const J_PANELS = [
   ...J_SECTIONS,
-  ...JARVIS_FLOWS.map(f => ({ id: f.id, label: f.kicker })),
+  ...JARVIS_AGENTS.map(f => ({ id: f.id, label: f.kicker })),
 ];
 const JPANEL_BASIS = `${100 / J_PANELS.length}%`;
 
@@ -7671,7 +7671,7 @@ const JPANEL_BASIS = `${100 / J_PANELS.length}%`;
 
 // REAL BACKEND WIRING (extrait de fastapi-self) — câble le design Jarvis
 
-// sur le vrai /api/jarvis/{flow_id}/stream + JarvisStore (singleton qui
+// sur le vrai /api/jarvis/{agent_id}/stream + JarvisStore (singleton qui
 
 // survit aux unmount, persiste runId en localStorage, reconcile au boot).
 
@@ -7686,15 +7686,15 @@ const SUBMITTABLE_FLOWS = new Set(['enrich', 'audit', 'signalement',
 // Icône emoji par flux (même set que l'onglet Aide : brin d'herbe pour
 // l'enrichissement, trou pour la détection de trous, etc.). Source unique
 // d'identité visuelle des flux dans la console.
-const FLOW_ICON = {
+const AGENT_ICON = {
   enrich: '🌱', audit: '🔍', gap: '🕳️',
   signalement: '⚠️', stats: '📊', annotation: '🏷️',
 };
-const flowIcon = (id) => FLOW_ICON[id] || '🦾';
+const agentIcon = (id) => AGENT_ICON[id] || '🦾';
 
 // Brief ULTRA court (une ligne) de ce que fait l'agent — affiché sur les
 // cartes de lancement vides pour orienter d'un coup d'œil.
-const FLOW_BRIEF = {
+const AGENT_BRIEF = {
   enrich:      'Propose de nouveaux triplets pour un terme, les valide via JDM (factcheck + inférence) et consolide ceux qui passent dans un .enrich prêt pour LLMDrops.',
   audit:       'Pour un terme polysémique, vérifie sens par sens quelles relations sont légitimes, contrastives ou à corriger. Produit un .audit en deux sections (verdicts + META).',
   gap:         'Inventorie les relations d’un terme et repère les trous de couverture (manquantes, faibles, négatives) pour cibler l’enrichissement. Sortie : rapport de trous.',
@@ -7742,13 +7742,13 @@ function JRobotHead({ size = 30, title }) {
 // clé LLMDrops prise côté serveur (.env JDM_DROPS_API_KEY) — donc grisé tant
 // que ni clé serveur ni clé fournie. `submitted` initial vient du run/fichier ;
 // devient ✓ après succès. `compact` = pastille icône-only pour les cartes.
-function FileSubmitButton({ filePath, flowId, submitted, onDone, compact, running }) {
+function FileSubmitButton({ filePath, agentId, submitted, onDone, compact, running }) {
   const _envStatus = useEnvStatus();
   const _envHasDrops = !!(_envStatus.JDM_DROPS_API_KEY && _envStatus.JDM_DROPS_API_KEY.set);
   const [state, setState] = useState('idle');   // idle | sending | error
   const [done, setDone] = useState(!!submitted);
   React.useEffect(() => { setDone(!!submitted); }, [submitted]);
-  if (!filePath || !SUBMITTABLE_FLOWS.has(flowId)) return null;
+  if (!filePath || !SUBMITTABLE_FLOWS.has(agentId)) return null;
   const fileName = filePath.split(/[\\/]/).slice(-1)[0];
   const canSubmit = _envHasDrops;
   const submit = async (e) => {
@@ -7758,9 +7758,9 @@ function FileSubmitButton({ filePath, flowId, submitted, onDone, compact, runnin
     // confirmation avant de soumettre un fichier partiel (ne jamais
     // soumettre à moitié sans validation explicite de l'utilisateur).
     if (running) {
-      const ext = flowId === 'enrich' ? 'enrich' : flowId === 'audit' ? 'audit'
-        : flowId === 'signalement' ? 'err' : flowId === 'stats' ? 'stat'
-        : flowId === 'annotation' ? 'annot' : 'txt';
+      const ext = agentId === 'enrich' ? 'enrich' : agentId === 'audit' ? 'audit'
+        : agentId === 'signalement' ? 'err' : agentId === 'stats' ? 'stat'
+        : agentId === 'annotation' ? 'annot' : 'txt';
       const ok = window.confirm(
         'Le flow n\'est pas encore terminé — le fichier .' + ext +
         ' contient seulement les triplets produits jusqu\'à maintenant.' +
@@ -7828,9 +7828,9 @@ function FileSubmitButton({ filePath, flowId, submitted, onDone, compact, runnin
 const _JARVIS_RUNS = {};
 const _JARVIS_LISTENERS = {};
 
-function _emptyJarvisRun(flowId) {
+function _emptyJarvisRun(agentId) {
   return {
-    flowId,
+    agentId,
     status: 'idle',  // 'idle' | 'running' | 'done' | 'error'
     headline: '',
     log: [],
@@ -7850,38 +7850,38 @@ function _emptyJarvisRun(flowId) {
 }
 
 const JarvisStore = {
-  get(flowId) {
-    if (!_JARVIS_RUNS[flowId]) _JARVIS_RUNS[flowId] = _emptyJarvisRun(flowId);
-    return _JARVIS_RUNS[flowId];
+  get(agentId) {
+    if (!_JARVIS_RUNS[agentId]) _JARVIS_RUNS[agentId] = _emptyJarvisRun(agentId);
+    return _JARVIS_RUNS[agentId];
   },
-  patch(flowId, partial) {
-    Object.assign(this.get(flowId), partial);
-    this._emit(flowId);
+  patch(agentId, partial) {
+    Object.assign(this.get(agentId), partial);
+    this._emit(agentId);
   },
-  _emit(flowId) {
-    const subs = _JARVIS_LISTENERS[flowId];
+  _emit(agentId) {
+    const subs = _JARVIS_LISTENERS[agentId];
     if (subs) for (const cb of subs) { try { cb(); } catch {} }
     const glob = _JARVIS_LISTENERS['*'];
     if (glob) for (const cb of glob) { try { cb(); } catch {} }
   },
-  subscribe(flowId, cb) {
-    if (!_JARVIS_LISTENERS[flowId]) _JARVIS_LISTENERS[flowId] = new Set();
-    _JARVIS_LISTENERS[flowId].add(cb);
-    return () => { if (_JARVIS_LISTENERS[flowId]) _JARVIS_LISTENERS[flowId].delete(cb); };
+  subscribe(agentId, cb) {
+    if (!_JARVIS_LISTENERS[agentId]) _JARVIS_LISTENERS[agentId] = new Set();
+    _JARVIS_LISTENERS[agentId].add(cb);
+    return () => { if (_JARVIS_LISTENERS[agentId]) _JARVIS_LISTENERS[agentId].delete(cb); };
   },
   activeFlowIds() {
     return Object.entries(_JARVIS_RUNS)
       .filter(([, s]) => s.status === 'running')
       .map(([id]) => id);
   },
-  stop(flowId) {
+  stop(agentId) {
     // Stop = cooperative cancellation côté serveur (POST /cancel) qui
     // pose un flag que le bg thread voit entre deux chunks → break du
     // for loop → finally blocs propres (exclusion_context exit, etc.).
     // Latence ≈ 5-15s (le round-trip LLM en cours se termine, aucun
     // nouveau ne démarre). En parallèle on coupe l'observation SSE
     // locale pour libérer le reader.
-    const cur = this.get(flowId);
+    const cur = this.get(agentId);
     if (cur.runId) {
       // Fire-and-forget : on n'attend pas la réponse pour ne pas bloquer
       // l'UI. Le bg confirmera le stop via event 'cancelled' dans la SSE
@@ -7895,17 +7895,17 @@ const JarvisStore = {
         t: ts(), tag: '[stop]', kind: 'iter',
         msg: 'Demande d\'arrêt envoyée — le flow se termine après le chunk en cours (~5-15s).',
       }];
-      this._emit(flowId);
+      this._emit(agentId);
     }
     if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
   },
-  reset(flowId) {
-    const cur = this.get(flowId);
+  reset(agentId) {
+    const cur = this.get(agentId);
     if (cur._abortCtrl) try { cur._abortCtrl.abort(); } catch {}
     if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
-    _localRunIdSet(flowId, null);  // purge la persistance localStorage
-    _JARVIS_RUNS[flowId] = _emptyJarvisRun(flowId);
-    this._emit(flowId);
+    _localRunIdSet(agentId, null);  // purge la persistance localStorage
+    _JARVIS_RUNS[agentId] = _emptyJarvisRun(agentId);
+    this._emit(agentId);
   },
 
   // Helpers internes ─────────────────────────────────────
@@ -7929,7 +7929,7 @@ const JarvisStore = {
     if (cur._elapsedTimer) clearInterval(cur._elapsedTimer);
     cur._elapsedTimer = setInterval(() => {
       cur.metrics = { ...cur.metrics, elapsed: Date.now() - (cur._startTime || Date.now()) };
-      this._emit(cur.flowId);
+      this._emit(cur.agentId);
     }, 250);
   },
 
@@ -7942,8 +7942,8 @@ const JarvisStore = {
    * Cas d'usage : au boot, on lit localStorage, on GET /api/jarvis/runs
    * pour filtrer les still-active, et on appelle attach() pour chacun.
    */
-  async attach(flowId, runId, knownHeadline) {
-    const cur = this.get(flowId);
+  async attach(agentId, runId, knownHeadline) {
+    const cur = this.get(agentId);
     if (cur.status === 'running') return;  // déjà attaché ou en cours
     this._resetRunData(cur);
     cur.status = 'running';
@@ -7951,16 +7951,16 @@ const JarvisStore = {
     if (knownHeadline) cur.headline = knownHeadline;
     cur._abortCtrl = new AbortController();
     this._startElapsedTimer(cur);
-    this._emit(flowId);
+    this._emit(agentId);
     await this._consumeStream(
-      flowId,
+      agentId,
       `api/jarvis/runs/${encodeURIComponent(runId)}/stream`,
       { method: 'GET' },
       cur._abortCtrl,
     );
   },
-  async start(flowId, { params, isResume, resumeState }) {
-    const cur = this.get(flowId);
+  async start(agentId, { params, isResume, resumeState }) {
+    const cur = this.get(agentId);
     if (cur.status === 'running') return;
     // Mémorise les params du run (notamment target_count) pour que la
     // barre de progression / le label X/Y reflètent la VRAIE cible
@@ -7975,19 +7975,19 @@ const JarvisStore = {
     }
     cur._abortCtrl = new AbortController();
     this._startElapsedTimer(cur);
-    this._emit(flowId);
+    this._emit(agentId);
 
     const flowParams = {
       ...params,
       ...(isResume && resumeState ? { resume_state: resumeState } : {}),
     };
     await this._consumeStream(
-      flowId,
-      `api/jarvis/${flowId}/stream`,
+      agentId,
+      `api/jarvis/${agentId}/stream`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flow_id: flowId, params: flowParams }),
+        body: JSON.stringify({ agent_id: agentId, params: flowParams }),
       },
       cur._abortCtrl,
     );
@@ -7996,8 +7996,8 @@ const JarvisStore = {
   // Boucle de consommation SSE partagée par start() et attach(). Le
   // dispatchEv gère désormais 'run_id' (persisté en localStorage pour
   // reconnexion ultérieure) et 'ping' (keepalive — ignoré).
-  async _consumeStream(flowId, url, fetchInit, abortCtrl) {
-    const cur = this.get(flowId);
+  async _consumeStream(agentId, url, fetchInit, abortCtrl) {
+    const cur = this.get(agentId);
     const ts = () => new Date().toTimeString().slice(0, 8);
     try {
       const res = await fetch(url, {
@@ -8018,7 +8018,7 @@ const JarvisStore = {
             // Premier event de la SSE POST — on persiste pour reconnect.
             if (d.run_id) {
               cur.runId = d.run_id;
-              _localRunIdSet(flowId, d.run_id);
+              _localRunIdSet(agentId, d.run_id);
             }
             break;
           case 'ping':
@@ -8030,7 +8030,7 @@ const JarvisStore = {
             // si présent dans le payload (sécurité / cas de reconnect).
             if (d.run_id && !cur.runId) {
               cur.runId = d.run_id;
-              _localRunIdSet(flowId, d.run_id);
+              _localRunIdSet(agentId, d.run_id);
             }
             cur.log = [...cur.log, { t: ts(), tag: '[start]', kind: 'iter', msg: d.text || '' }];
             break;
@@ -8121,7 +8121,7 @@ const JarvisStore = {
             // status est déjà 'done'.
             cur.log = [...cur.log, { t: ts(), tag: '[stop]', kind: 'iter', msg: d.text || 'Flow annulé.' }];
             cur.status = 'done';
-            _localRunIdSet(flowId, null);
+            _localRunIdSet(agentId, null);
             break;
           case 'done':
             // Idempotent : si déjà 'done' (post-cancellation), on ne
@@ -8130,15 +8130,15 @@ const JarvisStore = {
               cur.log = [...cur.log, { t: ts(), tag: '[done]', kind: 'accept', msg: 'Flow terminé.' }];
               cur.status = 'done';
             }
-            _localRunIdSet(flowId, null);
+            _localRunIdSet(agentId, null);
             break;
           case 'error':
             cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: d.text || 'erreur' }];
             cur.status = 'error';
-            _localRunIdSet(flowId, null);
+            _localRunIdSet(agentId, null);
             break;
         }
-        this._emit(flowId);
+        this._emit(agentId);
       };
       const flush = () => {
         const re = /\r\n\r\n|\n\n|\r\r/;
@@ -8175,24 +8175,24 @@ const JarvisStore = {
       } else {
         cur.log = [...cur.log, { t: ts(), tag: '[err]', kind: 'reject', msg: String(e && e.message ? e.message : e) }];
         cur.status = 'error';
-        _localRunIdSet(flowId, null);
+        _localRunIdSet(agentId, null);
       }
     } finally {
       if (cur._elapsedTimer) { clearInterval(cur._elapsedTimer); cur._elapsedTimer = null; }
-      this._emit(flowId);
+      this._emit(agentId);
     }
   },
 
   // Boot reconcile : appelée une fois au démarrage de l'app pour
   // détecter les runs qui tournaient encore côté serveur quand
   // l'utilisateur a fermé la tab / refresh / etc. Pour chaque
-  // (flowId, runId) trouvé en localStorage qui est encore actif
+  // (agentId, runId) trouvé en localStorage qui est encore actif
   // côté serveur, on rouvre une stream pour récupérer la progression.
   async bootReconcile() {
     let local = {};
     try { local = _localRunIdMap(); } catch {}
-    const flowIds = Object.keys(local);
-    if (flowIds.length === 0) return;
+    const agentIds = Object.keys(local);
+    if (agentIds.length === 0) return;
     let serverRuns = [];
     try {
       const r = await fetch('api/jarvis/runs');
@@ -8206,26 +8206,26 @@ const JarvisStore = {
         .filter(s => s.status === 'starting' || s.status === 'running')
         .map(s => [s.run_id, s])
     );
-    for (const flowId of flowIds) {
-      const runId = local[flowId];
+    for (const agentId of agentIds) {
+      const runId = local[agentId];
       if (!runId) continue;
       const serverInfo = activeOnServer.get(runId);
       if (!serverInfo) {
         // Plus actif côté serveur (terminé, ou TTL dépassé, ou process
         // restart) → purge la persistance.
-        _localRunIdSet(flowId, null);
+        _localRunIdSet(agentId, null);
         continue;
       }
       // Reconnect — fire-and-forget. attach() retourne après que la
       // stream se ferme (= run terminé) ou que l'observation est
       // arrêtée par l'utilisateur. Pas besoin d'attendre.
-      this.attach(flowId, runId, serverInfo.headline).catch(() => {});
+      this.attach(agentId, runId, serverInfo.headline).catch(() => {});
     }
   },
 };
 
 // ── localStorage helpers ────────────────────────────────────────
-// Stocke un mapping {[flowId]: runId} pour permettre la reconnexion
+// Stocke un mapping {[agentId]: runId} pour permettre la reconnexion
 // au boot après refresh / tab close. Effacée à la terminaison normale
 // (done / error) du flow ou au reset explicite.
 const _JARVIS_LS_KEY = 'jdm_jarvis_runs_v1';
@@ -8236,19 +8236,19 @@ function _localRunIdMap() {
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
-function _localRunIdSet(flowId, runId) {
+function _localRunIdSet(agentId, runId) {
   try {
     const cur = _localRunIdMap();
-    if (runId) cur[flowId] = runId; else delete cur[flowId];
+    if (runId) cur[agentId] = runId; else delete cur[agentId];
     localStorage.setItem(_JARVIS_LS_KEY, JSON.stringify(cur));
   } catch {}
 }
 if (typeof window !== 'undefined') window.__jdmJarvisStore = JarvisStore;
 
-function useJarvisRunState(flowId) {
+function useJarvisRunState(agentId) {
   const [, force] = React.useReducer(x => x + 1, 0);
-  React.useEffect(() => JarvisStore.subscribe(flowId, force), [flowId]);
-  return JarvisStore.get(flowId);
+  React.useEffect(() => JarvisStore.subscribe(agentId, force), [agentId]);
+  return JarvisStore.get(agentId);
 }
 
 function useJarvisActiveSet() {
@@ -8269,9 +8269,9 @@ function useJarvisActiveSet() {
 const _OBS_RUNS = {};
 const _OBS_LISTENERS = {};
 
-function _emptyObsRun(runId, flowId) {
+function _emptyObsRun(runId, agentId) {
   return {
-    runId, flowId: flowId || '', status: 'idle', headline: '',
+    runId, agentId: agentId || '', status: 'idle', headline: '',
     log: [], accepted: [], narrationHTML: '', filePreview: '', filePath: null,
     metrics: { toolsCalled: 0, accepted: 0, produced: 0, tokens: 0, elapsed: 0 },
     submitted: false,
@@ -8296,12 +8296,12 @@ const ObsStore = {
     _OBS_LISTENERS[runId].add(cb);
     return () => { if (_OBS_LISTENERS[runId]) _OBS_LISTENERS[runId].delete(cb); };
   },
-  observe(runId, flowId, headline) {
+  observe(runId, agentId, headline) {
     if (!runId) return;
     const cur = this.getRun(runId);
     if (cur._observing) return;  // déjà branché
     cur._observing = true;
-    cur.flowId = flowId || cur.flowId;
+    cur.agentId = agentId || cur.agentId;
     if (headline && !cur.headline) cur.headline = headline;
     if (cur.status === 'idle') cur.status = 'running';
     cur._abortCtrl = new AbortController();
@@ -8545,7 +8545,7 @@ function renderMarkdownJarvis(s) {
 //             =====SIGNALEMENT===== : sujet|rel|objet|JDM:x|LLM:y < arg >
 //   .audit  : sections === SENS ===, === SIGNALEMENTS ===, === META ===
 //             la section SIGNALEMENTS contient term|rel|target|verdict|justif
-function parseFilePreview(text, flowId) {
+function parseFilePreview(text, agentId) {
   text = (text || '').toString();
   if (!text.trim()) return { items: [], counts: {} };
   const lines = text.split(/\r?\n/);
@@ -8632,7 +8632,7 @@ function parseFilePreview(text, flowId) {
         }
       }
       // .err format : rest = catégorie_suspect, explanation
-      if (flowId === 'signalement' || /suspect/i.test(rest)) {
+      if (agentId === 'signalement' || /suspect/i.test(rest)) {
         items.push({
           type: 'flagged',
           subject: subject.trim(), relation: relation.trim(),
@@ -8691,8 +8691,8 @@ function parseFilePreview(text, flowId) {
 
 // Libellé adaptatif du compteur "Consolidés" selon le flow.
 // (design-pass-2 : aligné sur le wording designer — Signalés/Analysés)
-function metricLabelFor(flowId) {
-  switch (flowId) {
+function metricLabelFor(agentId) {
+  switch (agentId) {
     case 'enrich':      return { label: 'Consolidés',  sub: 'triplets' };
     case 'audit':       return { label: 'Verdicts',    sub: 'signalements' };
     case 'signalement': return { label: 'Signalés',    sub: 'triplets flaggés' };
@@ -8705,8 +8705,8 @@ function metricLabelFor(flowId) {
 
 // Titre adaptatif du panneau de droite selon le flow.
 // (design-pass-2 : 'Triplets signalés' + 'Artefacts analysés')
-function panelTitleFor(flowId) {
-  switch (flowId) {
+function panelTitleFor(agentId) {
+  switch (agentId) {
     case 'enrich':      return 'Triplets consolidés';
     case 'audit':       return 'Verdicts d\'audit (signalements)';
     case 'signalement': return 'Triplets signalés';
@@ -8780,7 +8780,7 @@ const BUDGET_OPTS = [
   { value: 'illimité', label: 'illimité' },
 ];
 
-function defaultParamsFor(flowId) {
+function defaultParamsFor(agentId) {
   // Defaults : term vide partout (= tirage au hasard via pick_random_term),
   // budget illimité, thinking=true (raisonnement activé par défaut sur tous
   // les flows — meilleur taux de consolidation, l'utilisateur peut décocher
@@ -8815,7 +8815,7 @@ function defaultParamsFor(flowId) {
   };
   // `upload` = soumission auto du fichier au LLMDrops (mappe cfg.autoSubmit).
   const autoUpload = cfg.autoSubmit === true;
-  switch (flowId) {
+  switch (agentId) {
     case 'enrich':
       return { ...common, term: '', relation: [],
                target_count: 3, vary_relations: true, iterate: true, upload: autoUpload };
@@ -9044,7 +9044,7 @@ function ViewJarvis() {
   // Switch entre runs depuis le rail bas du JarvisRun.
   useEffect(() => {
     const onSwitch = (e) => {
-      const id = e.detail && e.detail.flow_id;
+      const id = e.detail && e.detail.agent_id;
       if (id) setRunning(id);
     };
     window.addEventListener('jdm-jarvis-switch-run', onSwitch);
@@ -9125,7 +9125,7 @@ function ViewJarvis() {
 
   // ─── Run mode : replace carousel with the live monitor ───
   if (running) {
-    const flow = JARVIS_FLOWS.find(f => f.id === running);
+    const flow = JARVIS_AGENTS.find(f => f.id === running);
     return (
       <JarvisRun
         flow={flow}
@@ -9171,12 +9171,12 @@ function ViewJarvis() {
           willChange: 'transform',
         }}>
           <JPanel><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
-          <JPanel><JSupervisionPanel flows={JARVIS_FLOWS} onPick={goToId} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
-          <JPanel><JAccueilPanel flows={JARVIS_FLOWS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
+          <JPanel><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
+          <JPanel><JAccueilPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
 
-          {JARVIS_FLOWS.map((f, i) => (
+          {JARVIS_AGENTS.map((f, i) => (
             <JPanel key={f.id}>
-              <JFlowPanel
+              <JAgentPanel
                 flow={f}
                 index={i}
                 onLaunch={() => setRunning(f.id)}
@@ -9455,10 +9455,10 @@ function JConfigPanel({ onAccueil }) {
               ]} />
               <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.45 }}>{modeHint}</div>
             </JCfgRow>
-            <JCfgRow label="Flux en parallèle" hint="Boucles d’agent exécutées simultanément." stack>
+            <JCfgRow label="Agents en parallèle" hint="Boucles d’agent exécutées simultanément." stack>
               <Slider value={cfg.parallel} onChange={(v) => set('parallel', v)} min={1} max={5} step={1} />
             </JCfgRow>
-            <JCfgRow label="Itérations max par défaut" hint="Plafond appliqué à chaque nouveau flux." stack>
+            <JCfgRow label="Itérations max par défaut" hint="Plafond appliqué à chaque nouvel agent." stack>
               <Slider value={cfg.defaultMaxIter} onChange={(v) => set('defaultMaxIter', v)} min={5} max={100} step={1} />
             </JCfgRow>
           </JCfgGroup>
@@ -9559,14 +9559,14 @@ function JConfigPanel({ onAccueil }) {
               <JSumRow k="Modèle" v={llmLabel} />
               <JSumRow k="Confiance min" v={cfg.globalConf + ' %'} />
               <JSumRow k="Itér. max" v={cfg.defaultMaxIter} />
-              <JSumRow k="Parallèle" v={cfg.parallel + ' flux'} />
+              <JSumRow k="Parallèle" v={cfg.parallel + ' agents'} />
               <JSumRow k="Soumission JDM" v={cfg.autoSubmit ? 'auto' : 'manuelle'} accent={cfg.autoSubmit ? 'var(--jdm-green)' : undefined} />
               <JSumRow k="Validation" v={autonomous ? 'aucune' : (cfg.humanReview ? 'humaine' : 'auto')} />
               <JSumRow k="Export" v={fmtLabel} />
               <JSumRow k="Stockage" v={cfg.storageDir} mono />
             </div>
           </Card>
-          <Button full size="lg" onClick={onAccueil}>Choisir un flux →</Button>
+          <Button full size="lg" onClick={onAccueil}>Choisir un agent →</Button>
         </div>
       </div>
     </div>
@@ -9617,7 +9617,7 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
           textTransform: 'uppercase', letterSpacing: '0.18em', marginBottom: 12,
         }}>
           <em style={{ fontStyle: 'italic', fontFamily: 'var(--font-display)', color: 'var(--accent)', fontSize: 13, textTransform: 'none', letterSpacing: 0 }}>Jarvis</em>
-          &nbsp;· Catalogue des flux disponibles
+          &nbsp;· Catalogue des agents disponibles
         </div>
         <h1 className="display" style={{
           margin: 0, fontFamily: 'var(--font-display)',
@@ -9642,8 +9642,8 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
           }}>⌕</span>
           <input
             value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Rechercher un flux, une étape, un résultat…"
-            aria-label="Rechercher un flux"
+            placeholder="Rechercher un agent, une étape, un résultat…"
+            aria-label="Rechercher un agent"
             style={{
               width: '100%', padding: '10px 12px 10px 31px',
               background: 'var(--bg-card)', border: '1px solid var(--line)',
@@ -9659,7 +9659,7 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
           fontSize: 11, color: 'var(--ink-3)', whiteSpace: 'nowrap',
           padding: '6px 11px', background: 'var(--bg-elev)', border: '1px solid var(--line-soft)', borderRadius: 999,
         }}>
-          <strong style={{ color: 'var(--ink-2)' }}>{list.length}</strong>{qq ? ` / ${flows.length}` : ''} flux
+          <strong style={{ color: 'var(--ink-2)' }}>{list.length}</strong>{qq ? ` / ${flows.length}` : ''} agents
         </span>
       </div>
 
@@ -9668,7 +9668,7 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
           padding: '48px 20px', textAlign: 'center',
           border: '1px dashed var(--line)', borderRadius: 'var(--radius-lg)',
         }}>
-          <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--ink-2)', marginBottom: 4 }}>Aucun flux</div>
+          <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--ink-2)', marginBottom: 4 }}>Aucun agent</div>
           <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Rien ne correspond à «&nbsp;{q}&nbsp;».</div>
         </div>
       ) : view === 'apercus' ? (
@@ -9678,7 +9678,7 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
             fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--ink-3)',
           }}>
             <span style={{ display: 'inline-flex', width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />
-            Clic sur le <strong style={{ color: 'var(--ink-2)' }}>cercle</strong> = lancer le flux
+            Clic sur le <strong style={{ color: 'var(--ink-2)' }}>cercle</strong> = lancer l'agent
             <span style={{ color: 'var(--line)' }}>|</span>
             clic sur la <strong style={{ color: 'var(--ink-2)' }}>carte</strong> = voir le détail
           </div>
@@ -9720,7 +9720,7 @@ function JTocRow({ flow, num, delay, onOpen, onLaunch, running }) {
       )}
       {/* Circular loop schematic — OUTSIDE the card. Click = launch the flux. */}
       <button type="button" onClick={onLaunch} className="jring-btn"
-        title={`Lancer le flux « ${flow.title} »`} aria-label={`Lancer le flux ${flow.title}`}
+        title={`Lancer l'agent « ${flow.title} »`} aria-label={`Lancer l'agent ${flow.title}`}
         style={{ flexShrink: 0 }}>
         <JLoopRing accent={flow.accent} num={num} steps={flow.steps.length} delay={delay} size={62} />
       </button>
@@ -9788,7 +9788,7 @@ function JRegistry({ list, onPick, onLaunch }) {
         fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--ink-3)',
         textTransform: 'uppercase', letterSpacing: '0.1em',
       }}>
-        <span>#</span><span>Flux</span><span>Séquence</span><span>Produit</span>
+        <span>#</span><span>Agent</span><span>Séquence</span><span>Produit</span>
         <span style={{ textAlign: 'right' }}>Action</span>
       </div>
       {list.map(({ f, num }, i) => (
@@ -9853,10 +9853,10 @@ function JRegistryRow({ flow, num, cols, last, onOpen, onLaunch }) {
 
 // Tool kinds (API JDM / logique / workflow / IO / outil) a flow touches —
 // utilise pour les facettes de la Bibliotheque. Source de verite :
-// FLOW_TOOL_STEPS (mapping reel tool -> etape par flux) croise avec
+// AGENT_TOOL_STEPS (mapping reel tool -> etape par flux) croise avec
 // TOOL_DOCS (fetched : kind par tool).
 function flowToolKinds(flow) {
-  const steps = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+  const steps = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
   const kinds = new Set();
   for (const t of Object.keys(steps)) {
     const d = TOOL_DOCS[t];
@@ -10012,7 +10012,7 @@ function JLibrary({ list, onPick, onLaunch }) {
           <JRegistry list={results} onPick={onPick} onLaunch={onLaunch} />
         ) : (
           <div style={{ padding: '40px 20px', textAlign: 'center', border: '1px dashed var(--line)', borderRadius: 'var(--radius-lg)' }}>
-            <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--ink-2)', marginBottom: 4 }}>Aucun flux pour ces filtres</div>
+            <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--ink-2)', marginBottom: 4 }}>Aucun agent pour ces filtres</div>
             <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Élargis ta sélection dans les facettes ci-dessus.</div>
           </div>
         )}
@@ -10042,7 +10042,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   // Donnees REELLES du backend : on poll /api/jarvis/runs toutes les 3s
   // pour le statut, headlines, started_at. En parallele JarvisStore expose
   // les metrics live (consolidated, toolsCalled, accepted items) pour chaque
-  // flow_id observe localement. On combine les deux.
+  // agent_id observe localement. On combine les deux.
   const [serverRuns, setServerRuns] = useState([]);
   // run_ids déjà adoptés (attach) pour ne pas re-brancher en boucle.
   const adoptedRef = useRef(new Set());
@@ -10065,7 +10065,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
             if ((s.status === 'running' || s.status === 'starting')
                 && s.run_id && !adoptedRef.current.has(s.run_id)) {
               adoptedRef.current.add(s.run_id);
-              ObsStore.observe(s.run_id, s.flow_id, s.headline);
+              ObsStore.observe(s.run_id, s.agent_id, s.headline);
             }
           }
         }
@@ -10104,7 +10104,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   // (lançable). Évite de noyer la grille avec tout l'historique.
   const _runsByFlow = {};
   for (const r of serverRuns) {
-    if (r.flow_id) (_runsByFlow[r.flow_id] = _runsByFlow[r.flow_id] || []).push(r);
+    if (r.agent_id) (_runsByFlow[r.agent_id] = _runsByFlow[r.agent_id] || []).push(r);
   }
   const cardSpecs = [];
   for (const f of flows) {
@@ -10121,7 +10121,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   }
   const live = cardSpecs.map((spec, i) => spec.isLaunch
     ? { isLaunch: true, isRunning: false, isDone: false, submitted: false }
-    : computeFlowLive(
+    : computeAgentLive(
         spec.flow, i, tick, serverRuns, localActiveSet,
         spec.run ? { rec: ObsStore.getRun(spec.run.run_id), serverRun: spec.run } : undefined
       ));
@@ -10178,7 +10178,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
             marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10,
           }}>
             <em style={{ fontStyle: 'italic', fontFamily: 'var(--font-display)', color: 'var(--accent)', fontSize: 13, textTransform: 'none', letterSpacing: 0 }}>Jarvis</em>
-            <span>{'·'} Supervision {'·'} {flows.length} flux</span>
+            <span>{'·'} Supervision {'·'} {flows.length} agents</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: activeCount > 0 ? 'var(--jdm-green)' : 'var(--ink-3)' }}>
               <span className="pulse-dot" style={{ background: activeCount > 0 ? 'var(--jdm-green)' : 'var(--ink-3)' }} /> live
             </span>
@@ -10212,7 +10212,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         background: 'var(--line)', border: '1px solid var(--line)',
         borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 18,
       }}>
-        <JKpi label="Flux actifs"      value={activeCount}   sub="en boucle"  dot />
+        <JKpi label="Agents actifs"      value={activeCount}   sub="en boucle"  dot />
         <JKpi label="Iterations"       value={agg.iter}      sub="cumulees" />
         <JKpi label="Outils appeles"   value={agg.tools}     sub="JDM" />
         <JKpi label="Items produits"   value={agg.accepted}  sub="consolides/annotes" color="var(--jdm-green)" />
@@ -10245,7 +10245,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           }
           const rid = spec.run && spec.run.run_id;
           return (
-            <JFlowDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
+            <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
               onOpen={() => { if (rid) setDetailRunId(rid); else onLaunch(f.id); }}
               onLaunch={() => onLaunch(f.id)}
               onPreview={(p) => setPreviewPath(p)}
@@ -10348,7 +10348,7 @@ function FilePreviewModal({ path, onClose }) {
         }}>
           <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{name}</div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <FileSubmitButton filePath={path} flowId={_flowForExt} />
+            <FileSubmitButton filePath={path} agentId={_flowForExt} />
             <Button size="sm" variant="secondary"
               onClick={() => {
                 window.open(`api/productions/download?name=${encodeURIComponent(name)}`, '_blank');
@@ -10388,7 +10388,7 @@ function FilePreviewModal({ path, onClose }) {
 // Lit en LECTURE SEULE le record ObsStore (run observé, lancé hors JarvisRun :
 // mascotte/serveur). Aucun formulaire de lancement : un run précis est déjà
 // en cours/terminé. Réutilise les helpers de module (parseFilePreview,
-// renderMarkdownJarvis, ItemCard, FLOW_TOOL_STEPS, metricLabelFor…) pour un
+// renderMarkdownJarvis, ItemCard, AGENT_TOOL_STEPS, metricLabelFor…) pour un
 // rendu strictement aligné sur la vue Run.
 function RunDetailModal({ runId, onClose, onPreview }) {
   const rec = useObsRun(runId);
@@ -10403,8 +10403,8 @@ function RunDetailModal({ runId, onClose, onPreview }) {
   const onBackdrop = (e) => { if (e.target === e.currentTarget) onClose(); };
 
   const r = rec || {};
-  const flowId = r.flowId || '';
-  const flow = (JARVIS_FLOWS.find(f => f.id === flowId)) || JARVIS_FLOWS[0];
+  const agentId = r.agentId || '';
+  const flow = (JARVIS_AGENTS.find(f => f.id === agentId)) || JARVIS_AGENTS[0];
   const state = r.status || 'idle';
   const log = r.log || [];
   const accepted = r.accepted || [];
@@ -10412,12 +10412,12 @@ function RunDetailModal({ runId, onClose, onPreview }) {
   const filePath = r.filePath || null;
   const baseMetrics = r.metrics || {};
   const parsed = React.useMemo(
-    () => parseFilePreview(r.filePreview || '', flowId),
-    [r.filePreview, flowId]
+    () => parseFilePreview(r.filePreview || '', agentId),
+    [r.filePreview, agentId]
   );
   // Compteur "produits" dérivé comme dans JarvisRun (registry pour enrich,
   // items parsés sinon).
-  const produced = flowId === 'enrich'
+  const produced = agentId === 'enrich'
     ? (baseMetrics.accepted || accepted.length || 0)
     : parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
   const metrics = { ...baseMetrics, produced };
@@ -10476,8 +10476,8 @@ function RunDetailModal({ runId, onClose, onPreview }) {
           }}>
             <Metric label="Outils" value={metrics.toolsCalled || 0} sub="appels" accent={flow.accent} />
             <Metric label="Tokens" value={fmtTokens(metrics.tokens || 0)} sub="estimés" mono />
-            <Metric label={metricLabelFor(flowId).label} value={metrics.produced}
-                    sub={metricLabelFor(flowId).sub} color="var(--jdm-green)" />
+            <Metric label={metricLabelFor(agentId).label} value={metrics.produced}
+                    sub={metricLabelFor(agentId).sub} color="var(--jdm-green)" />
             <Metric label="Temps" value={fmtElapsed(metrics.elapsed || 0)} sub="écoulé" mono />
           </div>
 
@@ -10530,7 +10530,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
                 )}
                 {leftView === 'log' ? (
                   (() => {
-                    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flowId]) || {};
+                    const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[agentId]) || {};
                     const _norm = (s) => (s == null ? '' : String(s)).trim().toLowerCase();
                     const validatedSet = new Set();
                     if (Array.isArray(accepted)) {
@@ -10661,14 +10661,14 @@ function RunDetailModal({ runId, onClose, onPreview }) {
                   letterSpacing: '0.1em', flex: 1, minWidth: 0,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  {panelTitleFor(flowId)} · <span style={{ color: 'var(--jdm-green)' }}>{metrics.produced}</span>
+                  {panelTitleFor(agentId)} · <span style={{ color: 'var(--jdm-green)' }}>{metrics.produced}</span>
                   {fileName && (
                     <span style={{ color: 'var(--ink-2)', marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>· {fileName}</span>
                   )}
                 </div>
                 {fileName && (
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <FileSubmitButton filePath={filePath} flowId={flowId}
+                    <FileSubmitButton filePath={filePath} agentId={agentId}
                       submitted={r.submitted} running={state === 'running'} />
                     <Button size="sm" variant="ghost"
                       onClick={() => {
@@ -10682,7 +10682,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
               </div>
               <div style={{ height: 420, overflowY: 'auto', padding: 0, background: 'var(--bg-card)' }}>
                 {(() => {
-                  if (flowId === 'enrich') {
+                  if (agentId === 'enrich') {
                     if (accepted.length === 0) {
                       return (
                         <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
@@ -10749,7 +10749,7 @@ function JLaunchCard({ flow, onStart, onDetail }) {
           fontSize: 27, lineHeight: 1,
           background: `color-mix(in srgb, ${a} 12%, transparent)`,
           border: `1px solid color-mix(in srgb, ${a} 30%, transparent)`,
-        }}>{flowIcon(flow.id)}</div>
+        }}>{agentIcon(flow.id)}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="mono" style={{
             fontSize: 10, color: a, fontWeight: 600,
@@ -10765,7 +10765,7 @@ function JLaunchCard({ flow, onStart, onDetail }) {
       {/* Brief une ligne */}
       <div style={{
         padding: '0 16px 12px', fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.4,
-      }}>{FLOW_BRIEF[flow.id] || ''}</div>
+      }}>{AGENT_BRIEF[flow.id] || ''}</div>
       {/* Actions : Démarrer (direct) + Détail (vue Run) */}
       <div style={{
         marginTop: 'auto', padding: '10px 14px',
@@ -10828,14 +10828,14 @@ function JKpi({ label, value, sub, color, dot }) {
 //   - tick : heartbeat 1.4s utilise UNIQUEMENT pour animer stepIdx
 //     (= l'etape "active" qui clignote sur la pipeline) et donner du
 //     mouvement aux cartes meme quand les chiffres ne bougent pas.
-function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
+function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
   // opts.rec : record d'OBSERVATION par run (ObsStore) → carte PAR RUN.
   // opts.serverRun : le run serveur précis de cette carte.
   // Sans opts : comportement historique (JarvisStore par flow + dernier run).
   const store = opts && opts.rec
     ? opts.rec
     : ((typeof JarvisStore !== 'undefined') ? JarvisStore.get(flow.id) : null);
-  const runs = (serverRuns || []).filter(r => r.flow_id === flow.id);
+  const runs = (serverRuns || []).filter(r => r.agent_id === flow.id);
   const latest = (opts && opts.serverRun)
     ? opts.serverRun
     : (runs.sort((a, b) => (b.started_at || 0) - (a.started_at || 0))[0] || null);
@@ -10867,7 +10867,7 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
   // step 0 compte aussi pour 1.
   //   ex annot : workflow(0) → lookup(0) → get_relations(1) → lookup(0=>+1)
   //              → get_relations(1) → write_submission(2)  ⇒ 2 tentatives
-  const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+  const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
   let iter = 0;
   {
     let prevStep = -1;
@@ -11115,7 +11115,7 @@ function computeFlowLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
 //              de page. Utilise par le ring click pour permettre de
 //              demarrer un flow grise depuis Supervision en gardant le
 //              tableau de bord visible.
-function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }) {
+function JAgentDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
   const tint = (p) => `color-mix(in srgb, ${a} ${p}%, transparent)`;
@@ -11197,7 +11197,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
             (à côté du badge « terminé·voir »). */}
         {live.isDone && !live.submitted && live.filePath && SUBMITTABLE_FLOWS.has(flow.id) && (
           <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }}>
-            <FileSubmitButton filePath={live.filePath} flowId={flow.id} compact />
+            <FileSubmitButton filePath={live.filePath} agentId={flow.id} compact />
           </div>
         )}
         {/* Badge statut — 4 cas : en cours / soumis / terminé / au repos.
@@ -11271,7 +11271,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
 
       {/* Step pipeline — etape active highlightee. Detection REELLE :
           on lookup le dernier tool mentionne dans la narration LLM via
-          FLOW_TOOL_STEPS pour savoir a quelle etape on en est. -1 = aucun
+          AGENT_TOOL_STEPS pour savoir a quelle etape on en est. -1 = aucun
           tool reconnu encore, ou flow au repos. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 15px 12px', flexWrap: 'wrap' }}>
         {flow.steps.map((s, k) => {
@@ -11343,7 +11343,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
       {/* Flux en direct = log temps réel (timestamps + tags) MIX avec les
           triplets validés au format pretty quand l'entry porte un `triplet`
           (= [ok] poussée par le handler delta-aware). Source unifiée :
-          live.feed (cf. computeFlowLive). Avant : on n'affichait que les
+          live.feed (cf. computeAgentLive). Avant : on n'affichait que les
           items recent → la zone restait « En attente du 1er résultat » tant
           qu'aucun triplet n'avait été validé, même si plein d'events
           [start]/[file] passaient. */}
@@ -11354,7 +11354,7 @@ function JFlowDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
           {live.isRunning && <span className="pulse-dot" style={{ background: a, width: 5, height: 5 }} />}
-          {live.isRunning ? 'flux en direct' : 'derniers events'}
+          {live.isRunning ? 'agent en direct' : 'derniers events'}
         </div>
         <div style={{ display: 'grid', gap: 4, minHeight: 78 }}>
           {(!live.feed || live.feed.length === 0) ? (
@@ -11614,7 +11614,7 @@ function JLoopRing({ accent, num, steps, delay, size = 60, icon }) {
 }
 
 // ═══════════════════ Tool catalog — fetché depuis le backend ═══════════════════
-// TOOL_DOCS et FLOW_TOOL_STEPS sont alimentés au boot par
+// TOOL_DOCS et AGENT_TOOL_STEPS sont alimentés au boot par
 // GET /api/jarvis/tools. Le backend introspecte les @tool LangChain
 // de build_jdm_tools() et renvoie 39 fiches : {name, kind, description,
 // signature, args}. Avant la fin du fetch, TOOL_DOCS est un objet vide
@@ -11676,10 +11676,10 @@ function useToolDocs() {
   return [TOOL_DOCS, _TOOL_DOCS_LOADED];
 }
 
-// Map outil → index d'étape dans flow.steps, par flow_id réel. Établi
+// Map outil → index d'étape dans flow.steps, par agent_id réel. Établi
 // d'après les workflows backend (enrichment_workflow, audit_workflow,
 // etc.) qui décrivent quel tool LLM est attendu à quelle étape.
-const FLOW_TOOL_STEPS = {
+const AGENT_TOOL_STEPS = {
   enrich: {
     enrichment_workflow: 0,
     pick_random_term: 0,
@@ -11894,12 +11894,12 @@ function JToolDialog({ flow, tool, onClose }) {
   // Tous les rendus dependants d'un flow (Prompt agreged, step highlight,
   // accent CSS) utilisent selectedFlow.
   const [selectedFlowId, setSelectedFlowId] = useState(flow.id);
-  const selectedFlow = JARVIS_FLOWS.find(f => f.id === selectedFlowId) || flow;
+  const selectedFlow = JARVIS_AGENTS.find(f => f.id === selectedFlowId) || flow;
   const a = selectedFlow.accent;
   const kindColor = { 'API JDM': 'var(--jdm-cyan)', 'LLM': 'var(--jdm-violet)', 'logique': 'var(--jdm-orange)' }[doc.kind] || a;
 
   // Every flow whose sequence calls this tool (souvent plus d'une).
-  const usages = JARVIS_FLOWS.filter(f => (FLOW_TOOL_STEPS[f.id] || {})[tool] != null);
+  const usages = JARVIS_AGENTS.filter(f => (AGENT_TOOL_STEPS[f.id] || {})[tool] != null);
 
   // « Prompt » du flow courant = concatenation des docstrings de TOUS les
   // tools du flow (workflow + step tools), dans l'ordre de leur step.
@@ -11911,7 +11911,7 @@ function JToolDialog({ flow, tool, onClose }) {
     // Utilise selectedFlow (= flow VIEWE dans le dialog), pas flow (=
     // flow d'ORIGINE). Permet la navigation : cliquer sur une autre
     // carte dans « Inscription » switch le prompt agreged sur ce flow.
-    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[selectedFlow.id]) || {};
+    const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[selectedFlow.id]) || {};
     const ordered = Object.keys(fts).sort((a, b) => (fts[a] - fts[b]));
     if (ordered.length === 0) return doc.prompt;
     const parts = [
@@ -12010,7 +12010,7 @@ function JToolDialog({ flow, tool, onClose }) {
           <JToolSection label={usages.length > 1 ? 'Inscription dans les séquences' : 'Inscription dans la séquence'}>
             <div style={{ display: 'grid', gap: 10 }}>
               {usages.map(u => {
-                const si = (FLOW_TOOL_STEPS[u.id] || {})[tool];
+                const si = (AGENT_TOOL_STEPS[u.id] || {})[tool];
                 // Distinction nette : `isOriginFlow` = flow depuis lequel le
                 // dialog a ete OUVERT (garde la pastille « actuel », pas
                 // d'highlight). `isSelected` = flow actuellement VIEWE dans
@@ -12134,19 +12134,19 @@ function JToolDialog({ flow, tool, onClose }) {
 }
 
 // ═══════════════════ Per-flow design panel ═══════════════════
-function JFlowPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
-  // Tools utilises par ce flow (derives de FLOW_TOOL_STEPS — le mapping
+function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
+  // Tools utilises par ce flow (derives de AGENT_TOOL_STEPS — le mapping
   // reel tool -> etape, defini en haut du fichier en s'alignant sur les
   // workflows backend). Pas de samples : la "candidatesPool" du design
   // etait des donnees fictives ; les vraies candidats remontent dans
   // le ItemCard de la vue Run au moment du run, pas en preview.
-  const steps = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+  const steps = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
   const tools = Object.keys(steps);
   const samples = [];
   const params = defaultParamsFor(flow.id);
   const [openTool, setOpenTool] = useState(null);
   const panelPos = J_PANELS.findIndex(p => p.id === flow.id);  // position in the carousel track
-  const lastFlow = index === JARVIS_FLOWS.length - 1;
+  const lastFlow = index === JARVIS_AGENTS.length - 1;
 
   return (
     <div style={{ width: '100%', maxWidth: 1120 }}>
@@ -12163,8 +12163,8 @@ function JFlowPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
             type="button"
             onClick={onLaunch}
             className="jring-btn"
-            title="Lancer ce flux"
-            aria-label="Lancer ce flux"
+            title="Lancer cet agent"
+            aria-label="Lancer cet agent"
             style={{ flexShrink: 0 }}>
             <JLoopRing accent={flow.accent} num={index + 1} steps={flow.steps.length} delay={0} size={90} />
           </button>
@@ -12172,7 +12172,7 @@ function JFlowPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
             <div className="mono" style={{
               fontSize: 11, color: flow.accent, fontWeight: 600,
               textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 8,
-            }}>{flow.kicker} · {index + 1} / {JARVIS_FLOWS.length}</div>
+            }}>{flow.kicker} · {index + 1} / {JARVIS_AGENTS.length}</div>
             <h1 className="display" style={{
               margin: 0, fontFamily: 'var(--font-display)',
               fontSize: 'clamp(30px, 3.6vw, 44px)', fontWeight: 500,
@@ -12297,7 +12297,7 @@ function JFlowPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
             }}>Exemple · la boucle en accumule davantage</div>
           </Card>
 
-          <Button full size="lg" onClick={onLaunch}>▶ Lancer ce flux</Button>
+          <Button full size="lg" onClick={onLaunch}>▶ Lancer cet agent</Button>
         </div>
       </div>
 
@@ -12311,7 +12311,7 @@ function JFlowPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
           ↖ Accueil
         </button>
         <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
-          FLUX {String(index + 1).padStart(2, '0')} / {String(JARVIS_FLOWS.length).padStart(2, '0')}
+          AGENT {String(index + 1).padStart(2, '0')} / {String(JARVIS_AGENTS.length).padStart(2, '0')}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button type="button" onClick={() => onIndex(panelPos - 1)} className="focus-ring" style={ghostLinkStyle}>
@@ -12532,7 +12532,7 @@ function JSectionNav({ activeSection, onSelect, hidden }) {
 }
 
 // ─── (legacy) Carousel navigation — kept for reference, no longer mounted ───
-function JFlowNav({ navStyle, activePanel, onSelect }) {
+function JAgentNav({ navStyle, activePanel, onSelect }) {
   const [wide, setWide] = useState(typeof window !== 'undefined' ? window.innerWidth >= 1100 : true);
   useEffect(() => {
     const onResize = () => setWide(window.innerWidth >= 1100);
@@ -12557,7 +12557,7 @@ function JNavBottom({ activePanel, onSelect }) {
   }, [activePanel]);
 
   return (
-    <nav ref={containerRef} aria-label="Navigation entre flux" style={{
+    <nav ref={containerRef} aria-label="Navigation entre agents" style={{
       position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
       display: 'flex', alignItems: 'center', gap: 2, padding: 6,
       maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
@@ -12617,7 +12617,7 @@ function JNavRail({ activePanel, onSelect }) {
   }, [activePanel]);
 
   return (
-    <nav ref={containerRef} aria-label="Navigation entre flux" style={{
+    <nav ref={containerRef} aria-label="Navigation entre agents" style={{
       position: 'fixed', left: 32, top: '50%', transform: 'translateY(-50%)',
       display: 'flex', flexDirection: 'column', gap: 0, zIndex: 40,
       borderLeft: '1px solid var(--line)', paddingLeft: 16,
@@ -12837,7 +12837,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
         gap: 12,
         marginBottom: 12,
       }}>
-        <Button variant="ghost" size="sm" onClick={onBack}>← Tous les flux</Button>
+        <Button variant="ghost" size="sm" onClick={onBack}>← Tous les agents</Button>
         <span style={{ color: 'var(--ink-3)' }}>/</span>
         <span className="mono" style={{ fontSize: 12, color: flow.accent, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{flow.kicker}</span>
         {/* Symétrique : à droite, le flux suivant si pas en bout. */}
@@ -13148,7 +13148,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                 )}
                 {leftView === 'log' ? (
                   // Vue Log : derive les TENTATIVES depuis narrationHTML
-                  // (data-tool attributes) + croise avec FLOW_TOOL_STEPS,
+                  // (data-tool attributes) + croise avec AGENT_TOOL_STEPS,
                   // puis groupe les tools de chaque tentative sous un
                   // header « Tentative N ». Les events SSE brut (log)
                   // restent en pied de page pour les meta-evenements
@@ -13160,7 +13160,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   // On construit un Set de cles "term|rel|target" normalisees
                   // pour pouvoir teinter chaque ligne tentative.
                   (() => {
-                    const fts = (typeof FLOW_TOOL_STEPS !== 'undefined' && FLOW_TOOL_STEPS[flow.id]) || {};
+                    const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
                     const _norm = (s) => (s == null ? '' : String(s)).trim().toLowerCase();
                     const validatedSet = new Set();
                     if (Array.isArray(accepted)) {
@@ -13554,7 +13554,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
           }
           // Force le ViewJarvis a re-evaluer son state running depuis l'URL.
           if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('jdm-jarvis-switch-run', { detail: { flow_id: id } }));
+            window.dispatchEvent(new CustomEvent('jdm-jarvis-switch-run', { detail: { agent_id: id } }));
           }
         }}
       />
@@ -13568,11 +13568,11 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
 // (mono font, var(--bg-elev), bordures fines).
 function JarvisRunRail({ flow, onPick }) {
   const activeSet = useJarvisActiveSet();
-  const ordered = JARVIS_FLOWS.slice(0, 10).slice().sort((a, b) => {
+  const ordered = JARVIS_AGENTS.slice(0, 10).slice().sort((a, b) => {
     const aRun = activeSet.has(a.id) ? 0 : 1;
     const bRun = activeSet.has(b.id) ? 0 : 1;
     if (aRun !== bRun) return aRun - bRun;
-    return JARVIS_FLOWS.findIndex(f => f.id === a.id) - JARVIS_FLOWS.findIndex(f => f.id === b.id);
+    return JARVIS_AGENTS.findIndex(f => f.id === a.id) - JARVIS_AGENTS.findIndex(f => f.id === b.id);
   });
   return (
     <div style={{
@@ -13593,7 +13593,7 @@ function JarvisRunRail({ flow, onPick }) {
           flexShrink: 0, fontSize: 9.5, color: 'var(--ink-3)',
           textTransform: 'uppercase', letterSpacing: '0.1em',
           marginRight: 4,
-        }}>Flux</span>
+        }}>Agents</span>
         {ordered.map(f => {
           const isCurrent = f.id === flow.id;
           const isActive = activeSet.has(f.id);
@@ -13710,7 +13710,7 @@ window.ViewJarvis = ViewJarvis;
 
 // === webapp/views-productions.jsx ===
 // View: Productions — fichiers .enrich / .audit / .err / .stat /
-// visualisations produits par les flux Jarvis. Liste + download +
+// visualisations produits par les agents Jarvis. Liste + download +
 // soumission LLMDrops + suppression (admin).
 
 function ViewProductions() {
@@ -13878,7 +13878,7 @@ function ViewProductions() {
       <SectionTitle
         kicker="Sorties Jarvis"
         title="Productions"
-        desc="Fichiers .enrich / .audit / .err / .stat / visualisations produits par les flux Jarvis. Liste, prévisualisation, téléchargement, soumission LLMDrops."
+        desc="Fichiers .enrich / .audit / .err / .stat / visualisations produits par les agents Jarvis. Liste, prévisualisation, téléchargement, soumission LLMDrops."
         right={
           <div style={{
             display: 'inline-flex',
@@ -14275,11 +14275,11 @@ const TABS_TABLE = [
   { icon: '⚖️', name: 'Claim checker', what: 'SUPPORTED / CONTRADICTED / UNKNOWN sur un triplet. Déterministe.', key: 'Aucune' },
   { icon: '🕸️', name: 'Sous-graphe',   what: 'Visualisation vis-network interactive du voisinage.',              key: 'Aucune' },
   { icon: '🤖', name: 'Agent',         what: 'Chat libre avec un agent LLM qui utilise les outils JDM.',         key: 'Gemini gratuit · BYOK Claude/GPT' },
-  { icon: '🦾', name: 'Jarvis',        what: 'Flux guidés par formulaires (5 sous-onglets).',                    key: 'Gemini · LLMDrops si soumission' },
+  { icon: '🦾', name: 'Jarvis',        what: 'Agents guidés par formulaires (5 sous-onglets).',                    key: 'Gemini · LLMDrops si soumission' },
   { icon: '🛠️', name: 'Aide',          what: 'Ce document.',                                                      key: '—' },
 ];
 
-const JARVIS_FLOWS_HELP = [
+const JARVIS_AGENTS_HELP = [
   { id: 'enrich',      icon: '🌱', accent: 'var(--jdm-green)',   name: 'Enrichissement', wf: 'enrichment_workflow()',
     desc: 'Propose et consolide de nouveaux triplets pour un terme. Form : terme, relation cible (optionnelle), nombre cible, varier les relations, itérer jusqu\'au but, soumettre. Output : chatbot + fichier .enrich.' },
   { id: 'audit',       icon: '🔍', accent: 'var(--jdm-cyan)',    name: 'Audit',          wf: 'audit_workflow()',
@@ -14619,7 +14619,7 @@ function ViewAide() {
             gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
             gap: 12, marginBottom: 48,
           }}>
-            {JARVIS_FLOWS_HELP.map(f => (
+            {JARVIS_AGENTS_HELP.map(f => (
               <div key={f.id} style={{
                 background: 'var(--bg-card)',
                 border: '1px solid var(--line)',
@@ -15137,7 +15137,7 @@ const TWEAK_ACCENTS = ['#c0411a', '#1f97b1', '#c83a73', '#4ea63c', '#7a4fbe', '#
 // sous-routes /jarvis/<flow> qui pré-remplissent
 // window.__jdmPendingPayload.jarvis.flow (lu par ViewJarvis au mount).
 const _VALID_VIEWS = ['projet', 'explorer', 'claim', 'subgraph',
-                       'agent', 'chat', 'jarvis', 'productions', 'aide'];
+                       'chatbot', 'chat', 'jarvis', 'productions', 'aide'];
 
 function _appBase() {
   if (typeof document === 'undefined') return '';
@@ -15278,7 +15278,7 @@ function App() {
       explorer:    'JDM Agent - Explorer',
       claim:       'JDM Agent - Claim',
       subgraph:    'JDM Agent - Sous-graphe',
-      agent:       'JDM Agent - Chatbot',
+      chatbot:     'JDM Agent - Chatbot',
       chat:        'Jarvis : Chat',
       productions: 'JDM Agent - Productions',
       aide:        'JDM Agent - Aide',
@@ -15353,7 +15353,7 @@ function App() {
     let pendingGTimer = null;
     const SHORTCUTS_G = {
       'KeyE': 'explorer', 'KeyC': 'claim',  'KeyS': 'subgraph',
-      'KeyA': 'agent',    'KeyJ': 'jarvis', 'KeyP': 'productions',
+      'KeyA': 'chatbot',  'KeyJ': 'jarvis', 'KeyP': 'productions',
       'KeyH': 'aide',
     };
     const isTyping = (target) => {
@@ -15397,7 +15397,7 @@ function App() {
     explorer:    <ViewExplorer />,
     claim:       <ViewClaim />,
     subgraph:    <ViewSubgraph />,
-    agent:       <ViewAgent />,
+    chatbot:     <ViewAgent />,
     chat:        <ViewChat />,
     jarvis:      <ViewJarvis />,
     productions: <ViewProductions />,
@@ -15466,7 +15466,7 @@ function App() {
               ['explorer', 'Explorer'],
               ['claim', 'Claim'],
               ['subgraph', 'Sous-graphe'],
-              ['agent', 'Chatbot LLM'],
+              ['chatbot', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
               ['chat', 'Chat'],
               ['productions', 'Productions'],

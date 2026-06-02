@@ -1,5 +1,5 @@
 // View: Productions — fichiers .enrich / .audit / .err / .stat /
-// visualisations produits par les flux Jarvis. Liste + download +
+// visualisations produits par les agents Jarvis. Liste + download +
 // soumission LLMDrops + suppression (admin).
 
 function ViewProductions() {
@@ -167,7 +167,7 @@ function ViewProductions() {
       <SectionTitle
         kicker="Sorties Jarvis"
         title="Productions"
-        desc="Fichiers .enrich / .audit / .err / .stat / visualisations produits par les flux Jarvis. Liste, prévisualisation, téléchargement, soumission LLMDrops."
+        desc="Fichiers .enrich / .audit / .err / .stat / visualisations produits par les agents Jarvis. Liste, prévisualisation, téléchargement, soumission LLMDrops."
         right={
           <div style={{
             display: 'inline-flex',

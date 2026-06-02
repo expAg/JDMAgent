@@ -24,7 +24,7 @@ const TWEAK_ACCENTS = ['#c0411a', '#1f97b1', '#c83a73', '#4ea63c', '#7a4fbe', '#
 // sous-routes /jarvis/<flow> qui pré-remplissent
 // window.__jdmPendingPayload.jarvis.flow (lu par ViewJarvis au mount).
 const _VALID_VIEWS = ['projet', 'explorer', 'claim', 'subgraph',
-                       'agent', 'chat', 'jarvis', 'productions', 'aide'];
+                       'chatbot', 'chat', 'jarvis', 'productions', 'aide'];
 
 function _appBase() {
   if (typeof document === 'undefined') return '';
@@ -165,7 +165,7 @@ function App() {
       explorer:    'JDM Agent - Explorer',
       claim:       'JDM Agent - Claim',
       subgraph:    'JDM Agent - Sous-graphe',
-      agent:       'JDM Agent - Chatbot',
+      chatbot:     'JDM Agent - Chatbot',
       chat:        'Jarvis : Chat',
       productions: 'JDM Agent - Productions',
       aide:        'JDM Agent - Aide',
@@ -240,7 +240,7 @@ function App() {
     let pendingGTimer = null;
     const SHORTCUTS_G = {
       'KeyE': 'explorer', 'KeyC': 'claim',  'KeyS': 'subgraph',
-      'KeyA': 'agent',    'KeyJ': 'jarvis', 'KeyP': 'productions',
+      'KeyA': 'chatbot',  'KeyJ': 'jarvis', 'KeyP': 'productions',
       'KeyH': 'aide',
     };
     const isTyping = (target) => {
@@ -284,7 +284,7 @@ function App() {
     explorer:    <ViewExplorer />,
     claim:       <ViewClaim />,
     subgraph:    <ViewSubgraph />,
-    agent:       <ViewAgent />,
+    chatbot:     <ViewAgent />,
     chat:        <ViewChat />,
     jarvis:      <ViewJarvis />,
     productions: <ViewProductions />,
@@ -353,7 +353,7 @@ function App() {
               ['explorer', 'Explorer'],
               ['claim', 'Claim'],
               ['subgraph', 'Sous-graphe'],
-              ['agent', 'Chatbot LLM'],
+              ['chatbot', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
               ['chat', 'Chat'],
               ['productions', 'Productions'],

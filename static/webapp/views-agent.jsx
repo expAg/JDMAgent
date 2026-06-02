@@ -16,9 +16,9 @@ function ViewAgent() {
   // SANS envoyer (le user clique Envoyer lui-même). Lu une seule fois
   // au mount, puis le payload est nettoyé.
   const _pending = (typeof window !== 'undefined'
-                    && window.__jdmPendingPayload?.agent) || null;
+                    && window.__jdmPendingPayload?.chatbot) || null;
   if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
-    delete window.__jdmPendingPayload.agent;
+    delete window.__jdmPendingPayload.chatbot;
   }
   const [model, setModel] = useState(_pending?.model || 'gemini-3.1-flash-lite');
   const [thinking, setThinking] = useState(true);
@@ -82,7 +82,7 @@ function ViewAgent() {
     });
   }, [poolStatus]);
 
-  // Send : POST /api/agent/stream, parse SSE en flux, accumule sur le
+  // Send : POST /api/chatbot/stream, parse SSE en flux, accumule sur le
   // dernier message assistant (créé vide juste avant le fetch).
   // `overrideMsg` permet au bouton ↻ de re-soumettre une question
   // précédente sans passer par le state input (qui est async).

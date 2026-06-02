@@ -53,7 +53,7 @@ function ViewChat() {
       <SectionTitle
         kicker="Orchestrateur"
         title="Jarvis · Chat"
-        desc="Discute avec l'orchestrateur en plein écran : il supervise les agents, lance des flux, explique le graphe JDM. Même conversation que le volet latéral (le fil continue en fond)." />
+        desc="Discute avec l'orchestrateur en plein écran : il supervise et lance les agents, explique le graphe JDM. Même conversation que le volet latéral (le fil continue en fond)." />
 
       {!store ? (
         <div style={{ color: 'var(--ink-3)', padding: '48px 0', textAlign: 'center' }}>

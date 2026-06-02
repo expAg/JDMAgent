@@ -622,7 +622,7 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
     { id: 'explorer',    label: 'Explorer' },
     { id: 'claim',       label: 'Claim checker' },
     { id: 'subgraph',    label: 'Sous-graphe' },
-    { id: 'agent',       label: 'Chatbot LLM' },
+    { id: 'chatbot',     label: 'Chatbot LLM' },
     { id: 'jarvis',      label: 'Jarvis' },
     { id: 'chat',        label: 'Chat' },
     { id: 'productions', label: 'Productions' },
@@ -766,7 +766,7 @@ const CLI_COMMANDS = {
   agent:       { cmd: 'python -m jdm_agent.apps.qa_cli --provider gemini --model gemini-3.1-flash-lite',
                  hint: 'REPL chat LLM avec outils JDM. ANTHROPIC_API_KEY / GOOGLE_API_KEY dans l\'env.' },
   jarvis:      { cmd: 'python -m jdm_agent.apps.enrich --terms voiture --consolidate --inference-effort 1',
-                 hint: 'Flux Enrichissement complet — proposer, valider, consolider, écrire le .enrich.' },
+                 hint: 'Agent Enrichissement complet — proposer, valider, consolider, écrire le .enrich.' },
   productions: { cmd: 'ls /tmp/jdm_outputs/ && cat /tmp/jdm_outputs/*.enrich | head -20',
                  hint: 'Liste les fichiers produits (.enrich/.annot/.audit/.err/.stat).' },
   aide:        { cmd: 'python -m jdm_agent.apps.enrich --help',
@@ -923,8 +923,8 @@ const REMOTE_COMMANDS = {
                  hint: 'POST /api/subgraph — nodes/edges JSON ou HTML (format="html").',
                  runner: _runSubgraph },
   agent:       { lang: 'python',
-                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/agent/stream",\n        json={"message": "quels sens de voiture ?",\n              "model": "gemini-3.1-flash-lite"}) as r:\n    for line in r.iter_lines():\n        if line.startswith("data:"): print(line[5:].strip())',
-                 hint: 'POST /api/agent/stream — SSE streaming (events: chunk, tool, done).',
+                 cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/chatbot/stream",\n        json={"message": "quels sens de voiture ?",\n              "model": "gemini-3.1-flash-lite"}) as r:\n    for line in r.iter_lines():\n        if line.startswith("data:"): print(line[5:].strip())',
+                 hint: 'POST /api/chatbot/stream — SSE streaming (events: chunk, tool, done).',
                  runner: _runAgentStream },
   jarvis:      { lang: 'python',
                  cmd: 'import httpx\n\nwith httpx.stream("POST", "http://localhost:7860/api/jarvis/enrich/stream",\n        json={"params": {"term": "voiture", "target_count": 20,\n                          "iterate": True, "budget_label": "50"}}) as r:\n    for line in r.iter_lines():\n        if line.startswith("event:"): print(line)',
@@ -1476,13 +1476,13 @@ function ThemeSwitcher({ theme, setTheme }) {
 // ───────── Flux en cours pill — sticky en haut, polling léger ─────
 // Affiche `X/N flux en cours` où X = runs actifs (status=running)
 // retournés par GET /api/jarvis/runs et N = nombre de flows distincts
-// (configuré globalement par JARVIS_FLOWS_TOTAL). Gradient de couleur :
+// (configuré globalement par JARVIS_AGENTS_TOTAL). Gradient de couleur :
 //   0%   → vert  (var(--jdm-green))      tout dispo
 //   50%  → jaune (var(--jdm-yellow))     mi-charge
 //   100% → rouge (var(--jdm-magenta))    tous pris, file d'attente
 // Recharge toutes les 5s pendant qu'on a au moins un run actif (pour
 // suivre le pulse), 30s sinon (économe quand idle).
-const JARVIS_FLOWS_TOTAL = 6;  // enrich + audit + gap + signalement + stats + annotation
+const JARVIS_AGENTS_TOTAL = 6;  // enrich + audit + gap + signalement + stats + annotation
 
 function _interpolateColor(c1, c2, t) {
   // c1, c2 = [r, g, b] ; t in [0,1]
@@ -1540,8 +1540,8 @@ function ProductionsCountPill() {
   // l'ancien `max(local, server)` empêchait la décroissance immédiate
   // au stop (serveur lag 15s + bg thread cancellation 5-15s).
   const active = localActive > 0 ? localActive : (serverActive ?? 0);
-  const label = `${active}/${JARVIS_FLOWS_TOTAL}`;
-  const load = Math.min(1, active / JARVIS_FLOWS_TOTAL);
+  const label = `${active}/${JARVIS_AGENTS_TOTAL}`;
+  const load = Math.min(1, active / JARVIS_AGENTS_TOTAL);
   const [r, g, b] = _loadGradientRGB(load);
   const accentRGB = `rgb(${r}, ${g}, ${b})`;
   const fillRGBA = `rgba(${r}, ${g}, ${b}, 0.14)`;
@@ -1559,7 +1559,7 @@ function ProductionsCountPill() {
       }}
       title={
         active == null ? 'Chargement…'
-        : `${active} flux Jarvis actuellement en cours sur ${JARVIS_FLOWS_TOTAL} disponibles · clic pour ouvrir Supervision`
+        : `${active} agents Jarvis actuellement en cours sur ${JARVIS_AGENTS_TOTAL} disponibles · clic pour ouvrir Supervision`
       }
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -1580,7 +1580,7 @@ function ProductionsCountPill() {
       onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
       <span className="pulse-dot" style={{ background: dotRGB }} />
       <span>{label}</span>
-      <span style={{ opacity: 0.65, fontWeight: 400, textTransform: 'lowercase' }}>flux</span>
+      <span style={{ opacity: 0.65, fontWeight: 400, textTransform: 'lowercase' }}>agents</span>
     </button>
   );
 }
