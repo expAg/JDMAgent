@@ -2610,11 +2610,12 @@ function JLibrary({ list, onPick, onLaunch }) {
 function _parseWorkflowSteps(sp) {
   if (!sp || typeof sp !== 'string') return null;
   let body = sp;
-  // Isole la section ÉTAPES (jusqu'à RÈGLES/DESCRIPTION si présents).
+  // Isole la section ÉTAPES (jusqu'au 1er en-tête suivant : RÈGLES, DESCRIPTION,
+  // ATTENTION, NOTES, SORTIE…).
   const mStart = sp.match(/[ÉE]TAPES?\s*:?/i);
   if (mStart) {
     body = sp.slice(mStart.index + mStart[0].length);
-    const mEnd = body.match(/(R[ÈE]GLES?|DESCRIPTION)\s*:/i);
+    const mEnd = body.match(/(R[ÈE]GLES?|DESCRIPTION|ATTENTION|NOTES?|SORTIE|REMARQUES?)\s*:/i);
     if (mEnd) body = body.slice(0, mEnd.index);
   }
   // Lignes numérotées « 1. … » / « 1) … ».
@@ -2624,11 +2625,15 @@ function _parseWorkflowSteps(sp) {
   while ((m = re.exec(body)) !== null) {
     const full = m[2].trim().replace(/\s+/g, ' ');
     if (!full) continue;
-    // Titre court : avant « via »/«:»/«—», sinon ~6 premiers mots.
-    let title = full.split(/\s+via\s+|[:—–-]\s/)[0].trim();
-    const words = title.split(' ');
-    if (words.length > 7) title = words.slice(0, 6).join(' ') + '…';
-    items.push({ n: title || ('Étape ' + m[1]), d: full });
+    // Format attendu « Nom — description ». On sépare sur le 1er tiret/colon.
+    const sep = full.split(/\s+[—–-]\s+|\s*:\s+/);
+    let name = (sep[0] || full).trim();
+    const desc = sep.length > 1 ? sep.slice(1).join(' — ').trim() : full;
+    // Garde-fou : nom court (≤ 4 mots) sinon on tronque.
+    const words = name.split(' ');
+    if (words.length > 4) name = words.slice(0, 3).join(' ') + '…';
+    items.push({ n: name || ('Étape ' + m[1]), d: desc });
+    if (items.length >= 6) break;  // jamais plus de 6 phases
   }
   return items.length ? items : null;
 }
@@ -2672,6 +2677,16 @@ function _specToFlow(spec) {
     _format: fmt, _formatLabel: fmtLabel,
     _defaults: { target_count: (spec.defaults && spec.defaults.target_count) || (spec.consolidates ? 3 : 0) },
   };
+}
+
+// Résout un flow par id : natif, sinon agent SUR MESURE (via le registre de
+// specs peuplé au fetch de l'inventaire). Fallback sur le 1er natif si inconnu.
+function _flowById(id) {
+  const nat = JARVIS_AGENTS.find(f => f.id === id);
+  if (nat) return nat;
+  const spec = _CUSTOM_SPEC_REG[id];
+  if (spec) { try { return _specToFlow(spec); } catch (e) {} }
+  return JARVIS_AGENTS[0];
 }
 
 // Hook : récupère les agents SUR MESURE (rafraîchi sur l'event global
@@ -3423,7 +3438,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
 
   const r = rec || {};
   const agentId = r.agentId || '';
-  const flow = (JARVIS_AGENTS.find(f => f.id === agentId)) || JARVIS_AGENTS[0];
+  const flow = _flowById(agentId);   // natif OU sur mesure
   const state = r.status || 'idle';
   const log = r.log || [];
   const accepted = r.accepted || [];
@@ -3701,21 +3716,11 @@ function RunDetailModal({ runId, onClose, onPreview }) {
               </div>
               <div style={{ height: 420, overflowY: 'auto', padding: 0, background: 'var(--bg-card)' }}>
                 {(() => {
-                  if (flow.consolidates) {
-                    if (accepted.length === 0) {
-                      return (
-                        <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
-                          {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
-                        </div>
-                      );
-                    }
-                    return (
-                      <div style={{ display: 'grid', gap: 8, padding: 12 }}>
-                        {accepted.map((a, i) => <ItemCard key={i} item={a} accent={flow.accent} />)}
-                      </div>
-                    );
-                  }
-                  if (parsed.items.length === 0) {
+                  // Source items : registry de consolidation si dispo, SINON
+                  // parse du fichier produit (format jdm) — indispensable pour
+                  // les agents sur mesure qui écrivent sans passer par le registry.
+                  const toShow = (flow.consolidates && accepted.length) ? accepted : parsed.items;
+                  if (toShow.length === 0) {
                     return (
                       <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
                         {state === 'idle'
@@ -3726,7 +3731,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
                   }
                   return (
                     <div style={{ display: 'grid', gap: 8, padding: 12 }}>
-                      {parsed.items.map((it, i) => <ItemCard key={i} item={it} accent={flow.accent} />)}
+                      {toShow.map((it, i) => <ItemCard key={i} item={it} accent={flow.accent} />)}
                     </div>
                   );
                 })()}
@@ -6642,25 +6647,11 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   // Enrich : source registry (`accepted`) — déjà au format
                   // ItemCard (cf. mapping SSE plus haut qui pose
                   // type='consolidated' + explanation).
-                  if (flow.consolidates) {
-                    if (accepted.length === 0) {
-                      return (
-                        <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
-                          {state === 'idle' ? 'Aucun triplet encore.' : 'En attente du 1ᵉʳ triplet consolidé…'}
-                        </div>
-                      );
-                    }
-                    return (
-                      <div style={{ display: 'grid', gap: 8, padding: 12 }}>
-                        {accepted.map((a, i) => (
-                          <ItemCard key={i} item={a} accent={flow.accent} />
-                        ))}
-                      </div>
-                    );
-                  }
-
-                  // Autres flows : on parse le file_preview.
-                  if (parsed.items.length === 0) {
+                  // Registry de consolidation si dispo, SINON parse du fichier
+                  // produit (format jdm) — pour les agents sur mesure qui
+                  // écrivent sans passer par le registry de consolidation.
+                  const toShow = (flow.consolidates && accepted.length) ? accepted : parsed.items;
+                  if (toShow.length === 0) {
                     return (
                       <div style={{ color: 'var(--ink-3)', fontSize: 12, textAlign: 'center', padding: '60px 0' }}>
                         {state === 'idle'
@@ -6671,7 +6662,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                   }
                   return (
                     <div style={{ display: 'grid', gap: 8, padding: 12 }}>
-                      {parsed.items.map((it, i) => (
+                      {toShow.map((it, i) => (
                         <ItemCard key={i} item={it} accent={flow.accent} />
                       ))}
                     </div>
