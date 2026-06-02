@@ -2220,6 +2220,23 @@ def api_jarvis_cancel_run(run_id: str):
     return {"ok": True, "status": run["status"], "note": "cancel requested"}
 
 
+@app.post("/api/jarvis/runs/clear")
+def api_jarvis_clear_runs():
+    """Purge IMMÉDIATE des runs terminés (done/error) du registre mémoire —
+    déclenchée par le bouton « Effacer » du séparateur « Terminés » de la
+    Supervision. N'efface PAS les runs actifs (running/starting), ni le
+    journal persistant .jarvis_runs.jsonl (= historique Productions). Le
+    client re-poll /api/jarvis/runs et les cartes terminées disparaissent."""
+    dropped = 0
+    with _JARVIS_RUNS_LOCK:
+        to_drop = [rid for rid, r in _JARVIS_RUNS.items()
+                   if r.get("status") in ("done", "error")]
+        for rid in to_drop:
+            _JARVIS_RUNS.pop(rid, None)
+            dropped += 1
+    return {"ok": True, "dropped": dropped}
+
+
 @app.get("/api/jarvis/runs/{run_id}/stream")
 async def api_jarvis_stream_existing_run(run_id: str):
     """Re-stream un run existant (catch-up depuis le début du buffer

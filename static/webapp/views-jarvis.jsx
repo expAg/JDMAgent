@@ -3086,6 +3086,30 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   ), document.body);
 }
 
+// ─── Séparateur subtil entre groupes de cartes (En cours / Terminés / À
+// lancer). Petit libellé + filet fin ; `action` optionnelle alignée à droite
+// (ex. « Effacer » sur le groupe Terminés). ───
+function JRunsSeparator({ label, count, action }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 14px' }}>
+      <span className="mono" style={{
+        fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.14em',
+        color: 'var(--ink-3)', whiteSpace: 'nowrap', fontWeight: 600,
+      }}>{label}{typeof count === 'number' ? <span style={{ color: 'var(--ink-4, var(--ink-3))', fontWeight: 400 }}>{` · ${count}`}</span> : ''}</span>
+      <span style={{ flex: 1, height: 1, background: 'var(--line-soft)' }} />
+      {action && (
+        <button type="button" onClick={action.onClick} className="focus-ring" title="Retirer les runs terminés de la supervision"
+          style={{
+            appearance: 'none', background: 'transparent', border: 'none', cursor: 'pointer',
+            fontFamily: 'var(--font-mono)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.1em',
+            color: 'var(--ink-3)', padding: '2px 2px', whiteSpace: 'nowrap',
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+          }}>{action.label} <span aria-hidden="true" style={{ fontSize: 12 }}>✕</span></button>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════ Supervision — tableau de bord live ═══════════════════
 // Synthetic dashboard: every flux is shown "en cours", with a live preview of
 // what's happening inside (current step, growing metrics, streaming results).
@@ -3216,6 +3240,59 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
   // Compteur "Flux actifs" base sur les runs serveur reellement running/starting.
   const activeCount = serverRuns.filter(r => r.status === 'running' || r.status === 'starting').length;
 
+  // ── Trois groupes distincts (cf. demande UX) ──────────────────────
+  //   • EN COURS  : runs running/starting
+  //   • TERMINÉS  : dernier run d'un flux, terminé (done/soumis) → bouton « Effacer »
+  //   • À LANCER  : cartes vierges (placeholder lançable) + carte « + »
+  const runningIdx = orderedIdx.filter(i => !cardSpecs[i].isLaunch && live[i].isRunning);
+  const doneIdx    = orderedIdx.filter(i => !cardSpecs[i].isLaunch && !live[i].isRunning);
+  const launchIdx  = orderedIdx.filter(i => cardSpecs[i].isLaunch);
+
+  // « Effacer » du séparateur Terminés : purge serveur des runs done/error
+  // puis re-poll immédiat (les cartes terminées disparaissent, restent les
+  // cartes vierges « à lancer »).
+  const clearFinished = async () => {
+    try {
+      await fetch('api/jarvis/runs/clear', { method: 'POST' });
+      const r = await fetch('api/jarvis/runs');
+      if (r.ok) { const d = await r.json(); setServerRuns(d.runs || []); }
+    } catch (e) {}
+  };
+
+  // Rend une carte (run ou placeholder) à partir de son index dans cardSpecs.
+  const renderCard = (i) => {
+    const spec = cardSpecs[i];
+    const f = spec.flow;
+    if (spec.isLaunch) {
+      return <JLaunchCard key={'launch-' + f.id} flow={f}
+        onLaunch={() => onLaunch(f.id)}
+        onDetail={() => onPick(f.id)}
+        onStart={() => {
+          if (f._custom) { _startCustomAgent(f); return; }
+          if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
+            const dp = (typeof defaultParamsFor === 'function') ? defaultParamsFor(f.id) : {};
+            window.__jdmJarvisStore.start(f.id, { params: dp, isResume: false, resumeState: null }).catch(() => {});
+          }
+        }} />;
+    }
+    const rid = spec.run && spec.run.run_id;
+    const _origin = (spec.run && spec.run.origin) || 'ui';
+    return (
+      <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
+        onOpen={() => { if (rid && _origin !== 'ui') setDetailRunId(rid); else onLaunch(f.id); }}
+        onDetail={() => onPick(f.id)}
+        onLaunch={() => onLaunch(f.id)}
+        onPreview={(p) => setPreviewPath(p)}
+        onStart={() => {
+          if (f._custom) { _startCustomAgent(f); return; }
+          if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
+            const dp = (typeof defaultParamsFor === 'function') ? defaultParamsFor(f.id) : {};
+            window.__jdmJarvisStore.start(f.id, { params: dp, isResume: false, resumeState: null }).catch(() => {});
+          }
+        }} />
+    );
+  };
+
   return (
     <div ref={rootRef} style={{ width: '100%', maxWidth: 1120 }}>
       {/* ── Masthead — wrapper position:relative + min-height pour que
@@ -3286,56 +3363,31 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         <JKpi label="Items produits"   value={agg.accepted}  sub="consolides/annotes" color="var(--jdm-green)" />
       </div>
 
-      {/* ── Live flux grid — une carte par flux ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))',
-        gap: 14,
-      }}>
-        {orderedIdx.map(i => {
-          const spec = cardSpecs[i];
-          const f = spec.flow;
-          if (spec.isLaunch) {
-            return <JLaunchCard key={'launch-' + f.id} flow={f}
-              onLaunch={() => onLaunch(f.id)}
-              onDetail={() => onPick(f.id)}
-              onStart={() => {
-                // Agent SUR MESURE → démarrage in-place avec ses propres
-                // défauts (spec). Natif → defaults canoniques du flux.
-                if (f._custom) { _startCustomAgent(f); return; }
-                if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
-                  const dp = (typeof defaultParamsFor === 'function')
-                    ? defaultParamsFor(f.id) : {};
-                  window.__jdmJarvisStore.start(f.id, {
-                    params: dp, isResume: false, resumeState: null,
-                  }).catch(() => {});
-                }
-              }} />;
-          }
-          const rid = spec.run && spec.run.run_id;
-          // Origine du run : 'ui' = lancé via JarvisRun (session locale dans
-          // JarvisStore) → le clic ROUVRE JarvisRun pour continuer à suivre.
-          // 'chat'/'server' = pas de session locale → on ouvre la modal détail
-          // du run. (Placeholder sans run → lancement via JarvisRun.)
-          const _origin = (spec.run && spec.run.origin) || 'ui';
-          return (
-            <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
-              onOpen={() => { if (rid && _origin !== 'ui') setDetailRunId(rid); else onLaunch(f.id); }}
-              onDetail={() => onPick(f.id)}
-              onLaunch={() => onLaunch(f.id)}
-              onPreview={(p) => setPreviewPath(p)}
-              onStart={() => {
-                if (f._custom) { _startCustomAgent(f); return; }
-                if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
-                  const dp = (typeof defaultParamsFor === 'function')
-                    ? defaultParamsFor(f.id) : {};
-                  window.__jdmJarvisStore.start(f.id, {
-                    params: dp, isResume: false, resumeState: null,
-                  }).catch(() => {});
-                }
-              }} />
-          );
-        })}
+      {/* ── Trois sections : En cours / Terminés / À lancer ──
+          Chaque groupe est précédé d'un séparateur subtil (filet + petit
+          libellé). Le séparateur « Terminés » porte un « Effacer » à droite. */}
+      {runningIdx.length > 0 && (
+        <React.Fragment>
+          <JRunsSeparator label="En cours" count={runningIdx.length} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: 14, marginBottom: 26 }}>
+            {runningIdx.map(renderCard)}
+          </div>
+        </React.Fragment>
+      )}
+
+      {doneIdx.length > 0 && (
+        <React.Fragment>
+          <JRunsSeparator label="Terminés" count={doneIdx.length}
+            action={{ label: 'Effacer', onClick: clearFinished }} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: 14, marginBottom: 26 }}>
+            {doneIdx.map(renderCard)}
+          </div>
+        </React.Fragment>
+      )}
+
+      <JRunsSeparator label="À lancer" count={launchIdx.length} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: 14 }}>
+        {launchIdx.map(renderCard)}
         {/* Carte « + » — créer un agent spécialiste (ouvre le builder). */}
         <JCreateAgentCard onClick={() => setShowBuilder(true)} />
       </div>
