@@ -2609,31 +2609,38 @@ function JLibrary({ list, onPick, onLaunch }) {
 // diagramme de boucle. Renvoie null si rien d'exploitable.
 function _parseWorkflowSteps(sp) {
   if (!sp || typeof sp !== 'string') return null;
-  // On EXIGE une vraie section « ÉTAPES » (format workflow généré). Sinon
-  // (instructions brutes de l'utilisateur, prose libre…) → null → on retombe
-  // sur les étapes génériques propres, AU LIEU de parser n'importe quelle liste
-  // numérotée et de produire des « étapes » verbeuses ou des règles parasites.
+  let body = sp;
+  // Si une section « ÉTAPES : » existe (workflow généré), on part de là ; sinon
+  // on parse la liste numérotée telle quelle (instructions brutes).
   const mStart = sp.match(/[ÉE]TAPES?\s*:/i);
-  if (!mStart) return null;
-  let body = sp.slice(mStart.index + mStart[0].length);
-  const mEnd = body.match(/(R[ÈE]GLES?|DESCRIPTION|ATTENTION|NOTES?|SORTIE|REMARQUES?|CONTRAINTES?)\s*:/i);
+  if (mStart) body = sp.slice(mStart.index + mStart[0].length);
+  // Coupe à la 1re section de RÈGLES / DESCRIPTION / ATTENTION… (pas des étapes).
+  const mEnd = body.match(/\n\s*(R[ÈE]GLES?|DESCRIPTION|ATTENTION|NOTES?|SORTIE|REMARQUES?|CONTRAINTES?|IMPORTANT)\s*:?/i);
   if (mEnd) body = body.slice(0, mEnd.index);
-  // Lignes numérotées « 1. … » / « 1) … ».
   const items = [];
   const re = /(?:^|\n)\s*(\d+)[.)]\s+([^\n]+)/g;
   let m;
   while ((m = re.exec(body)) !== null) {
     const full = m[2].trim().replace(/\s+/g, ' ');
     if (!full) continue;
-    // Format attendu « Nom — description ». On sépare sur le 1er tiret/colon.
-    const sep = full.split(/\s+[—–-]\s+|\s*:\s+/);
-    let name = (sep[0] || full).trim();
-    const desc = sep.length > 1 ? sep.slice(1).join(' — ').trim() : full;
-    // Garde-fou : nom court (≤ 4 mots) sinon on tronque.
-    const words = name.split(' ');
-    if (words.length > 4) name = words.slice(0, 3).join(' ') + '…';
-    items.push({ n: name || ('Étape ' + m[1]), d: desc });
-    if (items.length >= 6) break;  // jamais plus de 6 phases
+    // Ignore les lignes qui sont des RÈGLES / avertissements (pas des étapes).
+    if (/^(attention|important|note|règle|regle|ne\s|n[e'’]|aucun|jamais)\b/i.test(full)) continue;
+    let name, desc;
+    const sep = full.split(/\s+[—–:-]\s+/);  // « Nom — desc » / « Nom : desc »
+    if (sep.length > 1 && sep[0].split(' ').length <= 4) {
+      name = sep[0].trim();
+      desc = sep.slice(1).join(' — ').trim();
+    } else {
+      // Pas de séparateur : nom SYNTHÉTIQUE = le verbe initial (1er mot),
+      // description = la phrase complète. Donne « Analyse », « Identifie »…
+      const w = full.replace(/[.:;،,].*$/, '').trim().split(' ');
+      name = w.slice(0, w.length === 1 ? 1 : (w[0].length <= 3 ? 2 : 1)).join(' ');
+      desc = full;
+    }
+    name = name.replace(/[.:;,]+$/, '').trim();
+    if (!name) name = 'Étape ' + m[1];
+    items.push({ n: name, d: desc });
+    if (items.length >= 6) break;
   }
   return items.length ? items : null;
 }
