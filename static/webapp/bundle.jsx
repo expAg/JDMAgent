@@ -9601,9 +9601,13 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
   const [q, setQ] = useState('');
   // Defaut = library (Bibliothèque MediaBay) au lieu d'apercus.
   const [view, setView] = useState('library'); // 'library' | 'apercus'
+  // Agents SUR MESURE de l'inventaire + builder.
+  const customAgents = useCustomAgentFlows();
+  const [showBuilder, setShowBuilder] = useState(false);
+  const allFlows = [...flows, ...customAgents];
 
   const qq = q.trim().toLowerCase();
-  const indexed = flows.map((f, i) => ({ f, num: i + 1 }));
+  const indexed = allFlows.map((f, i) => ({ f, num: i + 1 }));
   const list = qq
     ? indexed.filter(({ f }) =>
         (f.title + ' ' + f.kicker + ' ' + f.produces + ' ' + f.steps.map(s => s.n).join(' ')).toLowerCase().includes(qq))
@@ -9660,9 +9664,19 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
           fontSize: 11, color: 'var(--ink-3)', whiteSpace: 'nowrap',
           padding: '6px 11px', background: 'var(--bg-elev)', border: '1px solid var(--line-soft)', borderRadius: 999,
         }}>
-          <strong style={{ color: 'var(--ink-2)' }}>{list.length}</strong>{qq ? ` / ${flows.length}` : ''} agents
+          <strong style={{ color: 'var(--ink-2)' }}>{list.length}</strong>{qq ? ` / ${allFlows.length}` : ''} agents
         </span>
+        <button type="button" className="focus-ring" onClick={() => setShowBuilder(true)}
+          title="Créer un agent spécialiste sur mesure"
+          style={{
+            marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '7px 13px', borderRadius: 999, cursor: 'pointer', border: 'none',
+            background: 'var(--accent)', color: '#fff',
+            fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600,
+            textTransform: 'uppercase', letterSpacing: '0.06em',
+          }}>＋ Créer un agent spécialiste</button>
       </div>
+      {showBuilder && <JAgentBuilderModal onClose={() => setShowBuilder(false)} />}
 
       {list.length === 0 ? (
         <div style={{
@@ -10022,10 +10036,198 @@ function JLibrary({ list, onPick, onLaunch }) {
   );
 }
 
+// ═══════════════════ Agents SUR MESURE — inventaire + builder ═══════════════
+// Mappe un AgentSpec de l'inventaire (/api/jarvis/agents) vers un objet
+// « flow » consommable par les cartes. Enregistre aussi icône/brief dans les
+// maps globales pour que flowIcon/FLOW_BRIEF marchent sans toucher les cartes.
+function _specToFlow(spec) {
+  try {
+    if (spec.icon) AGENT_ICON[spec.id] = spec.icon;
+    if (spec.brief) AGENT_BRIEF[spec.id] = spec.brief;
+  } catch (e) {}
+  return {
+    id: spec.id, title: spec.title, kicker: 'Sur mesure',
+    icon: spec.icon || '🤖', accent: spec.accent || 'var(--accent)',
+    desc: spec.brief || '', brief: spec.brief || '',
+    produces: spec.output_ext || '', loopOf: spec.template || 'sur mesure',
+    category: 'Sur mesure', tags: [spec.template || 'custom'],
+    steps: [{ n: 'Stratégie', d: '' }, { n: 'Exécution', d: '' }, { n: 'Sortie', d: '' }],
+    consolidates: !!spec.consolidates,
+    _custom: true,
+    _defaults: { target_count: (spec.defaults && spec.defaults.target_count) || (spec.consolidates ? 3 : 0) },
+  };
+}
+
+// Hook : récupère les agents SUR MESURE (rafraîchi sur l'event global
+// 'jdm-agents-changed', émis après création/suppression).
+function useCustomAgentFlows() {
+  const [customs, setCustoms] = React.useState([]);
+  const load = React.useCallback(async () => {
+    try {
+      const r = await fetch('api/jarvis/agents');
+      if (!r.ok) return;
+      const d = await r.json();
+      const cs = (d.agents || []).filter(a => !a.builtin).map(_specToFlow);
+      setCustoms(cs);
+    } catch (e) {}
+  }, []);
+  React.useEffect(() => {
+    load();
+    const h = () => load();
+    window.addEventListener('jdm-agents-changed', h);
+    return () => window.removeEventListener('jdm-agents-changed', h);
+  }, [load]);
+  return customs;
+}
+
+// Lance un agent SUR MESURE EN PLACE (in-place, comme « ▸ Démarrer »), avec
+// les défauts de son spec — il apparaît ensuite dans la Supervision.
+function _startCustomAgent(flow) {
+  if (typeof window === 'undefined' || !window.__jdmJarvisStore) return;
+  const cfg = (window.__JDM_JARVIS_CONFIG__) || {};
+  const params = {
+    term: '', relation: [],
+    model: cfg.llm || 'gemini-3.1-flash-lite',
+    use_thinking: true, budget_label: 'illimité',
+    pool_active: cfg.poolActive !== false,
+    auto_switch: false,
+    upload: cfg.autoSubmit === true,
+    target_count: (flow._defaults && flow._defaults.target_count) || 0,
+  };
+  window.__jdmJarvisStore.start(flow.id, { params, isResume: false, resumeState: null }).catch(() => {});
+}
+
+// Modal de CRÉATION d'un agent spécialiste (le formulaire-builder).
+const _BUILDER_FORMATS = [
+  { value: '', label: '— défaut du template —' },
+  { value: 'enrich', label: 'Soumission JDM (.enrich)' },
+  { value: 'audit', label: 'Audit (.audit)' },
+  { value: 'err', label: 'Signalement (.err)' },
+  { value: 'stat', label: 'Stats (.stat)' },
+  { value: 'annot', label: 'Annotation (.annot)' },
+  { value: 'json', label: 'JSON (.json)' },
+  { value: 'txt', label: 'Libre (.txt)' },
+];
+
+function JAgentBuilderModal({ onClose }) {
+  const [templates, setTemplates] = React.useState({});
+  const [name, setName] = React.useState('');
+  const [template, setTemplate] = React.useState('generation_endogene');
+  const [strategy, setStrategy] = React.useState('');
+  const [writes, setWrites] = React.useState(true);
+  const [fmt, setFmt] = React.useState('');
+  const [target, setTarget] = React.useState(0);
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState('');
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('api/jarvis/agents');
+        if (r.ok) { const d = await r.json(); setTemplates(d.templates || {}); }
+      } catch (e) {}
+    })();
+  }, []);
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const tpl = templates[template] || {};
+  const create = async () => {
+    if (!name.trim() || !strategy.trim()) { setMsg('Nom et stratégie requis.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const spec = { title: name.trim(), template, system_prompt: strategy.trim(), writes };
+      if (fmt) spec.output_ext = fmt;
+      if (target > 0) spec.defaults = { target_count: Number(target) };
+      const r = await fetch('api/jarvis/agents', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spec }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        try { window.dispatchEvent(new CustomEvent('jdm-agents-changed')); } catch (e) {}
+        onClose();
+      } else { setMsg('✗ ' + (d.error || 'échec')); }
+    } catch (e) { setMsg('✗ ' + (e.message || e)); }
+    setBusy(false);
+  };
+
+  return ReactDOM.createPortal((
+    <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{
+      position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '5vh 20px', overflow: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg)',
+        maxWidth: 640, width: '100%', boxShadow: 'var(--shadow-lg)', padding: '20px 22px',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--ink)' }}>
+            🤖 Créer un agent spécialiste
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose}>× Fermer</Button>
+        </div>
+
+        <Field label="Nom de l'agent">
+          <Input value={name} onChange={setName} placeholder="ex. Enrichisseur de cuisine" />
+        </Field>
+        <Field label="Template (fixe les défauts : consolide / écrit / format)">
+          <Select value={template} onChange={setTemplate}
+            options={Object.keys(templates).length
+              ? Object.entries(templates).map(([k, v]) => ({ value: k, label: v.label || k }))
+              : [{ value: 'generation_endogene', label: 'Génération endogène' }]} />
+        </Field>
+        {tpl.skeleton && (
+          <div style={{ fontSize: 11.5, color: 'var(--ink-3)', margin: '-4px 0 10px', lineHeight: 1.4 }}>
+            {tpl.skeleton}
+          </div>
+        )}
+        <Field label="Stratégie de l'agent (son déroulé / system prompt)">
+          <textarea value={strategy} onChange={(e) => setStrategy(e.target.value)} rows={5}
+            placeholder="Décris ce que l'agent fait, étape par étape (terme au hasard, idées associées, relation cible, validation, consolidation…)."
+            style={{
+              width: '100%', resize: 'vertical', padding: '10px 12px',
+              background: 'var(--bg-card)', border: '1px solid var(--line)',
+              borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'inherit',
+              fontSize: 13.5, lineHeight: 1.5, outline: 'none',
+            }} />
+        </Field>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="Format de sortie">
+            <Select value={fmt} onChange={setFmt} options={_BUILDER_FORMATS} />
+          </Field>
+          <Field label={`Nombre cible · ${target || '—'}`}>
+            <Slider value={target} onChange={setTarget} min={0} max={50} step={1} />
+          </Field>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '4px 0 14px' }}>
+          <input type="checkbox" checked={writes} onChange={(e) => setWrites(e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }} />
+          Écrit un fichier de soumission (sinon résultat en réponse seulement)
+        </label>
+
+        {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button variant="secondary" onClick={onClose}>Annuler</Button>
+          <Button onClick={create} disabled={busy || !name.trim() || !strategy.trim()}>
+            {busy ? 'Création…' : 'Créer l\'agent'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
 // ═══════════════════ Supervision — tableau de bord live ═══════════════════
 // Synthetic dashboard: every flux is shown "en cours", with a live preview of
 // what's happening inside (current step, growing metrics, streaming results).
 function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
+  // Agents SUR MESURE de l'inventaire (fusionnés aux 6 natifs pour les cartes).
+  const customAgents = useCustomAgentFlows();
+  const [showBuilder, setShowBuilder] = useState(false);
   // Heartbeat tick (animation refresh) — anime stepIdx + petits effets visuels.
   // Reste fictif (cosmetique) ; ne change pas les chiffres reels.
   const [tick, setTick] = useState(0);
@@ -10108,7 +10310,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
     if (r.agent_id) (_runsByFlow[r.agent_id] = _runsByFlow[r.agent_id] || []).push(r);
   }
   const cardSpecs = [];
-  for (const f of flows) {
+  for (const f of [...flows, ...customAgents]) {
     const frs = _runsByFlow[f.id] || [];
     const activeR = frs.filter(r => r.status === 'running' || r.status === 'starting')
                        .sort((a, b) => (a.started_at || 0) - (b.started_at || 0));
@@ -10230,11 +10432,11 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           const f = spec.flow;
           if (spec.isLaunch) {
             return <JLaunchCard key={'launch-' + f.id} flow={f}
-              onDetail={() => onPick(f.id)}
+              onDetail={f._custom ? null : (() => onPick(f.id))}
               onStart={() => {
-                // Démarre le flux IMMÉDIATEMENT avec les defaults (term vide
-                // → tirage random côté backend) sans naviguer : la carte
-                // passera « en cours » au prochain poll /api/jarvis/runs.
+                // Agent SUR MESURE → démarrage in-place avec ses propres
+                // défauts (spec). Natif → defaults canoniques du flux.
+                if (f._custom) { _startCustomAgent(f); return; }
                 if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
                   const dp = (typeof defaultParamsFor === 'function')
                     ? defaultParamsFor(f.id) : {};
@@ -10251,9 +10453,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
               onLaunch={() => onLaunch(f.id)}
               onPreview={(p) => setPreviewPath(p)}
               onStart={() => {
-                // Demarre le flow IMMEDIATEMENT avec defaults (term/relation
-                // vides → tirage random cote backend) sans naviguer. La card
-                // passera "en cours" au prochain poll /api/jarvis/runs.
+                if (f._custom) { _startCustomAgent(f); return; }
                 if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
                   const dp = (typeof defaultParamsFor === 'function')
                     ? defaultParamsFor(f.id) : {};
@@ -10264,7 +10464,10 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
               }} />
           );
         })}
+        {/* Carte « + » — créer un agent spécialiste (ouvre le builder). */}
+        <JCreateAgentCard onClick={() => setShowBuilder(true)} />
       </div>
+      {showBuilder && <JAgentBuilderModal onClose={() => setShowBuilder(false)} />}
 
       {/* Légende « Clic sur le cercle / la carte » retirée — le rail
           sticky bottom (JSectionNav) prend sa place visuelle en bas de
@@ -10783,17 +10986,46 @@ function JLaunchCard({ flow, onStart, onDetail }) {
             fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600,
             textTransform: 'uppercase', letterSpacing: '0.07em',
           }}>▸ Démarrer</button>
-        <button type="button" className="focus-ring"
-          onClick={(e) => { e.stopPropagation(); onDetail && onDetail(); }}
-          title={`Ouvrir la vue Run de « ${flow.title} »`}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-            padding: '6px 10px', borderRadius: 999, cursor: 'pointer',
-            border: '1px solid var(--line)', background: 'transparent', color: 'var(--ink-2)',
-            fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600,
-            textTransform: 'uppercase', letterSpacing: '0.07em',
-          }}>Détail →</button>
+        {onDetail && (
+          <button type="button" className="focus-ring"
+            onClick={(e) => { e.stopPropagation(); onDetail(); }}
+            title={`Ouvrir la vue Run de « ${flow.title} »`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '6px 10px', borderRadius: 999, cursor: 'pointer',
+              border: '1px solid var(--line)', background: 'transparent', color: 'var(--ink-2)',
+              fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600,
+              textTransform: 'uppercase', letterSpacing: '0.07em',
+            }}>Détail →</button>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Carte « + » de fin de grille Supervision : ouvre le builder d'agent sur mesure.
+function JCreateAgentCard({ onClick }) {
+  const [hover, setHover] = useState(false);
+  const a = 'var(--accent)';
+  return (
+    <div role="button" tabIndex={0} onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      className="focus-ring" title="Créer un agent spécialiste"
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: 8, minHeight: 150, cursor: 'pointer',
+        background: 'var(--bg-card)',
+        border: '1px dashed ' + (hover ? a : 'var(--line)'),
+        borderRadius: 'var(--radius-lg)',
+        color: hover ? a : 'var(--ink-3)',
+        transition: 'border-color .16s, color .16s, transform .18s',
+        transform: hover ? 'translateY(-2px)' : 'none',
+      }}>
+      <span style={{ fontSize: 30, lineHeight: 1 }}>＋</span>
+      <span className="mono" style={{
+        fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em',
+      }}>Créer un agent spécialiste</span>
     </div>
   );
 }
