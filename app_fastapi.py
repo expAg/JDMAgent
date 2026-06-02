@@ -2045,6 +2045,7 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
     from jdm_agent.jarvis_chat import inventory as _inv
     from jdm_agent.jarvis_chat.agent import build_jarvis_chat_agent
     from langchain_core.messages import HumanMessage
+    from jarvis import _content_to_text
     cfg = req.config or {}
     spec = req.spec or {}
     meta = _inv.build_workflow_generation_prompt(spec)
@@ -2070,8 +2071,10 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         agent = build_jarvis_chat_agent(client=get_client(), llm=llm)
         out = agent.invoke({"messages": [HumanMessage(content=meta)]})
         msgs = out.get("messages") if isinstance(out, dict) else None
-        workflow = (msgs[-1].content if msgs else "") or ""
-        workflow = workflow.strip() if isinstance(workflow, str) else str(workflow).strip()
+        # Le contenu peut être une liste de blocs (Gemini « thoughts ») — on
+        # l'aplatit en texte propre (sinon on afficherait le repr brut).
+        raw = msgs[-1].content if msgs else ""
+        workflow = (_content_to_text(raw) or "").strip()
         if not workflow:
             return {"ok": False, "error": "génération vide", "fallback": _fallback}
         return {"ok": True, "workflow": workflow, "meta_prompt": meta}

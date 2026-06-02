@@ -10323,8 +10323,10 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     };
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
     if (target > 0) spec.defaults = { target_count: Number(target) };
-    if (Array.isArray(allowedTools) && allowedTools.length
-        && !(toolOpts.length && allowedTools.length === toolOpts.length)) {
+    // On persiste TOUJOURS la sélection d'outils (même « tout ») pour que la
+    // fiche détail puisse les afficher comme les natifs. « tout » → l'exclusion
+    // backend ne retire rien de plus que les *_workflow.
+    if (Array.isArray(allowedTools) && allowedTools.length) {
       spec.allowed_tools = allowedTools;
     }
     return spec;
@@ -12728,7 +12730,14 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
             title="Lancer cet agent"
             aria-label="Lancer cet agent"
             style={{ flexShrink: 0 }}>
-            <JLoopRing accent={flow.accent} num={safeIndex + 1} steps={flow.steps.length} delay={0} size={90} />
+            {/* Même icône que sur les cartes (emoji du flux), carré teinté à
+                l'accent — pas de fond blanc, pas l'anneau numéroté générique. */}
+            <span style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 84, height: 84, borderRadius: 20, fontSize: 44, lineHeight: 1,
+              background: `color-mix(in srgb, ${flow.accent} 12%, transparent)`,
+              border: `1px solid color-mix(in srgb, ${flow.accent} 30%, transparent)`,
+            }}>{agentIcon(flow.id)}</span>
           </button>
           <div>
             <div className="mono" style={{
@@ -12819,15 +12828,19 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
               <div className="mono" style={{
                 fontSize: 11, color: 'var(--ink-3)',
                 textTransform: 'uppercase', letterSpacing: '0.1em', margin: '16px 0 8px',
-              }}>Ce que l'agent sait faire (outils)</div>
+              }}>Outils JDM mobilisés</div>
               {(flow._spec && Array.isArray(flow._spec.allowed_tools) && flow._spec.allowed_tools.length) ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {flow._spec.allowed_tools.map(t => (
-                    <span key={t} className="mono" style={{
-                      fontSize: 11, padding: '3px 8px', background: 'var(--bg-elev)',
-                      border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
-                      color: 'var(--ink-2)',
-                    }}>{t}</span>
+                    <button key={t} type="button" onClick={() => setOpenTool(t)}
+                      className="jtool-chip" title={`Voir la fiche de ${t}()`}
+                      style={{
+                        fontSize: 11, padding: '4px 9px', background: 'var(--bg-elev)',
+                        border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
+                        color: 'var(--ink-2)', cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        transition: 'border-color .14s, color .14s, background .14s',
+                      }}>{t}()<span style={{ opacity: 0.5, fontSize: 10 }}>↗</span></button>
                   ))}
                 </div>
               ) : (

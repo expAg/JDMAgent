@@ -913,6 +913,23 @@ function ChatPanel({ dark, onClose }) {
           <strong>Jarvis</strong>
           <span>Discussion</span>
         </div>
+        <button type="button" className="jb-chat-x" onClick={() => {
+            // Bascule vers la vue Chat PLEIN ÉCRAN (route /chat). Navigation
+            // SOFT (pushState + popstate) → le routeur SPA switche sans reload,
+            // la conversation (JarvisChatStore global) est conservée.
+            try {
+              const b = document.querySelector('base');
+              const base = ((b && b.getAttribute('href')) || '/').replace(/\/+$/, '');
+              const url = (base || '') + '/chat';
+              window.history.pushState({ view: 'chat' }, '', url);
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            } catch (e) { window.location.href = '/chat'; }
+          }} title="Ouvrir en plein écran" aria-label="Plein écran"
+          style={{ marginLeft: 'auto' }}>
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+            <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
         <button type="button" className="jb-chat-x" onClick={onClose} title="Fermer la discussion" aria-label="Fermer">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
         </button>
