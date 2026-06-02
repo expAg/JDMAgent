@@ -509,11 +509,57 @@ def describe_flows(flow_id: str = "") -> dict:
             "describe_flows(flow_id)."}
 
 
+@tool
+def describe_site_routes() -> dict:
+    """Carte CANONIQUE des onglets/pages du site et de ce qu'on y fait.
+
+    Appelle-moi pour ORIENTER l'utilisateur dans l'interface : où superviser
+    les agents, où en lancer un à la main, où voir/soumettre les productions,
+    où configurer, etc. Cite ensuite la route en langage humain (le libellé de
+    l'onglet), pas l'identifiant technique.
+    """
+    return {
+        "onglets": [
+            {"route": "Projet", "fait": "présentation du projet et du cadre "
+             "théorique (neuro-symbolique, garde-fous, explicabilité)."},
+            {"route": "Explorer", "fait": "explorer un terme dans JeuxDeMots "
+             "(relations, voisins, sens)."},
+            {"route": "Claim", "fait": "vérifier un triplet (contenance effort 0 "
+             "/ inférence effort 1-2) avec la chaîne de preuve."},
+            {"route": "Sous-graphe", "fait": "visualiser le sous-graphe d'un "
+             "terme (interactif)."},
+            {"route": "Chatbot", "fait": "chatbot Q&A libre sur la langue "
+             "française (exploration)."},
+            {"route": "Jarvis", "fait": "la console d'orchestration — voir "
+             "ci-dessous ses sous-sections."},
+            {"route": "Chat", "fait": "discuter avec moi (l'orchestrateur) en "
+             "plein écran."},
+            {"route": "Productions", "fait": "lister, prévisualiser, télécharger "
+             "et SOUMETTRE au LLMDrops les fichiers produits (.enrich/.audit/"
+             ".err/.stat/.annot)."},
+            {"route": "Aide", "fait": "installation, clés API, formats de "
+             "fichiers."},
+        ],
+        "console_jarvis": [
+            {"section": "Supervision", "fait": "tableau de bord live : une carte "
+             "par agent en cours/terminé, métriques, détail d'un run, et une "
+             "carte « + Démarrer » par agent pour en lancer un À LA MAIN."},
+            {"section": "Configuration", "fait": "réglages de l'orchestrateur : "
+             "mode, modèle LLM, budget, pool gratuit, soumission auto."},
+            {"section": "Répertoire", "fait": "catalogue des agents disponibles "
+             "(fiches + lancement)."},
+        ],
+        "note": "Pour lancer un agent toi-même (moi, l'orchestrateur), utilise "
+        "start_flow. Pour que l'UTILISATEUR le fasse à la main, oriente-le vers "
+        "Jarvis › Supervision (carte « ▸ Démarrer ») ou Jarvis › Répertoire.",
+    }
+
+
 def build_supervision_tools() -> list:
     """Renvoie la liste des outils internes de supervision de la mascotte."""
     return [
         list_runs, get_run, list_productions, read_production, summarize_triplets,
-        describe_flows,
+        describe_flows, describe_site_routes,
         start_flow, stop_flow,
         get_config, set_config,
         read_env, set_env, rollback_env,
