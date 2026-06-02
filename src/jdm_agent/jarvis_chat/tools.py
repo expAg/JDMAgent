@@ -555,12 +555,124 @@ def describe_site_routes() -> dict:
     }
 
 
+# ───────────────────── tools : construction d'agents sur mesure ─────────────
+
+# Mots-clés de format → extension de fichier (pour create_specialist_agent).
+_FORMAT_TO_EXT = {
+    "jdm": ".enrich", "soumission": ".enrich", "enrich": ".enrich",
+    "audit": ".audit", "err": ".err", "signalement": ".err",
+    "stat": ".stat", "stats": ".stat", "annot": ".annot", "annotation": ".annot",
+    "libre": ".txt", "txt": ".txt", "texte": ".txt", "json": ".json",
+}
+
+
+@tool
+def list_agent_templates() -> dict:
+    """Liste les TEMPLATES disponibles pour construire un agent sur mesure
+    (audit, generation_endogene, generation_exogene, libre) avec leurs défauts
+    (consolide ?, écrit ?, format de sortie). Sers-t'en pour proposer un
+    template adapté à la demande de l'utilisateur."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    return {"templates": {
+        k: {"label": v["label"], "consolidates": v["consolidates"],
+            "writes": v["writes"], "output_ext": v["output_ext"],
+            "skeleton": v["skeleton"]}
+        for k, v in _inv.AGENT_TEMPLATES.items()
+    }}
+
+
+@tool
+def list_specialist_agents() -> dict:
+    """Liste les agents SUR MESURE déjà créés (persistés dans l'inventaire),
+    lançables avec start_agent('<id>')."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    customs = [s for s in _inv.list_agent_specs() if not s.get("builtin")]
+    return {"count": len(customs),
+            "agents": [{"id": s["id"], "title": s["title"], "template": s.get("template"),
+                        "consolidates": s["consolidates"], "writes": s["writes"],
+                        "output_ext": s["output_ext"]} for s in customs]}
+
+
+@tool
+def create_specialist_agent(name: str, strategy: str, template: str = "libre",
+                            writes: bool = True, output_format: str = "",
+                            target_count: int = 0, confirm: bool = False) -> dict:
+    """Construit un agent JDM SUR MESURE, persisté et réutilisable dans
+    l'inventaire (Répertoire), lançable ensuite via start_agent('<id>').
+
+    Toi (l'orchestrateur) RÉDIGES la `strategy` (le system prompt de tâche de
+    l'agent) à partir de la demande en langage naturel de l'utilisateur — c'est
+    le cœur de l'agent (« tire un terme au hasard, regarde ses idées associées,
+    tente telle relation, consolide… »).
+
+    Paramètres :
+      - name : nom lisible (l'id est slugifié automatiquement).
+      - strategy : la stratégie/déroulé que l'agent suivra (TU la rédiges).
+      - template ∈ {audit, generation_endogene, generation_exogene, libre} :
+        fixe les défauts (consolide ?, écrit ?, format). Choisis le plus proche.
+      - writes : l'agent écrit-il un fichier de soumission ? (défaut oui).
+      - output_format : 'jdm'/'enrich', 'audit', 'err', 'stat', 'annot',
+        'json', 'libre' (sinon le défaut du template).
+      - target_count : nombre d'items visés (0 = défaut).
+      - confirm : FALSE d'abord → renvoie un APERÇU à montrer à l'utilisateur
+        pour validation ; rappelle avec confirm=True pour CRÉER réellement.
+
+    NE crée jamais sans avoir montré l'aperçu et obtenu l'accord de l'utilisateur.
+    """
+    from jdm_agent.jarvis_chat import inventory as _inv
+    if not (name or "").strip() or not (strategy or "").strip():
+        return {"status": "error", "ok": False,
+                "error": "name et strategy sont requis.",
+                "instruction": "Demande à l'utilisateur le nom et la stratégie manquants."}
+    spec = {"title": name.strip(), "template": template,
+            "system_prompt": strategy.strip(), "writes": bool(writes)}
+    fmt = (output_format or "").strip().lower().lstrip(".")
+    if fmt:
+        spec["output_ext"] = _FORMAT_TO_EXT.get(fmt, "." + fmt)
+    if target_count and int(target_count) > 0:
+        spec["defaults"] = {"target_count": int(target_count)}
+    # Normalisation (sans persister) pour l'aperçu.
+    preview = _inv._normalize_spec(spec)
+    if not confirm:
+        return {"status": "preview", "ok": True, "spec": preview,
+                "instruction": "APERÇU — montre à l'utilisateur (nom, template, "
+                "consolide, écrit, format, stratégie) et demande s'il valide. "
+                "S'il confirme, rappelle create_specialist_agent(..., confirm=True)."}
+    saved = _inv.save_agent_spec(spec)
+    return {"status": "created", "ok": True, "spec": saved,
+            "agent_id": saved["id"],
+            "instruction": f"Agent créé et ajouté à l'inventaire (Répertoire). "
+            f"Tu peux le lancer avec start_agent('{saved['id']}'). Confirme à "
+            "l'utilisateur en langage humain (nom de l'agent), sans montrer l'id brut."}
+
+
+@tool
+def delete_specialist_agent(agent_id: str, confirm: bool = False) -> dict:
+    """Supprime un agent SUR MESURE de l'inventaire (les natifs ne sont pas
+    supprimables). confirm=False → demande validation ; confirm=True → supprime."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    spec = _inv.get_agent_spec(agent_id)
+    if not spec:
+        return {"status": "error", "ok": False, "error": f"Agent introuvable : {agent_id}."}
+    if spec.get("builtin"):
+        return {"status": "error", "ok": False,
+                "error": "Agent natif — non supprimable."}
+    if not confirm:
+        return {"status": "preview", "ok": True, "spec": spec,
+                "instruction": "Demande confirmation avant suppression ; rappelle "
+                "delete_specialist_agent(..., confirm=True) si l'utilisateur valide."}
+    ok = _inv.delete_agent_spec(agent_id)
+    return {"status": "deleted" if ok else "error", "ok": ok}
+
+
 def build_supervision_tools() -> list:
     """Renvoie la liste des outils internes de supervision de la mascotte."""
     return [
         list_runs, get_run, list_productions, read_production, summarize_triplets,
         describe_flows, describe_site_routes,
         start_agent, stop_agent,
+        list_agent_templates, list_specialist_agents,
+        create_specialist_agent, delete_specialist_agent,
         get_config, set_config,
         read_env, set_env, rollback_env,
     ]
