@@ -118,20 +118,27 @@ def test_allowed_tools_restricts_catalog(tmp_path, monkeypatch):
 
 def test_parse_generation_output(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
-    txt = ("TITRE : X\nÉTAPES :\n1. a\n2. b\nRÈGLES :\n- r\n"
+    txt = ("TITRE : X\nÉTAPES :\n1. action détaillée a\n2. action détaillée b\n"
+           "RÈGLES :\n- r\n"
            "OUTILS: exists, get_relations_of_type, verify_claim\n"
+           "RÉSUMÉ:\n1. Analyse — repère le domaine\n2. Production — écrit les triplets\n"
            "DESCRIPTION: Fait ceci.\nÉtapes clés.\nSort un .x")
-    wf, brief, tools = inv.parse_generation_output(txt)
-    assert "DESCRIPTION" not in wf and "OUTILS" not in wf
+    wf, brief, tools, steps = inv.parse_generation_output(txt)
+    # Le workflow FONCTIONNEL conserve ses étapes détaillées, sans les sections
+    # d'affichage.
     assert "TITRE : X" in wf and "RÈGLES" in wf
+    assert "action détaillée a" in wf
+    assert "DESCRIPTION" not in wf and "OUTILS" not in wf and "RÉSUMÉ" not in wf
     assert brief.startswith("Fait ceci.")
     assert tools == ["exists", "get_relations_of_type", "verify_claim"]
+    assert [s["n"] for s in steps] == ["Analyse", "Production"]
+    assert steps[0]["d"].startswith("repère")
     # Compat wrapper.
     wf2, brief2 = inv.split_workflow_and_brief(txt)
     assert wf2 == wf and brief2 == brief
-    # Sans sections → workflow brut, brief/tools vides.
-    wf3, brief3, tools3 = inv.parse_generation_output("TITRE : Y\nÉTAPES :\n1. z")
-    assert "TITRE : Y" in wf3 and brief3 == "" and tools3 == []
+    # Sans sections → workflow brut, reste vide.
+    wf3, brief3, tools3, steps3 = inv.parse_generation_output("TITRE : Y\nÉTAPES :\n1. z")
+    assert "TITRE : Y" in wf3 and brief3 == "" and tools3 == [] and steps3 == []
 
 
 def test_workflow_generation_prompt(tmp_path, monkeypatch):
@@ -146,6 +153,8 @@ def test_workflow_generation_prompt(tmp_path, monkeypatch):
     assert "TITRE" in meta and "ÉTAPES" in meta and "RÈGLES" in meta
     assert "DESCRIPTION" in meta             # résumé carte généré par le LLM
     assert "OUTILS" in meta                  # le LLM choisit les outils nécessaires
+    assert "RÉSUMÉ" in meta                  # résumé d'étapes (affichage), EN PLUS
+    assert "FONCTIONNEL" in meta             # le workflow reste le cœur fonctionnel
 
 
 def test_instructions_persisted(tmp_path, monkeypatch):

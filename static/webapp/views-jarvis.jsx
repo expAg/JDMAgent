@@ -2659,9 +2659,11 @@ function _specToFlow(spec) {
   } catch (e) {}
   const fmt = spec.output_format || 'jdm';
   const fmtLabel = fmt === 'json' ? 'JSON' : fmt === 'libre' ? 'texte libre' : 'soumission JDM';
-  // Vraies ÉTAPES = celles du workflow rédigé par l'orchestrateur (parsées du
-  // system_prompt). Fallback générique si non parsables.
-  let steps = _parseWorkflowSteps(spec.system_prompt);
+  // ÉTAPES affichées : 1) le RÉSUMÉ d'affichage stocké (spec.steps, n'affecte
+  // pas l'exécution) ; 2) sinon parse du workflow fonctionnel ; 3) sinon générique.
+  let steps = (Array.isArray(spec.steps) && spec.steps.length)
+    ? spec.steps.map(s => ({ n: s.n || '', d: s.d || '' }))
+    : _parseWorkflowSteps(spec.system_prompt);
   if (!steps || !steps.length) {
     steps = [
       { n: 'Cadrage', d: 'Reçoit le terme (ou en tire un) et la stratégie de l\'agent.' },
@@ -2774,6 +2776,10 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   const [strategy, setStrategy] = React.useState(
     _isEdit ? (editSpec.instructions || editSpec.system_prompt || '') : '');
   const [workflow, setWorkflow] = React.useState(_isEdit ? (editSpec.system_prompt || '') : '');
+  // Résumé d'étapes POUR L'AFFICHAGE (carte/fiche) — séparé du workflow
+  // fonctionnel ; n'affecte pas l'exécution.
+  const [genSteps, setGenSteps] = React.useState(
+    _isEdit && Array.isArray(editSpec.steps) ? editSpec.steps : []);
   const [writes, setWrites] = React.useState(_isEdit ? (editSpec.writes !== false) : true);
   const [fmt, setFmt] = React.useState(_isEdit ? (editSpec.output_format || 'jdm') : 'jdm');
   const [ext, setExt] = React.useState(_isEdit ? (editSpec.output_ext || '') : '');
@@ -2856,6 +2862,8 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     if (target > 0) _def.target_count = Number(target);
     if (writes && autoSubmit) _def.upload = true;  // soumission auto par défaut
     if (Object.keys(_def).length) spec.defaults = _def;
+    // Résumé d'étapes pour la carte (affichage) — n'affecte pas l'exécution.
+    if (Array.isArray(genSteps) && genSteps.length) spec.steps = genSteps;
     // On persiste TOUJOURS la sélection d'outils (même « tout ») pour que la
     // fiche détail puisse les afficher comme les natifs. « tout » → l'exclusion
     // backend ne retire rien de plus que les *_workflow.
@@ -2887,6 +2895,8 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           const picked = d.tools.filter(t => !valid.size || valid.has(t));
           if (picked.length) setAllowedTools(picked);
         }
+        // Résumé d'étapes pour la carte (affichage), séparé du workflow.
+        if (Array.isArray(d.steps) && d.steps.length) setGenSteps(d.steps);
       }
       else { setWorkflow(d.fallback || strategy.trim()); if (d.error) setMsg('⚠ génération indisponible (' + d.error + ') — workflow = instructions brutes, éditable.'); }
     } catch (e) { setWorkflow(strategy.trim()); setMsg('⚠ ' + (e.message || e)); }

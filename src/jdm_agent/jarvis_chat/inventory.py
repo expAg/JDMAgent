@@ -216,25 +216,57 @@ def _normalize_spec(spec: dict) -> dict:
     # conservée pour pouvoir RE-générer le workflow plus tard. Le system_prompt,
     # lui, EST le workflow généré par l'orchestrateur à la manière des *_workflow.
     s["instructions"] = (s.get("instructions") or "").strip()
+    # steps : RÉSUMÉ d'étapes pour l'AFFICHAGE de la carte/fiche (liste {n,d}).
+    # Purement cosmétique — n'affecte pas l'exécution (qui lit system_prompt).
+    st = s.get("steps")
+    if isinstance(st, list):
+        s["steps"] = [{"n": str(x.get("n", "")).strip(), "d": str(x.get("d", "")).strip()}
+                      for x in st if isinstance(x, dict) and str(x.get("n", "")).strip()]
+    else:
+        s["steps"] = []
     return s
 
 
-def parse_generation_output(text: str) -> tuple[str, str, list]:
-    """Découpe la sortie de génération en (workflow, brief, outils).
+def _parse_step_lines(block: str) -> list:
+    """Parse un bloc de lignes « Nom — desc » en [{n, d}] (affichage carte)."""
+    out = []
+    for line in (block or "").splitlines():
+        line = re.sub(r"^\s*(\d+[.)]|[-*•])\s*", "", line).strip()
+        if not line:
+            continue
+        parts = re.split(r"\s+[—–-]\s+|\s*:\s+", line, maxsplit=1)
+        n = parts[0].strip().strip("`")[:40]
+        d = parts[1].strip() if len(parts) > 1 else ""
+        if n:
+            out.append({"n": n, "d": d})
+        if len(out) >= 6:
+            break
+    return out
 
-    Format attendu :
-        TITRE / ÉTAPES / RÈGLES
-        OUTILS: a, b, c          (outils nécessaires choisis par le LLM)
+
+def parse_generation_output(text: str) -> tuple[str, str, list, list]:
+    """Découpe la sortie de génération en (workflow, brief, outils, étapes_carte).
+
+    Le WORKFLOW (TITRE/ÉTAPES/RÈGLES) est le CŒUR FONCTIONNEL — il n'est ni
+    allégé ni reformaté. Les sections suivantes sont AJOUTÉES, uniquement pour
+    l'affichage / la config, et ne remplacent PAS le workflow :
+        OUTILS: a, b, c          (outils choisis par le LLM)
+        RÉSUMÉ: Nom — desc …     (3-5 phases synthétiques pour la carte)
         DESCRIPTION: …           (3 lignes courtes pour la carte)
 
-    SOURCE UNIQUE utilisée à la fois par l'endpoint UI (/generate) ET par l'outil
-    chat `create_specialist_agent` → aucune divergence possible (pas de drift)."""
+    SOURCE UNIQUE : endpoint UI (/generate) ET outil chat create_specialist_agent."""
     t = (text or "").strip()
-    brief, tools = "", []
+    brief, tools, steps = "", [], []
     for marker in ("DESCRIPTION:", "DESCRIPTION :"):
         idx = t.rfind(marker)
         if idx >= 0:
             brief = t[idx + len(marker):].strip()
+            t = t[:idx].strip()
+            break
+    for marker in ("RÉSUMÉ:", "RESUME:", "RÉSUMÉ :", "RESUME :", "RÉSUMÉ_ÉTAPES:", "APERÇU:"):
+        idx = t.rfind(marker)
+        if idx >= 0:
+            steps = _parse_step_lines(t[idx + len(marker):])
             t = t[:idx].strip()
             break
     for marker in ("OUTILS:", "OUTILS :", "TOOLS:"):
@@ -244,12 +276,12 @@ def parse_generation_output(text: str) -> tuple[str, str, list]:
             t = t[:idx].strip()
             tools = [x.strip().strip("`") for x in re.split(r"[,\n;]+", raw) if x.strip()]
             break
-    return t, brief, tools
+    return t, brief, tools, steps
 
 
 def split_workflow_and_brief(text: str) -> tuple[str, str]:
     """Compat : (workflow, brief). Délègue à parse_generation_output."""
-    wf, brief, _ = parse_generation_output(text)
+    wf, brief, _, _ = parse_generation_output(text)
     return wf, brief
 
 
@@ -294,19 +326,23 @@ def build_workflow_generation_prompt(spec: dict) -> str:
         f"- Capacités : {' ; '.join(caps)}\n"
         f"- Catalogue d'outils disponibles (CHOISIS uniquement ceux dont l'agent "
         f"a besoin, JAMAIS de *_workflow) : {catalog_line}\n\n"
-        "Rends le workflow (pas de préambule, pas de ```), EXACTEMENT au format :\n"
+        "Rends d'abord le WORKFLOW FONCTIONNEL — le cerveau de l'agent, AUSSI "
+        "DÉTAILLÉ que la tâche l'exige (n'allège PAS pour l'affichage), au format :\n"
         "TITRE : <titre court>\n"
-        "ÉTAPES : 3 à 5 grandes phases SYNTHÉTIQUES (comme les agents natifs : "
-        "« Proposition », « Validation », « Consolidation »). PAS de micro-étapes. "
-        "UNE ligne par phase, format `Nom — courte description`, Nom = 1 à 3 mots :\n"
-        "1. <Nom> — <description brève (≤ 12 mots)>\n"
-        "2. …\n"
+        "ÉTAPES :\n"
+        "1. <action concrète mobilisant les outils ci-dessus>\n"
+        "2. … (autant d'étapes, et aussi détaillées, que nécessaire)\n"
         "RÈGLES :\n"
         "- <garde-fou / critère d'arrêt / qualité>\n"
+        "\n"
+        "Puis, EN PLUS et UNIQUEMENT pour l'AFFICHAGE (ces sections n'affectent PAS "
+        "le fonctionnement de l'agent) :\n"
         "OUTILS: <liste, séparée par des virgules, des SEULS outils du catalogue "
         "ci-dessus dont l'agent a besoin (3 à 8 en général ; PAS de *_workflow)>\n"
-        "DESCRIPTION: <description COURTE, 3 lignes max, pour la carte : ce que "
-        "fait l'agent, ses étapes clés, sa sortie>\n"
+        "RÉSUMÉ: <3 à 5 phases SYNTHÉTIQUES façon natifs (Proposition, Validation…), "
+        "UNE par ligne, format `Nom — courte description`, Nom = 1 à 3 mots — c'est "
+        "un RÉSUMÉ des ÉTAPES pour la carte, PAS un remplacement>\n"
+        "DESCRIPTION: <description COURTE, 3 lignes max, pour la carte>\n"
     )
 
 

@@ -2079,13 +2079,13 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         full = (_content_to_text(raw) or "").strip()
         if not full:
             return {"ok": False, "error": "génération vide", "fallback": _fallback}
-        # SOURCE UNIQUE : sépare workflow / DESCRIPTION (carte) / OUTILS (même
-        # helper que l'outil chat create_specialist_agent → aucune divergence).
-        workflow, brief, tools = _inv.parse_generation_output(full)
+        # SOURCE UNIQUE : workflow FONCTIONNEL + sections d'affichage (DESCRIPTION,
+        # OUTILS, RÉSUMÉ d'étapes). Même helper que l'outil chat → pas de drift.
+        workflow, brief, tools, steps = _inv.parse_generation_output(full)
         sel = _inv.selectable_tool_names()
         tools = [t for t in tools if t in sel] if sel else tools
         return {"ok": True, "workflow": workflow, "brief": brief, "tools": tools,
-                "meta_prompt": meta}
+                "steps": steps, "meta_prompt": meta}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}
     finally:

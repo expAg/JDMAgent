@@ -668,12 +668,14 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
     # workflow rédigé au format TITRE/ÉTAPES/RÈGLES/OUTILS/DESCRIPTION. On parse
     # avec LE MÊME helper que l'endpoint /generate → workflow + brief (carte) +
     # outils nécessaires. Aucune divergence UI/chat.
-    _wf, _brief, _tools = _inv.parse_generation_output(strategy.strip())
+    _wf, _brief, _tools, _steps = _inv.parse_generation_output(strategy.strip())
     spec = {"title": name.strip(), "template": template,
             "system_prompt": _wf, "instructions": strategy.strip(),
             "writes": bool(writes)}
     if _brief:
         spec["brief"] = _brief
+    if _steps:
+        spec["steps"] = _steps  # résumé d'étapes pour la carte (affichage)
     # Outils : ceux parsés du workflow (OUTILS:) ont priorité ; sinon le param
     # explicite allowed_tools. Filtrés au catalogue proposable.
     _ok = _inv.selectable_tool_names()
