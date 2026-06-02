@@ -8780,6 +8780,11 @@ const BUDGET_OPTS = [
   { value: 'illimité', label: 'illimité' },
 ];
 
+// Registre des specs SUR MESURE (peuplé par _specToFlow au fetch de
+// l'inventaire) — permet à defaultParamsFor de dériver les défauts d'un agent
+// custom (cible, écriture) DEPUIS son spec, comme le fait le backend.
+const _CUSTOM_SPEC_REG = {};
+
 function defaultParamsFor(agentId) {
   // Defaults : term vide partout (= tirage au hasard via pick_random_term),
   // budget illimité, thinking=true (raisonnement activé par défaut sur tous
@@ -8831,8 +8836,17 @@ function defaultParamsFor(agentId) {
       return { ...common, term: '', relation: [], top_k: 8,
                target_count: 10, upload: autoUpload };
   }
-  // Agent SUR MESURE / inconnu : valeurs définies pour le formulaire générique.
-  return { ...common, term: '', relation: [], target_count: 0, upload: autoUpload };
+  // Agent SUR MESURE : défauts DÉRIVÉS DU SPEC (= ceux du formulaire de
+  // création), modifiables ensuite dans le ParamsForm de JarvisRun comme les
+  // natifs. `upload` n'est proposé QUE si l'agent écrit (sinon rien à soumettre).
+  const _spec = _CUSTOM_SPEC_REG[agentId];
+  const _tc = (_spec && _spec.defaults && _spec.defaults.target_count)
+    || (_spec && _spec.consolidates ? 3 : 0);
+  const _writes = !_spec || _spec.writes !== false;
+  return {
+    ...common, term: '', relation: [], target_count: _tc,
+    ...(_writes ? { upload: autoUpload } : {}),
+  };
 }
 
 
@@ -9020,6 +9034,7 @@ const JRING_CSS = `
 function ViewJarvis() {
   const [running, setRunning] = useState(null);       // flow id, or null = carousel
   const [detailing, setDetailing] = useState(null);   // flow id pour la vue DÉTAIL (plein écran)
+  const [editing, setEditing] = useState(null);       // spec d'un agent custom en cours d'édition
   // Agents sur mesure (inventaire) — pour résoudre la vue JarvisRun d'un agent
   // sur mesure lancé depuis Supervision/Répertoire (les natifs vivent dans
   // JARVIS_AGENTS ; les sur-mesure y sont fusionnés à la volée).
@@ -9165,16 +9180,35 @@ function ViewJarvis() {
       );
     }
     const _idx = JARVIS_AGENTS.findIndex(f => f.id === detailing);
+    const _delCustom = async (f) => {
+      if (typeof window !== 'undefined' && !window.confirm(`Supprimer définitivement l'agent « ${f.title} » ?`)) return;
+      try {
+        await fetch('api/jarvis/agents/' + encodeURIComponent(f.id), { method: 'DELETE' });
+        try { window.dispatchEvent(new CustomEvent('jdm-agents-changed')); } catch (e) {}
+      } catch (e) {}
+      setDetailing(null);
+    };
     return (
-      <JAgentPanel
-        flow={flow}
-        index={_idx}
-        standalone
-        onBack={() => setDetailing(null)}
-        onLaunch={() => { setDetailing(null); setRunning(detailing); }}
-        onIndex={() => setDetailing(null)}
-        onSommaire={() => setDetailing(null)}
-      />
+      <>
+        <JAgentPanel
+          flow={flow}
+          index={_idx}
+          standalone
+          onBack={() => setDetailing(null)}
+          onLaunch={() => { setDetailing(null); setRunning(detailing); }}
+          onIndex={() => setDetailing(null)}
+          onSommaire={() => setDetailing(null)}
+          onEdit={(f) => setEditing(f._spec || f)}
+          onDelete={_delCustom}
+        />
+        {editing && (
+          <JAgentBuilderModal
+            editSpec={editing}
+            onClose={() => setEditing(null)}
+            onCreated={(id) => { setEditing(null); setDetailing(id); }}
+          />
+        )}
+      </>
     );
   }
 
@@ -10111,6 +10145,7 @@ function JLibrary({ list, onPick, onLaunch }) {
 function _specToFlow(spec) {
   const brief = spec.brief || '';
   try {
+    _CUSTOM_SPEC_REG[spec.id] = spec;
     if (spec.icon) AGENT_ICON[spec.id] = spec.icon;
     if (brief) AGENT_BRIEF[spec.id] = brief;
   } catch (e) {}
@@ -10199,20 +10234,23 @@ function _sanitizeExt(raw) {
   return '.' + e.replace(/^\.+/, '');
 }
 
-function JAgentBuilderModal({ onClose, onCreated }) {
+function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
+  const _isEdit = !!(editSpec && editSpec.id);
   const [templates, setTemplates] = React.useState({});
   const [step, setStep] = React.useState('form'); // 'form' | 'recap'
-  const [name, setName] = React.useState('');
-  const [description, setDescription] = React.useState('');
-  const [template, setTemplate] = React.useState('generation_endogene');
-  const [strategy, setStrategy] = React.useState('');
-  const [writes, setWrites] = React.useState(true);
-  const [fmt, setFmt] = React.useState('jdm');
-  const [ext, setExt] = React.useState('');
-  const [extTouched, setExtTouched] = React.useState(false);
-  const [target, setTarget] = React.useState(0);
+  const [name, setName] = React.useState(_isEdit ? (editSpec.title || '') : '');
+  const [description, setDescription] = React.useState(_isEdit ? (editSpec.brief || '') : '');
+  const [template, setTemplate] = React.useState(_isEdit ? (editSpec.template || 'libre') : 'generation_endogene');
+  const [strategy, setStrategy] = React.useState(_isEdit ? (editSpec.system_prompt || '') : '');
+  const [writes, setWrites] = React.useState(_isEdit ? (editSpec.writes !== false) : true);
+  const [fmt, setFmt] = React.useState(_isEdit ? (editSpec.output_format || 'jdm') : 'jdm');
+  const [ext, setExt] = React.useState(_isEdit ? (editSpec.output_ext || '') : '');
+  const [extTouched, setExtTouched] = React.useState(_isEdit && !!editSpec.output_ext);
+  const [target, setTarget] = React.useState(_isEdit ? ((editSpec.defaults && editSpec.defaults.target_count) || 0) : 0);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
+  const [preprompt, setPreprompt] = React.useState('');
+  const [preLoading, setPreLoading] = React.useState(false);
 
   React.useEffect(() => {
     (async () => {
@@ -10232,28 +10270,48 @@ function JAgentBuilderModal({ onClose, onCreated }) {
   // Quand on change le template, aligne le format sur celui du template (sauf
   // si l'utilisateur a déjà personnalisé). L'extension par défaut suit le format
   // tant qu'elle n'a pas été touchée manuellement.
+  const _tplFirst = React.useRef(true);
   React.useEffect(() => {
+    // En édition, ne PAS écraser le format sauvegardé au montage initial.
+    if (_tplFirst.current) { _tplFirst.current = false; if (_isEdit) return; }
     if (tpl.format && (tpl.format === 'jdm' || tpl.format === 'libre' || tpl.format === 'json')) {
       setFmt(tpl.format);
     }
   }, [template, templates]); // eslint-disable-line
   const effExt = (extTouched && ext.trim()) ? _sanitizeExt(ext) : (_FMT_DEFAULT_EXT[fmt] || '.txt');
 
-  const goRecap = () => {
+  const _buildSpec = () => {
+    const spec = {
+      title: name.trim(), template, system_prompt: strategy.trim(),
+      writes, output_format: fmt, output_ext: effExt,
+      brief: description.trim(),
+    };
+    if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
+    if (target > 0) spec.defaults = { target_count: Number(target) };
+    return spec;
+  };
+
+  const goRecap = async () => {
     if (!name.trim() || !strategy.trim()) { setMsg('Nom et stratégie requis.'); return; }
     setMsg(''); setStep('recap');
+    // Récupère le VRAI prompt assemblé (squelette + stratégie + cadrage).
+    setPreLoading(true); setPreprompt('');
+    try {
+      const r = await fetch('api/jarvis/agents/preview', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spec: _buildSpec() }),
+      });
+      const d = await r.json();
+      if (d.ok) setPreprompt(d.preprompt || '');
+    } catch (e) {}
+    setPreLoading(false);
   };
 
   const create = async () => {
     if (!name.trim() || !strategy.trim()) { setMsg('Nom et stratégie requis.'); return; }
     setBusy(true); setMsg('');
     try {
-      const spec = {
-        title: name.trim(), template, system_prompt: strategy.trim(),
-        writes, output_format: fmt, output_ext: effExt,
-        brief: description.trim(),
-      };
-      if (target > 0) spec.defaults = { target_count: Number(target) };
+      const spec = _buildSpec();
       const r = await fetch('api/jarvis/agents', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ spec }),
@@ -10287,7 +10345,9 @@ function JAgentBuilderModal({ onClose, onCreated }) {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--ink)' }}>
-            {step === 'recap' ? '🤖 Confirmer l\'agent' : '🤖 Créer un agent spécialiste'}
+            {step === 'recap'
+              ? (_isEdit ? '🤖 Confirmer les modifications' : '🤖 Confirmer l\'agent')
+              : (_isEdit ? '🤖 Modifier l\'agent spécialiste' : '🤖 Créer un agent spécialiste')}
           </div>
           <Button size="sm" variant="ghost" onClick={onClose}>× Fermer</Button>
         </div>
@@ -10337,8 +10397,12 @@ function JAgentBuilderModal({ onClose, onCreated }) {
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '4px 0 14px' }}>
           <input type="checkbox" checked={writes} onChange={(e) => setWrites(e.target.checked)}
             style={{ accentColor: 'var(--accent)' }} />
-          Écrit un fichier de soumission (sinon résultat en réponse seulement)
+          Produit un fichier de soumission (sinon résultat en réponse seulement)
         </label>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', margin: '-8px 0 14px', lineHeight: 1.4 }}>
+          Comme les autres agents : le fichier n'est <strong>soumis à JDM</strong>
+          {' '}que si « Soumettre » est coché au lancement (jamais d'envoi automatique).
+        </div>
 
         {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -10362,18 +10426,41 @@ function JAgentBuilderModal({ onClose, onCreated }) {
           {recapRow('Consolide', tpl.consolidates ? 'Oui' : 'Non')}
           {recapRow('Nombre cible', target > 0 ? String(target) : 'défaut')}
         </div>
-        <Field label="Prompt / stratégie de l'agent (éditable)">
-          <textarea value={strategy} onChange={(e) => setStrategy(e.target.value)} rows={8}
+        <Field label="Stratégie saisie (éditable)">
+          <textarea value={strategy} onChange={(e) => { setStrategy(e.target.value); setPreprompt(''); }} rows={4}
             style={{
               width: '100%', resize: 'vertical', padding: '10px 12px',
               background: 'var(--bg-card)', border: '1px solid var(--line)',
-              borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'var(--font-mono)',
-              fontSize: 12.5, lineHeight: 1.5, outline: 'none',
+              borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'inherit',
+              fontSize: 13, lineHeight: 1.5, outline: 'none',
             }} />
         </Field>
+        {/* Le VRAI prompt assemblé (squelette déterministe + stratégie +
+            cadrage format/cible/itération) tel qu'il sera donné à l'agent. */}
+        <Field label="Prompt réellement donné à l'agent (assemblé)">
+          {preLoading ? (
+            <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)', padding: '10px 12px' }}>
+              … assemblage du prompt …
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <textarea readOnly value={preprompt || '(indisponible — clique « ↻ Réassembler »)'} rows={9}
+                style={{
+                  width: '100%', resize: 'vertical', padding: '10px 12px',
+                  background: 'var(--bg-elev)', border: '1px solid var(--line)',
+                  borderRadius: 'var(--radius)', color: 'var(--ink-2)', fontFamily: 'var(--font-mono)',
+                  fontSize: 12, lineHeight: 1.5, outline: 'none',
+                }} />
+              <button type="button" onClick={goRecap} className="focus-ring" style={{ ...ghostLinkStyle, alignSelf: 'flex-start' }}>
+                ↻ Réassembler le prompt
+              </button>
+            </div>
+          )}
+        </Field>
         <div style={{ fontSize: 11.5, color: 'var(--ink-3)', margin: '-4px 0 14px', lineHeight: 1.4 }}>
-          Après création, l'agent apparaît dans le Répertoire et la Supervision ;
-          tu seras redirigé vers sa fiche détaillée.
+          {_isEdit
+            ? 'Les modifications sont enregistrées sur l\'agent existant ; tu seras redirigé vers sa fiche.'
+            : 'Après création, l\'agent apparaît dans le Répertoire et la Supervision ; tu seras redirigé vers sa fiche détaillée.'}
         </div>
 
         {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
@@ -10382,7 +10469,7 @@ function JAgentBuilderModal({ onClose, onCreated }) {
           <div style={{ display: 'flex', gap: 8 }}>
             <Button variant="secondary" onClick={onClose}>Annuler</Button>
             <Button onClick={create} disabled={busy || !name.trim() || !strategy.trim()}>
-              {busy ? 'Création…' : 'Créer l\'agent'}
+              {busy ? 'Enregistrement…' : (_isEdit ? 'Enregistrer' : 'Créer l\'agent')}
             </Button>
           </div>
         </div>
@@ -12547,7 +12634,7 @@ function JToolDialog({ flow, tool, onClose }) {
 }
 
 // ═══════════════════ Per-flow design panel ═══════════════════
-function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, onBack }) {
+function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, onBack, onEdit, onDelete }) {
   // Tools utilises par ce flow (derives de AGENT_TOOL_STEPS — le mapping
   // reel tool -> etape, defini en haut du fichier en s'alignant sur les
   // workflows backend). Pas de samples : la "candidatesPool" du design
@@ -12760,7 +12847,20 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
           <button type="button" onClick={onBack} className="focus-ring" style={ghostLinkStyle}>
             ← Retour
           </button>
-          <Button size="sm" onClick={onLaunch}>▶ Lancer cet agent</Button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {isCustom && onEdit && (
+              <button type="button" onClick={() => onEdit(flow)} className="focus-ring" style={ghostLinkStyle}>
+                ✎ Modifier
+              </button>
+            )}
+            {isCustom && onDelete && (
+              <button type="button" onClick={() => onDelete(flow)} className="focus-ring"
+                style={{ ...ghostLinkStyle, color: 'var(--jdm-magenta)', borderColor: 'color-mix(in srgb, var(--jdm-magenta) 40%, var(--line))' }}>
+                🗑 Supprimer
+              </button>
+            )}
+            <Button size="sm" onClick={onLaunch}>▶ Lancer cet agent</Button>
+          </div>
         </div>
       ) : (
         <div style={{

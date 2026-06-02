@@ -2027,6 +2027,25 @@ def api_jarvis_save_agent(req: AgentSpecRequest) -> dict[str, Any]:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+@app.post("/api/jarvis/agents/preview")
+def api_jarvis_preview_agent(req: AgentSpecRequest) -> dict[str, Any]:
+    """Renvoie le PRÉ-PROMPT réellement assemblé (squelette déterministe +
+    stratégie + cadrage format/params) pour un spec donné — sans persister.
+    Sert l'aperçu « voir le vrai prompt » dans la confirmation du builder."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    try:
+        spec = _inv._normalize_spec(req.spec or {})
+        d = spec.get("defaults") or {}
+        params = {"term": "", "relation": [],
+                  "target_count": int(d.get("target_count") or 0),
+                  "budget_label": "illimité",
+                  "upload": False}
+        preprompt = _inv.build_preprompt_for_spec(spec, params)
+        return {"ok": True, "preprompt": preprompt, "spec": spec}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.delete("/api/jarvis/agents/{agent_id}")
 def api_jarvis_delete_agent(agent_id: str) -> dict[str, Any]:
     """Supprime un agent SUR MESURE de l'inventaire."""

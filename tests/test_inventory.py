@@ -80,6 +80,35 @@ def test_output_ext_free(tmp_path, monkeypatch):
     assert spec3["output_ext"] == ".audit"
 
 
+def test_edit_preserves_id_on_rename(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    saved = inv.save_agent_spec({"title": "Cuisinier", "template": "libre",
+                                 "system_prompt": "S"})
+    aid = saved["id"]
+    assert aid == "cuisinier"
+    # Édition : on renomme MAIS on passe l'id existant → identité préservée,
+    # pas de doublon créé.
+    edited = inv.save_agent_spec({"id": aid, "title": "Chef Cuisinier",
+                                  "template": "libre", "system_prompt": "S2"})
+    assert edited["id"] == aid
+    assert edited["title"] == "Chef Cuisinier"
+    customs = [s for s in inv.list_agent_specs() if not s["builtin"]]
+    assert len(customs) == 1
+    assert inv.get_agent_spec(aid)["system_prompt"] == "S2"
+
+
+def test_preprompt_upload_gated(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    spec = inv.save_agent_spec({"title": "W", "template": "audit",
+                                "system_prompt": "S"})  # writes=True
+    # Sans upload → écrit le fichier mais NE soumet PAS.
+    pre_no = inv.build_preprompt_for_spec(spec, {"term": "chat", "upload": False})
+    assert "SANS upload" in pre_no
+    # Avec upload → soumet.
+    pre_yes = inv.build_preprompt_for_spec(spec, {"term": "chat", "upload": True})
+    assert "upload=True" in pre_yes
+
+
 def test_output_format_normalized(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
     spec = inv.save_agent_spec({
