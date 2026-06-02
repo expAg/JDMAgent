@@ -1498,8 +1498,14 @@ function ViewJarvis() {
   // sur mesure lancé depuis Supervision/Répertoire (les natifs vivent dans
   // JARVIS_AGENTS ; les sur-mesure y sont fusionnés à la volée).
   const _customAgents = useCustomAgentFlows();
-  const [panelIndex, setPanelIndex] = useState(1);     // default landing = Accueil (middle)
-  const [transitioning, setTransitioning] = useState(true);
+  const [panelIndex, setPanelIndex] = useState(1);     // default landing = Supervision (middle)
+  // transitioning = la CSS-transition du track est-elle active. On ne
+  // l'active QUE pendant une navigation utilisateur (goToIndex/swipe/clavier)
+  // et on la coupe des la transition finie (onTransitionEnd). Sinon elle
+  // resterait collee a true et un simple changement de layout — ex. l'arrivee
+  // async des agents sur mesure qui modifie `total`/`basis` — ferait glisser
+  // le carrousel tout seul (« glisse vers les details et revient »).
+  const [transitioning, setTransitioning] = useState(false);
   // Carrousel DATA-DRIVEN : 3 sections + UN panneau par agent (natifs ET sur
   // mesure). Les customs sont donc dans le rail/nav/Suivant comme les natifs.
   const allAgents = [...JARVIS_AGENTS, ..._customAgents];
@@ -1512,9 +1518,12 @@ function ViewJarvis() {
   const panelBasis = `${100 / total}%`;
 
   const goToIndex = useCallback((i) => {
-    setTransitioning(true);
-    setPanelIndex(Math.max(0, Math.min(total - 1, i)));
-  }, [total]);
+    const next = Math.max(0, Math.min(total - 1, i));
+    // N'anime QUE si l'index change vraiment — sinon pas de transitionend
+    // pour remettre `transitioning` a false, il resterait colle a true.
+    if (next !== panelIndex) setTransitioning(true);
+    setPanelIndex(next);
+  }, [total, panelIndex]);
   const goToId = useCallback((id) => {
     const idx = panels.findIndex(p => p.id === id);
     if (idx >= 0) goToIndex(idx);
@@ -1538,7 +1547,7 @@ function ViewJarvis() {
       setRunning(null);
       const supIdx = J_SECTIONS.findIndex(s => s.id === 'supervision');
       setPanelIndex(supIdx >= 0 ? supIdx : 1);
-      setTransitioning(true);
+      setTransitioning(false);   // retour a l'accueil = snap instantane, pas de glissade
       // Purge aussi le pending payload eventuel (deep link /jarvis/X qui
       // remettrait `running` au mount via _pending). Belt-and-suspenders.
       if (typeof window !== 'undefined' && window.__jdmPendingPayload) {
@@ -1700,7 +1709,9 @@ function ViewJarvis() {
             ? 'transform 0.7s cubic-bezier(0.65, 0, 0.35, 1)'
             : 'none',
           willChange: 'transform',
-        }}>
+        }}
+        onTransitionEnd={(e) => { if (e.propertyName === 'transform') setTransitioning(false); }}>
+
           <JPanel basis={panelBasis}><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
           <JPanel basis={panelBasis}><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
           <JPanel basis={panelBasis}><JAccueilPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
@@ -4983,13 +4994,33 @@ function JToolDialog({ flow, tool, onClose }) {
   //                             dans « Inscription dans les sequences ».
   // Tous les rendus dependants d'un flow (Prompt agreged, step highlight,
   // accent CSS) utilisent selectedFlow.
+  // Tous les agents (natifs + SUR MESURE de l'inventaire) — un outil peut
+  // etre mobilise par n'importe lequel, pas seulement les 6 natifs.
+  const customFlows = useCustomAgentFlows();
+  const allFlows = [...JARVIS_AGENTS, ...customFlows];
   const [selectedFlowId, setSelectedFlowId] = useState(flow.id);
-  const selectedFlow = JARVIS_AGENTS.find(f => f.id === selectedFlowId) || flow;
+  const selectedFlow = allFlows.find(f => f.id === selectedFlowId) || flow;
   const a = selectedFlow.accent;
   const kindColor = { 'API JDM': 'var(--jdm-cyan)', 'LLM': 'var(--jdm-violet)', 'logique': 'var(--jdm-orange)' }[doc.kind] || a;
 
-  // Every flow whose sequence calls this tool (souvent plus d'une).
-  const usages = JARVIS_AGENTS.filter(f => (AGENT_TOOL_STEPS[f.id] || {})[tool] != null);
+  // Step index de cet outil dans la sequence d'un flow :
+  //   - natif  : mapping reel tool -> etape (AGENT_TOOL_STEPS)
+  //   - custom : pas de mapping etape (l'allow-list n'ordonne pas) -> null,
+  //              on signale juste que l'agent mobilise cet outil.
+  const _stepOf = (f) => {
+    if (f._custom) return null;
+    const s = (AGENT_TOOL_STEPS[f.id] || {})[tool];
+    return s != null ? s : null;
+  };
+  const _usesTool = (f) => {
+    if (f._custom) {
+      const al = (f._spec && f._spec.allowed_tools) || [];
+      return Array.isArray(al) && al.includes(tool);
+    }
+    return (AGENT_TOOL_STEPS[f.id] || {})[tool] != null;
+  };
+  // Every flow (natif ou sur mesure) whose sequence calls this tool.
+  const usages = allFlows.filter(_usesTool);
 
   // « Prompt » du flow courant = concatenation des docstrings de TOUS les
   // tools du flow (workflow + step tools), dans l'ordre de leur step.
@@ -4998,6 +5029,15 @@ function JToolDialog({ flow, tool, onClose }) {
   // doc disponible cote catalogue (chargement en cours), on liste leur
   // nom avec un placeholder pour ne pas masquer leur presence.
   const flowPrompt = (() => {
+    // Agent SUR MESURE : pas de mapping tool->etape (allow-list non ordonnee).
+    // On montre directement sa STRATEGIE (le system_prompt genere par
+    // l'orchestrateur) — c'est le vrai contexte envoye au LLM pour cet agent.
+    if (selectedFlow._custom) {
+      const strat = selectedFlow._strategy || (selectedFlow._spec && selectedFlow._spec.system_prompt) || '';
+      return strat
+        ? `# STRATEGIE — agent sur mesure « ${selectedFlow.title} » (${selectedFlow.id})\n\n${strat}`
+        : doc.prompt;
+    }
     // Utilise selectedFlow (= flow VIEWE dans le dialog), pas flow (=
     // flow d'ORIGINE). Permet la navigation : cliquer sur une autre
     // carte dans « Inscription » switch le prompt agreged sur ce flow.
@@ -5100,7 +5140,7 @@ function JToolDialog({ flow, tool, onClose }) {
           <JToolSection label={usages.length > 1 ? 'Inscription dans les séquences' : 'Inscription dans la séquence'}>
             <div style={{ display: 'grid', gap: 10 }}>
               {usages.map(u => {
-                const si = (AGENT_TOOL_STEPS[u.id] || {})[tool];
+                const si = _stepOf(u);
                 // Distinction nette : `isOriginFlow` = flow depuis lequel le
                 // dialog a ete OUVERT (garde la pastille « actuel », pas
                 // d'highlight). `isSelected` = flow actuellement VIEWE dans
