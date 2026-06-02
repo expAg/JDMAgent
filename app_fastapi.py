@@ -81,7 +81,7 @@ from jdm_agent.viz import (
 #     _CURRENT_GEMINI_KEY persisté dans pool_state.json,
 #     pick_unblown_gemini_key, mark_gemini_key_invalid,
 #     mark_gemini_key_blown, set_current_gemini_key
-# jarvis.py contient `run_jarvis_flow` avec budget tool, append cumulatif
+# jarvis.py contient `run_jarvis_agent` avec budget tool, append cumulatif
 # vers `canonical_path`, retry rate-limit, retry-à-la-fin (truncate
 # history + liste des interdits), auto-bascule sur 3.1, etc.
 #
@@ -334,7 +334,7 @@ class AgentRequest(BaseModel):
 
 
 class JarvisRequest(BaseModel):
-    flow_id: str
+    agent_id: str
     params: dict = {}
 
 
@@ -872,7 +872,7 @@ async def _to_async_gen(sync_gen):
     """Convertit un générateur sync en async, en exécutant chaque `next()`
     dans un thread (pour ne pas bloquer le event loop FastAPI).
 
-    Utilisé pour chat_with_agent / run_jarvis_flow qui font des appels
+    Utilisé pour chat_with_agent / run_jarvis_agent qui font des appels
     HTTP/LLM bloquants à l'intérieur de leur boucle.
     """
     import asyncio
@@ -906,8 +906,8 @@ async def _to_async_gen(sync_gen):
 # Trade-off : on perd ici la mécanique de retry rate-limit + rotation
 # pool de chat_with_agent. C'est acceptable pour un chat (l'utilisateur
 # peut resoumettre). Pour les flux Jarvis longs, on garde chat_with_agent
-# via run_jarvis_flow.
-@app.post("/api/agent/stream")
+# via run_jarvis_agent.
+@app.post("/api/chatbot/stream")
 async def api_agent_stream(req: AgentRequest):
     """Token-level SSE stream pour le chatbot LLM."""
     async def gen():
@@ -1164,7 +1164,7 @@ async def api_agent_stream(req: AgentRequest):
 # ────────────────────────────────────────────────────────────────────
 # Route: Chat mascotte Jarvis (supervision) — SSE token-level
 # ────────────────────────────────────────────────────────────────────
-# Même mécanique de streaming que /api/agent/stream, mais :
+# Même mécanique de streaming que /api/chatbot/stream, mais :
 #   - agent = build_jarvis_chat_agent (outils supervision + JDM lecture)
 #   - config courante injectée dans le snapshot (tool get_config)
 #   - patches de config (tool set_config) émis en events `config_patch`
@@ -1337,7 +1337,7 @@ async def api_jarvis_chat(req: JarvisChatRequest):
 # ────────────────────────────────────────────────────────────────────
 # Route: Jarvis stream
 # ────────────────────────────────────────────────────────────────────
-# Mapping flow_id → (prompt_builder, headline_builder).
+# Mapping agent_id → (prompt_builder, headline_builder).
 # `params` est le dict envoyé par l'UI ; on en extrait ce que le
 # builder accepte. On filtre via inspect.signature pour rester
 # tolérant aux paramètres inconnus.
@@ -1349,7 +1349,7 @@ def _term_or_random(p: dict) -> str:
     return t if t else "un terme tiré au hasard"
 
 
-def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
+def _jarvis_dispatch(agent_id: str, params: dict) -> tuple[str, str]:
     """Construit (prompt, headline) pour un flow donné. Lève ValueError
     si le flow est inconnu."""
     import inspect
@@ -1366,12 +1366,12 @@ def _jarvis_dispatch(flow_id: str, params: dict) -> tuple[str, str]:
         "stats":       (build_stats_prompt,       lambda p: f"📊 Stats sur {_term_or_random(p)}"),
         "annotation":  (build_annotation_prompt,  lambda p: f"🏷️ Annoter {_term_or_random(p)}"),
     }
-    if flow_id not in BUILDERS:
+    if agent_id not in BUILDERS:
         raise ValueError(
-            f"flow_id inconnu : {flow_id!r}. "
+            f"agent_id inconnu : {agent_id!r}. "
             f"Attendu : {sorted(BUILDERS)}."
         )
-    builder, headline_fn = BUILDERS[flow_id]
+    builder, headline_fn = BUILDERS[agent_id]
     # Garde seulement les params acceptés par la signature du builder.
     sig = inspect.signature(builder)
     accepted = {k: v for k, v in (params or {}).items() if k in sig.parameters}
@@ -1411,7 +1411,7 @@ _JARVIS_RUNS_LOCK = _threading.Lock()
 _JARVIS_RUN_TTL = 24 * 3600  # 24h après terminaison (done / error)
 
 # Boucle asyncio principale, capturée au startup. Indispensable pour les
-# runs démarrés depuis un THREAD worker (ex. tool start_flow du chat
+# runs démarrés depuis un THREAD worker (ex. tool start_agent du chat
 # mascotte) : asyncio.get_event_loop() y lève RuntimeError (Py 3.12+).
 # _push_event a besoin d'un loop valide pour call_soon_threadsafe.
 _MAIN_LOOP: Optional[Any] = None
@@ -1438,7 +1438,7 @@ def _slug_term(term: str) -> str:
     return (t or "hasard")[:32]
 
 
-def _make_run_id(flow_id: str, params: dict) -> str:
+def _make_run_id(agent_id: str, params: dict) -> str:
     """Identité LISIBLE d'un run = stem du fichier produit.
     Forme : `<flux>_<terme>_<JJ-MM-AA_HHhMMmSS>`. Unique (collision →
     suffixe _2, _3…). Remplace l'ancien uuid hex incompréhensible : une
@@ -1446,7 +1446,7 @@ def _make_run_id(flow_id: str, params: dict) -> str:
     import datetime as _dt
     slug = _slug_term((params or {}).get("term") or "")
     ts = _dt.datetime.now().strftime("%d-%m-%y_%Hh%Mm%S")
-    base = f"{flow_id}_{slug}_{ts}"
+    base = f"{agent_id}_{slug}_{ts}"
     with _JARVIS_RUNS_LOCK:
         rid, i = base, 2
         while rid in _JARVIS_RUNS:
@@ -1454,8 +1454,8 @@ def _make_run_id(flow_id: str, params: dict) -> str:
     return rid
 
 
-def _new_run(flow_id: str, params: dict, headline: str, origin: str = "ui") -> dict:
-    run_id = _make_run_id(flow_id, params)
+def _new_run(agent_id: str, params: dict, headline: str, origin: str = "ui") -> dict:
+    run_id = _make_run_id(agent_id, params)
     # Snapshot des clés du registry de consolidation au moment du start.
     # Le registry est un global module-level (cf. note historique dans
     # validators.py expliquant pourquoi ce n'est pas un ContextVar — les
@@ -1478,7 +1478,7 @@ def _new_run(flow_id: str, params: dict, headline: str, origin: str = "ui") -> d
 
     run = {
         "run_id": run_id,
-        "flow_id": flow_id,
+        "agent_id": agent_id,
         "params": params,
         "headline": headline,
         # origine du lancement : 'ui' (vue JarvisRun) | 'chat' (mascotte).
@@ -1520,22 +1520,22 @@ def _push_event(run: dict, event: str, data) -> None:
             pass  # loop closed, subscriber stale — ignored
 
 
-def _drive_jarvis_flow_thread(run: dict) -> None:
+def _drive_jarvis_agent_thread(run: dict) -> None:
     """Exécute le flow Jarvis dans un thread, push les events dans le
     buffer. Appelé via threading.Thread (pas await) pour que ce soit
     INDÉPENDANT du cycle de vie HTTP."""
-    flow_id = run["flow_id"]
+    agent_id = run["agent_id"]
     p = run["params"]
     try:
         # 1) Headline tout de suite
         _push_event(run, "headline", {
-            "text": run["headline"], "flow_id": flow_id, "run_id": run["run_id"],
+            "text": run["headline"], "agent_id": agent_id, "run_id": run["run_id"],
         })
         # 2) Build prompt
-        prompt, headline = _jarvis_dispatch(flow_id, p)
+        prompt, headline = _jarvis_dispatch(agent_id, p)
         run["status"] = "running"
-        # 3) Drive run_jarvis_flow
-        sync_gen = _jarvis.run_jarvis_flow(
+        # 3) Drive run_jarvis_agent
+        sync_gen = _jarvis.run_jarvis_agent(
             prompt=prompt,
             headline=headline,
             model=p.get("model", "gemini-3.1-flash-lite"),
@@ -1550,10 +1550,10 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
             use_thinking=bool(p.get("use_thinking", False)),
             temperature=(p.get("temperature") if isinstance(p.get("temperature"), (int, float)) else None),
             consolidation_target=(
-                p.get("target_count") if flow_id == "enrich" else None
+                p.get("target_count") if agent_id == "enrich" else None
             ),
             production_target=(
-                p.get("target_count") if flow_id != "enrich" else None
+                p.get("target_count") if agent_id != "enrich" else None
             ),
             production_unit={
                 "enrich":      "consolidés",
@@ -1562,10 +1562,10 @@ def _drive_jarvis_flow_thread(run: dict) -> None:
                 "signalement": "suspects",
                 "gap":         "trous",
                 "stats":       "lignes",
-            }.get(flow_id, "items"),
+            }.get(agent_id, "items"),
             auto_switch_on_perday=bool(p.get("auto_switch", False)),
             resume_state=p.get("resume_state"),
-            flow_id=flow_id,
+            agent_id=agent_id,
             # Pool lease per-run : si activé via la config Jarvis, chaque
             # run prend une clé Gemini distincte (load-min) pour éviter
             # que 2 runs parallèles se battent sur le même quota PerMin.
@@ -1719,7 +1719,7 @@ def _persist_run_record(run: dict) -> None:
     """Sérialise un run terminé en une ligne du journal mascotte."""
     _jchat_persist.append_run_record({
         "run_id": run.get("run_id"),
-        "flow_id": run.get("flow_id"),
+        "agent_id": run.get("agent_id"),
         "status": run.get("status"),
         "headline": run.get("headline"),
         "started_at": run.get("started_at"),
@@ -1783,7 +1783,7 @@ def _runs_snapshot_for_chat() -> list[dict]:
         for r in _JARVIS_RUNS.values():
             out.append({
                 "run_id": r.get("run_id"),
-                "flow_id": r.get("flow_id"),
+                "agent_id": r.get("agent_id"),
                 "status": r.get("status"),
                 "headline": r.get("headline"),
                 "started_at": r.get("started_at"),
@@ -1795,7 +1795,7 @@ def _runs_snapshot_for_chat() -> list[dict]:
         return out
 
 
-def _default_flow_params(flow_id: str, cfg: dict | None) -> dict:
+def _default_agent_params(agent_id: str, cfg: dict | None) -> dict:
     """Défauts canoniques d'un flux pour un lancement AUTONOME (mascotte /
     serveur). Miroir DÉTERMINISTE de `defaultParamsFor` côté front
     (views-jarvis.jsx) : c'est ce qui porte TOUTE la mécanique du flux —
@@ -1827,29 +1827,29 @@ def _default_flow_params(flow_id: str, cfg: dict | None) -> dict:
         "temperature": temperature, "pool_active": pool_active,
         "term": "",                    # vide → tirage hasard via pick_random_term
     }
-    if flow_id == "enrich":
+    if agent_id == "enrich":
         return {**common, "relation": [], "target_count": 3,
                 "vary_relations": True, "iterate": True, "upload": auto_upload}
-    if flow_id == "audit":
+    if agent_id == "audit":
         return {**common, "relation": [], "upload": auto_upload}
-    if flow_id == "gap":
+    if agent_id == "gap":
         return {**common}
-    if flow_id == "signalement":
+    if agent_id == "signalement":
         return {**common, "relation": [], "upload": auto_upload}
-    if flow_id == "stats":
+    if agent_id == "stats":
         return {**common, "relation": [], "upload": auto_upload}
-    if flow_id == "annotation":
+    if agent_id == "annotation":
         return {**common, "relation": [], "top_k": 8,
                 "target_count": 10, "upload": auto_upload}
     return common
 
 
-def _chat_start_flow(flow_id: str, params: dict) -> dict:
+def _chat_start_agent(agent_id: str, params: dict) -> dict:
     """Démarre un flux Jarvis en bg (même machinerie que l'endpoint
-    /api/jarvis/{flow_id}/stream) pour le compte de la mascotte. Renvoie
+    /api/jarvis/{agent_id}/stream) pour le compte de la mascotte. Renvoie
     {run_id, headline}. Lève via retour {error} si flow inconnu.
 
-    CLÉ : on part des défauts canoniques complets (`_default_flow_params`)
+    CLÉ : on part des défauts canoniques complets (`_default_agent_params`)
     pour que le flux soit STRICTEMENT identique à un lancement UI (même
     pré-prompt enrichi par target_count/relations, même relance/itération),
     puis on superpose UNIQUEMENT les valeurs réellement fournies par la
@@ -1857,22 +1857,22 @@ def _chat_start_flow(flow_id: str, params: dict) -> dict:
     un défaut par un vide.
     """
     cfg = _jchat_rt.get_config_snapshot()
-    base = _default_flow_params(flow_id, cfg)
+    base = _default_agent_params(agent_id, cfg)
     overrides = {k: v for k, v in (params or {}).items() if v is not None}
     p = {**base, **overrides}
     try:
-        _prompt, headline = _jarvis_dispatch(flow_id, p)
+        _prompt, headline = _jarvis_dispatch(agent_id, p)
     except ValueError as e:
         return {"error": str(e)}
-    run = _new_run(flow_id, p, headline, origin="chat")
+    run = _new_run(agent_id, p, headline, origin="chat")
     _threading.Thread(
-        target=_drive_jarvis_flow_thread, args=(run,), daemon=True,
+        target=_drive_jarvis_agent_thread, args=(run,), daemon=True,
         name=f"jarvis-run-{run['run_id']}",
     ).start()
     return {"run_id": run["run_id"], "headline": headline}
 
 
-def _chat_stop_flow(run_id: str) -> dict:
+def _chat_stop_agent(run_id: str) -> dict:
     """Annulation coopérative d'un run (même logique que l'endpoint cancel)."""
     with _JARVIS_RUNS_LOCK:
         run = _JARVIS_RUNS.get(run_id)
@@ -1887,7 +1887,7 @@ def _chat_stop_flow(run_id: str) -> dict:
 @app.on_event("startup")
 async def _start_jarvis_cleanup_task():
     # Capture la loop principale (le startup tourne dedans) pour que les
-    # runs démarrés en thread worker (tool start_flow) aient un loop valide.
+    # runs démarrés en thread worker (tool start_agent) aient un loop valide.
     global _MAIN_LOOP
     _MAIN_LOOP = _asyncio.get_running_loop()
     _asyncio.create_task(_cleanup_old_runs_loop())
@@ -1907,7 +1907,7 @@ async def _start_jarvis_cleanup_task():
     # de ressusciter de vieux runs dans la vue live des cartes de supervision).
     _jchat_rt.set_runs_provider(_runs_snapshot_for_chat)
     # Câble le contrôleur de flux : la mascotte peut lancer/arrêter des flux.
-    _jchat_rt.set_flow_controller(_chat_start_flow, _chat_stop_flow)
+    _jchat_rt.set_agent_controller(_chat_start_agent, _chat_stop_agent)
 
 
 @app.get("/api/jarvis/runs")
@@ -1919,7 +1919,7 @@ def api_jarvis_list_runs():
             "runs": [
                 {
                     "run_id": r["run_id"],
-                    "flow_id": r["flow_id"],
+                    "agent_id": r["agent_id"],
                     "status": r["status"],
                     "headline": r["headline"],
                     "started_at": r["started_at"],
@@ -2101,8 +2101,8 @@ async def api_jarvis_stream_existing_run(run_id: str):
     return EventSourceResponse(_stream_run_events(run))
 
 
-@app.post("/api/jarvis/{flow_id}/stream")
-async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
+@app.post("/api/jarvis/{agent_id}/stream")
+async def api_jarvis_stream(agent_id: str, req: JarvisRequest):
     """Lance un flux Jarvis EN ARRIÈRE-PLAN et retourne un SSE qui
     observe son buffer d'events. Le flow est exécuté dans un thread
     indépendant du cycle de vie HTTP : si le client ferme la tab,
@@ -2118,7 +2118,7 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
 
     Events SSE émis :
       event: run_id    data: {"run_id": "..."}       ← NOUVEAU
-      event: headline  data: {"text": "...", "flow_id": "...", "run_id": "..."}
+      event: headline  data: {"text": "...", "agent_id": "...", "run_id": "..."}
       event: jarvis    data: {"messages": [...], ...}
       event: done      data: {}
       event: error     data: {"text": "..."}
@@ -2135,16 +2135,16 @@ async def api_jarvis_stream(flow_id: str, req: JarvisRequest):
 
     # 1) Build prompt + headline (validation précoce, error inline)
     try:
-        prompt, headline = _jarvis_dispatch(flow_id, p)
+        prompt, headline = _jarvis_dispatch(agent_id, p)
     except ValueError as e:
         async def err_gen():
             yield {"event": "error", "data": json.dumps({"text": str(e)})}
         return EventSourceResponse(err_gen())
 
     # 2) Crée le run + spawn le bg thread
-    run = _new_run(flow_id, p, headline)
+    run = _new_run(agent_id, p, headline)
     _threading.Thread(
-        target=_drive_jarvis_flow_thread,
+        target=_drive_jarvis_agent_thread,
         args=(run,),
         daemon=True,
         name=f"jarvis-run-{run['run_id']}",

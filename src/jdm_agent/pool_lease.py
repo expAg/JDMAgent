@@ -25,7 +25,7 @@ Implémentation :
 
 Activation :
     Le wiring n'est armé QUE si le caller (jarvis.py) passe
-    `pool_active=True` au run_jarvis_flow. Sinon, on retombe sur le
+    `pool_active=True` au run_jarvis_agent. Sinon, on retombe sur le
     pick sticky historique — comportement strictement inchangé hors
     pool mode.
 """

@@ -4,7 +4,7 @@ de formulaires UI + exécution de flows agent avec budget.
 Pour ne pas surcharger app.py, on isole ici :
   - les fonctions `build_*_prompt(form_values)` qui composent le
     texte d'entrée envoyé à l'agent à partir des champs du formulaire
-  - le générateur `run_jarvis_flow(prompt, model, api_key, budget_limit,
+  - le générateur `run_jarvis_agent(prompt, model, api_key, budget_limit,
     drops_key)` qui pilote l'agent en mode streaming dans une bulle
     de chatbot Gradio (sans saisie utilisateur)
 
@@ -1370,7 +1370,7 @@ def has_drops_key(ui_key: str = "") -> bool:
     return bool(os.environ.get("JDM_DROPS_API_KEY", "").strip())
 
 
-def run_jarvis_flow(
+def run_jarvis_agent(
     prompt: str,
     *,
     headline: str = "",
@@ -1389,7 +1389,7 @@ def run_jarvis_flow(
     max_persistence_relances: Optional[int] = None,
     auto_switch_on_perday: bool = False,
     resume_state: Optional[dict] = None,
-    flow_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
     temperature: Optional[float] = None,
     pool_active: bool = False,
     run_id: Optional[str] = None,
@@ -1595,7 +1595,7 @@ def run_jarvis_flow(
         import time as _time_mod
         _ts = _time_mod.strftime("%Y%m%d_%H%M%S")
         _hash = hashlib.sha1((prompt or "").encode("utf-8")).hexdigest()[:6]
-        # Extension + mode du canonical par flow_id :
+        # Extension + mode du canonical par agent_id :
         #   - enrich      → .enrich, mode auto_append (streaming +
         #     crash-safety via register_consolidation)
         #   - annotation  → .annot,  mode redirect  (overwrite canonical)
@@ -1604,7 +1604,7 @@ def run_jarvis_flow(
         #   - stats       → .stat,   mode redirect
         #   - gap         → pas de canonical (flow de découverte, ne
         #     produit pas de fichier)
-        #   - flow_id None : compat legacy. Si consolidation_target est
+        #   - agent_id None : compat legacy. Si consolidation_target est
         #     set → enrich auto_append. Sinon, pas de canonical (le LLM
         #     contrôle, anti-écrasement actif comme avant).
         _flow_canonical_spec = {
@@ -1615,10 +1615,10 @@ def run_jarvis_flow(
             "stats":       (".stat",   "redirect"),
             "gap":         (".gap",    None),  # ext sentinelle, pas de canonical
         }
-        if flow_id is not None:
-            _ext, _canon_mode = _flow_canonical_spec.get(flow_id, (".enrich", None))
+        if agent_id is not None:
+            _ext, _canon_mode = _flow_canonical_spec.get(agent_id, (".enrich", None))
         elif consolidation_target is not None:
-            # Legacy : pas de flow_id mais on a consolidation_target → enrich.
+            # Legacy : pas de agent_id mais on a consolidation_target → enrich.
             _ext, _canon_mode = ".enrich", "auto_append"
         else:
             _ext, _canon_mode = ".enrich", None
@@ -2549,3 +2549,10 @@ def run_jarvis_flow(
                 os.environ.pop("JDM_DROPS_API_KEY", None)
             else:
                 os.environ["JDM_DROPS_API_KEY"] = saved_drops_key
+
+
+# ── Shim legacy ─────────────────────────────────────────────────────
+# `app.py` (UI Gradio historique, hors chemin FastAPI, vouée à suppression)
+# référence encore `run_jarvis_flow`. On garde un alias pour ne pas churn
+# ce fichier mort ; le nom canonique est `run_jarvis_agent`.
+run_jarvis_flow = run_jarvis_agent

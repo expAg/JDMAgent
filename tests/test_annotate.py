@@ -406,13 +406,13 @@ def test_build_annotation_prompt_uses_iteration_block():
 
 # ─────────────── production_target file-line counter (flow-aware) ───────────────
 
-def test_run_jarvis_flow_accepts_production_target(tmp_path, monkeypatch):
-    """Smoke contract : run_jarvis_flow accepte production_target/
+def test_run_jarvis_agent_accepts_production_target(tmp_path, monkeypatch):
+    """Smoke contract : run_jarvis_agent accepte production_target/
     production_counter/production_unit sans planter à l'import-vérif.
     On ne lance pas l'agent — on vérifie juste la signature."""
     import inspect
-    from jarvis import run_jarvis_flow
-    sig = inspect.signature(run_jarvis_flow)
+    from jarvis import run_jarvis_agent
+    sig = inspect.signature(run_jarvis_agent)
     assert "production_target" in sig.parameters
     assert "production_counter" in sig.parameters
     assert "production_unit" in sig.parameters

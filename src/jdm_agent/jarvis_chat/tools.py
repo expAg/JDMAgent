@@ -79,7 +79,7 @@ def _run_summary(r: dict, submitted: set = None) -> dict:
     sub = submitted if submitted is not None else _submitted_set()
     return {
         "run_id": r.get("run_id"),
-        "flow_id": r.get("flow_id"),
+        "agent_id": r.get("agent_id"),
         "status": r.get("status"),
         "headline": r.get("headline"),
         "started_at": started,
@@ -107,16 +107,16 @@ def _safe_name(name: str) -> Optional[str]:
 # ───────────────────────── tools : runs ─────────────────────────
 
 @tool
-def list_runs(status: str = "", flow_id: str = "", limit: int = 20) -> dict:
+def list_runs(status: str = "", agent_id: str = "", limit: int = 20) -> dict:
     """Liste les flux (runs) Jarvis, vivants et passés, le plus récent d'abord.
 
     Filtres optionnels :
       - status : 'running', 'done', 'error', 'starting' (vide = tous)
-      - flow_id : 'enrich', 'audit', 'gap', 'signalement', 'stats',
+      - agent_id : 'enrich', 'audit', 'gap', 'signalement', 'stats',
         'annotation' (vide = tous)
       - limit : nombre max de runs renvoyés (défaut 20)
 
-    Chaque run renvoie : run_id, flow_id, status, headline, started_at,
+    Chaque run renvoie : run_id, agent_id, status, headline, started_at,
     duration_s, retained (items retenus/consolidés), attempts (tentatives),
     file (nom du fichier produit). Pour le détail complet d'un run précis,
     utilise get_run(run_id).
@@ -124,8 +124,8 @@ def list_runs(status: str = "", flow_id: str = "", limit: int = 20) -> dict:
     runs = _merged_runs()
     if status:
         runs = [r for r in runs if (r.get("status") or "") == status]
-    if flow_id:
-        runs = [r for r in runs if (r.get("flow_id") or "") == flow_id]
+    if agent_id:
+        runs = [r for r in runs if (r.get("agent_id") or "") == agent_id]
     sub = _submitted_set()
     out = [_run_summary(r, sub) for r in runs[: max(1, min(100, int(limit or 20)))]]
     return {"count": len(out), "runs": out}
@@ -140,7 +140,7 @@ def get_run(run_id: str) -> dict:
       - tools_count : nombre total d'appels d'outils
       - tools       : détail {nom_outil: nb_appels}
       - file        : fichier produit (nom)
-      - status, flow_id, headline, started_at, duration_s
+      - status, agent_id, headline, started_at, duration_s
 
     Passe le run_id renvoyé par list_runs.
     """
@@ -153,7 +153,7 @@ def get_run(run_id: str) -> dict:
             fname = _basename(r.get("last_file_path") or stats.get("file"))
             return {
                 "run_id": r.get("run_id"),
-                "flow_id": r.get("flow_id"),
+                "agent_id": r.get("agent_id"),
                 "status": r.get("status"),
                 "headline": r.get("headline"),
                 "started_at": started,
@@ -380,11 +380,11 @@ _VALID_FLOWS = {"enrich", "audit", "gap", "signalement", "stats", "annotation"}
 
 
 @tool
-def start_flow(flow_id: str, term: str = "", relation: str = "",
+def start_agent(agent_id: str, term: str = "", relation: str = "",
                target_count: int = 0) -> dict:
     """Démarre un flux d'agent Jarvis EN ARRIÈRE-PLAN et renvoie son run_id.
 
-    flow_id ∈ {enrich, audit, gap, signalement, stats, annotation} :
+    agent_id ∈ {enrich, audit, gap, signalement, stats, annotation} :
       - enrich      : proposer + consolider de nouveaux triplets
       - audit       : auditer la répartition des sens d'un terme
       - gap         : détecter les trous de couverture
@@ -400,13 +400,13 @@ def start_flow(flow_id: str, term: str = "", relation: str = "",
     un terme explicite. `relation` optionnel (ex. 'r_isa'). `target_count`
     optionnel (nb d'items visés, 0 = défaut du flux). Le flux tourne en fond
     et apparaît dans la supervision ; suis-le avec list_runs / get_run,
-    arrête-le avec stop_flow.
+    arrête-le avec stop_agent.
     """
-    fid = (flow_id or "").strip().lower()
+    fid = (agent_id or "").strip().lower()
     if fid not in _VALID_FLOWS:
         return {"status": "error", "ok": False,
-                "error": f"flow_id invalide : {flow_id!r}. Attendu : {sorted(_VALID_FLOWS)}.",
-                "instruction": "Dis à l'utilisateur que le flux N'A PAS démarré (flow_id invalide). N'invente pas de succès."}
+                "error": f"agent_id invalide : {agent_id!r}. Attendu : {sorted(_VALID_FLOWS)}.",
+                "instruction": "Dis à l'utilisateur que le flux N'A PAS démarré (agent_id invalide). N'invente pas de succès."}
     params: dict = {}
     if term and term.strip():
         params["term"] = term.strip()
@@ -414,7 +414,7 @@ def start_flow(flow_id: str, term: str = "", relation: str = "",
         params["relation"] = [relation.strip()]
     if target_count and int(target_count) > 0:
         params["target_count"] = int(target_count)
-    res = _rt.start_flow(fid, params)
+    res = _rt.start_agent(fid, params)
     # Échec réel (contrôleur non câblé, dispatch invalide, exception) :
     # statut error EXPLICITE + instruction de ne pas prétendre au succès.
     if res.get("error") or not res.get("run_id"):
@@ -422,7 +422,7 @@ def start_flow(flow_id: str, term: str = "", relation: str = "",
                 "error": res.get("error") or "Démarrage impossible (aucun run_id renvoyé).",
                 "instruction": "Le flux N'A PAS démarré. Dis-le clairement à l'utilisateur "
                                "et n'invente NI succès NI identifiant."}
-    return {"status": "started", "ok": True, "flow_id": fid,
+    return {"status": "started", "ok": True, "agent_id": fid,
             "run_id": res.get("run_id"),
             "instruction": "Le flux EST bien démarré en arrière-plan. Confirme-le à "
                            "l'utilisateur en langage humain (type + terme), sans afficher "
@@ -430,7 +430,7 @@ def start_flow(flow_id: str, term: str = "", relation: str = "",
 
 
 @tool
-def stop_flow(run_id: str) -> dict:
+def stop_agent(run_id: str) -> dict:
     """Arrête (annulation coopérative) un flux Jarvis en cours, par son
     run_id (cf. list_runs). L'arrêt prend effet entre deux étapes du flux
     (latence ~5-15s, le temps de l'appel LLM en cours). Idempotent : si le
@@ -440,7 +440,7 @@ def stop_flow(run_id: str) -> dict:
     if not rid:
         return {"status": "error", "ok": False, "error": "run_id vide.",
                 "instruction": "Impossible d'arrêter : aucun run_id. N'invente pas d'arrêt."}
-    res = _rt.stop_flow(rid)
+    res = _rt.stop_agent(rid)
     if res.get("error"):
         return {"status": "error", "ok": False, "error": res["error"],
                 "instruction": "L'arrêt a ÉCHOUÉ. Dis-le clairement, n'invente pas un arrêt réussi."}
@@ -451,7 +451,7 @@ def stop_flow(run_id: str) -> dict:
 
 # ───────────────────────── tool : description des flux (lecture seule) ─────────────────────────
 
-# flow_id (UI / start_flow) → fonction workflow canonique (jdm_tools).
+# agent_id (UI / start_agent) → fonction workflow canonique (jdm_tools).
 _FLOW_WORKFLOWS = {
     "enrich": "enrichment_workflow",
     "audit": "audit_workflow",
@@ -468,33 +468,33 @@ def _condense_workflow(fid: str, full: dict, detailed: bool) -> dict:
     liste). `detailed=True` : + intent court + outil de chaque étape."""
     steps_raw = full.get("steps") or []
     if not detailed:
-        return {"flow_id": fid, "title": full.get("title"),
+        return {"agent_id": fid, "title": full.get("title"),
                 "steps": [s.get("name") for s in steps_raw]}
     steps = [{"order": s.get("order"), "name": s.get("name"),
               "tools": s.get("tool")} for s in steps_raw]
-    return {"flow_id": fid, "title": full.get("title"),
+    return {"agent_id": fid, "title": full.get("title"),
             "intent": full.get("intent"), "steps": steps}
 
 
 @tool
-def describe_flows(flow_id: str = "") -> dict:
+def describe_flows(agent_id: str = "") -> dict:
     """Vue LECTURE SEULE des flux d'agents Jarvis : étapes et outils de chaque
     flow. À utiliser pour EXPLIQUER fidèlement comment un agent travaille —
     ne devine JAMAIS les étapes, lis-les ici.
 
-    - flow_id vide → résumé compact de TOUS les flux (titre + noms d'étapes).
-    - flow_id précis (enrich/audit/gap/signalement/stats/annotation) → détail
+    - agent_id vide → résumé compact de TOUS les flux (titre + noms d'étapes).
+    - agent_id précis (enrich/audit/gap/signalement/stats/annotation) → détail
       du flow : intention + étapes + outil de chaque étape.
 
     N'EXÉCUTE rien : c'est purement descriptif. Pour LANCER un flux, utilise
-    start_flow.
+    start_agent.
     """
     from jdm_agent.tools import jdm_tools as _jt
-    fid = (flow_id or "").strip().lower()
+    fid = (agent_id or "").strip().lower()
     if fid:
         wf_name = _FLOW_WORKFLOWS.get(fid)
         if not wf_name:
-            return {"error": f"flow_id invalide : {flow_id!r}. "
+            return {"error": f"agent_id invalide : {agent_id!r}. "
                              f"Attendu : {sorted(_FLOW_WORKFLOWS)}."}
         full = getattr(_jt, wf_name).invoke({})
         return _condense_workflow(fid, full, detailed=True)
@@ -506,7 +506,7 @@ def describe_flows(flow_id: str = "") -> dict:
         except Exception:
             continue
     return {"flows": flows, "note": "Pour le détail d'un flow, rappelle "
-            "describe_flows(flow_id)."}
+            "describe_flows(agent_id)."}
 
 
 @tool
@@ -550,7 +550,7 @@ def describe_site_routes() -> dict:
              "(fiches + lancement)."},
         ],
         "note": "Pour lancer un agent toi-même (moi, l'orchestrateur), utilise "
-        "start_flow. Pour que l'UTILISATEUR le fasse à la main, oriente-le vers "
+        "start_agent. Pour que l'UTILISATEUR le fasse à la main, oriente-le vers "
         "Jarvis › Supervision (carte « ▸ Démarrer ») ou Jarvis › Répertoire.",
     }
 
@@ -560,7 +560,7 @@ def build_supervision_tools() -> list:
     return [
         list_runs, get_run, list_productions, read_production, summarize_triplets,
         describe_flows, describe_site_routes,
-        start_flow, stop_flow,
+        start_agent, stop_agent,
         get_config, set_config,
         read_env, set_env, rollback_env,
     ]

@@ -73,6 +73,10 @@ def load_recent_runs(limit: int = 200) -> list[dict]:
                 rid = rec.get("run_id")
                 if not rid:
                     continue
+                # Rétro-compat : les anciens records utilisaient `flow_id`
+                # (avant le renommage flux→agent). On normalise à la lecture.
+                if "agent_id" not in rec and "flow_id" in rec:
+                    rec["agent_id"] = rec.get("flow_id")
                 if rid not in by_id:
                     order.append(rid)
                 by_id[rid] = rec
