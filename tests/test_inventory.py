@@ -126,6 +126,7 @@ def test_workflow_generation_prompt(tmp_path, monkeypatch):
     assert "*_workflow" in meta                  # « à la manière des *_workflow »
     assert "exists" in meta and "get_relations" in meta  # outils dispo cités
     assert "TITRE" in meta and "ÉTAPES" in meta and "RÈGLES" in meta
+    assert "DESCRIPTION" in meta             # résumé carte généré par le LLM
 
 
 def test_instructions_persisted(tmp_path, monkeypatch):

@@ -256,13 +256,17 @@ def build_workflow_generation_prompt(spec: dict) -> str:
         f"- Capacités : {' ; '.join(caps)}\n"
         f"- Outils que l'agent SAIT utiliser (UNIQUEMENT ceux-ci, JAMAIS de "
         f"*_workflow) : {tools_line}\n\n"
-        "Rends UNIQUEMENT le workflow (pas de préambule, pas de ```), au format :\n"
+        "Rends le workflow (pas de préambule, pas de ```), au format :\n"
         "TITRE : <titre court>\n"
         "ÉTAPES :\n"
         "1. <action concrète mobilisant les outils ci-dessus>\n"
         "2. …\n"
         "RÈGLES :\n"
         "- <garde-fou / critère d'arrêt / qualité>\n"
+        "\n"
+        "Puis, TOUT À LA FIN, une section préfixée exactement `DESCRIPTION:` "
+        "donnant en 3 lignes max, pour la carte de l'agent : ce qu'il fait, ses "
+        "étapes clés, sa sortie.\n"
     )
 
 

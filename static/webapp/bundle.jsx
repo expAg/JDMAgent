@@ -10141,6 +10141,35 @@ function JLibrary({ list, onPick, onLaunch }) {
 // ═══════════════════ Agents SUR MESURE — inventaire + builder ═══════════════
 // Mappe un AgentSpec de l'inventaire (/api/jarvis/agents) vers un objet
 // « flow » consommable par les cartes. Enregistre aussi icône/brief dans les
+// Parse les ÉTAPES d'un workflow rédigé par l'orchestrateur (format
+// « TITRE :… / ÉTAPES : 1. … 2. … / RÈGLES : … ») en [{n, d}] pour le
+// diagramme de boucle. Renvoie null si rien d'exploitable.
+function _parseWorkflowSteps(sp) {
+  if (!sp || typeof sp !== 'string') return null;
+  let body = sp;
+  // Isole la section ÉTAPES (jusqu'à RÈGLES/DESCRIPTION si présents).
+  const mStart = sp.match(/[ÉE]TAPES?\s*:?/i);
+  if (mStart) {
+    body = sp.slice(mStart.index + mStart[0].length);
+    const mEnd = body.match(/(R[ÈE]GLES?|DESCRIPTION)\s*:/i);
+    if (mEnd) body = body.slice(0, mEnd.index);
+  }
+  // Lignes numérotées « 1. … » / « 1) … ».
+  const items = [];
+  const re = /(?:^|\n)\s*(\d+)[.)]\s+([^\n]+)/g;
+  let m;
+  while ((m = re.exec(body)) !== null) {
+    const full = m[2].trim().replace(/\s+/g, ' ');
+    if (!full) continue;
+    // Titre court : avant « via »/«:»/«—», sinon ~6 premiers mots.
+    let title = full.split(/\s+via\s+|[:—–-]\s/)[0].trim();
+    const words = title.split(' ');
+    if (words.length > 7) title = words.slice(0, 6).join(' ') + '…';
+    items.push({ n: title || ('Étape ' + m[1]), d: full });
+  }
+  return items.length ? items : null;
+}
+
 // maps globales pour que flowIcon/FLOW_BRIEF marchent sans toucher les cartes.
 function _specToFlow(spec) {
   const brief = spec.brief || '';
@@ -10151,15 +10180,19 @@ function _specToFlow(spec) {
   } catch (e) {}
   const fmt = spec.output_format || 'jdm';
   const fmtLabel = fmt === 'json' ? 'JSON' : fmt === 'libre' ? 'texte libre' : 'soumission JDM';
-  // Étapes génériques, enrichies selon les capacités (consolide / écrit).
-  const steps = [
-    { n: 'Cadrage', d: 'Reçoit le terme (ou en tire un) et la stratégie de l\'agent.' },
-    { n: 'Exécution', d: 'Suit la stratégie en mobilisant les outils JDM autorisés.' },
-  ];
-  if (spec.consolidates) steps.push({ n: 'Consolidation', d: 'Vérifie chaque candidat par inférence dans le graphe.' });
-  steps.push(spec.writes === false
-    ? { n: 'Réponse', d: `Restitue le résultat en ${fmtLabel} dans la conversation.` }
-    : { n: 'Soumission', d: `Écrit le fichier ${spec.output_ext || ''} (${fmtLabel}).` });
+  // Vraies ÉTAPES = celles du workflow rédigé par l'orchestrateur (parsées du
+  // system_prompt). Fallback générique si non parsables.
+  let steps = _parseWorkflowSteps(spec.system_prompt);
+  if (!steps || !steps.length) {
+    steps = [
+      { n: 'Cadrage', d: 'Reçoit le terme (ou en tire un) et la stratégie de l\'agent.' },
+      { n: 'Exécution', d: 'Suit la stratégie en mobilisant les outils JDM autorisés.' },
+    ];
+    if (spec.consolidates) steps.push({ n: 'Consolidation', d: 'Vérifie chaque candidat par inférence dans le graphe.' });
+    steps.push(spec.writes === false
+      ? { n: 'Réponse', d: `Restitue le résultat en ${fmtLabel} dans la conversation.` }
+      : { n: 'Soumission', d: `Écrit le fichier ${spec.output_ext || ''} (${fmtLabel}).` });
+  }
   return {
     id: spec.id, title: spec.title, kicker: 'Sur mesure',
     icon: spec.icon || '🤖', accent: spec.accent || 'var(--accent)',
@@ -10245,7 +10278,8 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   // le workflow rédigé par l'ORCHESTRATEUR « à la manière des *_workflow »
   // (ce qui devient le system_prompt). En édition : instructions d'origine si
   // gardées, workflow = system_prompt sauvegardé.
-  const [strategy, setStrategy] = React.useState(_isEdit ? (editSpec.instructions || '') : '');
+  const [strategy, setStrategy] = React.useState(
+    _isEdit ? (editSpec.instructions || editSpec.system_prompt || '') : '');
   const [workflow, setWorkflow] = React.useState(_isEdit ? (editSpec.system_prompt || '') : '');
   const [writes, setWrites] = React.useState(_isEdit ? (editSpec.writes !== false) : true);
   const [fmt, setFmt] = React.useState(_isEdit ? (editSpec.output_format || 'jdm') : 'jdm');
@@ -10343,7 +10377,11 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         body: JSON.stringify({ spec: _buildSpec(true), config: { llm: cfg.llm, poolActive: cfg.poolActive } }),
       });
       const d = await r.json();
-      if (d.ok && d.workflow) setWorkflow(d.workflow);
+      if (d.ok && d.workflow) {
+        setWorkflow(d.workflow);
+        // Description (carte) rédigée par le LLM en 3 lignes.
+        if (d.brief) setDescription(d.brief);
+      }
       else { setWorkflow(d.fallback || strategy.trim()); if (d.error) setMsg('⚠ génération indisponible (' + d.error + ') — workflow = instructions brutes, éditable.'); }
     } catch (e) { setWorkflow(strategy.trim()); setMsg('⚠ ' + (e.message || e)); }
     setGenLoading(false);
@@ -10405,10 +10443,6 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         {step === 'form' ? (<React.Fragment>
         <Field label="Nom de l'agent">
           <Input value={name} onChange={setName} placeholder="ex. Enrichisseur de cuisine" />
-        </Field>
-        <Field label="Description (affichée sur la carte de l'agent)">
-          <Input value={description} onChange={setDescription}
-            placeholder="ex. Enrichit les termes du domaine culinaire en relations méronymiques." />
         </Field>
         <Field label="Template (fixe les défauts : consolide / écrit / format)">
           <Select value={template} onChange={setTemplate}
@@ -12703,6 +12737,17 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
   const samples = [];
   const params = defaultParamsFor(flow.id);
   const [openTool, setOpenTool] = useState(null);
+  // Catalogue chargé (boot) → liste d'outils pour un agent SUR MESURE : son
+  // allow-list si renseignée, sinon TOUT le catalogue proposable (sans
+  // *_workflow). Rendu en chips cliquables, EXACTEMENT comme les natifs.
+  const [_allDocs] = useToolDocs();
+  let customTools = [];
+  if (isCustom) {
+    const al = (flow._spec && flow._spec.allowed_tools) || [];
+    customTools = (al && al.length)
+      ? al
+      : Object.keys(_allDocs || {}).filter(n => n && !n.endsWith('_workflow')).sort();
+  }
   const panelPos = J_PANELS.findIndex(p => p.id === flow.id);  // position in the carousel track
   const safeIndex = index >= 0 ? index : 0;  // custom : pas dans JARVIS_AGENTS
   const lastFlow = index === JARVIS_AGENTS.length - 1;
@@ -12730,13 +12775,12 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
             title="Lancer cet agent"
             aria-label="Lancer cet agent"
             style={{ flexShrink: 0 }}>
-            {/* Même icône que sur les cartes (emoji du flux), carré teinté à
-                l'accent — pas de fond blanc, pas l'anneau numéroté générique. */}
+            {/* Emoji du flux NU — aucun fond ni bordure (pas de carré blanc,
+                pas l'anneau numéroté générique). */}
             <span style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 84, height: 84, borderRadius: 20, fontSize: 44, lineHeight: 1,
-              background: `color-mix(in srgb, ${flow.accent} 12%, transparent)`,
-              border: `1px solid color-mix(in srgb, ${flow.accent} 30%, transparent)`,
+              width: 84, height: 84, fontSize: 56, lineHeight: 1,
+              background: 'transparent', border: 'none',
             }}>{agentIcon(flow.id)}</span>
           </button>
           <div>
@@ -12829,9 +12873,9 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
                 fontSize: 11, color: 'var(--ink-3)',
                 textTransform: 'uppercase', letterSpacing: '0.1em', margin: '16px 0 8px',
               }}>Outils JDM mobilisés</div>
-              {(flow._spec && Array.isArray(flow._spec.allowed_tools) && flow._spec.allowed_tools.length) ? (
+              {customTools.length ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {flow._spec.allowed_tools.map(t => (
+                  {customTools.map(t => (
                     <button key={t} type="button" onClick={() => setOpenTool(t)}
                       className="jtool-chip" title={`Voir la fiche de ${t}()`}
                       style={{
@@ -12845,12 +12889,7 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
                 </div>
               ) : (
                 <div style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-                  Tout le catalogue d'outils JDM (lecture, exploration, désambiguïsation,
-                  fact-check, inférence{flow.consolidates ? ', consolidation' : ''})
-                  {flow.writes !== false
-                    ? ' + écriture du fichier de soumission.'
-                    : ' — sans écriture de fichier (résultat rendu en réponse).'}
-                  {' '}— sauf les recettes *_workflow.
+                  … chargement du catalogue d'outils …
                 </div>
               )}
             </div>

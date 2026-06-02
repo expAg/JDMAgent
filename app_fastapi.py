@@ -2077,7 +2077,15 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         workflow = (_content_to_text(raw) or "").strip()
         if not workflow:
             return {"ok": False, "error": "génération vide", "fallback": _fallback}
-        return {"ok": True, "workflow": workflow, "meta_prompt": meta}
+        # Sépare la DESCRIPTION (3 lignes pour la carte) du corps du workflow.
+        brief = ""
+        for marker in ("DESCRIPTION:", "DESCRIPTION :"):
+            idx = workflow.rfind(marker)
+            if idx >= 0:
+                brief = workflow[idx + len(marker):].strip()
+                workflow = workflow[:idx].strip()
+                break
+        return {"ok": True, "workflow": workflow, "brief": brief, "meta_prompt": meta}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}
     finally:
