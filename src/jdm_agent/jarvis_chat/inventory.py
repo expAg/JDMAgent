@@ -278,10 +278,20 @@ def consolidating_agent_ids() -> set:
     return {s["id"] for s in list_agent_specs() if s.get("consolidates")}
 
 
+# Recettes de flux canoniques : RÉSERVÉES aux agents NATIFS. Un agent sur
+# mesure suit SA PROPRE stratégie (son system_prompt) — on ne lui donne JAMAIS
+# les *_workflow (sinon il rejouerait le flux d'un natif au lieu du sien).
+WORKFLOW_TOOLS = frozenset({
+    "enrichment_workflow", "audit_workflow", "gap_detection_workflow",
+    "error_detection_workflow", "stats_workflow", "annotation_workflow",
+})
+
+
 def exclude_tools_for_spec(spec: dict) -> set:
-    """Outils JDM à retirer pour cet agent sur mesure : l'écriture si writes
-    est faux. (Les FORBIDDEN_TOOLS ne sont pas dans le toolset JDM.)"""
-    excl = set()
+    """Outils JDM à retirer pour cet agent sur mesure : TOUJOURS les recettes
+    *_workflow (réservées aux natifs), plus l'écriture si writes est faux.
+    (Les FORBIDDEN_TOOLS ne sont pas dans le toolset JDM.)"""
+    excl = set(WORKFLOW_TOOLS)
     if not spec.get("writes"):
         excl.add("write_submission_file")
     return excl

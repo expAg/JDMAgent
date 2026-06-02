@@ -60,6 +60,20 @@ def test_writes_false_excludes_write_tool_and_no_canonical(tmp_path, monkeypatch
     assert "write_submission_file" in inv.exclude_tools_for_spec(spec)
 
 
+def test_workflow_tools_always_excluded_for_custom(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    # Même un agent qui ÉCRIT (writes=True) n'a JAMAIS les recettes *_workflow.
+    spec = inv.save_agent_spec({
+        "title": "Endo", "template": "generation_endogene",
+        "system_prompt": "S",
+    })
+    assert spec["writes"] is True
+    excl = inv.exclude_tools_for_spec(spec)
+    for wf in ("enrichment_workflow", "audit_workflow", "gap_detection_workflow",
+               "error_detection_workflow", "stats_workflow", "annotation_workflow"):
+        assert wf in excl
+
+
 def test_output_ext_free(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
     # L'extension est LIBRE désormais : 'cuisine' → '.cuisine'.
