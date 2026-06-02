@@ -3275,9 +3275,14 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
               }} />;
           }
           const rid = spec.run && spec.run.run_id;
+          // Origine du run : 'ui' = lancé via JarvisRun (session locale dans
+          // JarvisStore) → le clic ROUVRE JarvisRun pour continuer à suivre.
+          // 'chat'/'server' = pas de session locale → on ouvre la modal détail
+          // du run. (Placeholder sans run → lancement via JarvisRun.)
+          const _origin = (spec.run && spec.run.origin) || 'ui';
           return (
             <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
-              onOpen={() => { if (rid) setDetailRunId(rid); else onLaunch(f.id); }}
+              onOpen={() => { if (rid && _origin !== 'ui') setDetailRunId(rid); else onLaunch(f.id); }}
               onDetail={() => onPick(f.id)}
               onLaunch={() => onLaunch(f.id)}
               onPreview={(p) => setPreviewPath(p)}
