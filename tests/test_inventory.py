@@ -166,6 +166,30 @@ def test_instructions_persisted(tmp_path, monkeypatch):
     assert saved["system_prompt"] == "WORKFLOW_GENERE"
 
 
+def test_runtime_tools_restricted_to_workflow(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    names = inv.all_tool_names()
+    assert {"exists", "verify_claim"}.issubset(names)
+    # Agent SANS allow-list mais dont le workflow CITE des outils → l'agent ne
+    # doit avoir QUE ces outils (pas tout le catalogue).
+    spec = inv.save_agent_spec({
+        "title": "Cite", "template": "libre", "writes": False,
+        "system_prompt": "TITRE: X\nÉTAPES:\n1. appelle exists(terme)\n2. verify_claim(...)",
+    })
+    excl = inv.exclude_tools_for_spec(spec)
+    remaining = names - excl
+    assert remaining == {"exists", "verify_claim"}
+    # Allow-list = TOUT le catalogue → ignorée (pas une vraie restriction) →
+    # on retombe sur les outils cités par le workflow.
+    spec2 = inv.save_agent_spec({
+        "title": "AllSelected", "template": "libre", "writes": False,
+        "allowed_tools": sorted(inv.selectable_tool_names()),
+        "system_prompt": "1. exists(x)",
+    })
+    rem2 = names - inv.exclude_tools_for_spec(spec2)
+    assert rem2 == {"exists"}
+
+
 def test_edit_preserves_id_on_rename(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
     saved = inv.save_agent_spec({"title": "Cuisinier", "template": "libre",

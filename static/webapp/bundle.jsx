@@ -10356,9 +10356,10 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           label: t.description ? `${t.name} — ${String(t.description).slice(0, 60)}` : t.name,
         }));
         setToolOpts(opts);
-        // Pré-remplissage : si pas déjà défini (création, ou édition sans
-        // allow-list sauvegardée) → TOUS les outils proposables.
-        setAllowedTools(prev => (prev && prev.length) ? prev : opts.map(o => o.value));
+        // PAS de pré-cochage à tout le catalogue (sinon l'agent aurait accès à
+        // tout). La sélection vient de la génération (section OUTILS du LLM) ;
+        // à défaut, le backend restreint déjà aux outils cités par le workflow.
+        setAllowedTools(prev => Array.isArray(prev) ? prev : []);
       } catch (e) {}
     })();
   }, []); // eslint-disable-line
@@ -10577,9 +10578,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
             placeholder={toolOpts.length ? '— sélectionne les outils —' : '… chargement du catalogue …'}
             options={toolOpts} />
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5, lineHeight: 1.4 }}>
-            Pré-rempli avec tout le catalogue. Retire ce dont l'agent n'a pas
-            besoin. Les recettes <span className="mono">*_workflow</span> (natifs)
-            ne sont jamais proposées.
+            Présélectionné par l'orchestrateur (outils nécessaires). Vide → l'agent
+            n'a accès qu'aux outils cités par son workflow. L'agent n'a JAMAIS tout
+            le catalogue ni les <span className="mono">*_workflow</span>.
           </div>
         </Field>
         {/* Le WORKFLOW rédigé par l'ORCHESTRATEUR « à la manière des *_workflow »
