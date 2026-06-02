@@ -815,7 +815,7 @@ async function _runAgentStream() {
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const r = await fetch('api/agent/stream', {
+    const r = await fetch('api/chatbot/stream', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: 'quels sens de voiture ?',
                               model: 'gemini-3.1-flash-lite',

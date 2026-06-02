@@ -271,7 +271,7 @@ function ViewProjet({ goto }) {
             const ctrl = new AbortController();
             const tid = setTimeout(() => ctrl.abort(), 12000);
             try {
-              const r = await fetch('api/agent/stream', {
+              const r = await fetch('api/chatbot/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: q, model, use_thinking: false }),
