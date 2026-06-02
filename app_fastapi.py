@@ -2065,25 +2065,31 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
             gem_key = _acq(model, lease_id, _app)
     except Exception:
         gem_key = None
+    def _invoke(agent, prompt_text):
+        out = agent.invoke({"messages": [HumanMessage(content=prompt_text)]})
+        msgs = out.get("messages") if isinstance(out, dict) else None
+        raw = msgs[-1].content if msgs else ""
+        return (_content_to_text(raw) or "").strip()
+
     try:
         llm = _app._build_llm(model, cfg.get("api_key") or "", use_thinking=False,
                               gemini_key_override=gem_key)
-        # MÊME orchestrateur que la mascotte : on lui DEMANDE de rédiger le
-        # workflow (il connaît tous les outils et les recettes *_workflow).
         agent = build_jarvis_chat_agent(client=get_client(), llm=llm)
-        out = agent.invoke({"messages": [HumanMessage(content=meta)]})
-        msgs = out.get("messages") if isinstance(out, dict) else None
-        # Le contenu peut être une liste de blocs (Gemini « thoughts ») — on
-        # l'aplatit en texte propre (sinon on afficherait le repr brut).
-        raw = msgs[-1].content if msgs else ""
-        full = (_content_to_text(raw) or "").strip()
+        # APPEL 1 — workflow FONCTIONNEL (+ OUTILS). Rien d'autre.
+        full = _invoke(agent, meta)
         if not full:
             return {"ok": False, "error": "génération vide", "fallback": _fallback}
-        # SOURCE UNIQUE : workflow FONCTIONNEL + sections d'affichage (DESCRIPTION,
-        # OUTILS, RÉSUMÉ d'étapes). Même helper que l'outil chat → pas de drift.
-        workflow, brief, tools, steps = _inv.parse_generation_output(full)
+        workflow, _b0, tools, _s0 = _inv.parse_generation_output(full)
         sel = _inv.selectable_tool_names()
         tools = [t for t in tools if t in sel] if sel else tools
+        # APPEL 2 — SÉPARÉ : éléments d'AFFICHAGE (résumé + description) à partir
+        # du workflow. Isolé → aucune pollution conversationnelle dans la carte.
+        brief, steps = "", []
+        try:
+            card = _invoke(agent, _inv.build_card_meta_prompt(spec, workflow))
+            _w, brief, _t, steps = _inv.parse_generation_output(card)
+        except Exception:
+            pass
         return {"ok": True, "workflow": workflow, "brief": brief, "tools": tools,
                 "steps": steps, "meta_prompt": meta}
     except Exception as e:

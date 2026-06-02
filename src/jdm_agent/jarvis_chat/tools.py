@@ -620,42 +620,41 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
                             writes: bool = True, output_format: str = "",
                             output_ext: str = "", target_count: int = 0,
                             allowed_tools: Optional[List[str]] = None,
+                            description: str = "", summary: str = "",
                             confirm: bool = False) -> dict:
     """Construit un agent JDM SUR MESURE, persisté et réutilisable dans
     l'inventaire (Répertoire), lançable ensuite via start_agent('<id>').
 
     Toi (l'orchestrateur) RÉDIGES la `strategy` à partir de la demande en
-    langage naturel — c'est le cœur de l'agent. Rédige-la EXACTEMENT comme un
+    langage naturel — c'est le CŒUR FONCTIONNEL de l'agent. Rédige-la comme un
     nouveau `*_workflow`, au format :
         TITRE : <titre court>
         ÉTAPES :
         1. <action concrète mobilisant les outils autorisés>
-        2. …
+        2. … (aussi détaillé que nécessaire)
         RÈGLES :
         - <garde-fou / critère d'arrêt>
-        DESCRIPTION: <3 lignes max pour la CARTE : ce que fait l'agent, ses
-        étapes clés, sa sortie>
-    La section `DESCRIPTION:` est OBLIGATOIRE (elle devient le texte de la carte,
-    comme dans la création par formulaire — même mécanique, aucune divergence).
+        OUTILS: <liste, virgules, des SEULS outils nécessaires (PAS de *_workflow)>
+
+    Les éléments d'AFFICHAGE de la carte sont des PARAMÈTRES SÉPARÉS (NE les mets
+    PAS dans `strategy`, sinon ta phrase de confirmation polluerait la carte) :
+      - description : 3 lignes COURTES, factuelles, pour la carte (PAS de
+        question, PAS de « je », PAS de demande de confirmation).
+      - summary : 3 à 5 étapes synthétiques « Nom — courte description », une par
+        ligne (résumé pour la carte).
 
     Paramètres :
       - name : nom lisible (l'id est slugifié automatiquement).
-      - strategy : le workflow complet (TITRE/ÉTAPES/RÈGLES/DESCRIPTION) que TU rédiges.
-      - template ∈ {audit, generation_endogene, generation_exogene, libre} :
-        fixe les défauts (consolide ?, écrit ?, format). Choisis le plus proche.
+      - strategy : le workflow FONCTIONNEL (TITRE/ÉTAPES/RÈGLES/OUTILS).
+      - template ∈ {audit, generation_endogene, generation_exogene, libre}.
       - writes : l'agent écrit-il un fichier de soumission ? (défaut oui).
-      - output_format : 'jdm' (lignes pipe soumissibles), 'libre' (texte) ou
-        'json' (sinon le défaut du template).
-      - output_ext : extension du fichier produit, LIBRE (ex. '.enrich',
-        '.cuisine', '.json'…). Vide → dérivée du format/template.
+      - output_format : 'jdm' / 'libre' / 'json'.
+      - output_ext : extension LIBRE (vide → dérivée du format/template).
       - target_count : nombre d'items visés (0 = défaut).
-      - allowed_tools : liste des outils que l'agent SAIT FAIRE (ce que tu
-        choisis dans le catalogue selon la stratégie — JAMAIS les *_workflow,
-        réservés aux natifs). TU connais tous les outils : pré-sélectionne ceux
-        pertinents. Vide = tout le catalogue disponible. Appelle
-        `list_jdm_tools()` si tu as besoin de revoir le catalogue.
-      - confirm : FALSE d'abord → renvoie un APERÇU à montrer à l'utilisateur
-        pour validation ; rappelle avec confirm=True pour CRÉER réellement.
+      - allowed_tools : outils que l'agent SAIT FAIRE (sinon ceux de la section
+        OUTILS de la strategy). JAMAIS de *_workflow. `list_jdm_tools()` au besoin.
+      - description / summary : voir ci-dessus (affichage carte, séparés).
+      - confirm : FALSE d'abord → APERÇU ; confirm=True pour créer.
 
     NE crée jamais sans avoir montré l'aperçu et obtenu l'accord de l'utilisateur.
     """
@@ -664,20 +663,19 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
         return {"status": "error", "ok": False,
                 "error": "name et strategy sont requis.",
                 "instruction": "Demande à l'utilisateur le nom et la stratégie manquants."}
-    # SOURCE UNIQUE (exactement comme la création UI) : la `strategy` est un
-    # workflow rédigé au format TITRE/ÉTAPES/RÈGLES/OUTILS/DESCRIPTION. On parse
-    # avec LE MÊME helper que l'endpoint /generate → workflow + brief (carte) +
-    # outils nécessaires. Aucune divergence UI/chat.
-    _wf, _brief, _tools, _steps = _inv.parse_generation_output(strategy.strip())
+    # La `strategy` = workflow FONCTIONNEL (+ OUTILS). La description et le résumé
+    # d'étapes de la CARTE sont des PARAMÈTRES SÉPARÉS (jamais parsés depuis le
+    # texte conversationnel) → pas de pollution.
+    _wf, _b0, _tools, _s0 = _inv.parse_generation_output(strategy.strip())
     spec = {"title": name.strip(), "template": template,
             "system_prompt": _wf, "instructions": strategy.strip(),
             "writes": bool(writes)}
-    if _brief:
-        spec["brief"] = _brief
+    if (description or "").strip():
+        spec["brief"] = description.strip()
+    _steps = _inv._parse_step_lines(summary) if (summary or "").strip() else _s0
     if _steps:
         spec["steps"] = _steps  # résumé d'étapes pour la carte (affichage)
-    # Outils : ceux parsés du workflow (OUTILS:) ont priorité ; sinon le param
-    # explicite allowed_tools. Filtrés au catalogue proposable.
+    # Outils : section OUTILS de la strategy en priorité, sinon param explicite.
     _ok = _inv.selectable_tool_names()
     _picked = _tools or (allowed_tools if isinstance(allowed_tools, list) else [])
     if _picked:

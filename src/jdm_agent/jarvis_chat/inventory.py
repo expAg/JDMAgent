@@ -326,23 +326,35 @@ def build_workflow_generation_prompt(spec: dict) -> str:
         f"- Capacités : {' ; '.join(caps)}\n"
         f"- Catalogue d'outils disponibles (CHOISIS uniquement ceux dont l'agent "
         f"a besoin, JAMAIS de *_workflow) : {catalog_line}\n\n"
-        "Rends d'abord le WORKFLOW FONCTIONNEL — le cerveau de l'agent, AUSSI "
-        "DÉTAILLÉ que la tâche l'exige (n'allège PAS pour l'affichage), au format :\n"
+        "Rends le WORKFLOW FONCTIONNEL — le cerveau de l'agent, AUSSI DÉTAILLÉ "
+        "que la tâche l'exige — et RIEN D'AUTRE (pas de préambule, pas de "
+        "confirmation, pas de ```), au format :\n"
         "TITRE : <titre court>\n"
         "ÉTAPES :\n"
         "1. <action concrète mobilisant les outils ci-dessus>\n"
         "2. … (autant d'étapes, et aussi détaillées, que nécessaire)\n"
         "RÈGLES :\n"
         "- <garde-fou / critère d'arrêt / qualité>\n"
-        "\n"
-        "Puis, EN PLUS et UNIQUEMENT pour l'AFFICHAGE (ces sections n'affectent PAS "
-        "le fonctionnement de l'agent) :\n"
         "OUTILS: <liste, séparée par des virgules, des SEULS outils du catalogue "
-        "ci-dessus dont l'agent a besoin (3 à 8 en général ; PAS de *_workflow)>\n"
-        "RÉSUMÉ: <3 à 5 phases SYNTHÉTIQUES façon natifs (Proposition, Validation…), "
-        "UNE par ligne, format `Nom — courte description`, Nom = 1 à 3 mots — c'est "
-        "un RÉSUMÉ des ÉTAPES pour la carte, PAS un remplacement>\n"
-        "DESCRIPTION: <description COURTE, 3 lignes max, pour la carte>\n"
+        "ci-dessus dont l'agent a besoin (3 à 8 ; PAS de *_workflow)>\n"
+    )
+
+
+def build_card_meta_prompt(spec: dict, workflow: str) -> str:
+    """Méta-prompt SÉPARÉ (2ᵉ appel) pour produire UNIQUEMENT les éléments
+    d'AFFICHAGE de la carte (résumé d'étapes + description courte) à partir du
+    workflow déjà rédigé. Séparé de la génération du workflow pour éviter toute
+    pollution par du texte conversationnel."""
+    return (
+        "Voici le workflow d'un agent JDM :\n\n" + (workflow or "").strip() + "\n\n"
+        "Produis UNIQUEMENT, sans préambule ni phrase de conclusion, ces deux "
+        "sections (rien d'autre) :\n"
+        "RÉSUMÉ:\n"
+        "1. <Nom (1-3 mots)> — <courte description>\n"
+        "2. … (3 à 5 phases synthétiques, façon Proposition/Validation/…)\n"
+        "DESCRIPTION: <description factuelle COURTE, 3 lignes max, pour la carte : "
+        "ce que fait l'agent, ses étapes clés, sa sortie. PAS de question, PAS de "
+        "demande de confirmation, PAS de « je ».>"
     )
 
 

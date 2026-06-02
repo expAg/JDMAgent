@@ -151,10 +151,14 @@ def test_workflow_generation_prompt(tmp_path, monkeypatch):
     assert "*_workflow" in meta                  # « à la manière des *_workflow »
     assert "exists" in meta and "get_relations" in meta  # outils dispo cités
     assert "TITRE" in meta and "ÉTAPES" in meta and "RÈGLES" in meta
-    assert "DESCRIPTION" in meta             # résumé carte généré par le LLM
     assert "OUTILS" in meta                  # le LLM choisit les outils nécessaires
-    assert "RÉSUMÉ" in meta                  # résumé d'étapes (affichage), EN PLUS
     assert "FONCTIONNEL" in meta             # le workflow reste le cœur fonctionnel
+    # Le prompt WORKFLOW ne demande PAS la description/résumé (générés à part).
+    assert "DESCRIPTION" not in meta and "RÉSUMÉ" not in meta
+    # Le prompt CARTE (2ᵉ appel, séparé) produit, lui, RÉSUMÉ + DESCRIPTION.
+    card = inv.build_card_meta_prompt(spec, "TITRE : X\nÉTAPES :\n1. a")
+    assert "RÉSUMÉ" in card and "DESCRIPTION" in card
+    assert "confirmation" in card.lower()    # interdit explicitement la pollution
 
 
 def test_instructions_persisted(tmp_path, monkeypatch):
