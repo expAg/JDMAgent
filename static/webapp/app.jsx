@@ -24,7 +24,7 @@ const TWEAK_ACCENTS = ['#c0411a', '#1f97b1', '#c83a73', '#4ea63c', '#7a4fbe', '#
 // sous-routes /jarvis/<flow> qui pré-remplissent
 // window.__jdmPendingPayload.jarvis.flow (lu par ViewJarvis au mount).
 const _VALID_VIEWS = ['projet', 'explorer', 'claim', 'subgraph',
-                       'agent', 'jarvis', 'productions', 'aide'];
+                       'agent', 'chat', 'jarvis', 'productions', 'aide'];
 
 function _appBase() {
   if (typeof document === 'undefined') return '';
@@ -152,7 +152,9 @@ function App() {
       link.setAttribute('type', 'image/svg+xml');
       document.head.appendChild(link);
     }
-    link.setAttribute('href', view === 'jarvis' ? ROBOT : SUN);
+    // Robot sur les surfaces orchestrateur (console Jarvis + chat plein écran).
+    const robotViews = (view === 'jarvis' || view === 'chat');
+    link.setAttribute('href', robotViews ? ROBOT : SUN);
   }, [view]);
 
   // Titre d'onglet par route : « JDM Agent » à l'accueil, « JDM Agent - <page> »
@@ -164,6 +166,7 @@ function App() {
       claim:       'JDM Agent - Claim',
       subgraph:    'JDM Agent - Sous-graphe',
       agent:       'JDM Agent - Chatbot',
+      chat:        'Jarvis : Chat',
       productions: 'JDM Agent - Productions',
       aide:        'JDM Agent - Aide',
       jarvis:      'Jarvis : Orchestrateur',
@@ -282,6 +285,7 @@ function App() {
     claim:       <ViewClaim />,
     subgraph:    <ViewSubgraph />,
     agent:       <ViewAgent />,
+    chat:        <ViewChat />,
     jarvis:      <ViewJarvis />,
     productions: <ViewProductions />,
     aide:        <ViewAide />,
@@ -351,6 +355,7 @@ function App() {
               ['subgraph', 'Sous-graphe'],
               ['agent', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
+              ['chat', 'Chat'],
               ['productions', 'Productions'],
               ['aide', 'Aide'],
             ].map(([id, label]) => (

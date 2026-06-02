@@ -1305,4 +1305,9 @@ function injectStyles() {
 injectStyles();
 
 window.JarvisBanner = JarvisBanner;
+// Expose le store de chat + ses helpers de rendu pour que la vue plein écran
+// (route /chat, dans le bundle) partage EXACTEMENT le même état (conversation,
+// stream en fond) et le même rendu (markdown, viz) que le volet latéral.
+window.JarvisChat = { store: JarvisChatStore, renderMd, VizBubble };
+window.JarvisChatStore = JarvisChatStore;
 })();
