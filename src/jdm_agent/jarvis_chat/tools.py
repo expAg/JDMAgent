@@ -17,7 +17,7 @@ import os
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from langchain_core.tools import tool
 
@@ -619,7 +619,7 @@ def list_jdm_tools() -> dict:
 def create_specialist_agent(name: str, strategy: str, template: str = "libre",
                             writes: bool = True, output_format: str = "",
                             output_ext: str = "", target_count: int = 0,
-                            allowed_tools: list | None = None,
+                            allowed_tools: Optional[List[str]] = None,
                             confirm: bool = False) -> dict:
     """Construit un agent JDM SUR MESURE, persisté et réutilisable dans
     l'inventaire (Répertoire), lançable ensuite via start_agent('<id>').
