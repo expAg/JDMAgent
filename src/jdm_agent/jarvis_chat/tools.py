@@ -624,14 +624,23 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
     """Construit un agent JDM SUR MESURE, persisté et réutilisable dans
     l'inventaire (Répertoire), lançable ensuite via start_agent('<id>').
 
-    Toi (l'orchestrateur) RÉDIGES la `strategy` (le system prompt de tâche de
-    l'agent) à partir de la demande en langage naturel de l'utilisateur — c'est
-    le cœur de l'agent (« tire un terme au hasard, regarde ses idées associées,
-    tente telle relation, consolide… »).
+    Toi (l'orchestrateur) RÉDIGES la `strategy` à partir de la demande en
+    langage naturel — c'est le cœur de l'agent. Rédige-la EXACTEMENT comme un
+    nouveau `*_workflow`, au format :
+        TITRE : <titre court>
+        ÉTAPES :
+        1. <action concrète mobilisant les outils autorisés>
+        2. …
+        RÈGLES :
+        - <garde-fou / critère d'arrêt>
+        DESCRIPTION: <3 lignes max pour la CARTE : ce que fait l'agent, ses
+        étapes clés, sa sortie>
+    La section `DESCRIPTION:` est OBLIGATOIRE (elle devient le texte de la carte,
+    comme dans la création par formulaire — même mécanique, aucune divergence).
 
     Paramètres :
       - name : nom lisible (l'id est slugifié automatiquement).
-      - strategy : la stratégie/déroulé que l'agent suivra (TU la rédiges).
+      - strategy : le workflow complet (TITRE/ÉTAPES/RÈGLES/DESCRIPTION) que TU rédiges.
       - template ∈ {audit, generation_endogene, generation_exogene, libre} :
         fixe les défauts (consolide ?, écrit ?, format). Choisis le plus proche.
       - writes : l'agent écrit-il un fichier de soumission ? (défaut oui).
@@ -655,8 +664,16 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
         return {"status": "error", "ok": False,
                 "error": "name et strategy sont requis.",
                 "instruction": "Demande à l'utilisateur le nom et la stratégie manquants."}
+    # SOURCE UNIQUE (comme la création UI) : la `strategy` est un workflow rédigé
+    # au format TITRE/ÉTAPES/RÈGLES terminé par `DESCRIPTION:` (3 lignes carte).
+    # On sépare exactement comme l'endpoint /generate → le `brief` (description
+    # de la carte) est rempli pareil, pas de divergence UI/chat.
+    _wf, _brief = _inv.split_workflow_and_brief(strategy.strip())
     spec = {"title": name.strip(), "template": template,
-            "system_prompt": strategy.strip(), "writes": bool(writes)}
+            "system_prompt": _wf, "instructions": strategy.strip(),
+            "writes": bool(writes)}
+    if _brief:
+        spec["brief"] = _brief
     fmt = (output_format or "").strip().lower().lstrip(".")
     if fmt in ("jdm", "libre", "json"):
         spec["output_format"] = fmt

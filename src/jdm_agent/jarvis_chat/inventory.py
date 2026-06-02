@@ -219,6 +219,23 @@ def _normalize_spec(spec: dict) -> dict:
     return s
 
 
+def split_workflow_and_brief(text: str) -> tuple[str, str]:
+    """Sépare un workflow rédigé par l'orchestrateur en (workflow, brief).
+
+    Le workflow se termine par une section `DESCRIPTION:` (3 lignes pour la
+    carte). SOURCE UNIQUE utilisée à la fois par l'endpoint UI (/generate) ET
+    par l'outil chat `create_specialist_agent` → aucune divergence possible."""
+    wf = (text or "").strip()
+    brief = ""
+    for marker in ("DESCRIPTION:", "DESCRIPTION :"):
+        idx = wf.rfind(marker)
+        if idx >= 0:
+            brief = wf[idx + len(marker):].strip()
+            wf = wf[:idx].strip()
+            break
+    return wf, brief
+
+
 def build_workflow_generation_prompt(spec: dict) -> str:
     """Méta-prompt DÉTERMINISTE (l'« aide ») demandant à l'orchestrateur LLM de
     CRÉER, à la manière des outils `*_workflow` de JDM (qui renvoient un flux

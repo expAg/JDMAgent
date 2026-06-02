@@ -2074,17 +2074,12 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         # Le contenu peut être une liste de blocs (Gemini « thoughts ») — on
         # l'aplatit en texte propre (sinon on afficherait le repr brut).
         raw = msgs[-1].content if msgs else ""
-        workflow = (_content_to_text(raw) or "").strip()
-        if not workflow:
+        full = (_content_to_text(raw) or "").strip()
+        if not full:
             return {"ok": False, "error": "génération vide", "fallback": _fallback}
-        # Sépare la DESCRIPTION (3 lignes pour la carte) du corps du workflow.
-        brief = ""
-        for marker in ("DESCRIPTION:", "DESCRIPTION :"):
-            idx = workflow.rfind(marker)
-            if idx >= 0:
-                brief = workflow[idx + len(marker):].strip()
-                workflow = workflow[:idx].strip()
-                break
+        # SOURCE UNIQUE : sépare DESCRIPTION (carte) du workflow (même helper que
+        # l'outil chat create_specialist_agent → pas de divergence).
+        workflow, brief = _inv.split_workflow_and_brief(full)
         return {"ok": True, "workflow": workflow, "brief": brief, "meta_prompt": meta}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}

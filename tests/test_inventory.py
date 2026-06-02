@@ -116,6 +116,19 @@ def test_allowed_tools_restricts_catalog(tmp_path, monkeypatch):
     assert excl2 == set(inv.WORKFLOW_TOOLS)
 
 
+def test_split_workflow_and_brief(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    txt = ("TITRE : X\nÉTAPES :\n1. a\n2. b\nRÈGLES :\n- r\n\n"
+           "DESCRIPTION: Fait ceci.\nÉtapes clés.\nSort un .x")
+    wf, brief = inv.split_workflow_and_brief(txt)
+    assert "DESCRIPTION" not in wf
+    assert "TITRE : X" in wf and "RÈGLES" in wf
+    assert brief.startswith("Fait ceci.")
+    # Pas de DESCRIPTION → brief vide, workflow inchangé.
+    wf2, brief2 = inv.split_workflow_and_brief("TITRE : Y\nÉTAPES :\n1. z")
+    assert brief2 == "" and "TITRE : Y" in wf2
+
+
 def test_workflow_generation_prompt(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
     spec = {"title": "Cuistot", "template": "generation_endogene",
