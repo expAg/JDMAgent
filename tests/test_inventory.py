@@ -116,6 +116,27 @@ def test_allowed_tools_restricts_catalog(tmp_path, monkeypatch):
     assert excl2 == set(inv.WORKFLOW_TOOLS)
 
 
+def test_workflow_generation_prompt(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    spec = {"title": "Cuistot", "template": "generation_endogene",
+            "instructions": "INSTRUCTION_UNIQUE_ABC",
+            "allowed_tools": ["exists", "get_relations"], "writes": True}
+    meta = inv.build_workflow_generation_prompt(spec)
+    assert "INSTRUCTION_UNIQUE_ABC" in meta      # les instructions de l'user
+    assert "*_workflow" in meta                  # « à la manière des *_workflow »
+    assert "exists" in meta and "get_relations" in meta  # outils dispo cités
+    assert "TITRE" in meta and "ÉTAPES" in meta and "RÈGLES" in meta
+
+
+def test_instructions_persisted(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    saved = inv.save_agent_spec({
+        "title": "I", "template": "libre",
+        "system_prompt": "WORKFLOW_GENERE", "instructions": "INSTR_BRUTE"})
+    assert saved["instructions"] == "INSTR_BRUTE"
+    assert saved["system_prompt"] == "WORKFLOW_GENERE"
+
+
 def test_edit_preserves_id_on_rename(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
     saved = inv.save_agent_spec({"title": "Cuisinier", "template": "libre",

@@ -2027,6 +2027,65 @@ def api_jarvis_save_agent(req: AgentSpecRequest) -> dict[str, Any]:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+class AgentGenerateRequest(BaseModel):
+    spec: dict
+    config: dict | None = None
+
+
+@app.post("/api/jarvis/agents/generate")
+def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
+    """Fait GÉNÉRER par L'ORCHESTRATEUR (le MÊME agent que la mascotte chat —
+    build_jarvis_chat_agent) le WORKFLOW de l'agent spécialiste « à la manière
+    des *_workflow » à partir des instructions de l'utilisateur.
+
+    C'est cette sortie (le workflow rédigé par l'orchestrateur) qui devient le
+    system_prompt de l'agent et qu'on montre à l'assemblage. Le méta-prompt
+    déterministe (build_workflow_generation_prompt) n'est qu'une aide. On ne crée
+    PAS un LLM ad hoc : on passe par l'orchestrateur déjà en place."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    from jdm_agent.jarvis_chat.agent import build_jarvis_chat_agent
+    from langchain_core.messages import HumanMessage
+    cfg = req.config or {}
+    spec = req.spec or {}
+    meta = _inv.build_workflow_generation_prompt(spec)
+    _fallback = (spec.get("instructions") or spec.get("system_prompt") or "")
+    # Résolution modèle + clé pool IDENTIQUE au chat de la mascotte.
+    llm_name = cfg.get("llm") or "gemini-3.1-flash-lite"
+    pool_active = cfg.get("poolActive") is not False
+    is_gemini = isinstance(llm_name, str) and llm_name.startswith("gemini")
+    model = ("gemini-3.1-flash-lite" if (pool_active and not is_gemini) else llm_name)
+    lease_id = "gen-" + _uuid.uuid4().hex[:8]
+    gem_key = None
+    try:
+        if str(model).startswith("gemini-") and pool_active:
+            from jdm_agent.pool_lease import acquire_key as _acq
+            gem_key = _acq(model, lease_id, _app)
+    except Exception:
+        gem_key = None
+    try:
+        llm = _app._build_llm(model, cfg.get("api_key") or "", use_thinking=False,
+                              gemini_key_override=gem_key)
+        # MÊME orchestrateur que la mascotte : on lui DEMANDE de rédiger le
+        # workflow (il connaît tous les outils et les recettes *_workflow).
+        agent = build_jarvis_chat_agent(client=get_client(), llm=llm)
+        out = agent.invoke({"messages": [HumanMessage(content=meta)]})
+        msgs = out.get("messages") if isinstance(out, dict) else None
+        workflow = (msgs[-1].content if msgs else "") or ""
+        workflow = workflow.strip() if isinstance(workflow, str) else str(workflow).strip()
+        if not workflow:
+            return {"ok": False, "error": "génération vide", "fallback": _fallback}
+        return {"ok": True, "workflow": workflow, "meta_prompt": meta}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}
+    finally:
+        if gem_key:
+            try:
+                from jdm_agent.pool_lease import release_key as _rel
+                _rel(lease_id, _app)
+            except Exception:
+                pass
+
+
 @app.post("/api/jarvis/agents/preview")
 def api_jarvis_preview_agent(req: AgentSpecRequest) -> dict[str, Any]:
     """Renvoie le PRÉ-PROMPT réellement assemblé (squelette déterministe +

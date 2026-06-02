@@ -2704,7 +2704,12 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   const [name, setName] = React.useState(_isEdit ? (editSpec.title || '') : '');
   const [description, setDescription] = React.useState(_isEdit ? (editSpec.brief || '') : '');
   const [template, setTemplate] = React.useState(_isEdit ? (editSpec.template || 'libre') : 'generation_endogene');
-  const [strategy, setStrategy] = React.useState(_isEdit ? (editSpec.system_prompt || '') : '');
+  // `strategy` = INSTRUCTIONS brutes saisies par l'utilisateur. `workflow` =
+  // le workflow rédigé par l'ORCHESTRATEUR « à la manière des *_workflow »
+  // (ce qui devient le system_prompt). En édition : instructions d'origine si
+  // gardées, workflow = system_prompt sauvegardé.
+  const [strategy, setStrategy] = React.useState(_isEdit ? (editSpec.instructions || '') : '');
+  const [workflow, setWorkflow] = React.useState(_isEdit ? (editSpec.system_prompt || '') : '');
   const [writes, setWrites] = React.useState(_isEdit ? (editSpec.writes !== false) : true);
   const [fmt, setFmt] = React.useState(_isEdit ? (editSpec.output_format || 'jdm') : 'jdm');
   const [ext, setExt] = React.useState(_isEdit ? (editSpec.output_ext || '') : '');
@@ -2712,8 +2717,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   const [target, setTarget] = React.useState(_isEdit ? ((editSpec.defaults && editSpec.defaults.target_count) || 0) : 0);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
-  const [preprompt, setPreprompt] = React.useState('');
-  const [preLoading, setPreLoading] = React.useState(false);
+  const [genLoading, setGenLoading] = React.useState(false);
   // Catalogue d'outils PROPOSABLES (sans *_workflow) + allow-list « ce que
   // l'agent doit savoir faire ». Pré-rempli : édition → outils sauvegardés ;
   // création → TOUT le catalogue (l'orchestrateur les connaît tous).
@@ -2768,16 +2772,20 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   }, [template, templates]); // eslint-disable-line
   const effExt = (extTouched && ext.trim()) ? _sanitizeExt(ext) : (_FMT_DEFAULT_EXT[fmt] || '.txt');
 
-  const _buildSpec = () => {
+  // spec ENVOYÉ : system_prompt = le WORKFLOW généré par l'orchestrateur (ou,
+  // à défaut, les instructions brutes) ; instructions = la saisie brute (gardée
+  // pour ré-génération). `forGen` true = on prépare la requête de génération
+  // (workflow pas encore produit).
+  const _buildSpec = (forGen) => {
     const spec = {
-      title: name.trim(), template, system_prompt: strategy.trim(),
+      title: name.trim(), template,
+      system_prompt: forGen ? '' : (workflow.trim() || strategy.trim()),
+      instructions: strategy.trim(),
       writes, output_format: fmt, output_ext: effExt,
       brief: description.trim(),
     };
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
     if (target > 0) spec.defaults = { target_count: Number(target) };
-    // allow-list « ce que l'agent doit savoir faire ». Si tout est sélectionné
-    // (ou liste non chargée), on n'envoie rien → l'agent a tout le catalogue.
     if (Array.isArray(allowedTools) && allowedTools.length
         && !(toolOpts.length && allowedTools.length === toolOpts.length)) {
       spec.allowed_tools = allowedTools;
@@ -2785,24 +2793,33 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     return spec;
   };
 
-  const goRecap = async () => {
-    if (!name.trim() || !strategy.trim()) { setMsg('Nom et stratégie requis.'); return; }
-    setMsg(''); setStep('recap');
-    // Récupère le VRAI prompt assemblé (squelette + stratégie + cadrage).
-    setPreLoading(true); setPreprompt('');
+  // Demande à L'ORCHESTRATEUR (même agent que la mascotte) de rédiger le
+  // workflow « à la manière des *_workflow » depuis les instructions.
+  const generate = async () => {
+    setGenLoading(true); setMsg('');
     try {
-      const r = await fetch('api/jarvis/agents/preview', {
+      const cfg = (typeof window !== 'undefined' && window.__JDM_JARVIS_CONFIG__) || {};
+      const r = await fetch('api/jarvis/agents/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spec: _buildSpec() }),
+        body: JSON.stringify({ spec: _buildSpec(true), config: { llm: cfg.llm, poolActive: cfg.poolActive } }),
       });
       const d = await r.json();
-      if (d.ok) setPreprompt(d.preprompt || '');
-    } catch (e) {}
-    setPreLoading(false);
+      if (d.ok && d.workflow) setWorkflow(d.workflow);
+      else { setWorkflow(d.fallback || strategy.trim()); if (d.error) setMsg('⚠ génération indisponible (' + d.error + ') — workflow = instructions brutes, éditable.'); }
+    } catch (e) { setWorkflow(strategy.trim()); setMsg('⚠ ' + (e.message || e)); }
+    setGenLoading(false);
+  };
+
+  const goRecap = async () => {
+    if (!name.trim() || !strategy.trim()) { setMsg('Nom et instructions requis.'); return; }
+    setMsg(''); setStep('recap');
+    // En création : génère le workflow via l'orchestrateur. En édition : on
+    // garde le workflow existant (re-génération sur demande via le bouton).
+    if (!workflow.trim()) await generate();
   };
 
   const create = async () => {
-    if (!name.trim() || !strategy.trim()) { setMsg('Nom et stratégie requis.'); return; }
+    if (!name.trim() || !strategy.trim()) { setMsg('Nom et instructions requis.'); return; }
     setBusy(true); setMsg('');
     try {
       const spec = _buildSpec();
@@ -2865,9 +2882,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
             {tpl.skeleton}
           </div>
         )}
-        <Field label="Stratégie de l'agent (son déroulé / system prompt)">
-          <textarea value={strategy} onChange={(e) => setStrategy(e.target.value)} rows={5}
-            placeholder="Décris ce que l'agent fait, étape par étape (terme au hasard, idées associées, relation cible, validation, consolidation…)."
+        <Field label="Instructions — ce que l'agent doit faire (l'orchestrateur en rédigera le workflow)">
+          <textarea value={strategy} onChange={(e) => { setStrategy(e.target.value); setWorkflow(''); }} rows={5}
+            placeholder="Décris en langage naturel ce que l'agent doit accomplir (ex. « enrichis les termes de cuisine en relations de parties, en partant de leurs idées associées, et consolide »). L'orchestrateur en fera un workflow à la manière des *_workflow."
             style={{
               width: '100%', resize: 'vertical', padding: '10px 12px',
               background: 'var(--bg-card)', border: '1px solid var(--line)',
@@ -2932,41 +2949,36 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
             ne sont jamais proposées.
           </div>
         </Field>
-        <Field label="Stratégie saisie (éditable)">
-          <textarea value={strategy} onChange={(e) => { setStrategy(e.target.value); setPreprompt(''); }} rows={4}
-            style={{
-              width: '100%', resize: 'vertical', padding: '10px 12px',
-              background: 'var(--bg-card)', border: '1px solid var(--line)',
-              borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'inherit',
-              fontSize: 13, lineHeight: 1.5, outline: 'none',
-            }} />
-        </Field>
-        {/* Le VRAI prompt assemblé (squelette déterministe + stratégie +
-            cadrage format/cible/itération) tel qu'il sera donné à l'agent. */}
-        <Field label="Prompt réellement donné à l'agent (assemblé)">
-          {preLoading ? (
+        {/* Le WORKFLOW rédigé par l'ORCHESTRATEUR « à la manière des *_workflow »
+            depuis les instructions — c'est lui qui devient le system_prompt de
+            l'agent. Éditable ; régénérable. */}
+        <Field label="Workflow rédigé par l'orchestrateur (deviendra le cerveau de l'agent) — éditable">
+          {genLoading ? (
             <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)', padding: '10px 12px' }}>
-              … assemblage du prompt …
+              … l'orchestrateur rédige le workflow …
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <textarea readOnly value={preprompt || '(indisponible — clique « ↻ Réassembler »)'} rows={9}
+              <textarea value={workflow} onChange={(e) => setWorkflow(e.target.value)} rows={12}
+                placeholder="(le workflow généré par l'orchestrateur apparaîtra ici)"
                 style={{
                   width: '100%', resize: 'vertical', padding: '10px 12px',
                   background: 'var(--bg-elev)', border: '1px solid var(--line)',
-                  borderRadius: 'var(--radius)', color: 'var(--ink-2)', fontFamily: 'var(--font-mono)',
+                  borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'var(--font-mono)',
                   fontSize: 12, lineHeight: 1.5, outline: 'none',
                 }} />
-              <button type="button" onClick={goRecap} className="focus-ring" style={{ ...ghostLinkStyle, alignSelf: 'flex-start' }}>
-                ↻ Réassembler le prompt
+              <button type="button" onClick={generate} className="focus-ring" style={{ ...ghostLinkStyle, alignSelf: 'flex-start' }}>
+                ↻ Régénérer via l'orchestrateur
               </button>
             </div>
           )}
         </Field>
         <div style={{ fontSize: 11.5, color: 'var(--ink-3)', margin: '-4px 0 14px', lineHeight: 1.4 }}>
+          Au lancement, ce workflow est cadré par le préprompt déterministe
+          (terme/cible/format) — une simple aide.{' '}
           {_isEdit
             ? 'Les modifications sont enregistrées sur l\'agent existant ; tu seras redirigé vers sa fiche.'
-            : 'Après création, l\'agent apparaît dans le Répertoire et la Supervision ; tu seras redirigé vers sa fiche détaillée.'}
+            : 'Après création, l\'agent apparaît dans le Répertoire et la Supervision ; tu seras redirigé vers sa fiche.'}
         </div>
 
         {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
@@ -2974,7 +2986,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           <Button variant="ghost" onClick={() => { setStep('form'); setMsg(''); }}>← Modifier</Button>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button variant="secondary" onClick={onClose}>Annuler</Button>
-            <Button onClick={create} disabled={busy || !name.trim() || !strategy.trim()}>
+            <Button onClick={create} disabled={busy || genLoading || !name.trim() || !workflow.trim()}>
               {busy ? 'Enregistrement…' : (_isEdit ? 'Enregistrer' : 'Créer l\'agent')}
             </Button>
           </div>

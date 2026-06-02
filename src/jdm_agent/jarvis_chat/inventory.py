@@ -212,7 +212,58 @@ def _normalize_spec(spec: dict) -> dict:
         s["allowed_tools"] = [str(x) for x in at if str(x).strip()]
     else:
         s["allowed_tools"] = []
+    # instructions : la demande BRUTE de l'utilisateur (ce qu'il a tapé / dit),
+    # conservée pour pouvoir RE-générer le workflow plus tard. Le system_prompt,
+    # lui, EST le workflow généré par l'orchestrateur à la manière des *_workflow.
+    s["instructions"] = (s.get("instructions") or "").strip()
     return s
+
+
+def build_workflow_generation_prompt(spec: dict) -> str:
+    """Méta-prompt DÉTERMINISTE (l'« aide ») demandant à l'orchestrateur LLM de
+    CRÉER, à la manière des outils `*_workflow` de JDM (qui renvoient un flux
+    canonique : un TITRE, des ÉTAPES numérotées, des RÈGLES), un NOUVEAU workflow
+    pour l'agent spécialiste à partir des instructions de l'utilisateur.
+
+    La SORTIE de ce prompt (le workflow rédigé par le LLM) devient le
+    `system_prompt` de l'agent — c'est elle qu'on montre à l'assemblage."""
+    s = _normalize_spec(spec)
+    instructions = (s.get("instructions") or s.get("system_prompt") or "").strip()
+    tpl = AGENT_TEMPLATES[s["template"]]
+    fmt = s["output_format"]
+    fmt_hint = {
+        "jdm": "soumission JDM (lignes `terme|relation|cible|annotation`)",
+        "json": "JSON structuré",
+        "libre": "texte/rapport libre",
+    }.get(fmt, fmt)
+    tools = s.get("allowed_tools") or []
+    tools_line = (", ".join(tools) if tools
+                  else "tout le catalogue JDM disponible (sauf les *_workflow)")
+    caps = []
+    caps.append("CONSOLIDE chaque candidat par inférence" if s["consolidates"]
+                else "ne consolide pas")
+    caps.append(f"ÉCRIT un fichier {s['output_ext']}" if s["writes"]
+                else "n'écrit pas de fichier (résultat en réponse)")
+    return (
+        "Tu es l'orchestrateur Jarvis. À LA MANIÈRE des outils `*_workflow` de "
+        "JDM (enrichment_workflow, audit_workflow… qui renvoient un flux "
+        "canonique : un TITRE, des ÉTAPES numérotées, et des RÈGLES), rédige un "
+        "NOUVEAU workflow pour un agent spécialiste, à partir de ces instructions :\n\n"
+        f"« {instructions} »\n\n"
+        "Cadre de l'agent :\n"
+        f"- Esprit du template : {tpl['skeleton']}\n"
+        f"- Format de sortie : {fmt_hint}\n"
+        f"- Capacités : {' ; '.join(caps)}\n"
+        f"- Outils que l'agent SAIT utiliser (UNIQUEMENT ceux-ci, JAMAIS de "
+        f"*_workflow) : {tools_line}\n\n"
+        "Rends UNIQUEMENT le workflow (pas de préambule, pas de ```), au format :\n"
+        "TITRE : <titre court>\n"
+        "ÉTAPES :\n"
+        "1. <action concrète mobilisant les outils ci-dessus>\n"
+        "2. …\n"
+        "RÈGLES :\n"
+        "- <garde-fou / critère d'arrêt / qualité>\n"
+    )
 
 
 # ───────────────────────── API inventaire ──────────────────────────────────
