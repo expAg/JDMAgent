@@ -2714,6 +2714,12 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   const [msg, setMsg] = React.useState('');
   const [preprompt, setPreprompt] = React.useState('');
   const [preLoading, setPreLoading] = React.useState(false);
+  // Catalogue d'outils PROPOSABLES (sans *_workflow) + allow-list « ce que
+  // l'agent doit savoir faire ». Pré-rempli : édition → outils sauvegardés ;
+  // création → TOUT le catalogue (l'orchestrateur les connaît tous).
+  const [toolOpts, setToolOpts] = React.useState([]);
+  const [allowedTools, setAllowedTools] = React.useState(
+    _isEdit && Array.isArray(editSpec.allowed_tools) ? editSpec.allowed_tools.slice() : null);
 
   React.useEffect(() => {
     (async () => {
@@ -2723,6 +2729,25 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
       } catch (e) {}
     })();
   }, []);
+  // Catalogue d'outils → options du multi-select (exclut les *_workflow).
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('api/jarvis/tools');
+        if (!r.ok) return;
+        const d = await r.json();
+        const sel = (d.tools || []).filter(t => t.kind !== 'workflow');
+        const opts = sel.map(t => ({
+          value: t.name,
+          label: t.description ? `${t.name} — ${String(t.description).slice(0, 60)}` : t.name,
+        }));
+        setToolOpts(opts);
+        // Pré-remplissage : si pas déjà défini (création, ou édition sans
+        // allow-list sauvegardée) → TOUS les outils proposables.
+        setAllowedTools(prev => (prev && prev.length) ? prev : opts.map(o => o.value));
+      } catch (e) {}
+    })();
+  }, []); // eslint-disable-line
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -2751,6 +2776,12 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     };
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
     if (target > 0) spec.defaults = { target_count: Number(target) };
+    // allow-list « ce que l'agent doit savoir faire ». Si tout est sélectionné
+    // (ou liste non chargée), on n'envoie rien → l'agent a tout le catalogue.
+    if (Array.isArray(allowedTools) && allowedTools.length
+        && !(toolOpts.length && allowedTools.length === toolOpts.length)) {
+      spec.allowed_tools = allowedTools;
+    }
     return spec;
   };
 
@@ -2888,7 +2919,19 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           {recapRow('Écrit un fichier', writes ? 'Oui' : 'Non')}
           {recapRow('Consolide', tpl.consolidates ? 'Oui' : 'Non')}
           {recapRow('Nombre cible', target > 0 ? String(target) : 'défaut')}
+          {recapRow('Outils', `${(allowedTools || []).length}${toolOpts.length ? ` / ${toolOpts.length}` : ''}`)}
         </div>
+        <Field label="Ce que l'agent spécialiste doit savoir faire (outils)">
+          <MultiSelect value={allowedTools || []}
+            onChange={(v) => setAllowedTools(v)}
+            placeholder={toolOpts.length ? '— sélectionne les outils —' : '… chargement du catalogue …'}
+            options={toolOpts} />
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5, lineHeight: 1.4 }}>
+            Pré-rempli avec tout le catalogue. Retire ce dont l'agent n'a pas
+            besoin. Les recettes <span className="mono">*_workflow</span> (natifs)
+            ne sont jamais proposées.
+          </div>
+        </Field>
         <Field label="Stratégie saisie (éditable)">
           <textarea value={strategy} onChange={(e) => { setStrategy(e.target.value); setPreprompt(''); }} rows={4}
             style={{
@@ -5227,14 +5270,27 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
               <div className="mono" style={{
                 fontSize: 11, color: 'var(--ink-3)',
                 textTransform: 'uppercase', letterSpacing: '0.1em', margin: '16px 0 8px',
-              }}>Outils JDM mobilisés</div>
-              <div style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-                Tout le catalogue d'outils JDM (lecture, exploration, désambiguïsation,
-                fact-check, inférence{flow.consolidates ? ', consolidation' : ''})
-                {flow.writes !== false
-                  ? ' + écriture du fichier de soumission.'
-                  : ' — sans écriture de fichier (résultat rendu en réponse).'}
-              </div>
+              }}>Ce que l'agent sait faire (outils)</div>
+              {(flow._spec && Array.isArray(flow._spec.allowed_tools) && flow._spec.allowed_tools.length) ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {flow._spec.allowed_tools.map(t => (
+                    <span key={t} className="mono" style={{
+                      fontSize: 11, padding: '3px 8px', background: 'var(--bg-elev)',
+                      border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
+                      color: 'var(--ink-2)',
+                    }}>{t}</span>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                  Tout le catalogue d'outils JDM (lecture, exploration, désambiguïsation,
+                  fact-check, inférence{flow.consolidates ? ', consolidation' : ''})
+                  {flow.writes !== false
+                    ? ' + écriture du fichier de soumission.'
+                    : ' — sans écriture de fichier (résultat rendu en réponse).'}
+                  {' '}— sauf les recettes *_workflow.
+                </div>
+              )}
             </div>
           )}
         </div>

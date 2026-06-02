@@ -594,9 +594,32 @@ def list_specialist_agents() -> dict:
 
 
 @tool
+def list_jdm_tools() -> dict:
+    """Liste les OUTILS PROPOSABLES à un agent sur mesure (= catalogue JDM moins
+    les recettes *_workflow, réservées aux natifs). Chaque entrée : nom + 1ʳᵉ
+    ligne de docstring. Sers-t'en pour pré-sélectionner `allowed_tools` quand tu
+    crées un agent spécialiste (ce qu'il « doit savoir faire »)."""
+    from jdm_agent.jarvis_chat import inventory as _inv
+    try:
+        from jdm_agent.tools.jdm_tools import build_jdm_tools
+        sel = _inv.selectable_tool_names()
+        out = []
+        for t in build_jdm_tools():
+            nm = getattr(t, "name", "")
+            if nm and nm in sel:
+                doc = (getattr(t, "description", "") or "").strip().splitlines()
+                out.append({"name": nm, "description": doc[0] if doc else ""})
+        out.sort(key=lambda x: x["name"])
+        return {"count": len(out), "tools": out}
+    except Exception as e:
+        return {"count": 0, "tools": [], "error": f"{type(e).__name__}: {e}"}
+
+
+@tool
 def create_specialist_agent(name: str, strategy: str, template: str = "libre",
                             writes: bool = True, output_format: str = "",
                             output_ext: str = "", target_count: int = 0,
+                            allowed_tools: list | None = None,
                             confirm: bool = False) -> dict:
     """Construit un agent JDM SUR MESURE, persisté et réutilisable dans
     l'inventaire (Répertoire), lançable ensuite via start_agent('<id>').
@@ -617,6 +640,11 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
       - output_ext : extension du fichier produit, LIBRE (ex. '.enrich',
         '.cuisine', '.json'…). Vide → dérivée du format/template.
       - target_count : nombre d'items visés (0 = défaut).
+      - allowed_tools : liste des outils que l'agent SAIT FAIRE (ce que tu
+        choisis dans le catalogue selon la stratégie — JAMAIS les *_workflow,
+        réservés aux natifs). TU connais tous les outils : pré-sélectionne ceux
+        pertinents. Vide = tout le catalogue disponible. Appelle
+        `list_jdm_tools()` si tu as besoin de revoir le catalogue.
       - confirm : FALSE d'abord → renvoie un APERÇU à montrer à l'utilisateur
         pour validation ; rappelle avec confirm=True pour CRÉER réellement.
 
@@ -630,8 +658,16 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
     spec = {"title": name.strip(), "template": template,
             "system_prompt": strategy.strip(), "writes": bool(writes)}
     fmt = (output_format or "").strip().lower().lstrip(".")
-    if fmt:
+    if fmt in ("jdm", "libre", "json"):
+        spec["output_format"] = fmt
+    if (output_ext or "").strip():
+        spec["output_ext"] = output_ext.strip()
+    elif fmt:
         spec["output_ext"] = _FORMAT_TO_EXT.get(fmt, "." + fmt)
+    if isinstance(allowed_tools, list) and allowed_tools:
+        # On ne garde que des outils PROPOSABLES (catalogue moins *_workflow).
+        ok_names = _inv.selectable_tool_names()
+        spec["allowed_tools"] = [t for t in allowed_tools if t in ok_names] if ok_names else list(allowed_tools)
     if target_count and int(target_count) > 0:
         spec["defaults"] = {"target_count": int(target_count)}
     # Normalisation (sans persister) pour l'aperçu.
@@ -674,7 +710,7 @@ def build_supervision_tools() -> list:
         list_runs, get_run, list_productions, read_production, summarize_triplets,
         describe_flows, describe_site_routes,
         start_agent, stop_agent,
-        list_agent_templates, list_specialist_agents,
+        list_agent_templates, list_specialist_agents, list_jdm_tools,
         create_specialist_agent, delete_specialist_agent,
         get_config, set_config,
         read_env, set_env, rollback_env,

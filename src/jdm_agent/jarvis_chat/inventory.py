@@ -204,6 +204,14 @@ def _normalize_spec(spec: dict) -> dict:
         s["canonical_mode"] = "auto_append" if s["consolidates"] else "redirect"
     s["system_prompt"] = (s.get("system_prompt") or tpl["skeleton"]).strip()
     s["defaults"] = s.get("defaults") if isinstance(s.get("defaults"), dict) else {}
+    # allowed_tools : sous-ensemble du catalogue que l'agent SAIT FAIRE (choisi
+    # par l'orchestrateur / éditable dans la confirmation). Vide = tout le
+    # catalogue disponible (sauf *_workflow et écriture si non-écrivant).
+    at = s.get("allowed_tools")
+    if isinstance(at, list):
+        s["allowed_tools"] = [str(x) for x in at if str(x).strip()]
+    else:
+        s["allowed_tools"] = []
     return s
 
 
@@ -287,13 +295,43 @@ WORKFLOW_TOOLS = frozenset({
 })
 
 
+_ALL_TOOL_NAMES_CACHE: Optional[set] = None
+
+
+def all_tool_names() -> set:
+    """Noms de tous les @tool du catalogue JDM (cache process). Sert à calculer
+    l'exclusion quand un agent a une allow-list explicite."""
+    global _ALL_TOOL_NAMES_CACHE
+    if _ALL_TOOL_NAMES_CACHE is None:
+        try:
+            from jdm_agent.tools.jdm_tools import build_jdm_tools
+            _ALL_TOOL_NAMES_CACHE = {getattr(t, "name", "") for t in build_jdm_tools()} - {""}
+        except Exception:
+            _ALL_TOOL_NAMES_CACHE = set()
+    return set(_ALL_TOOL_NAMES_CACHE)
+
+
+def selectable_tool_names() -> set:
+    """Outils PROPOSABLES à un agent sur mesure = catalogue moins les recettes
+    *_workflow (réservées aux natifs)."""
+    return all_tool_names() - set(WORKFLOW_TOOLS)
+
+
 def exclude_tools_for_spec(spec: dict) -> set:
-    """Outils JDM à retirer pour cet agent sur mesure : TOUJOURS les recettes
-    *_workflow (réservées aux natifs), plus l'écriture si writes est faux.
+    """Outils JDM à retirer pour cet agent sur mesure :
+    - TOUJOURS les recettes *_workflow (réservées aux natifs) ;
+    - l'écriture si writes est faux ;
+    - tout ce qui n'est PAS dans `allowed_tools` quand cette allow-list est
+      renseignée (vide = tout le catalogue disponible).
     (Les FORBIDDEN_TOOLS ne sont pas dans le toolset JDM.)"""
     excl = set(WORKFLOW_TOOLS)
     if not spec.get("writes"):
         excl.add("write_submission_file")
+    allowed = spec.get("allowed_tools") or []
+    if allowed:
+        names = all_tool_names()
+        if names:
+            excl |= (names - set(allowed))
     return excl
 
 

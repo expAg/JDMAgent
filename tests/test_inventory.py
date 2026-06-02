@@ -94,6 +94,28 @@ def test_output_ext_free(tmp_path, monkeypatch):
     assert spec3["output_ext"] == ".audit"
 
 
+def test_allowed_tools_restricts_catalog(tmp_path, monkeypatch):
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    names = inv.all_tool_names()
+    assert names, "catalogue d'outils non vide attendu"
+    pick = "exists" if "exists" in names else sorted(names)[0]
+    spec = inv.save_agent_spec({
+        "title": "Ciblé", "template": "libre", "writes": False,
+        "allowed_tools": [pick],
+    })
+    assert spec["allowed_tools"] == [pick]
+    excl = inv.exclude_tools_for_spec(spec)
+    # Tout le catalogue SAUF `pick` est exclu ; les *_workflow aussi.
+    assert pick not in excl
+    assert (names - {pick}).issubset(excl)
+    for wf in inv.WORKFLOW_TOOLS:
+        assert wf in excl
+    # Allow-list vide → comportement par défaut (rien retiré au-delà des workflows).
+    spec2 = inv.save_agent_spec({"title": "Large", "template": "libre", "writes": True})
+    excl2 = inv.exclude_tools_for_spec(spec2)
+    assert excl2 == set(inv.WORKFLOW_TOOLS)
+
+
 def test_edit_preserves_id_on_rename(tmp_path, monkeypatch):
     inv = _fresh_inventory(tmp_path, monkeypatch)
     saved = inv.save_agent_spec({"title": "Cuisinier", "template": "libre",
