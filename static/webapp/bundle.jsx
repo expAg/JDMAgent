@@ -9030,7 +9030,6 @@ const JRING_CSS = `
 
 function ViewJarvis() {
   const [running, setRunning] = useState(null);       // flow id, or null = carousel
-  const [detailing, setDetailing] = useState(null);   // flow id pour la vue DÉTAIL (plein écran)
   const [editing, setEditing] = useState(null);       // spec d'un agent custom en cours d'édition
   // Agents sur mesure (inventaire) — pour résoudre la vue JarvisRun d'un agent
   // sur mesure lancé depuis Supervision/Répertoire (les natifs vivent dans
@@ -9038,17 +9037,25 @@ function ViewJarvis() {
   const _customAgents = useCustomAgentFlows();
   const [panelIndex, setPanelIndex] = useState(1);     // default landing = Accueil (middle)
   const [transitioning, setTransitioning] = useState(true);
-  const total = J_PANELS.length;
+  // Carrousel DATA-DRIVEN : 3 sections + UN panneau par agent (natifs ET sur
+  // mesure). Les customs sont donc dans le rail/nav/Suivant comme les natifs.
+  const allAgents = [...JARVIS_AGENTS, ..._customAgents];
   const sectionCount = J_SECTIONS.length;
+  const panels = [
+    ...J_SECTIONS,
+    ...allAgents.map(f => ({ id: f.id, label: f.kicker || 'Sur mesure' })),
+  ];
+  const total = panels.length;
+  const panelBasis = `${100 / total}%`;
 
   const goToIndex = useCallback((i) => {
     setTransitioning(true);
     setPanelIndex(Math.max(0, Math.min(total - 1, i)));
   }, [total]);
   const goToId = useCallback((id) => {
-    const idx = J_PANELS.findIndex(p => p.id === id);
+    const idx = panels.findIndex(p => p.id === id);
     if (idx >= 0) goToIndex(idx);
-  }, [goToIndex]);
+  }, [goToIndex, panels]);
 
   // Auto-hide the section nav while scrolling down through a panel's content
   // (so it never collides with what's underneath); reveal it at the top or on scroll-up.
@@ -9161,57 +9168,19 @@ function ViewJarvis() {
     return () => { window.removeEventListener('touchstart', onStart); window.removeEventListener('touchend', onEnd); };
   }, [panelIndex, goToIndex, sectionCount, running]);
 
-  // ─── Detail mode : vue détail plein écran d'un agent (natif ou sur mesure).
-  // Atteinte via le bouton « Détail → » de N'IMPORTE quelle carte. Le clic sur
-  // le corps de la carte LANCE le run ; le bouton Détail ouvre cette vue. ───
-  if (detailing) {
-    const flow = [...JARVIS_AGENTS, ..._customAgents].find(f => f.id === detailing);
-    if (!flow) {
-      return (
-        <PageShell>
-          <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--ink-3)' }}>
-            <div style={{ marginBottom: 14 }}>… chargement de l'agent …</div>
-            <Button variant="secondary" onClick={() => setDetailing(null)}>← Retour</Button>
-          </div>
-        </PageShell>
-      );
-    }
-    const _idx = JARVIS_AGENTS.findIndex(f => f.id === detailing);
-    const _delCustom = async (f) => {
-      if (typeof window !== 'undefined' && !window.confirm(`Supprimer définitivement l'agent « ${f.title} » ?`)) return;
-      try {
-        await fetch('api/jarvis/agents/' + encodeURIComponent(f.id), { method: 'DELETE' });
-        try { window.dispatchEvent(new CustomEvent('jdm-agents-changed')); } catch (e) {}
-      } catch (e) {}
-      setDetailing(null);
-    };
-    return (
-      <>
-        <JAgentPanel
-          flow={flow}
-          index={_idx}
-          standalone
-          onBack={() => setDetailing(null)}
-          onLaunch={() => { setDetailing(null); setRunning(detailing); }}
-          onIndex={() => setDetailing(null)}
-          onSommaire={() => setDetailing(null)}
-          onEdit={(f) => setEditing(f._spec || f)}
-          onDelete={_delCustom}
-        />
-        {editing && (
-          <JAgentBuilderModal
-            editSpec={editing}
-            onClose={() => setEditing(null)}
-            onCreated={(id) => { setEditing(null); setDetailing(id); }}
-          />
-        )}
-      </>
-    );
-  }
+  // Suppression d'agent sur mesure (depuis sa fiche détail dans le carrousel).
+  const _delCustomAgent = async (f) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Supprimer définitivement l'agent « ${f.title} » ?`)) return;
+    try {
+      await fetch('api/jarvis/agents/' + encodeURIComponent(f.id), { method: 'DELETE' });
+      try { window.dispatchEvent(new CustomEvent('jdm-agents-changed')); } catch (e) {}
+    } catch (e) {}
+    goToId('repertoire');
+  };
 
   // ─── Run mode : replace carousel with the live monitor ───
   if (running) {
-    const flow = [...JARVIS_AGENTS, ..._customAgents].find(f => f.id === running);
+    const flow = allAgents.find(f => f.id === running);
     if (!flow) {
       // Agent sur mesure pas encore chargé (fetch async de l'inventaire) ou
       // introuvable : on évite le crash (flow.id sur undefined). Le hook
@@ -9229,7 +9198,7 @@ function ViewJarvis() {
       <JarvisRun
         flow={flow}
         onBack={() => {
-          const idx = J_PANELS.findIndex(p => p.id === running);
+          const idx = panels.findIndex(p => p.id === running);
           setRunning(null);
           setTransitioning(false);
           if (idx >= 0) setPanelIndex(idx);
@@ -9238,7 +9207,7 @@ function ViewJarvis() {
     );
   }
 
-  const activePanel = J_PANELS[panelIndex].id;
+  const activePanel = panels[panelIndex].id;
   const activeSection = panelIndex < sectionCount ? activePanel : 'accueil';
 
   return (
@@ -9269,32 +9238,47 @@ function ViewJarvis() {
             : 'none',
           willChange: 'transform',
         }}>
-          <JPanel><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
-          <JPanel><JSupervisionPanel flows={JARVIS_AGENTS} onPick={(id) => setDetailing(id)} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
-          <JPanel><JAccueilPanel flows={JARVIS_AGENTS} onPick={(id) => setDetailing(id)} onLaunch={(id) => setRunning(id)} /></JPanel>
+          <JPanel basis={panelBasis}><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
+          <JPanel basis={panelBasis}><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
+          <JPanel basis={panelBasis}><JAccueilPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
 
-          {JARVIS_AGENTS.map((f, i) => (
-            <JPanel key={f.id}>
-              <JAgentPanel
-                flow={f}
-                index={i}
-                onLaunch={() => setRunning(f.id)}
-                onIndex={goToIndex}
-                onSommaire={() => goToId('accueil')}
-              />
-            </JPanel>
-          ))}
+          {allAgents.map((f, i) => {
+            const panelPos = sectionCount + i;          // index réel dans le carrousel
+            const isCustom = !!f._custom;
+            return (
+              <JPanel key={f.id} basis={panelBasis}>
+                <JAgentPanel
+                  flow={f}
+                  index={i}
+                  panelPos={panelPos}
+                  total={total}
+                  onLaunch={() => setRunning(f.id)}
+                  onIndex={goToIndex}
+                  onSommaire={() => goToId('repertoire')}
+                  onEdit={isCustom ? ((spec) => setEditing(spec._spec || spec)) : undefined}
+                  onDelete={isCustom ? _delCustomAgent : undefined}
+                />
+              </JPanel>
+            );
+          })}
         </div>
       </div>
+      {editing && (
+        <JAgentBuilderModal
+          editSpec={editing}
+          onClose={() => setEditing(null)}
+          onCreated={(id) => { setEditing(null); goToId(id); }}
+        />
+      )}
     </>
   );
 }
 
 // ─── Panel wrapper — one slot of the carousel track ───
-function JPanel({ children }) {
+function JPanel({ children, basis }) {
   return (
     <div className="jpanel-scroll" style={{
-      flex: `0 0 ${JPANEL_BASIS}`,
+      flex: `0 0 ${basis || JPANEL_BASIS}`,
       width: '100%',
       height: '100%',
       display: 'flex',
@@ -12777,7 +12761,7 @@ function JToolDialog({ flow, tool, onClose }) {
 }
 
 // ═══════════════════ Per-flow design panel ═══════════════════
-function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, onBack, onEdit, onDelete }) {
+function JAgentPanel({ flow, index, panelPos: panelPosProp, total, onLaunch, onIndex, onSommaire, standalone, onBack, onEdit, onDelete }) {
   // Tools utilises par ce flow (derives de AGENT_TOOL_STEPS — le mapping
   // reel tool -> etape, defini en haut du fichier en s'alignant sur les
   // workflows backend). Pas de samples : la "candidatesPool" du design
@@ -12800,9 +12784,17 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
       ? al
       : Object.keys(_allDocs || {}).filter(n => n && !n.endsWith('_workflow')).sort();
   }
-  const panelPos = J_PANELS.findIndex(p => p.id === flow.id);  // position in the carousel track
+  // Position dans le carrousel + nombre total d'agents (natifs + sur mesure),
+  // fournis par ViewJarvis (data-driven). Fallback : recalcul local.
+  const panelPos = (panelPosProp != null && panelPosProp >= 0)
+    ? panelPosProp
+    : J_PANELS.findIndex(p => p.id === flow.id);
+  const sectionCount = (typeof J_SECTIONS !== 'undefined') ? J_SECTIONS.length : 3;
+  const carouselTotal = (total != null && total > 0) ? total : J_PANELS.length;
+  const agentCount = carouselTotal - sectionCount;        // nb d'agents (hors sections)
+  const agentNum = panelPos - sectionCount + 1;           // rang 1-based de cet agent
   const safeIndex = index >= 0 ? index : 0;  // custom : pas dans JARVIS_AGENTS
-  const lastFlow = index === JARVIS_AGENTS.length - 1;
+  const lastFlow = panelPos >= carouselTotal - 1;
 
   return (
     <div style={{ width: '100%', maxWidth: 1120, margin: standalone ? '0 auto' : undefined, padding: standalone ? '6px 28px 80px' : undefined }}>
@@ -12839,7 +12831,7 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
             <div className="mono" style={{
               fontSize: 11, color: flow.accent, fontWeight: 600,
               textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 8,
-            }}>{flow.kicker}{isCustom ? '' : ` · ${index + 1} / ${JARVIS_AGENTS.length}`}</div>
+            }}>{flow.kicker}{(agentNum >= 1 && agentCount >= 1) ? ` · ${agentNum} / ${agentCount}` : ''}</div>
             <h1 className="display" style={{
               margin: 0, fontFamily: 'var(--font-display)',
               fontSize: 'clamp(30px, 3.6vw, 44px)', fontWeight: 500,
@@ -13041,19 +13033,34 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, o
           borderTop: '1px solid var(--line-soft)', flexWrap: 'wrap',
         }}>
           <button type="button" onClick={onSommaire} className="focus-ring" style={ghostLinkStyle}>
-            ↖ Accueil
+            ↖ Répertoire
           </button>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
-            AGENT {String(index + 1).padStart(2, '0')} / {String(JARVIS_AGENTS.length).padStart(2, '0')}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
+              AGENT {String(agentNum).padStart(2, '0')} / {String(agentCount).padStart(2, '0')}
+            </div>
+            {isCustom && onEdit && (
+              <button type="button" onClick={() => onEdit(flow)} className="focus-ring" style={ghostLinkStyle}>
+                ✎ Modifier
+              </button>
+            )}
+            {isCustom && onDelete && (
+              <button type="button" onClick={() => onDelete(flow)} className="focus-ring"
+                style={{ ...ghostLinkStyle, color: 'var(--jdm-magenta)', borderColor: 'color-mix(in srgb, var(--jdm-magenta) 40%, var(--line))' }}>
+                🗑 Supprimer
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button" onClick={() => onIndex(panelPos - 1)} className="focus-ring" style={ghostLinkStyle}>
+            <button type="button"
+              onClick={() => agentNum <= 1 ? onSommaire() : onIndex(panelPos - 1)}
+              className="focus-ring" style={ghostLinkStyle}>
               ‹ Précédent
             </button>
             <button type="button"
               onClick={() => lastFlow ? onSommaire() : onIndex(panelPos + 1)}
               className="focus-ring" style={ghostLinkStyle}>
-              {lastFlow ? 'Accueil ›' : 'Suivant ›'}
+              {lastFlow ? 'Répertoire ›' : 'Suivant ›'}
             </button>
           </div>
         </div>
