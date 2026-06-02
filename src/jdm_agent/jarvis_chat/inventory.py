@@ -102,7 +102,7 @@ _BUILTINS: dict[str, dict] = {
 AGENT_TEMPLATES: dict[str, dict] = {
     "audit": {
         "label": "Audit",
-        "consolidates": False, "writes": True,
+        "consolidates": False, "writes": True, "format": "jdm",
         "output_ext": ".audit", "canonical_mode": "redirect",
         "skeleton": (
             "Tu AUDITES un terme : pour chaque sens (désambiguïsation), vérifie "
@@ -112,7 +112,7 @@ AGENT_TEMPLATES: dict[str, dict] = {
     },
     "generation_endogene": {
         "label": "Génération endogène",
-        "consolidates": True, "writes": True,
+        "consolidates": True, "writes": True, "format": "jdm",
         "output_ext": ".enrich", "canonical_mode": "auto_append",
         "skeleton": (
             "Tu ENRICHIS un terme à partir de ses PROPRES idées associées "
@@ -123,7 +123,7 @@ AGENT_TEMPLATES: dict[str, dict] = {
     },
     "generation_exogene": {
         "label": "Génération exogène",
-        "consolidates": True, "writes": True,
+        "consolidates": True, "writes": True, "format": "jdm",
         "output_ext": ".enrich", "canonical_mode": "auto_append",
         "skeleton": (
             "Tu ENRICHIS un terme avec de la connaissance EXTERNE au graphe "
@@ -134,7 +134,7 @@ AGENT_TEMPLATES: dict[str, dict] = {
     },
     "libre": {
         "label": "Libre",
-        "consolidates": False, "writes": False,
+        "consolidates": False, "writes": False, "format": "libre",
         "output_ext": ".txt", "canonical_mode": None,
         "skeleton": "Agent libre : suis fidèlement la stratégie décrite.",
     },
@@ -184,10 +184,19 @@ def _normalize_spec(spec: dict) -> dict:
     tpl = AGENT_TEMPLATES[s["template"]]
     s["consolidates"] = bool(s.get("consolidates", tpl["consolidates"]))
     s["writes"] = bool(s.get("writes", tpl["writes"]))
-    ext = s.get("output_ext") or tpl["output_ext"]
-    if not str(ext).startswith("."):
-        ext = "." + str(ext)
-    s["output_ext"] = ext if ext in ALLOWED_OUTPUT_EXTS else tpl["output_ext"]
+    # Format de sortie SÉMANTIQUE choisi par l'utilisateur : jdm (pipe
+    # A|R|B|annot, soumissible LLMDrops), libre (texte), ou json.
+    fmt = (s.get("output_format") or tpl.get("format") or "jdm")
+    s["output_format"] = fmt if fmt in ("jdm", "libre", "json") else "jdm"
+    # Extension du fichier : LIBRE (l'utilisateur la renseigne), sanitizée à
+    # des caractères sûrs ; à défaut, dérivée du format ou du template.
+    ext = (s.get("output_ext") or "").strip()
+    if not ext:
+        ext = {"jdm": tpl["output_ext"], "json": ".json", "libre": ".txt"}.get(
+            s["output_format"], tpl["output_ext"])
+    ext = "." + str(ext).lstrip(".").lower()
+    ext = re.sub(r"[^a-z0-9._-]", "", ext) or ".txt"
+    s["output_ext"] = ext
     # canonical_mode : cohérent avec writes/consolidates.
     if not s["writes"]:
         s["canonical_mode"] = None
@@ -309,13 +318,22 @@ def build_preprompt_for_spec(spec: dict, params: dict) -> str:
             except Exception:
                 pass
     if spec.get("writes"):
+        fmt = spec.get("output_format") or "jdm"
+        fmt_hint = {
+            "jdm": "Format JDM : lignes `terme|relation|cible|annotation` "
+                   "(pipe-separated, soumissibles au LLMDrops).",
+            "json": "Format JSON : un tableau JSON valide d'objets.",
+            "libre": "Format LIBRE : texte/rapport lisible, structuré.",
+        }.get(fmt, "")
+        ext = spec.get("output_ext") or ".txt"
+        if fmt_hint:
+            parts.append(fmt_hint)
         if p.get("upload"):
-            parts.append("À la fin, écris le fichier de soumission ET soumets-le "
-                         "au LLMDrops (write_submission_file avec upload=True).")
+            parts.append(f"À la fin, écris le fichier de soumission (extension {ext}) "
+                         "ET soumets-le au LLMDrops (write_submission_file avec upload=True).")
         else:
-            parts.append("À la fin, écris le fichier de soumission "
-                         "(write_submission_file SANS upload) — l'utilisateur "
-                         "décidera de soumettre.")
+            parts.append(f"À la fin, écris le fichier de soumission (extension {ext}) "
+                         "(write_submission_file SANS upload) — l'utilisateur décidera de soumettre.")
     else:
         parts.append("N'écris PAS de fichier de soumission ; rends ton résultat "
                      "directement dans ta réponse.")

@@ -596,7 +596,8 @@ def list_specialist_agents() -> dict:
 @tool
 def create_specialist_agent(name: str, strategy: str, template: str = "libre",
                             writes: bool = True, output_format: str = "",
-                            target_count: int = 0, confirm: bool = False) -> dict:
+                            output_ext: str = "", target_count: int = 0,
+                            confirm: bool = False) -> dict:
     """Construit un agent JDM SUR MESURE, persisté et réutilisable dans
     l'inventaire (Répertoire), lançable ensuite via start_agent('<id>').
 
@@ -611,8 +612,10 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
       - template ∈ {audit, generation_endogene, generation_exogene, libre} :
         fixe les défauts (consolide ?, écrit ?, format). Choisis le plus proche.
       - writes : l'agent écrit-il un fichier de soumission ? (défaut oui).
-      - output_format : 'jdm'/'enrich', 'audit', 'err', 'stat', 'annot',
-        'json', 'libre' (sinon le défaut du template).
+      - output_format : 'jdm' (lignes pipe soumissibles), 'libre' (texte) ou
+        'json' (sinon le défaut du template).
+      - output_ext : extension du fichier produit, LIBRE (ex. '.enrich',
+        '.cuisine', '.json'…). Vide → dérivée du format/template.
       - target_count : nombre d'items visés (0 = défaut).
       - confirm : FALSE d'abord → renvoie un APERÇU à montrer à l'utilisateur
         pour validation ; rappelle avec confirm=True pour CRÉER réellement.

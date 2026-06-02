@@ -9151,6 +9151,19 @@ function ViewJarvis() {
   // ─── Run mode : replace carousel with the live monitor ───
   if (running) {
     const flow = [...JARVIS_AGENTS, ..._customAgents].find(f => f.id === running);
+    if (!flow) {
+      // Agent sur mesure pas encore chargé (fetch async de l'inventaire) ou
+      // introuvable : on évite le crash (flow.id sur undefined). Le hook
+      // useCustomAgentFlows re-render dès que l'inventaire arrive → flow trouvé.
+      return (
+        <PageShell>
+          <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--ink-3)' }}>
+            <div style={{ marginBottom: 14 }}>… chargement de l'agent …</div>
+            <Button variant="secondary" onClick={() => setRunning(null)}>← Retour</Button>
+          </div>
+        </PageShell>
+      );
+    }
     return (
       <JarvisRun
         flow={flow}
@@ -9700,7 +9713,8 @@ function JAccueilPanel({ flows, onPick, onLaunch }) {
             textTransform: 'uppercase', letterSpacing: '0.06em',
           }}>＋ Créer un agent spécialiste</button>
       </div>
-      {showBuilder && <JAgentBuilderModal onClose={() => setShowBuilder(false)} />}
+      {showBuilder && <JAgentBuilderModal onClose={() => setShowBuilder(false)}
+        onCreated={(id) => { setShowBuilder(false); if (onLaunch) onLaunch(id); }} />}
 
       {list.length === 0 ? (
         <div style={{
@@ -10122,24 +10136,32 @@ function _startCustomAgent(flow) {
 }
 
 // Modal de CRÉATION d'un agent spécialiste (le formulaire-builder).
+// Format de sortie = jdm / libre / json (3 choix). L'extension de fichier est
+// LIBRE (texte), proposée par défaut selon le format.
 const _BUILDER_FORMATS = [
-  { value: '', label: '— défaut du template —' },
-  { value: 'enrich', label: 'Soumission JDM (.enrich)' },
-  { value: 'audit', label: 'Audit (.audit)' },
-  { value: 'err', label: 'Signalement (.err)' },
-  { value: 'stat', label: 'Stats (.stat)' },
-  { value: 'annot', label: 'Annotation (.annot)' },
-  { value: 'json', label: 'JSON (.json)' },
-  { value: 'txt', label: 'Libre (.txt)' },
+  { value: 'jdm', label: 'Soumission JDM (lignes terme|relation|cible)' },
+  { value: 'libre', label: 'Libre (texte / prose)' },
+  { value: 'json', label: 'JSON (données structurées)' },
 ];
+const _FMT_DEFAULT_EXT = { jdm: '.enrich', libre: '.txt', json: '.json' };
 
-function JAgentBuilderModal({ onClose }) {
+// Sanitize une extension saisie librement (miroir du backend _normalize_spec).
+function _sanitizeExt(raw) {
+  let e = (raw || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  if (!e) return '';
+  return '.' + e.replace(/^\.+/, '');
+}
+
+function JAgentBuilderModal({ onClose, onCreated }) {
   const [templates, setTemplates] = React.useState({});
+  const [step, setStep] = React.useState('form'); // 'form' | 'recap'
   const [name, setName] = React.useState('');
   const [template, setTemplate] = React.useState('generation_endogene');
   const [strategy, setStrategy] = React.useState('');
   const [writes, setWrites] = React.useState(true);
-  const [fmt, setFmt] = React.useState('');
+  const [fmt, setFmt] = React.useState('jdm');
+  const [ext, setExt] = React.useState('');
+  const [extTouched, setExtTouched] = React.useState(false);
   const [target, setTarget] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
@@ -10159,12 +10181,29 @@ function JAgentBuilderModal({ onClose }) {
   }, [onClose]);
 
   const tpl = templates[template] || {};
+  // Quand on change le template, aligne le format sur celui du template (sauf
+  // si l'utilisateur a déjà personnalisé). L'extension par défaut suit le format
+  // tant qu'elle n'a pas été touchée manuellement.
+  React.useEffect(() => {
+    if (tpl.format && (tpl.format === 'jdm' || tpl.format === 'libre' || tpl.format === 'json')) {
+      setFmt(tpl.format);
+    }
+  }, [template, templates]); // eslint-disable-line
+  const effExt = (extTouched && ext.trim()) ? _sanitizeExt(ext) : (_FMT_DEFAULT_EXT[fmt] || '.txt');
+
+  const goRecap = () => {
+    if (!name.trim() || !strategy.trim()) { setMsg('Nom et stratégie requis.'); return; }
+    setMsg(''); setStep('recap');
+  };
+
   const create = async () => {
     if (!name.trim() || !strategy.trim()) { setMsg('Nom et stratégie requis.'); return; }
     setBusy(true); setMsg('');
     try {
-      const spec = { title: name.trim(), template, system_prompt: strategy.trim(), writes };
-      if (fmt) spec.output_ext = fmt;
+      const spec = {
+        title: name.trim(), template, system_prompt: strategy.trim(),
+        writes, output_format: fmt, output_ext: effExt,
+      };
       if (target > 0) spec.defaults = { target_count: Number(target) };
       const r = await fetch('api/jarvis/agents', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -10173,11 +10212,20 @@ function JAgentBuilderModal({ onClose }) {
       const d = await r.json();
       if (d.ok) {
         try { window.dispatchEvent(new CustomEvent('jdm-agents-changed')); } catch (e) {}
-        onClose();
+        const newId = (d.spec && d.spec.id) || d.agent_id || '';
+        if (onCreated && newId) onCreated(newId); else onClose();
       } else { setMsg('✗ ' + (d.error || 'échec')); }
     } catch (e) { setMsg('✗ ' + (e.message || e)); }
     setBusy(false);
   };
+
+  const fmtLabel = (_BUILDER_FORMATS.find(f => f.value === fmt) || {}).label || fmt;
+  const recapRow = (k, v) => (
+    <div style={{ display: 'flex', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--line-soft)' }}>
+      <span style={{ flex: '0 0 130px', fontSize: 12, color: 'var(--ink-3)' }}>{k}</span>
+      <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{v}</span>
+    </div>
+  );
 
   return ReactDOM.createPortal((
     <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{
@@ -10190,11 +10238,12 @@ function JAgentBuilderModal({ onClose }) {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--ink)' }}>
-            🤖 Créer un agent spécialiste
+            {step === 'recap' ? '🤖 Confirmer l\'agent' : '🤖 Créer un agent spécialiste'}
           </div>
           <Button size="sm" variant="ghost" onClick={onClose}>× Fermer</Button>
         </div>
 
+        {step === 'form' ? (<React.Fragment>
         <Field label="Nom de l'agent">
           <Input value={name} onChange={setName} placeholder="ex. Enrichisseur de cuisine" />
         </Field>
@@ -10221,12 +10270,17 @@ function JAgentBuilderModal({ onClose }) {
         </Field>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Format de sortie">
-            <Select value={fmt} onChange={setFmt} options={_BUILDER_FORMATS} />
+            <Select value={fmt} onChange={(v) => { setFmt(v); }} options={_BUILDER_FORMATS} />
           </Field>
-          <Field label={`Nombre cible · ${target || '—'}`}>
-            <Slider value={target} onChange={setTarget} min={0} max={50} step={1} />
+          <Field label="Extension de fichier (libre)">
+            <Input value={extTouched ? ext : effExt}
+              onChange={(v) => { setExtTouched(true); setExt(v); }}
+              placeholder={_FMT_DEFAULT_EXT[fmt] || '.txt'} />
           </Field>
         </div>
+        <Field label={`Nombre cible · ${target || '—'}`}>
+          <Slider value={target} onChange={setTarget} min={0} max={50} step={1} />
+        </Field>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '4px 0 14px' }}>
           <input type="checkbox" checked={writes} onChange={(e) => setWrites(e.target.checked)}
             style={{ accentColor: 'var(--accent)' }} />
@@ -10236,10 +10290,49 @@ function JAgentBuilderModal({ onClose }) {
         {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button variant="secondary" onClick={onClose}>Annuler</Button>
-          <Button onClick={create} disabled={busy || !name.trim() || !strategy.trim()}>
-            {busy ? 'Création…' : 'Créer l\'agent'}
+          <Button onClick={goRecap} disabled={!name.trim() || !strategy.trim()}>
+            Aperçu &amp; confirmation →
           </Button>
         </div>
+        </React.Fragment>) : (<React.Fragment>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-2)', marginBottom: 12, lineHeight: 1.45 }}>
+          Vérifie la configuration de l'agent avant de le créer. Tu peux revenir
+          en arrière pour ajuster.
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          {recapRow('Nom', name.trim())}
+          {recapRow('Template', (tpl.label || template))}
+          {recapRow('Format', fmtLabel)}
+          {recapRow('Extension', <span className="mono">{writes ? effExt : '— (pas de fichier)'}</span>)}
+          {recapRow('Écrit un fichier', writes ? 'Oui' : 'Non')}
+          {recapRow('Consolide', tpl.consolidates ? 'Oui' : 'Non')}
+          {recapRow('Nombre cible', target > 0 ? String(target) : 'défaut')}
+        </div>
+        <Field label="Prompt / stratégie de l'agent (éditable)">
+          <textarea value={strategy} onChange={(e) => setStrategy(e.target.value)} rows={8}
+            style={{
+              width: '100%', resize: 'vertical', padding: '10px 12px',
+              background: 'var(--bg-card)', border: '1px solid var(--line)',
+              borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'var(--font-mono)',
+              fontSize: 12.5, lineHeight: 1.5, outline: 'none',
+            }} />
+        </Field>
+        <div style={{ fontSize: 11.5, color: 'var(--ink-3)', margin: '-4px 0 14px', lineHeight: 1.4 }}>
+          Après création, l'agent apparaît dans le Répertoire et la Supervision ;
+          tu seras redirigé vers sa fiche détaillée.
+        </div>
+
+        {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+          <Button variant="ghost" onClick={() => { setStep('form'); setMsg(''); }}>← Modifier</Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="secondary" onClick={onClose}>Annuler</Button>
+            <Button onClick={create} disabled={busy || !name.trim() || !strategy.trim()}>
+              {busy ? 'Création…' : 'Créer l\'agent'}
+            </Button>
+          </div>
+        </div>
+        </React.Fragment>)}
       </div>
     </div>
   ), document.body);
@@ -10491,7 +10584,8 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
         {/* Carte « + » — créer un agent spécialiste (ouvre le builder). */}
         <JCreateAgentCard onClick={() => setShowBuilder(true)} />
       </div>
-      {showBuilder && <JAgentBuilderModal onClose={() => setShowBuilder(false)} />}
+      {showBuilder && <JAgentBuilderModal onClose={() => setShowBuilder(false)}
+        onCreated={(id) => { setShowBuilder(false); if (onLaunch) onLaunch(id); }} />}
 
       {/* Légende « Clic sur le cercle / la carte » retirée — le rail
           sticky bottom (JSectionNav) prend sa place visuelle en bas de
