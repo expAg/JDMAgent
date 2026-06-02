@@ -1482,6 +1482,7 @@ const JRING_CSS = `
 
 function ViewJarvis() {
   const [running, setRunning] = useState(null);       // flow id, or null = carousel
+  const [detailing, setDetailing] = useState(null);   // flow id pour la vue DÉTAIL (plein écran)
   // Agents sur mesure (inventaire) — pour résoudre la vue JarvisRun d'un agent
   // sur mesure lancé depuis Supervision/Répertoire (les natifs vivent dans
   // JARVIS_AGENTS ; les sur-mesure y sont fusionnés à la volée).
@@ -1611,6 +1612,35 @@ function ViewJarvis() {
     return () => { window.removeEventListener('touchstart', onStart); window.removeEventListener('touchend', onEnd); };
   }, [panelIndex, goToIndex, sectionCount, running]);
 
+  // ─── Detail mode : vue détail plein écran d'un agent (natif ou sur mesure).
+  // Atteinte via le bouton « Détail → » de N'IMPORTE quelle carte. Le clic sur
+  // le corps de la carte LANCE le run ; le bouton Détail ouvre cette vue. ───
+  if (detailing) {
+    const flow = [...JARVIS_AGENTS, ..._customAgents].find(f => f.id === detailing);
+    if (!flow) {
+      return (
+        <PageShell>
+          <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--ink-3)' }}>
+            <div style={{ marginBottom: 14 }}>… chargement de l'agent …</div>
+            <Button variant="secondary" onClick={() => setDetailing(null)}>← Retour</Button>
+          </div>
+        </PageShell>
+      );
+    }
+    const _idx = JARVIS_AGENTS.findIndex(f => f.id === detailing);
+    return (
+      <JAgentPanel
+        flow={flow}
+        index={_idx}
+        standalone
+        onBack={() => setDetailing(null)}
+        onLaunch={() => { setDetailing(null); setRunning(detailing); }}
+        onIndex={() => setDetailing(null)}
+        onSommaire={() => setDetailing(null)}
+      />
+    );
+  }
+
   // ─── Run mode : replace carousel with the live monitor ───
   if (running) {
     const flow = [...JARVIS_AGENTS, ..._customAgents].find(f => f.id === running);
@@ -1672,8 +1702,8 @@ function ViewJarvis() {
           willChange: 'transform',
         }}>
           <JPanel><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
-          <JPanel><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
-          <JPanel><JAccueilPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
+          <JPanel><JSupervisionPanel flows={JARVIS_AGENTS} onPick={(id) => setDetailing(id)} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
+          <JPanel><JAccueilPanel flows={JARVIS_AGENTS} onPick={(id) => setDetailing(id)} onLaunch={(id) => setRunning(id)} /></JPanel>
 
           {JARVIS_AGENTS.map((f, i) => (
             <JPanel key={f.id}>
@@ -2542,19 +2572,36 @@ function JLibrary({ list, onPick, onLaunch }) {
 // « flow » consommable par les cartes. Enregistre aussi icône/brief dans les
 // maps globales pour que flowIcon/FLOW_BRIEF marchent sans toucher les cartes.
 function _specToFlow(spec) {
+  const brief = spec.brief || '';
   try {
     if (spec.icon) AGENT_ICON[spec.id] = spec.icon;
-    if (spec.brief) AGENT_BRIEF[spec.id] = spec.brief;
+    if (brief) AGENT_BRIEF[spec.id] = brief;
   } catch (e) {}
+  const fmt = spec.output_format || 'jdm';
+  const fmtLabel = fmt === 'json' ? 'JSON' : fmt === 'libre' ? 'texte libre' : 'soumission JDM';
+  // Étapes génériques, enrichies selon les capacités (consolide / écrit).
+  const steps = [
+    { n: 'Cadrage', d: 'Reçoit le terme (ou en tire un) et la stratégie de l\'agent.' },
+    { n: 'Exécution', d: 'Suit la stratégie en mobilisant les outils JDM autorisés.' },
+  ];
+  if (spec.consolidates) steps.push({ n: 'Consolidation', d: 'Vérifie chaque candidat par inférence dans le graphe.' });
+  steps.push(spec.writes === false
+    ? { n: 'Réponse', d: `Restitue le résultat en ${fmtLabel} dans la conversation.` }
+    : { n: 'Soumission', d: `Écrit le fichier ${spec.output_ext || ''} (${fmtLabel}).` });
   return {
     id: spec.id, title: spec.title, kicker: 'Sur mesure',
     icon: spec.icon || '🤖', accent: spec.accent || 'var(--accent)',
-    desc: spec.brief || '', brief: spec.brief || '',
-    produces: spec.output_ext || '', loopOf: spec.template || 'sur mesure',
+    desc: brief, brief: brief,
+    produces: spec.output_ext || (spec.writes === false ? 'réponse' : ''),
+    loopOf: spec.template || 'sur mesure',
     category: 'Sur mesure', tags: [spec.template || 'custom'],
-    steps: [{ n: 'Stratégie', d: '' }, { n: 'Exécution', d: '' }, { n: 'Sortie', d: '' }],
+    steps,
     consolidates: !!spec.consolidates,
+    writes: spec.writes !== false,
     _custom: true,
+    _strategy: spec.system_prompt || '',
+    _spec: spec,
+    _format: fmt, _formatLabel: fmtLabel,
     _defaults: { target_count: (spec.defaults && spec.defaults.target_count) || (spec.consolidates ? 3 : 0) },
   };
 }
@@ -2619,6 +2666,7 @@ function JAgentBuilderModal({ onClose, onCreated }) {
   const [templates, setTemplates] = React.useState({});
   const [step, setStep] = React.useState('form'); // 'form' | 'recap'
   const [name, setName] = React.useState('');
+  const [description, setDescription] = React.useState('');
   const [template, setTemplate] = React.useState('generation_endogene');
   const [strategy, setStrategy] = React.useState('');
   const [writes, setWrites] = React.useState(true);
@@ -2666,6 +2714,7 @@ function JAgentBuilderModal({ onClose, onCreated }) {
       const spec = {
         title: name.trim(), template, system_prompt: strategy.trim(),
         writes, output_format: fmt, output_ext: effExt,
+        brief: description.trim(),
       };
       if (target > 0) spec.defaults = { target_count: Number(target) };
       const r = await fetch('api/jarvis/agents', {
@@ -2709,6 +2758,10 @@ function JAgentBuilderModal({ onClose, onCreated }) {
         {step === 'form' ? (<React.Fragment>
         <Field label="Nom de l'agent">
           <Input value={name} onChange={setName} placeholder="ex. Enrichisseur de cuisine" />
+        </Field>
+        <Field label="Description (affichée sur la carte de l'agent)">
+          <Input value={description} onChange={setDescription}
+            placeholder="ex. Enrichit les termes du domaine culinaire en relations méronymiques." />
         </Field>
         <Field label="Template (fixe les défauts : consolide / écrit / format)">
           <Select value={template} onChange={setTemplate}
@@ -2764,6 +2817,7 @@ function JAgentBuilderModal({ onClose, onCreated }) {
         </div>
         <div style={{ marginBottom: 14 }}>
           {recapRow('Nom', name.trim())}
+          {description.trim() && recapRow('Description', description.trim())}
           {recapRow('Template', (tpl.label || template))}
           {recapRow('Format', fmtLabel)}
           {recapRow('Extension', <span className="mono">{writes ? effExt : '— (pas de fichier)'}</span>)}
@@ -3012,7 +3066,8 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           const f = spec.flow;
           if (spec.isLaunch) {
             return <JLaunchCard key={'launch-' + f.id} flow={f}
-              onDetail={f._custom ? (() => onLaunch(f.id)) : (() => onPick(f.id))}
+              onLaunch={() => onLaunch(f.id)}
+              onDetail={() => onPick(f.id)}
               onStart={() => {
                 // Agent SUR MESURE → démarrage in-place avec ses propres
                 // défauts (spec). Natif → defaults canoniques du flux.
@@ -3030,6 +3085,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           return (
             <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
               onOpen={() => { if (rid) setDetailRunId(rid); else onLaunch(f.id); }}
+              onDetail={() => onPick(f.id)}
               onLaunch={() => onLaunch(f.id)}
               onPreview={(p) => setPreviewPath(p)}
               onStart={() => {
@@ -3511,14 +3567,19 @@ function RunDetailModal({ runId, onClose, onPreview }) {
 // en place (defaults serveur, comme avant) et « Détail → » ouvre la vue Run
 // (formulaire + paramètres). Désaturée + bordure pointillée pour signaler
 // l'emplacement de lancement.
-function JLaunchCard({ flow, onStart, onDetail }) {
+function JLaunchCard({ flow, onStart, onDetail, onLaunch }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
   return (
     <div
+      role="button" tabIndex={0}
+      onClick={onLaunch}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLaunch && onLaunch(); } }}
+      title={`Lancer « ${flow.title} » (vue Run)`}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      className="focus-ring"
       style={{
-        display: 'flex', flexDirection: 'column',
+        display: 'flex', flexDirection: 'column', cursor: 'pointer',
         background: 'var(--bg-card)',
         border: '1px dashed ' + (hover ? a : 'var(--line)'),
         borderRadius: 'var(--radius-lg)', overflow: 'hidden',
@@ -3929,7 +3990,7 @@ function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
 //              de page. Utilise par le ring click pour permettre de
 //              demarrer un flow grise depuis Supervision en gardant le
 //              tableau de bord visible.
-function JAgentDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview }) {
+function JAgentDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview, onDetail }) {
   const [hover, setHover] = useState(false);
   const a = flow.accent;
   const tint = (p) => `color-mix(in srgb, ${a} ${p}%, transparent)`;
@@ -4269,8 +4330,9 @@ function JAgentDashCard({ flow, num, live, onOpen, onLaunch, onStart, onPreview 
       }}>
         <span className="mono" style={{ fontSize: 9.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>boucle {'·'} {flow.steps.length} etapes</span>
         <button type="button"
-          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          onClick={(e) => { e.stopPropagation(); (onDetail || onOpen)(); }}
           className="focus-ring"
+          title={`Voir le détail de « ${flow.title} » (outils, étapes)`}
           style={{
             background: 'transparent', border: 'none', padding: '2px 0', cursor: 'pointer',
             fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
@@ -4948,23 +5010,30 @@ function JToolDialog({ flow, tool, onClose }) {
 }
 
 // ═══════════════════ Per-flow design panel ═══════════════════
-function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
+function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire, standalone, onBack }) {
   // Tools utilises par ce flow (derives de AGENT_TOOL_STEPS — le mapping
   // reel tool -> etape, defini en haut du fichier en s'alignant sur les
   // workflows backend). Pas de samples : la "candidatesPool" du design
   // etait des donnees fictives ; les vraies candidats remontent dans
   // le ItemCard de la vue Run au moment du run, pas en preview.
+  const isCustom = !!flow._custom;
   const steps = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
   const tools = Object.keys(steps);
   const samples = [];
   const params = defaultParamsFor(flow.id);
   const [openTool, setOpenTool] = useState(null);
   const panelPos = J_PANELS.findIndex(p => p.id === flow.id);  // position in the carousel track
+  const safeIndex = index >= 0 ? index : 0;  // custom : pas dans JARVIS_AGENTS
   const lastFlow = index === JARVIS_AGENTS.length - 1;
 
   return (
-    <div style={{ width: '100%', maxWidth: 1120 }}>
+    <div style={{ width: '100%', maxWidth: 1120, margin: standalone ? '0 auto' : undefined, padding: standalone ? '6px 28px 80px' : undefined }}>
       {openTool && <JToolDialog flow={flow} tool={openTool} onClose={() => setOpenTool(null)} />}
+      {standalone && (
+        <button type="button" onClick={onBack} className="focus-ring" style={{ ...ghostLinkStyle, marginBottom: 16 }}>
+          ← Retour
+        </button>
+      )}
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
@@ -4980,13 +5049,13 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
             title="Lancer cet agent"
             aria-label="Lancer cet agent"
             style={{ flexShrink: 0 }}>
-            <JLoopRing accent={flow.accent} num={index + 1} steps={flow.steps.length} delay={0} size={90} />
+            <JLoopRing accent={flow.accent} num={safeIndex + 1} steps={flow.steps.length} delay={0} size={90} />
           </button>
           <div>
             <div className="mono" style={{
               fontSize: 11, color: flow.accent, fontWeight: 600,
               textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 8,
-            }}>{flow.kicker} · {index + 1} / {JARVIS_AGENTS.length}</div>
+            }}>{flow.kicker}{isCustom ? '' : ` · ${index + 1} / ${JARVIS_AGENTS.length}`}</div>
             <h1 className="display" style={{
               margin: 0, fontFamily: 'var(--font-display)',
               fontSize: 'clamp(30px, 3.6vw, 44px)', fontWeight: 500,
@@ -5054,6 +5123,33 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
               </div>
             </div>
           )}
+
+          {/* ── Agent SUR MESURE : sa stratégie (system prompt) + ses outils ── */}
+          {isCustom && (
+            <div>
+              <div className="mono" style={{
+                fontSize: 11, color: 'var(--ink-3)',
+                textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8,
+              }}>Stratégie de l'agent</div>
+              <div style={{
+                whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: 12.5,
+                lineHeight: 1.55, color: 'var(--ink-2)', background: 'var(--bg-card)',
+                border: '1px solid var(--line)', borderRadius: 'var(--radius)',
+                padding: '12px 14px', maxHeight: 320, overflow: 'auto',
+              }}>{flow._strategy || '(stratégie non renseignée)'}</div>
+              <div className="mono" style={{
+                fontSize: 11, color: 'var(--ink-3)',
+                textTransform: 'uppercase', letterSpacing: '0.1em', margin: '16px 0 8px',
+              }}>Outils JDM mobilisés</div>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                Tout le catalogue d'outils JDM (lecture, exploration, désambiguïsation,
+                fact-check, inférence{flow.consolidates ? ', consolidation' : ''})
+                {flow.writes !== false
+                  ? ' + écriture du fichier de soumission.'
+                  : ' — sans écriture de fichier (résultat rendu en réponse).'}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Right : params preview + sample output + CTA ── */}
@@ -5115,29 +5211,44 @@ function JAgentPanel({ flow, index, onLaunch, onIndex, onSommaire }) {
         </div>
       </div>
 
-      {/* Footer : sequence position + step within the run */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        gap: 16, marginTop: 26, paddingTop: 16,
-        borderTop: '1px solid var(--line-soft)', flexWrap: 'wrap',
-      }}>
-        <button type="button" onClick={onSommaire} className="focus-ring" style={ghostLinkStyle}>
-          ↖ Accueil
-        </button>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
-          AGENT {String(index + 1).padStart(2, '0')} / {String(JARVIS_AGENTS.length).padStart(2, '0')}
-        </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button type="button" onClick={() => onIndex(panelPos - 1)} className="focus-ring" style={ghostLinkStyle}>
-            ‹ Précédent
+      {/* Footer : sequence position + step within the run. En mode standalone
+          (vue détail ouverte par « Détail → »), pas de navigation carousel —
+          juste un retour. */}
+      {standalone ? (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 16, marginTop: 26, paddingTop: 16,
+          borderTop: '1px solid var(--line-soft)', flexWrap: 'wrap',
+        }}>
+          <button type="button" onClick={onBack} className="focus-ring" style={ghostLinkStyle}>
+            ← Retour
           </button>
-          <button type="button"
-            onClick={() => lastFlow ? onSommaire() : onIndex(panelPos + 1)}
-            className="focus-ring" style={ghostLinkStyle}>
-            {lastFlow ? 'Accueil ›' : 'Suivant ›'}
-          </button>
+          <Button size="sm" onClick={onLaunch}>▶ Lancer cet agent</Button>
         </div>
-      </div>
+      ) : (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 16, marginTop: 26, paddingTop: 16,
+          borderTop: '1px solid var(--line-soft)', flexWrap: 'wrap',
+        }}>
+          <button type="button" onClick={onSommaire} className="focus-ring" style={ghostLinkStyle}>
+            ↖ Accueil
+          </button>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
+            AGENT {String(index + 1).padStart(2, '0')} / {String(JARVIS_AGENTS.length).padStart(2, '0')}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" onClick={() => onIndex(panelPos - 1)} className="focus-ring" style={ghostLinkStyle}>
+              ‹ Précédent
+            </button>
+            <button type="button"
+              onClick={() => lastFlow ? onSommaire() : onIndex(panelPos + 1)}
+              className="focus-ring" style={ghostLinkStyle}>
+              {lastFlow ? 'Accueil ›' : 'Suivant ›'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
