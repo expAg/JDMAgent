@@ -8820,35 +8820,28 @@ function defaultParamsFor(agentId) {
   };
   // `upload` = soumission auto du fichier au LLMDrops (mappe cfg.autoSubmit).
   const autoUpload = cfg.autoSubmit === true;
-  switch (agentId) {
-    case 'enrich':
-      return { ...common, term: '', relation: [],
-               target_count: 3, vary_relations: true, iterate: true, upload: autoUpload };
-    case 'audit':
-      return { ...common, term: '', relation: [], upload: autoUpload };
-    case 'gap':
-      return { ...common, term: '' };
-    case 'signalement':
-      return { ...common, term: '', relation: [], upload: autoUpload };
-    case 'stats':
-      return { ...common, term: '', relation: [], upload: autoUpload };
-    case 'annotation':
-      return { ...common, term: '', relation: [], top_k: 8,
-               target_count: 10, upload: autoUpload };
+  // UN SEUL chemin (natif ET sur mesure) : défauts DÉRIVÉS DU SPEC inventaire
+  // (`defaults` du natif = repris du backend ; du custom = formulaire de
+  // création). `upload` n'est proposé que si l'agent écrit.
+  let _spec = _CUSTOM_SPEC_REG[agentId];
+  if (!_spec) {
+    // Fallback pré-fetch (avant que l'inventaire arrive) — mêmes valeurs que
+    // les specs natifs côté backend, pour ne pas dépendre du timing du fetch.
+    const _FB = {
+      enrich:      { defaults: { target_count: 3, vary_relations: true, iterate: true }, writes: true },
+      audit:       { defaults: {}, writes: true },
+      gap:         { defaults: {}, writes: false },
+      signalement: { defaults: {}, writes: true },
+      stats:       { defaults: {}, writes: true },
+      annotation:  { defaults: { top_k: 8, target_count: 10 }, writes: true },
+    };
+    _spec = _FB[agentId];
   }
-  // Agent SUR MESURE : défauts DÉRIVÉS DU SPEC (= ceux du formulaire de
-  // création), modifiables ensuite dans le ParamsForm de JarvisRun comme les
-  // natifs. `upload` n'est proposé QUE si l'agent écrit (sinon rien à soumettre).
-  const _spec = _CUSTOM_SPEC_REG[agentId];
-  const _tc = (_spec && _spec.defaults && _spec.defaults.target_count)
-    || (_spec && _spec.consolidates ? 3 : 0);
+  const _d = (_spec && _spec.defaults) || {};
   const _writes = !_spec || _spec.writes !== false;
-  // upload par défaut : la case « Soumettre automatiquement » du formulaire de
-  // création (spec.defaults.upload) prime ; sinon le réglage global autoSubmit.
-  const _up = (_spec && _spec.defaults && typeof _spec.defaults.upload === 'boolean')
-    ? _spec.defaults.upload : autoUpload;
+  const _up = (typeof _d.upload === 'boolean') ? _d.upload : autoUpload;
   return {
-    ...common, term: '', relation: [], target_count: _tc,
+    ...common, term: '', relation: [], ..._d,
     ...(_writes ? { upload: _up } : {}),
   };
 }
@@ -10248,6 +10241,10 @@ function useCustomAgentFlows() {
       const r = await fetch('api/jarvis/agents');
       if (!r.ok) return;
       const d = await r.json();
+      // Enregistre TOUS les specs (natifs + sur mesure) dans le registre :
+      // defaultParamsFor / display lisent les défauts depuis le spec, pour les
+      // deux, via le MÊME chemin (le natif porte désormais ses `defaults`).
+      for (const a of (d.agents || [])) { if (a && a.id) _CUSTOM_SPEC_REG[a.id] = a; }
       const cs = (d.agents || []).filter(a => !a.builtin).map(_specToFlow);
       setCustoms(cs);
     } catch (e) {}
