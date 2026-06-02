@@ -355,7 +355,6 @@ function App() {
               ['subgraph', 'Sous-graphe'],
               ['chatbot', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
-              ['chat', 'Chat'],
               ['productions', 'Productions'],
               ['aide', 'Aide'],
             ].map(([id, label]) => (

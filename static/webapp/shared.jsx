@@ -624,7 +624,6 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
     { id: 'subgraph',    label: 'Sous-graphe' },
     { id: 'chatbot',     label: 'Chatbot LLM' },
     { id: 'jarvis',      label: 'Jarvis' },
-    { id: 'chat',        label: 'Chat' },
     { id: 'productions', label: 'Productions' },
     { id: 'aide',        label: 'Aide' },
   ];

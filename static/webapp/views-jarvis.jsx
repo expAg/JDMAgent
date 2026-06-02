@@ -1294,7 +1294,8 @@ function defaultParamsFor(agentId) {
       return { ...common, term: '', relation: [], top_k: 8,
                target_count: 10, upload: autoUpload };
   }
-  return common;
+  // Agent SUR MESURE / inconnu : valeurs définies pour le formulaire générique.
+  return { ...common, term: '', relation: [], target_count: 0, upload: autoUpload };
 }
 
 
@@ -1428,7 +1429,27 @@ function ParamsForm({ flow, params, setParams, locked }) {
     </>);
   }
 
-  return null;
+  // Agent SUR MESURE (hors built-ins) : formulaire générique — terme,
+  // relations, cible, budget, et soumission si l'agent écrit (flow.writes !==
+  // false). Le pré-prompt/format/outils sont portés par son spec côté serveur.
+  return wrap(<>
+    <Field label="Terme (optionnel — vide = tirage au hasard)">
+      <Input value={params.term} onChange={(v) => set('term', v)} mono />
+    </Field>
+    <Field label="Relations (optionnel, multi)">
+      <MultiSelect value={params.relation || []}
+        onChange={(v) => set('relation', v)}
+        placeholder="— libre —"
+        options={REL_OPTS_COMMON} />
+    </Field>
+    <Field label={`Nombre cible · ${params.target_count || '—'}`}>
+      <Slider value={params.target_count || 0} onChange={(v) => set('target_count', v)} min={0} max={50} step={1} />
+    </Field>
+    <Field label="Budget d'outils">
+      <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
+    </Field>
+    {flow.writes !== false && submitLabel}
+  </>);
 }
 
 // Ring interaction CSS (hover spin + scale, soft pulsing halo). Injected once.
@@ -1461,6 +1482,10 @@ const JRING_CSS = `
 
 function ViewJarvis() {
   const [running, setRunning] = useState(null);       // flow id, or null = carousel
+  // Agents sur mesure (inventaire) — pour résoudre la vue JarvisRun d'un agent
+  // sur mesure lancé depuis Supervision/Répertoire (les natifs vivent dans
+  // JARVIS_AGENTS ; les sur-mesure y sont fusionnés à la volée).
+  const _customAgents = useCustomAgentFlows();
   const [panelIndex, setPanelIndex] = useState(1);     // default landing = Accueil (middle)
   const [transitioning, setTransitioning] = useState(true);
   const total = J_PANELS.length;
@@ -1588,7 +1613,7 @@ function ViewJarvis() {
 
   // ─── Run mode : replace carousel with the live monitor ───
   if (running) {
-    const flow = JARVIS_AGENTS.find(f => f.id === running);
+    const flow = [...JARVIS_AGENTS, ..._customAgents].find(f => f.id === running);
     return (
       <JarvisRun
         flow={flow}
@@ -2894,7 +2919,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           const f = spec.flow;
           if (spec.isLaunch) {
             return <JLaunchCard key={'launch-' + f.id} flow={f}
-              onDetail={f._custom ? null : (() => onPick(f.id))}
+              onDetail={f._custom ? (() => onLaunch(f.id)) : (() => onPick(f.id))}
               onStart={() => {
                 // Agent SUR MESURE → démarrage in-place avec ses propres
                 // défauts (spec). Natif → defaults canoniques du flux.
