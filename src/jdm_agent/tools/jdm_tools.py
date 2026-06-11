@@ -205,6 +205,108 @@ def pick_random_term() -> dict:
 
 
 @tool
+def pick_random_relation(
+    relation_name: Optional[str] = None,
+    min_weight: Optional[float] = None,
+    with_annotations: bool = False,
+) -> dict:
+    """Tire AU HASARD une relation existante de JDM = un triplet réel
+    `source → relation → cible`. Pendant de `pick_random_term`, mais pour
+    une relation plutôt qu'un terme.
+
+    Deux usages :
+      - sans argument : tire un type de relation au hasard PUIS une de ses
+        instances → un triplet quelconque du graphe.
+      - avec `relation_name` (ex. "r_agent-1") : tire une instance AU HASARD
+        de CE type précis — pratique pour échantillonner/auditer une relation
+        ciblée sans tirer des termes en aveugle.
+
+    ⚠️ Détail technique : JeuxDeMots n'expose PAS d'endpoint « relation par
+    id » (contrairement aux nœuds). On ne peut donc pas faire un vrai uniform
+    sampling sur l'espace des relations. On tire ici un type puis on lit une
+    page à un `offset` aléatoire via `by_type_id`, et on en prend une au
+    hasard. C'est un échantillon raisonnable, PAS une loi uniforme stricte.
+
+    Le triplet renvoyé existe déjà — NE teste PAS son existence.
+
+    Args:
+        relation_name: restreindre à ce type (commence par "r_"). None = type
+            au hasard.
+        min_weight: ne tirer que des triplets de poids ≥ ce seuil.
+        with_annotations: si True, joint les annotations JDM du triplet
+            (constitutif/contrastif/exception). Opt-in (lookup HTTP en plus).
+
+    Renvoie un triplet `{source, relation, target, w, polarity, source_id?,
+    target_id?, annotations?}`, `{"retry": "..."}` si le tirage n'a rien donné
+    (rappeler l'outil), ou `{"error": ...}` si `relation_name` est inconnu.
+    """
+    import random as _random
+    c = _client()
+    # 1) Liste des types candidats.
+    if relation_name:
+        rid = c.relation_type_id(relation_name)
+        if rid is None:
+            return {"error": f"relation inconnue: {relation_name!r} "
+                              f"(vérifie via list_relation_types)"}
+        candidates = [(rid, relation_name)]
+    else:
+        rts = [rt for rt in c.relation_types() if rt.id and rt.name]
+        _random.shuffle(rts)
+        candidates = [(rt.id, rt.name) for rt in rts[:8]]   # cap d'essais de types
+    mw = _mw(min_weight)
+    # 2) Pour chaque type candidat, on lit une page à offset aléatoire et on
+    #    pioche une relation. Faute d'endpoint relation-by-id, c'est le mieux
+    #    disponible (cf. docstring).
+    for tid, tname in candidates:
+        for _try in range(2):                # cap d'essais d'offset par type
+            # Offset VOLONTAIREMENT petit : un grand offset sur by_type_id est
+            # très lent côté serveur (jusqu'au timeout). La variété vient du
+            # type tiré + du random.choice dans la page (l'API tronque avant de
+            # trier, donc même offset=0 donne une tranche arbitraire).
+            off = _random.randint(0, 400)
+            try:
+                res = c.relations_by_type(tid, min_weight=mw, limit=100, offset=off)
+                rels = list(res.relations)
+                if not rels and off:         # offset trop grand → repli début
+                    res = c.relations_by_type(tid, min_weight=mw, limit=100, offset=0)
+                    rels = list(res.relations)
+            except Exception:
+                # Hoquet réseau / type pathologique : on n'échoue pas l'outil,
+                # on tente l'essai/candidat suivant (cf. random_term).
+                continue
+            if not rels:
+                continue
+            idx = res.node_index()
+            _random.shuffle(rels)
+            for r in rels:
+                src_node = idx.get(r.node1)
+                tgt_node = idx.get(r.node2)
+                try:
+                    if src_node is None:
+                        src_node = c.node_by_id(r.node1)
+                    if tgt_node is None:
+                        tgt_node = c.node_by_id(r.node2)
+                except Exception:
+                    continue
+                if src_node.type == 8 or tgt_node.type == 8:
+                    continue                 # skip chunks
+                src_dec = c.decode_node_name(src_node.name, local_nodes=idx)
+                tgt_dec = c.decode_node_name(tgt_node.name, local_nodes=idx)
+                annotations: list[dict] = []
+                if with_annotations:
+                    for a in c.get_annotations_for_triplet(r.id):
+                        annotations.append({"kind": a.kind, "value": a.value, "w": a.w})
+                return _make_triplet(
+                    src_dec["decoded"], src_node.name if src_dec["is_refinement"] else None,
+                    tname,
+                    tgt_dec["decoded"], tgt_node.name if tgt_dec["is_refinement"] else None,
+                    r.w, annotations,
+                )
+    return {"retry": "rappelle `pick_random_relation()` — tirage ponctuellement "
+                     "infructueux (offsets vides), le suivant aboutira."}
+
+
+@tool
 def exists(term: str) -> dict:
     """Vérifie qu'un terme existe dans JeuxDeMots et renvoie ses infos de base.
 
@@ -2699,6 +2801,7 @@ def build_subgraph_visualization(
 
 ALL_TOOLS: list[StructuredTool] = [
     pick_random_term,
+    pick_random_relation,
     exists,
     get_synonyms,
     get_antonyms,
