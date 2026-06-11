@@ -440,6 +440,7 @@ def get_relations_by_type(
     max_weight: Optional[float] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = None,
+    with_annotations: bool = False,
 ) -> list[dict]:
     """Renvoie des triplets d'UN type de relation, indépendamment du terme.
 
@@ -468,10 +469,17 @@ def get_relations_by_type(
             `max_weight=0` pour ne voir que les relations NÉGATIVES).
         limit: taille de page (50 par défaut).
         offset: décalage de pagination (0 par défaut).
+        with_annotations: si True, chaque triplet renvoyé contient un champ
+            `annotations` listant les annotations JDM déjà attachées (kind,
+            value, w) — constitutif / contrastif / exception, etc. Pratique
+            pour un audit/signalement par relation (repérer les contrastifs
+            ou exceptions oubliés). Identique au flag de `get_relations_of_type`.
+            ⚠️ Opt-in : ~10× plus lent (N+1 lookups HTTP cachés). Laisse False
+            hors flux qui en ont vraiment besoin.
 
     Renvoie une liste de triplets `{source, relation, target, w, polarity,
-    source_id?, target_id?}` (les refinements opaques sont décodés en clair),
-    ou `[{"error": ...}]` si la relation est inconnue.
+    source_id?, target_id?, annotations?}` (les refinements opaques sont
+    décodés en clair), ou `[{"error": ...}]` si la relation est inconnue.
     """
     c = _client()
     rid = c.relation_type_id(relation_name)
@@ -508,11 +516,17 @@ def get_relations_by_type(
             continue
         src_dec = c.decode_node_name(src_node.name, local_nodes=idx)
         tgt_dec = c.decode_node_name(tgt_node.name, local_nodes=idx)
+        # Annotations inline (opt-in, N+1 HTTP cachés) — parité avec
+        # get_relations_of_type(with_annotations=True).
+        annotations: list[dict] = []
+        if with_annotations:
+            for a in c.get_annotations_for_triplet(r.id):
+                annotations.append({"kind": a.kind, "value": a.value, "w": a.w})
         out.append(_make_triplet(
             src_dec["decoded"], src_node.name if src_dec["is_refinement"] else None,
             relation_name,
             tgt_dec["decoded"], tgt_node.name if tgt_dec["is_refinement"] else None,
-            r.w,
+            r.w, annotations,
         ))
     return out
 
