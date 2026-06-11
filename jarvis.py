@@ -691,6 +691,33 @@ def random_term_instruction() -> str:
     return _RANDOM_TERM_INSTRUCTION
 
 
+def resolve_canonical_output(
+    output_ext: Optional[str],
+    canonical_mode: Optional[str],
+    consolidation_target: Optional[int],
+) -> tuple[str, str]:
+    """Résout `(extension, mode)` du fichier canonique d'un run.
+
+    INVARIANT D'ÉCRITURE (universel) : un run écrit TOUJOURS dans UN SEUL
+    fichier canonique, et c'est NOUS qui écrivons — jamais le LLM. Le `mode`
+    renvoyé n'est donc JAMAIS None :
+      - `auto_append` : enrich (streaming ligne-à-ligne via le registry).
+      - `redirect`    : DÉFAUT pour tout le reste (audit/err/stat/annot, mais
+        aussi libre/json/gap/legacy) — `write_submission_file` ignore le path
+        du LLM, accumule per-run et (ré)écrit le canonical. Zéro fragmentation,
+        zéro fichier choisi par le LLM, zéro écrasement sale.
+    """
+    if output_ext is not None:
+        ext, mode = output_ext, canonical_mode
+    elif consolidation_target is not None:
+        ext, mode = ".enrich", "auto_append"   # legacy enrich (CLI sans spec)
+    else:
+        ext, mode = ".enrich", None
+    if mode is None:
+        mode = "redirect"   # ← jamais laisser le LLM choisir/écraser son path
+    return ext, mode
+
+
 def _iteration_block(
     target_count: Optional[int],
     budget_label: str,
@@ -1599,14 +1626,11 @@ def run_jarvis_agent(
         _hash = hashlib.sha1((prompt or "").encode("utf-8")).hexdigest()[:6]
         # Extension + mode du canonical : FOURNIS PAR L'APPELANT via le spec
         # inventaire (natif ET sur mesure — source unique, plus de table codée
-        # par agent_id ici). Fallbacks legacy uniquement pour les appels CLI
-        # sans spec (output_ext None).
-        if output_ext is not None:
-            _ext, _canon_mode = output_ext, canonical_mode
-        elif consolidation_target is not None:
-            _ext, _canon_mode = ".enrich", "auto_append"   # legacy enrich
-        else:
-            _ext, _canon_mode = ".enrich", None
+        # par agent_id ici). `resolve_canonical_output` garantit l'INVARIANT :
+        # mode jamais None → interception d'écriture universelle (un seul
+        # fichier par run, écrit par nous, jamais par le LLM).
+        _ext, _canon_mode = resolve_canonical_output(
+            output_ext, canonical_mode, consolidation_target)
         # Nom du fichier = IDENTITÉ DU RUN (run_id lisible : <flux>_<terme>_
         # <date>) quand l'appelant en fournit un. Le fichier et le run
         # partagent ainsi UN SEUL identifiant cohérent et humain. Fallback
@@ -1711,16 +1735,17 @@ def run_jarvis_agent(
         #   - auto_append (enrich) : register_consolidation streame
         #     ligne par ligne dans canonical_path. write_submission_file
         #     y est no-op poli. UI voit le fichier grossir en temps réel.
-        #   - redirect (annot/audit/err/stat) : write_submission_file
-        #     overwrite canonical_path, ignore le path passé par le LLM.
-        #     Garantie structurelle zéro fragmentation.
-        #   - None (gap, ou legacy sans signal) : pas de canonical, le
-        #     LLM contrôle son path (anti-écrasement actif).
+        #   - redirect (DÉFAUT universel : annot/audit/err/stat/libre/json/gap) :
+        #     write_submission_file overwrite canonical_path, ignore le path
+        #     passé par le LLM, accumule les items per-run. Zéro fragmentation,
+        #     zéro fichier choisi par le LLM.
         # Désactivé automatiquement quand `_rctx_ctx.__exit__` est appelé
         # dans le finally (le rctx tombe hors scope, plus de globals à
         # nettoyer).
-        if _canon_mode is not None:
-            rctx.set_canonical(canonical_path, _canon_mode)
+        # `_canon_mode` n'est JAMAIS None ici (forcé à "redirect" plus haut),
+        # donc on pose TOUJOURS le canonical → interception d'écriture garantie
+        # pour TOUS les runs.
+        rctx.set_canonical(canonical_path, _canon_mode)
         while not persistence_done:
             rate_limit_attempts = 0
             # Hits de rate limit CONSÉCUTIFS sans aucun chunk reçu

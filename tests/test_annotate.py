@@ -418,6 +418,27 @@ def test_run_jarvis_agent_accepts_production_target(tmp_path, monkeypatch):
     assert "production_unit" in sig.parameters
 
 
+def test_resolve_canonical_output_never_none_mode():
+    """INVARIANT : le mode canonique n'est JAMAIS None — on intercepte
+    TOUJOURS l'écriture (un seul fichier par run, écrit par nous, jamais
+    le LLM). Tout cas « libre/json/gap/legacy » retombe sur redirect."""
+    from jarvis import resolve_canonical_output as r
+
+    # 1) enrich explicite (auto_append) — préservé.
+    assert r(".enrich", "auto_append", None) == (".enrich", "auto_append")
+    # 2) audit/err explicite (redirect) — préservé.
+    assert r(".audit", "redirect", None) == (".audit", "redirect")
+    # 3) spec libre/json SANS mode (None) → redirect, extension respectée.
+    assert r(".verinfagent", None, None) == (".verinfagent", "redirect")
+    assert r(".txt", None, None) == (".txt", "redirect")
+    # 4) legacy enrich (consolidation_target, pas de spec) → auto_append.
+    assert r(None, None, 10) == (".enrich", "auto_append")
+    # 5) aucun signal du tout → redirect (jamais None).
+    ext, mode = r(None, None, None)
+    assert mode == "redirect"
+    assert mode is not None  # garde-fou explicite contre toute régression
+
+
 def test_condense_history_with_nudge_uses_flow_counter(tmp_path):
     """Quand target+count_fn sont fournis, condense_history_with_nudge
     doit utiliser le compteur fourni et le nombre observé doit
