@@ -434,6 +434,90 @@ def get_relations_between(term1: str, term2: str, min_weight: Optional[float] = 
 
 
 @tool
+def get_relations_by_type(
+    relation_name: str,
+    min_weight: Optional[float] = None,
+    max_weight: Optional[float] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+) -> list[dict]:
+    """Renvoie des triplets d'UN type de relation, indépendamment du terme.
+
+    Contrairement à `get_relations_of_type(term, relation)` qui part d'un terme
+    connu, cet outil énumère la POPULATION d'une relation : « donne-moi des
+    couples source → cible qui portent `r_agent-1` (ou `r_isa`, `r_lieu`…) »,
+    sans avoir à deviner les termes à l'avance. C'est le bon point d'entrée
+    pour inspecter / échantillonner / auditer une relation à l'échelle du
+    graphe (au lieu de tirer des termes au hasard en espérant tomber dessus).
+
+    ⚠️ Pagination obligatoire : certaines relations (`r_isa`, `r_syn`…)
+    comptent des millions d'instances. Utilise `limit` (page) + `offset`
+    (décalage) pour parcourir progressivement. `limit` vaut 50 par défaut.
+
+    ⚠️ Tri vs troncature (bug API JDM connu) : l'endpoint `by_type_id`
+    tronque côté serveur AVANT de trier par poids. Donc une page (`limit`)
+    n'est PAS garantie « les plus forts d'abord » — c'est un échantillon de
+    la population, trié localement par |poids| pour la lisibilité. Pour cibler
+    les triplets forts, ajoute `min_weight`.
+
+    Args:
+        relation_name: nom technique de la relation (commence par "r_",
+            ex. "r_agent-1"). Vérifie le nom exact via `list_relation_types`.
+        min_weight: ne garder que les triplets de poids ≥ ce seuil.
+        max_weight: ne garder que les triplets de poids ≤ ce seuil (ex.
+            `max_weight=0` pour ne voir que les relations NÉGATIVES).
+        limit: taille de page (50 par défaut).
+        offset: décalage de pagination (0 par défaut).
+
+    Renvoie une liste de triplets `{source, relation, target, w, polarity,
+    source_id?, target_id?}` (les refinements opaques sont décodés en clair),
+    ou `[{"error": ...}]` si la relation est inconnue.
+    """
+    c = _client()
+    rid = c.relation_type_id(relation_name)
+    if rid is None:
+        return [{"error": f"relation inconnue: {relation_name!r} "
+                          f"(vérifie via list_relation_types)"}]
+    # Pagination explicite : on PASSE limit/offset à l'API (population
+    # potentiellement énorme — on ne peut pas tout rapatrier comme dans
+    # _resolve_targets). Défaut prudent à 50 pour éviter un dump massif.
+    lm = _lim(limit, 50)
+    res = c.relations_by_type(
+        rid,
+        min_weight=_mw(min_weight),
+        max_weight=_mw(max_weight),
+        limit=lm,
+        offset=(int(offset) if offset is not None else None),
+    )
+    idx = res.node_index()  # `by_type_id` ne renvoie pas toujours de nodes
+    out: list[dict] = []
+    # Tri local par |w| pour la lisibilité (cf. note troncature dans la
+    # docstring — ce n'est PAS un top-N global garanti).
+    for r in sorted(res.relations, key=lambda x: -abs(x.w)):
+        src_node = idx.get(r.node1)
+        tgt_node = idx.get(r.node2)
+        try:
+            if src_node is None:
+                src_node = c.node_by_id(r.node1)
+            if tgt_node is None:
+                tgt_node = c.node_by_id(r.node2)
+        except Exception:
+            continue
+        # Skip les chunks (type 8) — agrégats syntaxiques non exposés.
+        if src_node.type == 8 or tgt_node.type == 8:
+            continue
+        src_dec = c.decode_node_name(src_node.name, local_nodes=idx)
+        tgt_dec = c.decode_node_name(tgt_node.name, local_nodes=idx)
+        out.append(_make_triplet(
+            src_dec["decoded"], src_node.name if src_dec["is_refinement"] else None,
+            relation_name,
+            tgt_dec["decoded"], tgt_node.name if tgt_dec["is_refinement"] else None,
+            r.w,
+        ))
+    return out
+
+
+@tool
 def disambiguate(term: str) -> list[dict]:
     """Renvoie les sens (raffinements sémantiques) d'un terme polysémique, décodés en clair.
 
@@ -2628,6 +2712,7 @@ ALL_TOOLS: list[StructuredTool] = [
     # Génériques
     get_relations_of_type,
     get_relations_between,
+    get_relations_by_type,
     disambiguate,
     # Fact-checking + inférence + annotations
     verify_claim,
