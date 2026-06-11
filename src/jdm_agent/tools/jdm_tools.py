@@ -2163,19 +2163,21 @@ def write_submission_file(
        est multi-sections avec des séparateurs `=== … ===` que tu
        construis toi-même)
 
-    Exemple .audit (mode lignes) :
+    Exemple mode lignes (structure GÉNÉRIQUE — tu construis le format
+    propre à TON flux) :
 
         triplets = [
-            {"line": "=== SENS ==="},
-            {"line": "guitare>91594 | 1000 | guitare (instrument de musique)"},
+            {"line": "=== SECTION 1 ==="},
+            {"line": "terme | relation | cible | catégorie | note"},
             {"line": ""},
-            {"line": "=== SIGNALEMENTS ==="},
-            {"line": "guitare | r_isa | poisson | contamination_sens_non_premier | sens minoritaire"},
-            {"line": ""},
-            {"line": "=== META ==="},
-            {"line": "Score de santé : 7/10"},
-            {"line": "..."},
+            {"line": "=== SECTION 2 ==="},
+            {"line": "<ligne de texte libre>"},
         ]
+
+    ⚠️ Les noms de sections, les colonnes et les éventuelles catégories
+    ci-dessus sont des PLACEHOLDERS : ils dépendent ENTIÈREMENT de ta tâche.
+    Suis le format imposé par TON flux (donné dans tes consignes) ; n'emprunte
+    PAS le vocabulaire ou les catégories d'un autre flux.
 
     Exemple .enrich (mode triplets) :
 
