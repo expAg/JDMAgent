@@ -558,7 +558,34 @@ def build_preprompt_for_spec(spec: dict, params: dict) -> str:
     if term:
         parts.append(f"Terme cible : « {term} ».")
     else:
-        parts.append(random_term_instruction())
+        # Pas de terme imposé → instruction de point de départ. ⚠️ Cette
+        # instruction DOIT rester accordée à l'outillage RÉEL de l'agent :
+        # un natif a `pick_random_term` ; un agent SUR MESURE ne l'a que si
+        # son `allowed_tools` le contient (sinon le binding refuse l'appel
+        # — incohérence prompt↔outils observée). Cascade déterministe :
+        #   1. pick_random_term dispo → instruction canonique d'origine.
+        #   2. sinon pick_random_relation dispo → tirage par relation.
+        #   3. sinon → consigne neutre, sans nommer d'outil absent.
+        # MIROIR de exclude_tools_for_spec : `allowed_tools` VIDE = catalogue
+        # complet (agent non restreint) → il a donc TOUS les outils.
+        _allowed = set(spec.get("allowed_tools") or [])
+        _unrestricted = (not _allowed)
+        def _has(name: str) -> bool:
+            return bool(spec.get("builtin")) or _unrestricted or (name in _allowed)
+        if _has("pick_random_term"):
+            parts.append(random_term_instruction())
+        elif _has("pick_random_relation"):
+            parts.append(
+                "Je n'ai pas précisé de terme : pars d'une relation tirée au "
+                "hasard via `pick_random_relation()` (puis travaille sur ses "
+                "termes)."
+            )
+        else:
+            parts.append(
+                "Je n'ai pas précisé de terme : choisis un point de départ "
+                "UNIQUEMENT avec les outils dont tu disposes. N'appelle aucun "
+                "outil hors de ta liste (notamment PAS `pick_random_term`)."
+            )
     rels = p.get("relation")
     if rels:
         rel_str = ", ".join(f"`{r}`" for r in (rels if isinstance(rels, list) else [rels]))

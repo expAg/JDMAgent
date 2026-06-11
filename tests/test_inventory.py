@@ -263,3 +263,32 @@ def test_build_preprompt_includes_strategy_and_random_clause(tmp_path, monkeypat
     pre = inv.build_preprompt_for_spec(spec, {"term": "", "target_count": 5})
     assert "STRATEGIE_UNIQUE_XYZ" in pre
     assert "5" in pre  # objectif chiffré
+
+
+def test_no_term_instruction_matches_allowed_tools(tmp_path, monkeypatch):
+    """L'instruction « pas de terme » doit être accordée au binding réel :
+    on ne dit JAMAIS à un agent d'appeler pick_random_term s'il ne l'a pas
+    (incohérence prompt↔outils qui faisait halluciner un appel rejeté)."""
+    inv = _fresh_inventory(tmp_path, monkeypatch)
+    base = {"system_prompt": "STRAT", "output_format": "jdm", "writes": False}
+
+    # 1) allow-list restreinte SANS pick_random_term → ne le nomme pas.
+    s1 = {**base, "allowed_tools": ["exists", "get_relations_by_type"]}
+    p1 = inv.build_preprompt_for_spec(s1, {"term": ""})
+    assert "pick_random_term()" not in p1
+
+    # 2) allow-list avec pick_random_relation (sans random_term) → le propose.
+    s2 = {**base, "allowed_tools": ["pick_random_relation", "get_relations_by_type"]}
+    p2 = inv.build_preprompt_for_spec(s2, {"term": ""})
+    assert "pick_random_relation()" in p2
+    assert "pick_random_term()" not in p2
+
+    # 3) allow-list AVEC pick_random_term → instruction canonique.
+    s3 = {**base, "allowed_tools": ["pick_random_term", "exists"]}
+    p3 = inv.build_preprompt_for_spec(s3, {"term": ""})
+    assert "pick_random_term()" in p3
+
+    # 4) allow-list VIDE = catalogue complet (non restreint) → il l'a → canonique.
+    s4 = {**base, "allowed_tools": []}
+    p4 = inv.build_preprompt_for_spec(s4, {"term": ""})
+    assert "pick_random_term()" in p4
