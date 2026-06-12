@@ -33,6 +33,9 @@ function ViewClaim() {
   // Defaults alignés sur la branche deploy-self : baleine | r_isa | poisson / effort 0.
   const [subject, setSubject] = useState('baleine');
   const [relation, setRelation] = useState('r_isa');
+  // TOUTES les relations JDM depuis /api/relations ; CLAIM_RELATIONS_OPTS = fallback offline.
+  const _allRels = useJdmRelations();
+  const relOptions = jdmRelationOptions(_allRels, CLAIM_RELATIONS_OPTS);
   const [object_, setObject] = useState('poisson');
   const [effort, setEffort] = useState(0);
   const [bypass, setBypass] = useState(false);
@@ -141,7 +144,7 @@ function ViewClaim() {
         }}>
           <Input value={subject} onChange={setSubject} placeholder="sujet" mono />
           <Sep />
-          <Select value={relation} options={CLAIM_RELATIONS_OPTS} onChange={setRelation} />
+          <Select value={relation} options={relOptions} onChange={setRelation} />
           <Sep />
           <Input value={object_} onChange={setObject} placeholder="objet" mono />
         </div>

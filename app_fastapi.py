@@ -397,6 +397,24 @@ async def disable_buffering(request: Request, call_next):
 # ────────────────────────────────────────────────────────────────────
 # Route: Explorer (CÂBLÉE comme exemple)
 # ────────────────────────────────────────────────────────────────────
+@app.get("/api/relations")
+def api_relations() -> dict[str, Any]:
+    """Catalogue COMPLET des types de relations JDM (180+), pour peupler les
+    dropdowns Explorer / Claim. Trié par nom. Source = JDMClient.relation_types
+    (caché TTL long côté client). Renvoie [{name, id, help}]."""
+    c = get_client()
+    out: list[dict] = []
+    try:
+        for rt in c.relation_types():
+            if not getattr(rt, "name", None):
+                continue
+            out.append({"name": rt.name, "id": rt.id, "help": (rt.help or "")[:160]})
+    except Exception as e:
+        return {"relations": [], "error": f"{type(e).__name__}: {e}"}
+    out.sort(key=lambda d: d["name"])
+    return {"relations": out}
+
+
 @app.post("/api/explore")
 def api_explore(req: ExploreRequest) -> dict[str, Any]:
     """Explorer les relations d'un terme dans JDM."""

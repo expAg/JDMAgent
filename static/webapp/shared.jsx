@@ -1637,10 +1637,87 @@ function isKeyAvailable(envStatus, name, userInput) {
   return !!(envStatus && envStatus[name] && envStatus[name].set);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Catalogue COMPLET des relations JDM (180+), fetché une fois depuis
+// /api/relations et partagé par Explorer + Claim checker. On garde des
+// libellés FR « curés » pour les relations courantes (tête de liste,
+// lisibles), et on expose TOUTES les autres avec leur nom `r_*` + aide.
+// ─────────────────────────────────────────────────────────────────────
+const JDM_RELATION_LABELS = {
+  r_syn: 'Synonymes', r_anto: 'Antonymes',
+  r_isa: 'Hyperonymes — « est un »', r_hypo: 'Hyponymes — « exemples de »',
+  r_has_part: 'Parties / composants', r_holo: 'Tout / ensemble',
+  r_carac: 'Caractéristiques', r_has_color: 'Couleurs',
+  r_lieu: 'Lieux typiques', r_agent: 'Agents typiques (verbe)',
+  r_patient: 'Patients typiques (verbe)', r_instr: 'Instruments (verbe)',
+  r_telic_role: 'Rôle télique — à quoi sert', r_has_causatif: 'Causes',
+  r_has_conseq: 'Conséquences', r_but: 'But',
+  r_manner: 'Manière (verbe / processus)',
+};
+// Ordre de tête : les courantes d'abord (lisibilité), le reste par nom.
+const JDM_RELATION_COMMON = [
+  'r_isa', 'r_hypo', 'r_syn', 'r_anto', 'r_carac', 'r_has_part',
+  'r_has_color', 'r_lieu', 'r_agent', 'r_patient', 'r_instr',
+  'r_telic_role', 'r_has_causatif', 'r_has_conseq', 'r_but', 'r_manner',
+];
+
+let _JDM_RELATIONS_CACHE = null;       // [{name, id, help}] ou null
+const _JDM_RELATIONS_LOADERS = new Set();
+async function _fetchJdmRelations() {
+  try {
+    const r = await fetch('api/relations');
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Array.isArray(d.relations) ? d.relations : [];
+  } catch (e) { return []; }
+}
+
+// Hook : renvoie la liste complète [{name, id, help}] ([] avant chargement).
+function useJdmRelations() {
+  const [rels, setRels] = useState(_JDM_RELATIONS_CACHE || []);
+  useEffect(() => {
+    if (_JDM_RELATIONS_CACHE) { setRels(_JDM_RELATIONS_CACHE); return; }
+    _JDM_RELATIONS_LOADERS.add(setRels);
+    if (_JDM_RELATIONS_LOADERS.size > 1) return;  // déjà en cours
+    _fetchJdmRelations().then(list => {
+      _JDM_RELATIONS_CACHE = list;
+      _JDM_RELATIONS_LOADERS.forEach(s => { try { s(list); } catch {} });
+      _JDM_RELATIONS_LOADERS.clear();
+    });
+    return () => { _JDM_RELATIONS_LOADERS.delete(setRels); };
+  }, []);
+  return rels;
+}
+
+// Construit les options <Select> depuis le catalogue complet : courantes en
+// tête (libellé FR), puis TOUTES les autres triées par nom (nom + aide).
+// `fallback` = options statiques si le fetch n'a rien rendu (offline / API
+// muette) — jamais de dropdown vide.
+function jdmRelationOptions(relations, fallback) {
+  if (!relations || !relations.length) return fallback || [];
+  const byName = {};
+  for (const r of relations) { if (r && r.name) byName[r.name] = r; }
+  const seen = new Set();
+  const opts = [];
+  const push = (name) => {
+    if (seen.has(name) || !byName[name]) return;
+    seen.add(name);
+    const friendly = JDM_RELATION_LABELS[name];
+    const help = (byName[name].help || '').trim();
+    opts.push(friendly
+      ? { value: name, label: friendly, sub: name }
+      : { value: name, label: name, sub: help || undefined });
+  };
+  JDM_RELATION_COMMON.forEach(push);
+  Object.keys(byName).sort().forEach(push);
+  return opts;
+}
+
 Object.assign(window, {
   JDM_PALETTE, JDM_COLORS,
   Select, Field, Input, Slider, Button, Card, Pill, SectionTitle, EmptyState,
   Triplet, TopNav, ThemeSwitcher, PageShell, JDMMark, JDMWordmark,
   useEnvStatus, isKeyAvailable,
+  useJdmRelations, jdmRelationOptions,
 });
 

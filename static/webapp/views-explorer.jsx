@@ -31,6 +31,10 @@ function ViewExplorer() {
   // Defaults alignés sur la branche deploy-self : chat / r_isa / 25 / 20 / true.
   const [term, setTerm] = useState(_pending?.term || 'chat');
   const [rel, setRel] = useState(_pending?.rel || 'r_isa');
+  // TOUTES les relations JDM (180+) depuis /api/relations ; EXPLORE_RELATIONS
+  // reste le fallback offline. Courantes en tête, le reste par nom.
+  const _allRels = useJdmRelations();
+  const relOptions = jdmRelationOptions(_allRels, EXPLORE_RELATIONS);
   const [minWeight, setMinWeight] = useState(25);
   const [limit, setLimit] = useState(20);
   const [annotations, setAnnotations] = useState(true);
@@ -98,7 +102,7 @@ function ViewExplorer() {
           <Input value={term} onChange={setTerm} placeholder="chat, avocat, courir…" mono />
         </Field>
         <Field label="Type de relation">
-          <Select value={rel} options={EXPLORE_RELATIONS} onChange={setRel} />
+          <Select value={rel} options={relOptions} onChange={setRel} />
         </Field>
         {/* Spacer marginBottom matches Field's marginBottom:14 so the
             visible button aligns with the visible input row (le Field
