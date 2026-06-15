@@ -2763,6 +2763,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   const _isEdit = !!(editSpec && editSpec.id);
   const [templates, setTemplates] = React.useState({});
   const [step, setStep] = React.useState('form'); // 'form' | 'recap'
+  // Onglet du step 1 : 'instructions' (langage naturel) ↔ 'prompt' (workflow
+  // généré, éditable). Édition → on arrive sur le prompt (c'est ce qu'on modifie).
+  const [tab, setTab] = React.useState(_isEdit ? 'prompt' : 'instructions');
   const [name, setName] = React.useState(_isEdit ? (editSpec.title || '') : '');
   const [description, setDescription] = React.useState(_isEdit ? (editSpec.brief || '') : '');
   const [template, setTemplate] = React.useState(_isEdit ? (editSpec.template || 'libre') : 'generation_endogene');
@@ -2911,6 +2914,14 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     setGenLoading(false);
   };
 
+  // 🪄 Baguette magique : l'orchestrateur rédige le prompt depuis les
+  // instructions, puis on bascule sur l'onglet « Prompt » pour le montrer/éditer.
+  const wand = async () => {
+    if (!strategy.trim()) { setTab('instructions'); setMsg('Écris d\'abord les instructions.'); return; }
+    setTab('prompt');
+    await generate();
+  };
+
   const goRecap = async () => {
     // En édition, c'est le PROMPT GÉNÉRÉ (workflow) qui est requis et qu'on
     // modifie ; en création, ce sont les instructions (le workflow sera généré).
@@ -2985,35 +2996,36 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
             {tpl.skeleton}
           </div>
         )}
-        {_isEdit ? (<>
-          {/* ÉDITION : on modifie DIRECTEMENT le prompt généré par
-              l'orchestrateur (= le cerveau de l'agent, son system_prompt), PAS
-              le premier prompt utilisateur. Les « instructions d'origine »
-              restent dessous, uniquement pour une régénération optionnelle. */}
-          <Field label="Prompt de l'agent — généré par l'orchestrateur (c'est CE prompt que tu modifies)">
-            <textarea value={workflow} onChange={(e) => setWorkflow(e.target.value)} rows={12}
-              placeholder="(prompt de l'agent)"
-              style={{
-                width: '100%', resize: 'vertical', padding: '10px 12px',
-                background: 'var(--bg-elev)', border: '1px solid var(--line)',
-                borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'var(--font-mono)',
-                fontSize: 12, lineHeight: 1.5, outline: 'none',
-              }} />
-          </Field>
-          <Field label="Instructions d'origine (optionnel — sert seulement à RÉGÉNÉRER le prompt ci-dessus)">
-            <textarea value={strategy} onChange={(e) => setStrategy(e.target.value)} rows={3}
-              placeholder="(instructions en langage naturel ayant servi à générer le prompt)"
-              style={{
-                width: '100%', resize: 'vertical', padding: '10px 12px',
-                background: 'var(--bg-card)', border: '1px solid var(--line)',
-                borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'inherit',
-                fontSize: 13, lineHeight: 1.5, outline: 'none',
-              }} />
-          </Field>
-        </>) : (
-          <Field label="Instructions — ce que l'agent doit faire (l'orchestrateur en rédigera le workflow)">
-            <textarea value={strategy} onChange={(e) => { setStrategy(e.target.value); setWorkflow(''); }} rows={5}
-              placeholder="Décris en langage naturel ce que l'agent doit accomplir (ex. « enrichis les termes de cuisine en relations de parties, en partant de leurs idées associées, et consolide »). L'orchestrateur en fera un workflow à la manière des *_workflow."
+        {/* Onglets Instructions ↔ Prompt généré + 🪄 baguette magique. Un seul
+            textarea visible à la fois (la fenêtre reste courte). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <div role="tablist" style={{ display: 'flex', gap: 2, flex: 1 }}>
+            {[['instructions', 'Instructions'], ['prompt', "Prompt de l'agent"]].map(([k, lbl]) => (
+              <button key={k} type="button" role="tab" aria-selected={tab === k}
+                onClick={() => setTab(k)} className="focus-ring"
+                style={{
+                  appearance: 'none', cursor: 'pointer', padding: '6px 12px',
+                  background: tab === k ? 'var(--accent)' : 'var(--bg-elev)',
+                  color: tab === k ? '#fff' : 'var(--ink-2)',
+                  border: '1px solid ' + (tab === k ? 'var(--accent)' : 'var(--line)'),
+                  borderRadius: 'var(--radius)', fontFamily: 'inherit', fontSize: 12.5,
+                }}>{lbl}</button>
+            ))}
+          </div>
+          <button type="button" onClick={wand} disabled={genLoading || !strategy.trim()}
+            className="focus-ring" title="Générer le prompt de l'agent via l'orchestrateur"
+            style={{
+              appearance: 'none', padding: '6px 12px', borderRadius: 'var(--radius)',
+              background: 'var(--bg-card)', border: '1px solid var(--line)', color: 'var(--ink)',
+              fontFamily: 'inherit', fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 6,
+              cursor: (genLoading || !strategy.trim()) ? 'not-allowed' : 'pointer',
+              opacity: (genLoading || !strategy.trim()) ? 0.55 : 1,
+            }}>🪄 {genLoading ? 'Génération…' : 'Générer le prompt'}</button>
+        </div>
+        {tab === 'instructions' ? (
+          <Field label="Instructions — ce que l'agent doit faire (langage naturel)">
+            <textarea value={strategy} onChange={(e) => setStrategy(e.target.value)} rows={6}
+              placeholder="Décris ce que l'agent doit accomplir (ex. « enrichis les termes de cuisine en relations de parties, en partant de leurs idées associées, et consolide »). Puis 🪄 pour que l'orchestrateur en rédige le prompt."
               style={{
                 width: '100%', resize: 'vertical', padding: '10px 12px',
                 background: 'var(--bg-card)', border: '1px solid var(--line)',
@@ -3021,7 +3033,34 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
                 fontSize: 13.5, lineHeight: 1.5, outline: 'none',
               }} />
           </Field>
+        ) : (
+          <Field label="Prompt de l'agent — rédigé par l'orchestrateur (éditable, c'est le cerveau de l'agent)">
+            {genLoading ? (
+              <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)', padding: '10px 12px' }}>
+                … l'orchestrateur rédige le prompt …
+              </div>
+            ) : (
+              <textarea value={workflow} onChange={(e) => setWorkflow(e.target.value)} rows={12}
+                placeholder="Vide → clique 🪄 pour générer depuis les instructions (ou écris le prompt directement)."
+                style={{
+                  width: '100%', resize: 'vertical', padding: '10px 12px',
+                  background: 'var(--bg-elev)', border: '1px solid var(--line)',
+                  borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'var(--font-mono)',
+                  fontSize: 12, lineHeight: 1.5, outline: 'none',
+                }} />
+            )}
+          </Field>
         )}
+        <Field label="Outils que l'agent peut mobiliser">
+          <MultiSelect value={allowedTools || []}
+            onChange={(v) => setAllowedTools(v)}
+            placeholder={toolOpts.length ? '— sélectionne les outils —' : '… chargement du catalogue …'}
+            options={toolOpts} searchable />
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5, lineHeight: 1.4 }}>
+            Présélectionné par l'orchestrateur (🪄). Vide → l'agent n'a que les outils
+            cités par son prompt. Jamais tout le catalogue ni les <span className="mono">*_workflow</span>.
+          </div>
+        </Field>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Format de sortie">
             <Select value={fmt} onChange={(v) => { setFmt(v); }} options={_BUILDER_FORMATS} />
@@ -3035,35 +3074,12 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         <Field label={`Nombre cible · ${target || '—'}`}>
           <Slider value={target} onChange={setTarget} min={0} max={50} step={1} />
         </Field>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '4px 0 8px' }}>
-          <input type="checkbox" checked={consolidates}
-            onChange={(e) => { setConsTouched(true); setConsolidates(e.target.checked); }}
-            style={{ accentColor: 'var(--accent)' }} />
-          Consolide (vérifie chaque candidat par inférence avant de le retenir)
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '0 0 14px' }}>
-          <input type="checkbox" checked={writes}
-            onChange={(e) => { setWritesTouched(true); setWrites(e.target.checked); }}
-            style={{ accentColor: 'var(--accent)' }} />
-          Produit un fichier de soumission (sinon résultat en réponse seulement)
-        </label>
-        {writes && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '-4px 0 6px' }}>
-            <input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)}
-              style={{ accentColor: 'var(--accent)' }} />
-            Soumettre automatiquement à JDM (valeur par défaut au lancement)
-          </label>
-        )}
-        <div style={{ fontSize: 11, color: 'var(--ink-3)', margin: '-2px 0 14px', lineHeight: 1.4 }}>
-          La soumission auto est la <strong>valeur par défaut</strong> du lancement ;
-          elle reste décochable à chaque run (et nécessite une clé LLMDrops).
-        </div>
 
         {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button variant="secondary" onClick={onClose}>Annuler</Button>
           <Button onClick={goRecap} disabled={!name.trim() || (_isEdit ? !workflow.trim() : !strategy.trim())}>
-            Aperçu &amp; confirmation →
+            Suivant : description &amp; options →
           </Button>
         </div>
         </React.Fragment>) : (<React.Fragment>
@@ -3082,44 +3098,37 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           {recapRow('Nombre cible', target > 0 ? String(target) : 'défaut')}
           {recapRow('Outils', `${(allowedTools || []).length}${toolOpts.length ? ` / ${toolOpts.length}` : ''}`)}
         </div>
-        <Field label="Ce que l'agent spécialiste doit savoir faire (outils)">
-          <MultiSelect value={allowedTools || []}
-            onChange={(v) => setAllowedTools(v)}
-            placeholder={toolOpts.length ? '— sélectionne les outils —' : '… chargement du catalogue …'}
-            options={toolOpts} />
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5, lineHeight: 1.4 }}>
-            Présélectionné par l'orchestrateur (outils nécessaires). Vide → l'agent
-            n'a accès qu'aux outils cités par son workflow. L'agent n'a JAMAIS tout
-            le catalogue ni les <span className="mono">*_workflow</span>.
-          </div>
-        </Field>
-        {/* Le WORKFLOW rédigé par l'ORCHESTRATEUR « à la manière des *_workflow »
-            depuis les instructions — c'est lui qui devient le system_prompt de
-            l'agent. Éditable ; régénérable. */}
-        <Field label="Workflow rédigé par l'orchestrateur (deviendra le cerveau de l'agent) — éditable">
-          {genLoading ? (
-            <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)', padding: '10px 12px' }}>
-              … l'orchestrateur rédige le workflow …
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <textarea value={workflow} onChange={(e) => setWorkflow(e.target.value)} rows={12}
-                placeholder="(le workflow généré par l'orchestrateur apparaîtra ici)"
-                style={{
-                  width: '100%', resize: 'vertical', padding: '10px 12px',
-                  background: 'var(--bg-elev)', border: '1px solid var(--line)',
-                  borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'var(--font-mono)',
-                  fontSize: 12, lineHeight: 1.5, outline: 'none',
-                }} />
-              <button type="button" onClick={generate} className="focus-ring" style={{ ...ghostLinkStyle, alignSelf: 'flex-start' }}>
-                ↻ Régénérer via l'orchestrateur
-              </button>
-            </div>
-          )}
-        </Field>
-        <div style={{ fontSize: 11.5, color: 'var(--ink-3)', margin: '-4px 0 14px', lineHeight: 1.4 }}>
-          Au lancement, ce workflow est cadré par le préprompt déterministe
-          (terme/cible/format) — une simple aide.{' '}
+        {/* Étapes (résumé d'affichage rédigé par l'orchestrateur). */}
+        {Array.isArray(genSteps) && genSteps.length > 0 && (
+          <Field label="Étapes">
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+              {genSteps.map((s, i) => (
+                <li key={i}><strong style={{ color: 'var(--ink)' }}>{s.n}</strong>{s.d ? ` — ${s.d}` : ''}</li>
+              ))}
+            </ol>
+          </Field>
+        )}
+        {/* Options (cases à cocher) — déplacées ici depuis le step 1. */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '4px 0 8px' }}>
+          <input type="checkbox" checked={consolidates}
+            onChange={(e) => { setConsTouched(true); setConsolidates(e.target.checked); }}
+            style={{ accentColor: 'var(--accent)' }} />
+          Consolide (vérifie chaque candidat par inférence avant de le retenir)
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '0 0 8px' }}>
+          <input type="checkbox" checked={writes}
+            onChange={(e) => { setWritesTouched(true); setWrites(e.target.checked); }}
+            style={{ accentColor: 'var(--accent)' }} />
+          Produit un fichier de soumission (sinon résultat en réponse seulement)
+        </label>
+        {writes && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '-2px 0 6px' }}>
+            <input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)}
+              style={{ accentColor: 'var(--accent)' }} />
+            Soumettre automatiquement à JDM (valeur par défaut au lancement)
+          </label>
+        )}
+        <div style={{ fontSize: 11.5, color: 'var(--ink-3)', margin: '-2px 0 14px', lineHeight: 1.4 }}>
           {_isEdit
             ? 'Les modifications sont enregistrées sur l\'agent existant ; tu seras redirigé vers sa fiche.'
             : 'Après création, l\'agent apparaît dans le Répertoire et la Supervision ; tu seras redirigé vers sa fiche.'}
