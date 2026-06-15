@@ -114,6 +114,45 @@ function _normSearch(s) {
     .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
+// Filtre PARTAGÉ des options d'un Select/MultiSelect par une requête texte —
+// match casse/accents-insensible sur valeur, libellé ET sous-titre. Source
+// UNIQUE : Select et MultiSelect l'appellent tous deux (changer ici = partout).
+function filterOptions(options, query) {
+  const q = _normSearch(query);
+  if (!q) return options;
+  return options.filter(o => {
+    const v = _normSearch(o.value ?? o);
+    const l = _normSearch(o.label ?? o);
+    const sub = _normSearch(o.sub);
+    return v.includes(q) || l.includes(q) || sub.includes(q);
+  });
+}
+
+// Champ de recherche STICKY en tête de menu — markup/style PARTAGÉ par Select
+// et MultiSelect (un seul endroit à changer).
+function OptionSearchInput({ inputRef, value, onChange, onKeyDown }) {
+  return (
+    <div style={{
+      position: 'sticky', top: -4, zIndex: 1,
+      background: 'var(--bg-card)', padding: '2px 2px 6px',
+      borderBottom: '1px solid var(--line-soft)', marginBottom: 4,
+    }}>
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="Filtrer… (r_agent, agent, hyperonyme)"
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          padding: '7px 9px', background: 'var(--bg-elev)',
+          border: '1px solid var(--line)', borderRadius: 'var(--radius)',
+          color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none',
+        }} />
+    </div>
+  );
+}
+
 function Select({ value, options, onChange, placeholder = 'Choisir…', width, searchable = false }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -146,16 +185,8 @@ function Select({ value, options, onChange, placeholder = 'Choisir…', width, s
   const selected = options.find(o => (o.value ?? o) === value);
   const label = selected ? (selected.label ?? selected) : placeholder;
 
-  // Filtrage : match sur valeur (r_agent), libellé (Hyperonymes…) ET sous-titre.
-  const q = _normSearch(query);
-  const filtered = (searchable && q)
-    ? options.filter(o => {
-        const v = _normSearch(o.value ?? o);
-        const l = _normSearch(o.label ?? o);
-        const sub = _normSearch(o.sub);
-        return v.includes(q) || l.includes(q) || sub.includes(q);
-      })
-    : options;
+  // Filtrage via le helper partagé (cf. filterOptions).
+  const filtered = searchable ? filterOptions(options, query) : options;
 
   return (
     <div className="om-select" ref={rootRef} style={{ width }}>
@@ -178,29 +209,14 @@ function Select({ value, options, onChange, placeholder = 'Choisir…', width, s
       {open && (
         <div className="om-select__menu fade-up" role="listbox">
           {searchable && (
-            <div style={{
-              position: 'sticky', top: -4, zIndex: 1,
-              background: 'var(--bg-card)', padding: '2px 2px 6px',
-              borderBottom: '1px solid var(--line-soft)', marginBottom: 4,
-            }}>
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Filtrer… (r_agent, agent, hyperonyme)"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && filtered.length) {
-                    const f = filtered[0];
-                    onChange(f.value ?? f); setOpen(false);
-                  }
-                }}
-                style={{
-                  width: '100%', boxSizing: 'border-box',
-                  padding: '7px 9px', background: 'var(--bg-elev)',
-                  border: '1px solid var(--line)', borderRadius: 'var(--radius)',
-                  color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none',
-                }} />
-            </div>
+            <OptionSearchInput
+              inputRef={inputRef} value={query} onChange={setQuery}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && filtered.length) {
+                  const f = filtered[0];
+                  onChange(f.value ?? f); setOpen(false);
+                }
+              }} />
           )}
           {filtered.length === 0 && (
             <div className="om-select__option" style={{ color: 'var(--ink-3)', cursor: 'default' }}>
@@ -274,16 +290,9 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
     }
   }, [open, searchable]);
 
-  // Filtrage (match casse/accents-insensible sur valeur, libellé, sous-titre).
-  const q = _normSearch(query);
-  const filtered = (searchable && q)
-    ? options.filter(o => {
-        const v = _normSearch(o.value ?? o);
-        const l = _normSearch(o.label ?? o);
-        const sub = _normSearch(o.sub);
-        return v.includes(q) || l.includes(q) || sub.includes(q);
-      })
-    : options;
+  // Filtrage via le helper partagé (cf. filterOptions).
+  const filtered = searchable ? filterOptions(options, query) : options;
+  const _qActive = !!query.trim();
 
   const toggle = (v) => {
     const next = selected.includes(v)
@@ -345,23 +354,7 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
       {open && (
         <div className="om-select__menu fade-up" role="listbox">
           {searchable && (
-            <div style={{
-              position: 'sticky', top: -4, zIndex: 1,
-              background: 'var(--bg-card)', padding: '2px 2px 6px',
-              borderBottom: '1px solid var(--line-soft)', marginBottom: 4,
-            }}>
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Filtrer… (r_agent, agent, hyperonyme)"
-                style={{
-                  width: '100%', boxSizing: 'border-box',
-                  padding: '7px 9px', background: 'var(--bg-elev)',
-                  border: '1px solid var(--line)', borderRadius: 'var(--radius)',
-                  color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none',
-                }} />
-            </div>
+            <OptionSearchInput inputRef={inputRef} value={query} onChange={setQuery} />
           )}
           {/* Barre d'action : tout/aucun porte sur le sous-ensemble FILTRÉ. */}
           <div style={{
@@ -371,7 +364,7 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
             color: 'var(--ink-3)', letterSpacing: '0.06em',
             textTransform: 'uppercase',
           }}>
-            <span>{selected.length}/{options.length}{q ? ` · ${filtered.length} filtrés` : ''}</span>
+            <span>{selected.length}/{options.length}{_qActive ? ` · ${filtered.length} filtrés` : ''}</span>
             <span style={{ display: 'flex', gap: 8 }}>
               <button type="button"
                 onClick={(e) => {
