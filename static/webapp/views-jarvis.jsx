@@ -2778,6 +2778,12 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   const [genSteps, setGenSteps] = React.useState(
     _isEdit && Array.isArray(editSpec.steps) ? editSpec.steps : []);
   const [writes, setWrites] = React.useState(_isEdit ? (editSpec.writes !== false) : true);
+  // Consolidation : réglable comme `writes`. Préremplie par le template
+  // (modifiable). `consTouched` = l'utilisateur l'a réglée à la main → on
+  // n'écrase plus en changeant de template.
+  const [consolidates, setConsolidates] = React.useState(_isEdit ? !!editSpec.consolidates : true);
+  const [consTouched, setConsTouched] = React.useState(false);
+  const [writesTouched, setWritesTouched] = React.useState(false);
   const [fmt, setFmt] = React.useState(_isEdit ? (editSpec.output_format || 'jdm') : 'jdm');
   const [ext, setExt] = React.useState(_isEdit ? (editSpec.output_ext || '') : '');
   const [extTouched, setExtTouched] = React.useState(_isEdit && !!editSpec.output_ext);
@@ -2840,6 +2846,10 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     if (tpl.format && (tpl.format === 'jdm' || tpl.format === 'libre' || tpl.format === 'json')) {
       setFmt(tpl.format);
     }
+    // Préremplit `consolide` / `écrit` depuis le template tant que l'utilisateur
+    // ne les a pas réglés à la main (alors ils restent libres).
+    if (!consTouched && typeof tpl.consolidates === 'boolean') setConsolidates(tpl.consolidates);
+    if (!writesTouched && typeof tpl.writes === 'boolean') setWrites(tpl.writes);
   }, [template, templates]); // eslint-disable-line
   const effExt = (extTouched && ext.trim()) ? _sanitizeExt(ext) : (_FMT_DEFAULT_EXT[fmt] || '.txt');
 
@@ -2852,7 +2862,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
       title: name.trim(), template,
       system_prompt: forGen ? '' : (workflow.trim() || strategy.trim()),
       instructions: strategy.trim(),
-      writes, output_format: fmt, output_ext: effExt,
+      writes, consolidates, output_format: fmt, output_ext: effExt,
       brief: description.trim(),
     };
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
@@ -2958,7 +2968,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         <Field label="Nom de l'agent">
           <Input value={name} onChange={setName} placeholder="ex. Enrichisseur de cuisine" />
         </Field>
-        <Field label="Template (fixe les défauts : consolide / écrit / format)">
+        <Field label="Template (préremplit consolide / écrit / format — modifiables)">
           <Select value={template} onChange={setTemplate}
             options={Object.keys(templates).length
               ? Object.entries(templates).map(([k, v]) => ({ value: k, label: v.label || k }))
@@ -2992,8 +3002,15 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         <Field label={`Nombre cible · ${target || '—'}`}>
           <Slider value={target} onChange={setTarget} min={0} max={50} step={1} />
         </Field>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '4px 0 14px' }}>
-          <input type="checkbox" checked={writes} onChange={(e) => setWrites(e.target.checked)}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '4px 0 8px' }}>
+          <input type="checkbox" checked={consolidates}
+            onChange={(e) => { setConsTouched(true); setConsolidates(e.target.checked); }}
+            style={{ accentColor: 'var(--accent)' }} />
+          Consolide (vérifie chaque candidat par inférence avant de le retenir)
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '0 0 14px' }}>
+          <input type="checkbox" checked={writes}
+            onChange={(e) => { setWritesTouched(true); setWrites(e.target.checked); }}
             style={{ accentColor: 'var(--accent)' }} />
           Produit un fichier de soumission (sinon résultat en réponse seulement)
         </label>
@@ -3028,7 +3045,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           {recapRow('Format', fmtLabel)}
           {recapRow('Extension', <span className="mono">{writes ? effExt : '— (pas de fichier)'}</span>)}
           {recapRow('Écrit un fichier', writes ? 'Oui' : 'Non')}
-          {recapRow('Consolide', tpl.consolidates ? 'Oui' : 'Non')}
+          {recapRow('Consolide', consolidates ? 'Oui' : 'Non')}
           {recapRow('Nombre cible', target > 0 ? String(target) : 'défaut')}
           {recapRow('Outils', `${(allowedTools || []).length}${toolOpts.length ? ` / ${toolOpts.length}` : ''}`)}
         </div>
