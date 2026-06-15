@@ -10873,13 +10873,21 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
             style={{ accentColor: 'var(--accent)' }} />
           Produit un fichier de soumission (sinon résultat en réponse seulement)
         </label>
-        {writes && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', margin: '-2px 0 6px' }}>
-            <input type="checkbox" checked={autoSubmit} onChange={(e) => setAutoSubmit(e.target.checked)}
-              style={{ accentColor: 'var(--accent)' }} />
-            Soumettre automatiquement à JDM (valeur par défaut au lancement)
-          </label>
-        )}
+        {/* Soumission auto : TOUJOURS visible (ne disparaît plus), mais
+            désactivée si l'agent n'écrit pas (rien à soumettre). */}
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+          color: writes ? 'var(--ink-2)' : 'var(--ink-3)',
+          cursor: writes ? 'pointer' : 'not-allowed', opacity: writes ? 1 : 0.55,
+          margin: '-2px 0 6px',
+        }}
+        title={writes ? 'Valeur par défaut au lancement (nécessite une clé LLMDrops)'
+                      : 'Active « Produit un fichier » pour pouvoir soumettre'}>
+          <input type="checkbox" checked={writes && autoSubmit} disabled={!writes}
+            onChange={(e) => setAutoSubmit(e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }} />
+          Soumettre automatiquement à JDM (valeur par défaut au lancement)
+        </label>
         <div style={{ fontSize: 11.5, color: 'var(--ink-3)', margin: '-2px 0 14px', lineHeight: 1.4 }}>
           {_isEdit
             ? 'Les modifications sont enregistrées sur l\'agent existant ; tu seras redirigé vers sa fiche.'
