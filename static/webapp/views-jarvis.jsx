@@ -2912,7 +2912,11 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   };
 
   const goRecap = async () => {
-    if (!name.trim() || !strategy.trim()) { setMsg('Nom et instructions requis.'); return; }
+    // En édition, c'est le PROMPT GÉNÉRÉ (workflow) qui est requis et qu'on
+    // modifie ; en création, ce sont les instructions (le workflow sera généré).
+    if (!name.trim() || (_isEdit ? !workflow.trim() : !strategy.trim())) {
+      setMsg(_isEdit ? 'Nom et prompt requis.' : 'Nom et instructions requis.'); return;
+    }
     setMsg(''); setStep('recap');
     // En création : génère le workflow via l'orchestrateur. En édition : on
     // garde le workflow existant (re-génération sur demande via le bouton).
@@ -2920,7 +2924,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   };
 
   const create = async () => {
-    if (!name.trim() || !strategy.trim()) { setMsg('Nom et instructions requis.'); return; }
+    if (!name.trim() || (_isEdit ? !workflow.trim() : !strategy.trim())) {
+      setMsg(_isEdit ? 'Nom et prompt requis.' : 'Nom et instructions requis.'); return;
+    }
     setBusy(true); setMsg('');
     try {
       const spec = _buildSpec();
@@ -2979,16 +2985,43 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
             {tpl.skeleton}
           </div>
         )}
-        <Field label="Instructions — ce que l'agent doit faire (l'orchestrateur en rédigera le workflow)">
-          <textarea value={strategy} onChange={(e) => { setStrategy(e.target.value); setWorkflow(''); }} rows={5}
-            placeholder="Décris en langage naturel ce que l'agent doit accomplir (ex. « enrichis les termes de cuisine en relations de parties, en partant de leurs idées associées, et consolide »). L'orchestrateur en fera un workflow à la manière des *_workflow."
-            style={{
-              width: '100%', resize: 'vertical', padding: '10px 12px',
-              background: 'var(--bg-card)', border: '1px solid var(--line)',
-              borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'inherit',
-              fontSize: 13.5, lineHeight: 1.5, outline: 'none',
-            }} />
-        </Field>
+        {_isEdit ? (<>
+          {/* ÉDITION : on modifie DIRECTEMENT le prompt généré par
+              l'orchestrateur (= le cerveau de l'agent, son system_prompt), PAS
+              le premier prompt utilisateur. Les « instructions d'origine »
+              restent dessous, uniquement pour une régénération optionnelle. */}
+          <Field label="Prompt de l'agent — généré par l'orchestrateur (c'est CE prompt que tu modifies)">
+            <textarea value={workflow} onChange={(e) => setWorkflow(e.target.value)} rows={12}
+              placeholder="(prompt de l'agent)"
+              style={{
+                width: '100%', resize: 'vertical', padding: '10px 12px',
+                background: 'var(--bg-elev)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'var(--font-mono)',
+                fontSize: 12, lineHeight: 1.5, outline: 'none',
+              }} />
+          </Field>
+          <Field label="Instructions d'origine (optionnel — sert seulement à RÉGÉNÉRER le prompt ci-dessus)">
+            <textarea value={strategy} onChange={(e) => setStrategy(e.target.value)} rows={3}
+              placeholder="(instructions en langage naturel ayant servi à générer le prompt)"
+              style={{
+                width: '100%', resize: 'vertical', padding: '10px 12px',
+                background: 'var(--bg-card)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'inherit',
+                fontSize: 13, lineHeight: 1.5, outline: 'none',
+              }} />
+          </Field>
+        </>) : (
+          <Field label="Instructions — ce que l'agent doit faire (l'orchestrateur en rédigera le workflow)">
+            <textarea value={strategy} onChange={(e) => { setStrategy(e.target.value); setWorkflow(''); }} rows={5}
+              placeholder="Décris en langage naturel ce que l'agent doit accomplir (ex. « enrichis les termes de cuisine en relations de parties, en partant de leurs idées associées, et consolide »). L'orchestrateur en fera un workflow à la manière des *_workflow."
+              style={{
+                width: '100%', resize: 'vertical', padding: '10px 12px',
+                background: 'var(--bg-card)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius)', color: 'var(--ink)', fontFamily: 'inherit',
+                fontSize: 13.5, lineHeight: 1.5, outline: 'none',
+              }} />
+          </Field>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Format de sortie">
             <Select value={fmt} onChange={(v) => { setFmt(v); }} options={_BUILDER_FORMATS} />
@@ -3029,7 +3062,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         {msg && <div className="mono" style={{ fontSize: 12, color: 'var(--jdm-magenta)', marginBottom: 10 }}>{msg}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button variant="secondary" onClick={onClose}>Annuler</Button>
-          <Button onClick={goRecap} disabled={!name.trim() || !strategy.trim()}>
+          <Button onClick={goRecap} disabled={!name.trim() || (_isEdit ? !workflow.trim() : !strategy.trim())}>
             Aperçu &amp; confirmation →
           </Button>
         </div>
