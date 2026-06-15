@@ -86,10 +86,12 @@ def submit_to_jdm(
     # ⚠️ NE PAS rabattre sur une whitelist codée en dur : c'était le bug qui
     # uploadait tout en .enrich quand l'extension n'était pas une des 5 natives,
     # écrasant silencieusement l'extension custom voulue par l'agent.
-    # Fallback .enrich UNIQUEMENT si le fichier n'a réellement pas d'extension.
+    # Fallback NEUTRE `.txt` si le fichier n'a réellement pas d'extension —
+    # JAMAIS `.enrich` (réservé au flux enrichissement ; ne doit pas être
+    # forcé sur un autre flux).
     src_ext = p.suffix.lower()
     if not src_ext or len(src_ext) < 2:
-        src_ext = ".enrich"
+        src_ext = ".txt"
     uploaded_name = compute_submission_filename(resolved_model, extension=src_ext)
 
     if not key:

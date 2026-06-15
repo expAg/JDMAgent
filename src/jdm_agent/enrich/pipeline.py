@@ -16,7 +16,7 @@ from jdm_agent.enrich.validators import consolidate_candidate, validate_candidat
 
 def compute_submission_filename(model_name: str, *,
                                 now: Optional[datetime] = None,
-                                extension: str = ".enrich") -> str:
+                                extension: str = ".txt") -> str:
     """Nom standardisé d'un fichier de soumission LLMDrops.
 
     Format : `{YYYY}-{MM}-{DD}_{HH}h{MM}_automatic_submission_from_{model_slug}{extension}`
@@ -31,9 +31,12 @@ def compute_submission_filename(model_name: str, *,
     Args:
         model_name: nom du LLM source. Peut être vide → "unknown".
         now: datetime injectable pour les tests. Défaut: `datetime.now()`.
-        extension: extension du fichier (avec le point). Défaut `.enrich`.
-            Doit refléter le type de soumission (.enrich / .audit / .err) —
+        extension: extension du fichier (avec le point). Défaut `.txt`.
+            Doit refléter le type RÉEL de la soumission (.enrich / .audit /
+            .err / .annot / extension custom d'un agent sur mesure…) —
             `submit_to_jdm` la dérive automatiquement du fichier source.
+            ⚠️ On ne force JAMAIS `.enrich` : c'est l'extension du flux
+            enrichissement, pas un défaut générique. Fallback neutre = `.txt`.
 
     Returns:
         Le nom de fichier (basename, pas un path).
@@ -43,8 +46,9 @@ def compute_submission_filename(model_name: str, *,
     # Slug très conservateur : on garde lettres ASCII, chiffres, tirets, points,
     # underscores, et on remplace TOUT le reste par '_'. Évite tout pb URL/shell.
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", model_name).strip("_") or "unknown"
-    # Normalise l'extension : doit commencer par un point, fallback .enrich.
-    ext = (extension or ".enrich").strip()
+    # Normalise l'extension : doit commencer par un point ; fallback NEUTRE
+    # `.txt` (jamais `.enrich`, qui est spécifique au flux enrichissement).
+    ext = (extension or ".txt").strip()
     if not ext.startswith("."):
         ext = "." + ext
     ts = (now or datetime.now())
