@@ -398,7 +398,10 @@ function Input({ value, onChange, placeholder, mono, type, ...rest }) {
 }
 
 // ───────── Slider ─────────
-function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '' }) {
+function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '', format }) {
+  // `format(value)` optionnel : permet d'afficher autre chose que le nombre
+  // brut (ex. « ∞ » quand la jauge atteint sa fin = pas de limite).
+  const display = format ? format(value) : `${value}${suffix}`;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <input
@@ -411,7 +414,7 @@ function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '' }) 
       <div className="mono" style={{
         minWidth: 28, textAlign: 'right',
         fontSize: 12, color: 'var(--ink-2)',
-      }}>{value}{suffix}</div>
+      }}>{display}</div>
     </div>
   );
 }
@@ -4954,6 +4957,11 @@ const EXPLORE_RELATIONS = [
   { value: 'r_manner', label: 'Manière (verbe / processus)', sub: 'r_manner' },
 ];
 
+// Jauge « Limite » : valeurs 10..EXPLORE_LIMIT_MAX, puis un cran final
+// (EXPLORE_LIMIT_MAX + pas) = « illimité » (aucun cap envoyé au backend).
+const EXPLORE_LIMIT_MAX = 1000;
+const EXPLORE_LIMIT_STEP = 10;
+
 function ViewExplorer() {
   // Pré-remplissage depuis Projet › Quick try (term, rel). Lu une fois
   // au mount puis nettoyé. Pas d'auto-fetch ici — le user clique « Lister ».
@@ -4972,6 +4980,9 @@ function ViewExplorer() {
   const [minWeight, setMinWeight] = useState(25);
   const [limit, setLimit] = useState(20);
   const [annotations, setAnnotations] = useState(true);
+  // Récupérer aussi les triplets de poids NÉGATIF (par défaut oui). Le seuil
+  // de poids (minWeight) ne porte que sur les positifs.
+  const [includeNeg, setIncludeNeg] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   // rows = liste de {source, relation, target, weight, annotations, target_id}
@@ -4992,8 +5003,10 @@ function ViewExplorer() {
           term,
           relation: rel,
           min_weight: Number(minWeight),
-          limit: Number(limit),
+          // Jauge au max (> EXPLORE_LIMIT_MAX) → illimité (null = pas de cap).
+          limit: Number(limit) > EXPLORE_LIMIT_MAX ? null : Number(limit),
           with_annotations: !!annotations,
+          include_negatives: !!includeNeg,
         }),
       });
       if (!res.ok) {
@@ -5048,23 +5061,35 @@ function ViewExplorer() {
         </div>
       </div>
 
-      {/* Secondary controls */}
+      {/* Secondary controls — 2×2 : sliders en haut, cases en bas. */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '1fr 1fr 1fr',
-        gap: 20,
+        gridTemplateColumns: '1fr 1fr',
+        gap: '16px 20px',
         padding: '14px 16px',
         background: 'var(--bg-elev)',
         border: '1px solid var(--line-soft)',
         borderRadius: 'var(--radius)',
         marginBottom: 28,
       }}>
-        <Field label="Poids minimum" inline>
+        <Field label="Poids minimum (positifs)" inline>
           <Slider value={minWeight} onChange={setMinWeight} min={0} max={500} step={5} />
         </Field>
         <Field label="Limite" inline>
-          <Slider value={limit} onChange={setLimit} min={5} max={200} step={5} />
+          <Slider value={limit} onChange={setLimit}
+            min={10} max={EXPLORE_LIMIT_MAX + EXPLORE_LIMIT_STEP} step={EXPLORE_LIMIT_STEP}
+            format={(v) => v > EXPLORE_LIMIT_MAX ? '∞' : String(v)} />
         </Field>
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer',
+        }}>
+          <input type="checkbox"
+            checked={includeNeg}
+            onChange={(e) => setIncludeNeg(e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }} />
+          Récupérer les relations négatives
+        </label>
         <label style={{
           display: 'flex', alignItems: 'center', gap: 8,
           fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer',

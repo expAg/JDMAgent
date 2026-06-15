@@ -167,8 +167,9 @@ class ExploreRequest(BaseModel):
     term: str
     relation: str = Field(..., description="r_syn, r_isa, etc.")
     min_weight: float = 25
-    limit: int = 50
+    limit: Optional[int] = 50          # None = illimité (jauge au max)
     with_annotations: bool = False
+    include_negatives: bool = True     # inclure les triplets de poids négatif
 
 
 class ClaimRequest(BaseModel):
@@ -427,18 +428,33 @@ def api_explore(req: ExploreRequest) -> dict[str, Any]:
     if rid is None:
         return {"rows": [], "message": f"Relation inconnue : {req.relation!r}"}
 
+    # On NE filtre PAS côté API (pas de min_weight ni limit passés) : on
+    # récupère TOUT pour pouvoir (a) trier par poids AVANT de tronquer
+    # (l'API JDM tronque AVANT le tri → un `limit` API perd les plus forts),
+    # (b) appliquer le seuil de poids aux SEULS positifs et inclure les
+    # négatifs indépendamment selon `include_negatives`.
     try:
-        res = c.relations_from(
-            term, types_ids=[rid],
-            min_weight=float(req.min_weight),
-            limit=int(req.limit),
-        )
+        res = c.relations_from(term, types_ids=[rid])
     except Exception as e:
         return {"rows": [], "message": f"Erreur API JDM : {e}"}
 
+    mw = float(req.min_weight)
+    lim = req.limit if (req.limit is None or int(req.limit) <= 0) else int(req.limit)
+    # Filtre + tri AVANT décodage (perf : on ne résout/décodera que les gardés).
+    kept = []
+    for r in sorted(res.relations, key=lambda x: -x.w):
+        if r.w >= 0:
+            if r.w < mw:           # seuil de poids → POSITIFS uniquement
+                continue
+        elif not req.include_negatives:
+            continue               # négatif exclu si la case est décochée
+        kept.append(r)
+        if lim is not None and len(kept) >= lim:   # tronque APRÈS tri+filtre
+            break
+
     idx = res.node_index()
     rows: list[dict] = []
-    for r in sorted(res.relations, key=lambda x: -x.w):
+    for r in kept:
         node = idx.get(r.node2)
         if node is None:
             try:
@@ -466,8 +482,9 @@ def api_explore(req: ExploreRequest) -> dict[str, Any]:
         })
 
     if not rows:
+        neg = "" if req.include_negatives else " ; négatifs exclus"
         msg = (f"Aucun triplet `{term} | {req.relation} | ?` "
-               f"(w ≥ {req.min_weight:.0f}).")
+               f"(positifs w ≥ {req.min_weight:.0f}{neg}).")
         return {"rows": [], "message": msg}
 
     return {"rows": rows, "message": f"{len(rows)} triplet(s) trouvé(s)."}

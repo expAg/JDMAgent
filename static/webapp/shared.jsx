@@ -397,7 +397,10 @@ function Input({ value, onChange, placeholder, mono, type, ...rest }) {
 }
 
 // ───────── Slider ─────────
-function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '' }) {
+function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '', format }) {
+  // `format(value)` optionnel : permet d'afficher autre chose que le nombre
+  // brut (ex. « ∞ » quand la jauge atteint sa fin = pas de limite).
+  const display = format ? format(value) : `${value}${suffix}`;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <input
@@ -410,7 +413,7 @@ function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '' }) 
       <div className="mono" style={{
         minWidth: 28, textAlign: 'right',
         fontSize: 12, color: 'var(--ink-2)',
-      }}>{value}{suffix}</div>
+      }}>{display}</div>
     </div>
   );
 }
