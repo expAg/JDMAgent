@@ -1312,6 +1312,11 @@ function defaultParamsFor(agentId) {
 
 function ParamsForm({ flow, params, setParams, locked }) {
   const set = (k, v) => setParams(p => ({ ...p, [k]: v }));
+  // TOUTES les relations JDM (177) pour les dropdowns de ciblage ; les agents
+  // doivent pouvoir cibler n'importe quel type. REL_OPTS_COMMON = fallback
+  // offline. Filtrables au clavier (searchable).
+  const _allRels = useJdmRelations();
+  const relOpts = jdmRelationOptions(_allRels, REL_OPTS_COMMON);
   // Env-aware : la case « Soumettre à LLMDrops » n'est cochable que
   // si une clé est dispo (champ saisi OU env serveur). Sinon disabled
   // + tooltip explicatif.
@@ -1353,7 +1358,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
         <MultiSelect value={params.relation || []}
           onChange={(v) => set('relation', v)}
           placeholder="— libre (toutes par défaut) —"
-          options={REL_OPTS_COMMON} />
+          options={relOpts} searchable />
       </Field>
       <Field label={`Nombre cible · ${params.target_count}`}>
         <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
@@ -1386,7 +1391,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
         <MultiSelect value={params.relation || []}
           onChange={(v) => set('relation', v)}
           placeholder="— toutes —"
-          options={REL_OPTS_COMMON} />
+          options={relOpts} searchable />
       </Field>
       <Field label="Budget d'outils">
         <Select value={params.budget_label} onChange={(v) => set('budget_label', v)} options={BUDGET_OPTS} />
@@ -1420,7 +1425,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
         <MultiSelect value={params.relation || []}
           onChange={(v) => set('relation', v)}
           placeholder="— toutes principales —"
-          options={REL_OPTS_COMMON} />
+          options={relOpts} searchable />
       </Field>
       <Field label={`Cible d'annotations utiles · ${params.target_count}`}>
         <Slider value={params.target_count} onChange={(v) => set('target_count', v)} min={1} max={50} step={1} />
@@ -1451,7 +1456,7 @@ function ParamsForm({ flow, params, setParams, locked }) {
       <MultiSelect value={params.relation || []}
         onChange={(v) => set('relation', v)}
         placeholder="— libre —"
-        options={REL_OPTS_COMMON} />
+        options={relOpts} searchable />
     </Field>
     <Field label={`Nombre cible · ${params.target_count || '—'}`}>
       <Slider value={params.target_count || 0} onChange={(v) => set('target_count', v)} min={0} max={50} step={1} />

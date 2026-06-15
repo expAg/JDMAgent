@@ -245,9 +245,11 @@ function Select({ value, options, onChange, placeholder = 'Choisir…', width, s
 // `onChange(newArray)` appelé à chaque toggle. `placeholder` affiché
 // quand vide. Affiche en pastilles compactes quand 1-3 items, sinon
 // « N sélectionnés ». Cliquer en dehors ferme le menu (idem Select).
-function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélection', width }) {
+function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélection', width, searchable = false }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const rootRef = useRef(null);
+  const inputRef = useRef(null);
   const selected = Array.isArray(value) ? value : (value ? [value] : []);
 
   useEffect(() => {
@@ -263,6 +265,25 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (open && searchable) {
+      setQuery('');
+      const t = setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [open, searchable]);
+
+  // Filtrage (match casse/accents-insensible sur valeur, libellé, sous-titre).
+  const q = _normSearch(query);
+  const filtered = (searchable && q)
+    ? options.filter(o => {
+        const v = _normSearch(o.value ?? o);
+        const l = _normSearch(o.label ?? o);
+        const sub = _normSearch(o.sub);
+        return v.includes(q) || l.includes(q) || sub.includes(q);
+      })
+    : options;
 
   const toggle = (v) => {
     const next = selected.includes(v)
@@ -323,7 +344,26 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
       </button>
       {open && (
         <div className="om-select__menu fade-up" role="listbox">
-          {/* Petite barre d'action pour tout sélectionner/désélectionner */}
+          {searchable && (
+            <div style={{
+              position: 'sticky', top: -4, zIndex: 1,
+              background: 'var(--bg-card)', padding: '2px 2px 6px',
+              borderBottom: '1px solid var(--line-soft)', marginBottom: 4,
+            }}>
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filtrer… (r_agent, agent, hyperonyme)"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '7px 9px', background: 'var(--bg-elev)',
+                  border: '1px solid var(--line)', borderRadius: 'var(--radius)',
+                  color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none',
+                }} />
+            </div>
+          )}
+          {/* Barre d'action : tout/aucun porte sur le sous-ensemble FILTRÉ. */}
           <div style={{
             display: 'flex', justifyContent: 'space-between',
             padding: '4px 10px', borderBottom: '1px solid var(--line-soft)',
@@ -331,10 +371,15 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
             color: 'var(--ink-3)', letterSpacing: '0.06em',
             textTransform: 'uppercase',
           }}>
-            <span>{selected.length}/{options.length}</span>
+            <span>{selected.length}/{options.length}{q ? ` · ${filtered.length} filtrés` : ''}</span>
             <span style={{ display: 'flex', gap: 8 }}>
               <button type="button"
-                onClick={(e) => { e.stopPropagation(); onChange(options.map(o => o.value ?? o)); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Union de la sélection courante + tous les FILTRÉS.
+                  const fv = filtered.map(o => o.value ?? o);
+                  onChange(Array.from(new Set([...selected, ...fv])));
+                }}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
                   color: 'var(--accent)', fontSize: 10,
@@ -342,7 +387,12 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
                   letterSpacing: '0.06em', textTransform: 'uppercase',
                 }}>tout</button>
               <button type="button"
-                onClick={(e) => { e.stopPropagation(); onChange([]); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Retire les FILTRÉS de la sélection (sans filtre = vide tout).
+                  const fv = new Set(filtered.map(o => o.value ?? o));
+                  onChange(selected.filter(v => !fv.has(v)));
+                }}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
                   color: 'var(--ink-3)', fontSize: 10,
@@ -351,7 +401,12 @@ function MultiSelect({ value, options, onChange, placeholder = 'Aucune sélectio
                 }}>aucun</button>
             </span>
           </div>
-          {options.map((o, i) => {
+          {filtered.length === 0 && (
+            <div className="om-select__option" style={{ color: 'var(--ink-3)', cursor: 'default' }}>
+              Aucune relation ne correspond.
+            </div>
+          )}
+          {filtered.map((o, i) => {
             const v = o.value ?? o;
             const l = o.label ?? o;
             const sub = o.sub;
