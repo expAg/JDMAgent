@@ -441,16 +441,19 @@ def api_explore(req: ExploreRequest) -> dict[str, Any]:
     mw = float(req.min_weight)
     lim = req.limit if (req.limit is None or int(req.limit) <= 0) else int(req.limit)
     # Filtre + tri AVANT décodage (perf : on ne résout/décodera que les gardés).
-    kept = []
-    for r in sorted(res.relations, key=lambda x: -x.w):
-        if r.w >= 0:
-            if r.w < mw:           # seuil de poids → POSITIFS uniquement
-                continue
-        elif not req.include_negatives:
-            continue               # négatif exclu si la case est décochée
-        kept.append(r)
-        if lim is not None and len(kept) >= lim:   # tronque APRÈS tri+filtre
-            break
+    # ⚠️ La limite porte UNIQUEMENT sur les POSITIFS. Les négatifs (si la case
+    # est cochée) sont TOUJOURS renvoyés EN ENTIER — jamais tronqués par la
+    # limite. Sinon, comme le tri met les positifs forts en tête, les négatifs
+    # (en queue) disparaissaient dès qu'il y avait assez de positifs, obligeant
+    # à passer en « illimité » pour les voir.
+    rels = res.relations
+    positives = sorted((r for r in rels if r.w >= 0 and r.w >= mw),
+                       key=lambda x: -x.w)
+    if lim is not None:
+        positives = positives[:lim]
+    negatives = (sorted((r for r in rels if r.w < 0), key=lambda x: x.w)
+                 if req.include_negatives else [])
+    kept = positives + negatives    # positifs (limités) puis négatifs (tous)
 
     idx = res.node_index()
     rows: list[dict] = []
