@@ -109,9 +109,17 @@ function JDMWordmark({ small = false }) {
 // Full-width hit targets, generous vertical padding, no children
 // stealing pointer events. Open/close on full trigger area; option
 // list is a sibling div absolutely positioned (proper z-index).
-function Select({ value, options, onChange, placeholder = 'Choisir…', width }) {
+// Normalise pour la recherche : minuscules + sans accents.
+function _normSearch(s) {
+  return String(s == null ? '' : s)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+function Select({ value, options, onChange, placeholder = 'Choisir…', width, searchable = false }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const rootRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -127,8 +135,28 @@ function Select({ value, options, onChange, placeholder = 'Choisir…', width })
     };
   }, [open]);
 
+  // À l'ouverture d'un select recherchable : vider le filtre et focus le champ.
+  useEffect(() => {
+    if (open && searchable) {
+      setQuery('');
+      const t = setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [open, searchable]);
+
   const selected = options.find(o => (o.value ?? o) === value);
   const label = selected ? (selected.label ?? selected) : placeholder;
+
+  // Filtrage : match sur valeur (r_agent), libellé (Hyperonymes…) ET sous-titre.
+  const q = _normSearch(query);
+  const filtered = (searchable && q)
+    ? options.filter(o => {
+        const v = _normSearch(o.value ?? o);
+        const l = _normSearch(o.label ?? o);
+        const sub = _normSearch(o.sub);
+        return v.includes(q) || l.includes(q) || sub.includes(q);
+      })
+    : options;
 
   return (
     <div className="om-select" ref={rootRef} style={{ width }}>
@@ -150,7 +178,37 @@ function Select({ value, options, onChange, placeholder = 'Choisir…', width })
       </button>
       {open && (
         <div className="om-select__menu fade-up" role="listbox">
-          {options.map((o, i) => {
+          {searchable && (
+            <div style={{
+              position: 'sticky', top: -4, zIndex: 1,
+              background: 'var(--bg-card)', padding: '2px 2px 6px',
+              borderBottom: '1px solid var(--line-soft)', marginBottom: 4,
+            }}>
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filtrer… (r_agent, agent, hyperonyme)"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && filtered.length) {
+                    const f = filtered[0];
+                    onChange(f.value ?? f); setOpen(false);
+                  }
+                }}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '7px 9px', background: 'var(--bg-elev)',
+                  border: '1px solid var(--line)', borderRadius: 'var(--radius)',
+                  color: 'var(--ink)', fontFamily: 'inherit', fontSize: 13, outline: 'none',
+                }} />
+            </div>
+          )}
+          {filtered.length === 0 && (
+            <div className="om-select__option" style={{ color: 'var(--ink-3)', cursor: 'default' }}>
+              Aucune relation ne correspond.
+            </div>
+          )}
+          {filtered.map((o, i) => {
             const v = o.value ?? o;
             const l = o.label ?? o;
             const sub = o.sub;
@@ -5049,7 +5107,7 @@ function ViewExplorer() {
           <Input value={term} onChange={setTerm} placeholder="chat, avocat, courir…" mono />
         </Field>
         <Field label="Type de relation">
-          <Select value={rel} options={relOptions} onChange={setRel} />
+          <Select value={rel} options={relOptions} onChange={setRel} searchable />
         </Field>
         {/* Spacer marginBottom matches Field's marginBottom:14 so the
             visible button aligns with the visible input row (le Field
@@ -5380,7 +5438,7 @@ function ViewClaim() {
         }}>
           <Input value={subject} onChange={setSubject} placeholder="sujet" mono />
           <Sep />
-          <Select value={relation} options={relOptions} onChange={setRelation} />
+          <Select value={relation} options={relOptions} onChange={setRelation} searchable />
           <Sep />
           <Input value={object_} onChange={setObject} placeholder="objet" mono />
         </div>

@@ -144,7 +144,7 @@ function ViewClaim() {
         }}>
           <Input value={subject} onChange={setSubject} placeholder="sujet" mono />
           <Sep />
-          <Select value={relation} options={relOptions} onChange={setRelation} />
+          <Select value={relation} options={relOptions} onChange={setRelation} searchable />
           <Sep />
           <Input value={object_} onChange={setObject} placeholder="objet" mono />
         </div>

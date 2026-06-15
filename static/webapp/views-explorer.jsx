@@ -112,7 +112,7 @@ function ViewExplorer() {
           <Input value={term} onChange={setTerm} placeholder="chat, avocat, courir…" mono />
         </Field>
         <Field label="Type de relation">
-          <Select value={rel} options={relOptions} onChange={setRel} />
+          <Select value={rel} options={relOptions} onChange={setRel} searchable />
         </Field>
         {/* Spacer marginBottom matches Field's marginBottom:14 so the
             visible button aligns with the visible input row (le Field
