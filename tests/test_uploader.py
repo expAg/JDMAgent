@@ -97,6 +97,33 @@ def test_submit_success_with_json_response(tmp_path):
 
 
 @respx.mock
+def test_submit_preserves_custom_extension(tmp_path):
+    """RÉGRESSION (bug grave) : une extension CUSTOM d'agent sur mesure
+    (.verifagent) doit être PRÉSERVÉE dans le nom uploadé — surtout pas
+    écrasée en .enrich par une whitelist codée en dur."""
+    p = tmp_path / "mon_run.verifagent"
+    p.write_text("ligne 1\nligne 2\n", encoding="utf-8")
+    respx.post(DEFAULT_ENDPOINT_URL).mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    out = submit_to_jdm(p, api_key="k", model_name="gpt-5")
+    assert out["uploaded_as"].endswith(".verifagent"), out["uploaded_as"]
+    assert ".enrich" not in out["uploaded_as"]
+
+
+@respx.mock
+def test_submit_no_extension_falls_back_to_enrich(tmp_path):
+    """Fallback .enrich UNIQUEMENT quand le fichier n'a pas d'extension."""
+    p = tmp_path / "noext"
+    p.write_text("x\n", encoding="utf-8")
+    respx.post(DEFAULT_ENDPOINT_URL).mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    out = submit_to_jdm(p, api_key="k", model_name="gpt-5")
+    assert out["uploaded_as"].endswith(".enrich"), out["uploaded_as"]
+
+
+@respx.mock
 def test_submit_server_error(tmp_path):
     p = tmp_path / "sub.enrich"
     p.write_text("x\n", encoding="utf-8")

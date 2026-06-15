@@ -51,7 +51,9 @@ def submit_to_jdm(
     """POST le fichier de soumission au endpoint LLMDrops.
 
     Args:
-        path: chemin local du fichier `.enrich` consolidé à uploader.
+        path: chemin local du fichier à uploader. Son extension réelle est
+            PRÉSERVÉE pour le nom soumis (y compris extensions custom des
+            agents sur mesure : .verifagent, etc.).
         api_key: clé API (override env `JDM_DROPS_API_KEY` si fournie).
         model_name: nom du LLM source (override env `LLM_MODEL`, fallback "gemini-3.1-flash-lite").
         endpoint_url: URL du endpoint (override env `JDM_DROPS_URL`, fallback défaut).
@@ -79,11 +81,14 @@ def submit_to_jdm(
     key = api_key or os.environ.get("JDM_DROPS_API_KEY") or ""
     url = endpoint_url or os.environ.get("JDM_DROPS_URL") or DEFAULT_ENDPOINT_URL
     resolved_model = model_name or os.environ.get("LLM_MODEL") or _DEFAULT_MODEL
-    # Extension dérivée du fichier source — préserve .enrich / .audit / .err
-    # pour que le mainteneur JDM voie immédiatement le type du drop.
-    # Fallback .enrich si le fichier n'a pas d'extension reconnue.
+    # Extension dérivée du fichier source — on PRÉSERVE l'extension RÉELLE,
+    # y compris les extensions CUSTOM des agents sur mesure (.verifagent, …).
+    # ⚠️ NE PAS rabattre sur une whitelist codée en dur : c'était le bug qui
+    # uploadait tout en .enrich quand l'extension n'était pas une des 5 natives,
+    # écrasant silencieusement l'extension custom voulue par l'agent.
+    # Fallback .enrich UNIQUEMENT si le fichier n'a réellement pas d'extension.
     src_ext = p.suffix.lower()
-    if src_ext not in (".enrich", ".audit", ".err", ".stat", ".annot"):
+    if not src_ext or len(src_ext) < 2:
         src_ext = ".enrich"
     uploaded_name = compute_submission_filename(resolved_model, extension=src_ext)
 

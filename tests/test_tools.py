@@ -410,8 +410,10 @@ def test_write_submission_file_with_upload_success(tmp_path, monkeypatch):
     assert out["count"] == 1
     assert out["upload"]["ok"] is True
     assert out["upload"]["status_code"] == 200
+    # L'extension RÉELLE du fichier (.txt ici) est préservée à l'upload —
+    # auparavant la whitelist la rabattait à tort sur .enrich (bug corrigé).
     assert out["upload"]["uploaded_as"].endswith(
-        "_automatic_submission_from_claude-sonnet-4-7.enrich"
+        "_automatic_submission_from_claude-sonnet-4-7.txt"
     )
     assert out["upload"]["response"] == {"status": "ok", "id": 7}
 
