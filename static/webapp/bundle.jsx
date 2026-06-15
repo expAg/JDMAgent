@@ -5181,7 +5181,7 @@ function ViewExplorer() {
         <Field label="Poids minimum (positifs)" inline>
           <Slider value={minWeight} onChange={setMinWeight} min={0} max={500} step={5} />
         </Field>
-        <Field label="Limite (positifs)" inline>
+        <Field label="Limite (par signe)" inline>
           <Slider value={limit} onChange={setLimit}
             min={10} max={EXPLORE_LIMIT_MAX + EXPLORE_LIMIT_STEP} step={EXPLORE_LIMIT_STEP}
             format={(v) => v > EXPLORE_LIMIT_MAX ? '∞' : String(v)} />

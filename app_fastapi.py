@@ -440,20 +440,21 @@ def api_explore(req: ExploreRequest) -> dict[str, Any]:
 
     mw = float(req.min_weight)
     lim = req.limit if (req.limit is None or int(req.limit) <= 0) else int(req.limit)
-    # Filtre + tri AVANT décodage (perf : on ne résout/décodera que les gardés).
-    # ⚠️ La limite porte UNIQUEMENT sur les POSITIFS. Les négatifs (si la case
-    # est cochée) sont TOUJOURS renvoyés EN ENTIER — jamais tronqués par la
-    # limite. Sinon, comme le tri met les positifs forts en tête, les négatifs
-    # (en queue) disparaissaient dès qu'il y avait assez de positifs, obligeant
-    # à passer en « illimité » pour les voir.
+    # UN SEUL fetch JDM (sans limit/min_weight côté API) → on découpe ici.
+    # La limite porte sur CHAQUE signe INDÉPENDAMMENT : limite=10 → jusqu'à
+    # 10 positifs ET 10 négatifs (pas 10 au total, pas tous les négatifs).
+    # Positifs filtrés par seuil de poids ; négatifs (si case cochée) triés par
+    # négation la plus forte d'abord. Tri AVANT troncature (l'API JDM tronque
+    # avant de trier → on ne lui passe jamais le limit).
     rels = res.relations
     positives = sorted((r for r in rels if r.w >= 0 and r.w >= mw),
                        key=lambda x: -x.w)
-    if lim is not None:
-        positives = positives[:lim]
     negatives = (sorted((r for r in rels if r.w < 0), key=lambda x: x.w)
                  if req.include_negatives else [])
-    kept = positives + negatives    # positifs (limités) puis négatifs (tous)
+    if lim is not None:
+        positives = positives[:lim]
+        negatives = negatives[:lim]
+    kept = positives + negatives
 
     idx = res.node_index()
     rows: list[dict] = []
