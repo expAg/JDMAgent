@@ -43,21 +43,42 @@ fi
 PYVER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 echo "   python3 = $PYVER"
 
-# 2. Creer le venv si absent
-if [ -d ".venv" ]; then
-    warn "Le venv .venv/ existe deja — on le reutilise"
+# 2. Creer / reparer le venv.
+#    Un .venv/ peut exister mais etre casse (interpreteur ou pip absent :
+#    `python3 -m venv` echoue parfois a amorcer pip, frequent sur Debian
+#    quand python3-venv n'est pas complet). On detecte et on repare.
+create_venv() { step "Creation du venv .venv/"; python3 -m venv .venv; }
+
+if [ ! -x ".venv/bin/python" ]; then
+    [ -d ".venv" ] && { warn ".venv/ present mais sans interpreteur — recreation"; rm -rf .venv; }
+    create_venv
 else
-    step "Creation du venv .venv/"
-    python3 -m venv .venv
+    warn "Le venv .venv/ existe deja — on le reutilise"
 fi
 
-# 3. Upgrade pip + install des dependances
+# pip absent du venv ? on tente ensurepip, sinon on recree.
+if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    warn "pip absent du venv — tentative de reparation (ensurepip)"
+    if ! .venv/bin/python -m ensurepip --upgrade >/dev/null 2>&1; then
+        warn "ensurepip indisponible — recreation complete du venv"
+        rm -rf .venv
+        create_venv
+    fi
+fi
+if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    err "Impossible d'obtenir pip dans le venv. Installe le paquet venv de l'OS :"
+    err "   sudo apt install -y python3-venv python3-pip"
+    err "puis relance ./install.sh"
+    exit 1
+fi
+
+# 3. Upgrade pip + install des dependances (via 'python -m pip', robuste)
 step "Mise a jour de pip"
-.venv/bin/pip install --quiet --upgrade pip
+.venv/bin/python -m pip install --quiet --upgrade pip
 
 step "Installation des dependances (requirements.txt)"
-.venv/bin/pip install --quiet -r requirements.txt
-echo "   OK ($(.venv/bin/pip list --format=freeze | wc -l) paquets installes)"
+.venv/bin/python -m pip install --quiet -r requirements.txt
+echo "   OK ($(.venv/bin/python -m pip list --format=freeze | wc -l) paquets installes)"
 
 # 4. Initialiser le .env si absent
 ENV_NEW=0

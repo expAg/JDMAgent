@@ -31,9 +31,9 @@ echo "=== JDMAgent (FastAPI) — Update ==="
 echo "Repo : $SCRIPT_DIR"
 echo ""
 
-# 1. Verifier le venv
-if [ ! -d ".venv" ]; then
-    err "Pas de venv .venv/ trouve. Lance d'abord ./install.sh"
+# 1. Verifier le venv (interpreteur + pip)
+if [ ! -x ".venv/bin/python" ] || ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    err "venv .venv/ absent ou casse (pas de pip). Lance d'abord ./install.sh"
     exit 1
 fi
 
