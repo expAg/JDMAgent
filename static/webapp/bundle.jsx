@@ -8071,6 +8071,33 @@ function _emptyJarvisRun(agentId) {
   };
 }
 
+// ── Clés de run (« slots ») : permettre PLUSIEURS runs parallèles d'un même
+// agent. Le slot PRIMAIRE d'un agent = son id brut (comportement mono-run
+// strictement inchangé). Les runs concurrents reçoivent `agentId#2`, `#3`…
+// `_slotAgent` retrouve l'agent depuis un slot ; `_allocSlot` rend le 1er slot
+// libre (= non running/starting) pour cet agent.
+function _slotAgent(slot) { return String(slot || '').split('#')[0]; }
+function _allocSlot(agentId) {
+  const busy = (s) => s && (s.status === 'running' || s.status === 'starting');
+  if (!busy(_JARVIS_RUNS[agentId])) return agentId;       // primaire libre
+  for (let n = 2; n < 100; n++) {
+    const k = agentId + '#' + n;
+    if (!busy(_JARVIS_RUNS[k])) return k;
+  }
+  return agentId + '#' + Math.floor(Date.now() / 1000);   // garde-fou
+}
+// Slot local qui OBSERVE déjà un run_id donné (pour rouvrir une carte « en
+// cours » sur SON run, et non en lancer un nouveau). Fallback = slot primaire.
+function _slotForRun(agentId, runId) {
+  if (runId) {
+    for (const k of Object.keys(_JARVIS_RUNS)) {
+      const s = _JARVIS_RUNS[k];
+      if (_slotAgent(k) === agentId && s && s.runId === runId) return k;
+    }
+  }
+  return agentId;
+}
+
 const JarvisStore = {
   get(agentId) {
     if (!_JARVIS_RUNS[agentId]) _JARVIS_RUNS[agentId] = _emptyJarvisRun(agentId);
@@ -9429,7 +9456,7 @@ function ViewJarvis() {
 
   // ─── Run mode : replace carousel with the live monitor ───
   if (running) {
-    const flow = allAgents.find(f => f.id === running);
+    const flow = allAgents.find(f => f.id === _slotAgent(running));
     if (!flow) {
       // Agent sur mesure pas encore chargé (fetch async de l'inventaire) ou
       // introuvable : on évite le crash (flow.id sur undefined). Le hook
@@ -9446,8 +9473,9 @@ function ViewJarvis() {
     return (
       <JarvisRun
         flow={flow}
+        slot={running}
         onBack={() => {
-          const idx = panels.findIndex(p => p.id === running);
+          const idx = panels.findIndex(p => p.id === _slotAgent(running));
           setRunning(null);
           setTransitioning(false);
           if (idx >= 0) setPanelIndex(idx);
@@ -9490,8 +9518,8 @@ function ViewJarvis() {
         onTransitionEnd={(e) => { if (e.propertyName === 'transform') setTransitioning(false); }}>
 
           <JPanel basis={panelBasis}><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
-          <JPanel basis={panelBasis}><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} active={activePanel === 'supervision'} /></JPanel>
-          <JPanel basis={panelBasis}><JAccueilPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(id)} /></JPanel>
+          <JPanel basis={panelBasis}><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(_allocSlot(id))} onOpenRun={(aid, rid) => setRunning(_slotForRun(aid, rid))} active={activePanel === 'supervision'} /></JPanel>
+          <JPanel basis={panelBasis}><JAccueilPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(_allocSlot(id))} /></JPanel>
 
           {allAgents.map((f, i) => {
             const panelPos = sectionCount + i;          // index réel dans le carrousel
@@ -10512,7 +10540,7 @@ function _startCustomAgent(flow) {
     upload: flow.writes !== false ? _up : false,
     target_count: (flow._defaults && flow._defaults.target_count) || 0,
   };
-  window.__jdmJarvisStore.start(flow.id, { params, isResume: false, resumeState: null }).catch(() => {});
+  window.__jdmJarvisStore.start(_allocSlot(flow.id), { params, isResume: false, resumeState: null }).catch(() => {});
 }
 
 // Modal de CRÉATION d'un agent spécialiste (le formulaire-builder).
@@ -11031,7 +11059,7 @@ function JRunsSeparator({ label, count, action }) {
 // ═══════════════════ Supervision — tableau de bord live ═══════════════════
 // Synthetic dashboard: every flux is shown "en cours", with a live preview of
 // what's happening inside (current step, growing metrics, streaming results).
-function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
+function JSupervisionPanel({ flows, onPick, onLaunch, onOpenRun, active }) {
   // Agents SUR MESURE de l'inventaire (fusionnés aux 6 natifs pour les cartes).
   const customAgents = useCustomAgentFlows();
   const [showBuilder, setShowBuilder] = useState(false);
@@ -11189,7 +11217,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           if (f._custom) { _startCustomAgent(f); return; }
           if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
             const dp = (typeof defaultParamsFor === 'function') ? defaultParamsFor(f.id) : {};
-            window.__jdmJarvisStore.start(f.id, { params: dp, isResume: false, resumeState: null }).catch(() => {});
+            window.__jdmJarvisStore.start(_allocSlot(f.id), { params: dp, isResume: false, resumeState: null }).catch(() => {});
           }
         }} />;
     }
@@ -11197,7 +11225,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
     const _origin = (spec.run && spec.run.origin) || 'ui';
     return (
       <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
-        onOpen={() => { if (rid && _origin !== 'ui') setDetailRunId(rid); else onLaunch(f.id); }}
+        onOpen={() => { if (rid && _origin !== 'ui') setDetailRunId(rid); else onOpenRun(f.id, rid); }}
         onDetail={() => onPick(f.id)}
         onLaunch={() => onLaunch(f.id)}
         onPreview={(p) => setPreviewPath(p)}
@@ -11205,7 +11233,7 @@ function JSupervisionPanel({ flows, onPick, onLaunch, active }) {
           if (f._custom) { _startCustomAgent(f); return; }
           if (typeof window !== 'undefined' && window.__jdmJarvisStore) {
             const dp = (typeof defaultParamsFor === 'function') ? defaultParamsFor(f.id) : {};
-            window.__jdmJarvisStore.start(f.id, { params: dp, isResume: false, resumeState: null }).catch(() => {});
+            window.__jdmJarvisStore.start(_allocSlot(f.id), { params: dp, isResume: false, resumeState: null }).catch(() => {});
           }
         }} />
     );
@@ -13887,7 +13915,12 @@ function LoopGlyph({ color }) {
 }
 
 // ───── Run view — the auto-loop interface ─────
-function JarvisRun({ flow, nextFlow, onBack, onNext }) {
+function JarvisRun({ flow, slot, nextFlow, onBack, onNext }) {
+  // runKey = CLÉ DE RUN dans le store (slot). Par défaut = flow.id (= run
+  // primaire, comportement mono-run inchangé) ; un slot suffixé `agentId#n`
+  // permet un run parallèle distinct du même agent. `flow.id` reste utilisé
+  // partout où c'est l'IDENTITÉ AGENT (params par défaut, libellés, format…).
+  const runKey = slot || flow.id;
   // Pré-remplissage du `term` depuis Projet › Quick try (si présent).
   // Consommation et nettoyage du payload au mount. PAS de lancement
   // automatique — l'utilisateur clique « Lancer » lui-même.
@@ -13907,7 +13940,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   // Survit aux unmounts → switch d'onglet pendant un run ne tue plus
   // le flow ni la progression affichée. Le composant ne fait que lire
   // et déclencher des actions sur le store.
-  const run = useJarvisRunState(flow.id);
+  const run = useJarvisRunState(runKey);
   const state = run.status;
   const log = run.log;
   const metrics = run.metrics;
@@ -13917,7 +13950,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   const filePath = run.filePath;
   const headline = run.headline;
   const resumeState = run.resumeState;
-  const setResumeState = (v) => JarvisStore.patch(flow.id, { resumeState: v });
+  const setResumeState = (v) => JarvisStore.patch(runKey, { resumeState: v });
   const [poolStatus, setPoolStatus] = useState(null);
   // État des secrets en env serveur. Permet d'autoriser
   // soumission / auto-upload même si l'utilisateur n'a pas tapé la clé
@@ -13974,27 +14007,27 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   // local (le state vit là-bas).
   React.useEffect(() => {
     if (flow.consolidates) {
-      JarvisStore.patch(flow.id, { metrics: { ...metrics, produced: metrics.accepted } });
+      JarvisStore.patch(runKey, { metrics: { ...metrics, produced: metrics.accepted } });
     } else {
       const n = parsed.items.filter(i => i.type !== 'meta' && i.type !== 'sens').length;
-      JarvisStore.patch(flow.id, { metrics: { ...metrics, produced: n } });
+      JarvisStore.patch(runKey, { metrics: { ...metrics, produced: n } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parsed.items.length, metrics.accepted, flow.id]);
+  }, [parsed.items.length, metrics.accepted, runKey]);
 
   // launch/stop/reset délèguent au store. Le reader SSE + l'horloge
   // elapsed + le state du run vivent là-bas, donc unmount du composant
   // (= switch d'onglet) ne tue plus le flow.
   const launch = (continueFromResume) => {
-    JarvisStore.start(flow.id, {
+    JarvisStore.start(runKey, {
       params,
       isResume: !!continueFromResume,
       resumeState: continueFromResume ? resumeState : null,
     });
     if (continueFromResume) setResumeState(null);
   };
-  const stop = () => JarvisStore.stop(flow.id);
-  const reset = () => JarvisStore.reset(flow.id);
+  const stop = () => JarvisStore.stop(runKey);
+  const reset = () => JarvisStore.reset(runKey);
 
   // Smooth scroll animé : tween rAF custom (behavior:'smooth' peut
   // etre desactive par prefers-reduced-motion).
@@ -14032,7 +14065,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
     const tid = setTimeout(() => _scrollSmoothTo(0), 50);
     return () => clearTimeout(tid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flow.id]);
+  }, [runKey]);
   // Au passage idle → running (clic Lancer) : scroll vers le bas pour
   // suivre la narration live + les triplets qui arrivent.
   const _prevStateRef = useRef(state);
@@ -14660,7 +14693,7 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
                               // Persiste dans le store pour que la card
                               // Supervision affiche le statut "SOUMIS"
                               // après unmount + sticky entre runs.
-                              try { JarvisStore.patch(flow.id, { submitted: true }); } catch {}
+                              try { JarvisStore.patch(runKey, { submitted: true }); } catch {}
                             } else {
                               setSubmitState('error');
                               setSubmitMsg(`✗ ${res.error || 'échec inconnu'}`);
