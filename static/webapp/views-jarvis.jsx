@@ -154,6 +154,13 @@ const AGENT_ICON = {
   signalement: '⚠️', stats: '📊', annotation: '🏷️',
 };
 const agentIcon = (id) => AGENT_ICON[id] || '🦾';
+// Réserve d'emojis pour le picker cosmétique d'icône (miroir de inventory._ICON_POOL).
+const _ICON_PICK_POOL = [
+  '🧩','🔮','🧠','📚','🗂️','🔗','🧪','🛰️','🧭','📐',
+  '🔧','⚙️','🪛','📎','🧱','🪐','🌿','🦉','🐝','🦊',
+  '📡','🔦','🧮','✒️','🗺️','🎯','🧰','🔬','📈','🧷',
+  '🌱','🔍','🕳️','⚠️','📊','🏷️','🤖','🦾','💡','🧬',
+];
 
 // Brief ULTRA court (une ligne) de ce que fait l'agent — affiché sur les
 // cartes de lancement vides pour orienter d'un coup d'œil.
@@ -1311,7 +1318,11 @@ function defaultParamsFor(agentId) {
   }
   const _d = (_spec && _spec.defaults) || {};
   const _writes = !_spec || _spec.writes !== false;
-  const _up = (typeof _d.upload === 'boolean') ? _d.upload : autoUpload;
+  // Le réglage PAR AGENT fait autorité. Un agent SUR MESURE qui n'a pas activé la
+  // soumission ne doit JAMAIS hériter du toggle global → défaut false. Le global
+  // (autoUpload) ne s'applique qu'aux natifs (pas de réglage upload par défaut).
+  const _isCustom = !!_CUSTOM_SPEC_REG[agentId];
+  const _up = (typeof _d.upload === 'boolean') ? _d.upload : (_isCustom ? false : autoUpload);
   return {
     ...common, term: '', relation: [], ..._d,
     ...(_writes ? { upload: _up } : {}),
@@ -2737,9 +2748,9 @@ function _startCustomAgent(flow) {
   if (typeof window === 'undefined' || !window.__jdmJarvisStore) return;
   const cfg = (window.__JDM_JARVIS_CONFIG__) || {};
   const _d = (flow._spec && flow._spec.defaults) || {};
-  // upload : case « Soumettre automatiquement » du formulaire (defaults.upload)
-  // prime ; sinon réglage global autoSubmit.
-  const _up = (typeof _d.upload === 'boolean') ? _d.upload : (cfg.autoSubmit === true);
+  // upload : réglage PAR AGENT (defaults.upload) fait autorité ; un agent sur
+  // mesure sans réglage explicite NE soumet PAS (jamais le global ici).
+  const _up = (typeof _d.upload === 'boolean') ? _d.upload : false;
   const params = {
     term: '', relation: [],
     model: cfg.llm || 'gemini-3.1-flash-lite',
@@ -2808,6 +2819,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   // Icône (emoji) de l'agent — choisie par l'orchestrateur à la génération
   // (un glyphe distinct par agent). Édition : on garde celle sauvegardée.
   const [icon, setIcon] = React.useState(_isEdit ? (editSpec.icon || '') : '');
+  // Picker cosmétique d'icône (clic sur l'emoji du titre) — purement visuel,
+  // ne touche NI au prompt NI au fonctionnel ; choix limité aux non-utilisées.
+  const [iconPick, setIconPick] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
   const [genLoading, setGenLoading] = React.useState(false);
@@ -2897,7 +2911,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
     const _def = {};
     if (target > 0) _def.target_count = Number(target);
-    if (writes && autoSubmit) _def.upload = true;  // soumission auto par défaut
+    // Persiste TOUJOURS le booléen quand l'agent écrit (true OU false) : le
+    // réglage par-agent doit être explicite, jamais déduit du global au lancement.
+    if (writes) _def.upload = !!autoSubmit;
     if (Object.keys(_def).length) spec.defaults = _def;
     // Résumé d'étapes pour la carte (affichage) — n'affecte pas l'exécution.
     if (Array.isArray(genSteps) && genSteps.length) spec.steps = genSteps;
@@ -2995,6 +3011,18 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   };
 
   const fmtLabel = (_BUILDER_FORMATS.find(f => f.value === fmt) || {}).label || fmt;
+  // Icônes disponibles pour le picker = réserve MOINS celles déjà utilisées
+  // (natifs + sur mesure), l'icône courante de l'agent restant proposée.
+  const availIcons = (() => {
+    const used = new Set();
+    try {
+      Object.values(AGENT_ICON || {}).forEach(v => v && used.add(v));
+      Object.values(_CUSTOM_SPEC_REG || {}).forEach(sp => sp && sp.icon && used.add(sp.icon));
+    } catch (e) {}
+    if (_isEdit && editSpec.icon) used.delete(editSpec.icon);
+    if (icon) used.delete(icon);
+    return _ICON_PICK_POOL.filter(em => !used.has(em));
+  })();
   const recapRow = (k, v) => (
     <div style={{ display: 'flex', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--line-soft)' }}>
       <span style={{ flex: '0 0 130px', fontSize: 12, color: 'var(--ink-3)' }}>{k}</span>
@@ -3015,10 +3043,34 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         maxWidth: 640, width: '100%', boxShadow: 'var(--shadow-lg)', padding: '20px 22px',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--ink)' }}>
-            {step === 'recap'
-              ? (_isEdit ? '🤖 Confirmer les modifications' : '🤖 Confirmer l\'agent')
-              : (_isEdit ? '🤖 Modifier l\'agent spécialiste' : '🤖 Créer un agent spécialiste')}
+          <div className="display" style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* Emoji cliquable = picker cosmétique d'icône (fonctionnalité discrète,
+                sans libellé). Sans effet sur le prompt ni le fonctionnel. */}
+            <span style={{ position: 'relative', display: 'inline-block' }}>
+              <span onClick={() => setIconPick(v => !v)}
+                title="Changer l'icône"
+                style={{ cursor: 'pointer', userSelect: 'none' }}>{icon || '🤖'}</span>
+              {iconPick && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, zIndex: 20, marginTop: 6,
+                  background: 'var(--bg-elev)', border: '1px solid var(--line)',
+                  borderRadius: 'var(--radius)', padding: 8, boxShadow: 'var(--shadow-lg)',
+                  display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 2, width: 300,
+                }}>
+                  {availIcons.map(em => (
+                    <span key={em} onClick={() => { setIcon(em); setIconPick(false); }}
+                      style={{
+                        cursor: 'pointer', fontSize: 18, lineHeight: '28px', textAlign: 'center',
+                        borderRadius: 6,
+                        background: em === icon ? 'rgba(138,35,66,0.15)' : 'transparent',
+                      }}>{em}</span>
+                  ))}
+                </div>
+              )}
+            </span>
+            <span>{step === 'recap'
+              ? (_isEdit ? 'Confirmer les modifications' : 'Confirmer l\'agent')
+              : (_isEdit ? 'Modifier l\'agent spécialiste' : 'Créer un agent spécialiste')}</span>
           </div>
           <Button size="sm" variant="ghost" onClick={onClose}>× Fermer</Button>
         </div>
