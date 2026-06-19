@@ -472,16 +472,52 @@ def is_builtin(agent_id: str) -> bool:
 
 def save_agent_spec(spec: dict) -> dict:
     """Crée/écrase un agent sur mesure (id unique, slug auto). Refuse d'écraser
-    un natif. Renvoie le spec normalisé persisté."""
+    un natif. Renvoie le spec normalisé persisté.
+
+    SITE UNIQUE d'attribution de l'icône : quelle que soit la voie de création
+    (formulaire UI ou outil chat `create_specialist_agent`), tout passe ici. On y
+    garantit un emoji DISTINCT par agent — on garde celui proposé (par le LLM) s'il
+    est exploitable et libre, sinon on en pioche un non encore utilisé."""
     norm = _normalize_spec(spec)
     if norm["id"] in _BUILTINS:
         norm["id"] = norm["id"] + "_custom"
     with _LOCK:
         raw = _load_custom_raw()
         raw = [r for r in raw if slugify_agent_id(r.get("id") or r.get("title") or "") != norm["id"]]
+        # Icônes déjà prises (natifs + autres sur mesure, l'agent courant exclu).
+        used = {v.get("icon") for v in _BUILTINS.values() if v.get("icon")}
+        for r in raw:
+            try:
+                used.add(_normalize_spec(r).get("icon"))
+            except Exception:
+                pass
+        norm["icon"] = _distinct_icon(norm.get("icon"), used)
         raw.append(norm)
         _write_custom_raw(raw)
     return norm
+
+
+# Réserve d'emojis variés pour l'attribution automatique quand le LLM n'en a pas
+# proposé (ou un déjà pris). Tirés de registres lexico-sémantiques / d'outils.
+_ICON_POOL = [
+    "🧩", "🔮", "🧠", "📚", "🗂️", "🔗", "🧪", "🛰️", "🧭", "📐",
+    "🔧", "⚙️", "🪛", "📎", "🧱", "🪐", "🌿", "🦉", "🐝", "🦊",
+    "📡", "🔦", "🧮", "✒️", "🗺️", "🎯", "🧰", "🔬", "📊", "🧷",
+]
+
+
+def _distinct_icon(preferred, used) -> str:
+    """Renvoie un emoji distinct : garde `preferred` s'il est exploitable, non
+    générique (≠ 🤖) et libre ; sinon pioche le 1er emoji libre de la réserve ;
+    en dernier recours, garde `preferred` ou 🤖."""
+    used = set(used or [])
+    p = (preferred or "").strip()
+    if p and p != "🤖" and p not in used:
+        return p
+    for cand in _ICON_POOL:
+        if cand not in used:
+            return cand
+    return p or "🤖"
 
 
 def delete_agent_spec(agent_id: str) -> bool:

@@ -568,14 +568,8 @@ def describe_site_routes() -> dict:
 
 
 # ───────────────────── tools : construction d'agents sur mesure ─────────────
-
-# Mots-clés de format → extension de fichier (pour create_specialist_agent).
-_FORMAT_TO_EXT = {
-    "jdm": ".enrich", "soumission": ".enrich", "enrich": ".enrich",
-    "audit": ".audit", "err": ".err", "signalement": ".err",
-    "stat": ".stat", "stats": ".stat", "annot": ".annot", "annotation": ".annot",
-    "libre": ".txt", "txt": ".txt", "texte": ".txt", "json": ".json",
-}
+# (l'extension de sortie par défaut est dérivée du format dans
+#  inventory._normalize_spec — SITE UNIQUE, pas de table dupliquée ici.)
 
 
 @tool
@@ -660,7 +654,10 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
       - strategy : le workflow FONCTIONNEL (TITRE/ÉTAPES/RÈGLES/OUTILS).
       - template ∈ {audit, generation_endogene, generation_exogene, libre}.
       - writes : l'agent écrit-il un fichier de soumission ? (défaut oui).
-      - output_format : 'jdm' / 'libre' / 'json'.
+      - output_format : 'jdm' / 'ligne' (1 ligne = 1 résultat, format libre) /
+        'libre' (prose) / 'json'.
+      - icon : emoji représentatif (mets une section `ICÔNE: <emoji>` en fin de
+        `strategy` pour le proposer ; un glyphe distinct est garanti à la création).
       - output_ext : extension LIBRE (vide → dérivée du format/template).
       - target_count : nombre d'items visés (0 = défaut).
       - allowed_tools : outils que l'agent SAIT FAIRE (sinon ceux de la section
@@ -682,6 +679,10 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
     spec = {"title": name.strip(), "template": template,
             "system_prompt": _wf, "instructions": strategy.strip(),
             "writes": bool(writes)}
+    # Icône : si l'orchestrateur en a mis une (section ICÔNE: dans la strategy),
+    # on la propose ; l'unicité finale est garantie au SITE UNIQUE save_agent_spec.
+    if _ic0:
+        spec["icon"] = _ic0
     if (description or "").strip():
         spec["brief"] = description.strip()
     _steps = _inv._parse_step_lines(summary) if (summary or "").strip() else _s0
@@ -692,13 +693,14 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
     _picked = _tools or (allowed_tools if isinstance(allowed_tools, list) else [])
     if _picked:
         spec["allowed_tools"] = [t for t in _picked if t in _ok] if _ok else list(_picked)
+    # Format/extension : on PASSE la valeur brute et on laisse _normalize_spec
+    # valider et dériver l'extension (site unique — pas de whitelist ni de table
+    # d'extensions dupliquées ici, qui divergeaient, ex. 'ligne' manquant).
     fmt = (output_format or "").strip().lower().lstrip(".")
-    if fmt in ("jdm", "libre", "json"):
+    if fmt:
         spec["output_format"] = fmt
     if (output_ext or "").strip():
         spec["output_ext"] = output_ext.strip()
-    elif fmt:
-        spec["output_ext"] = _FORMAT_TO_EXT.get(fmt, "." + fmt)
     if target_count and int(target_count) > 0:
         spec["defaults"] = {"target_count": int(target_count)}
     # Normalisation (sans persister) pour l'aperçu.
