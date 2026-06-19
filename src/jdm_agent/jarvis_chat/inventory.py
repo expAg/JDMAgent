@@ -252,6 +252,24 @@ def _normalize_spec(spec: dict) -> dict:
                       for x in st if isinstance(x, dict) and str(x.get("n", "")).strip()]
     else:
         s["steps"] = []
+    # tool_steps : mapping {outil: indice d'étape} AFFECTÉ PAR LE LLM à la
+    # génération (équivalent custom d'AGENT_TOOL_STEPS, codé en dur pour les
+    # natifs). Permet à l'UI d'animer l'étape courante via l'outil appelé. On
+    # ne fait que VALIDER le dict fourni (str -> int borné au nb d'étapes) ;
+    # aucun parsing de texte libre.
+    nsteps = len(s["steps"])
+    raw_ts = s.get("tool_steps")
+    ts = {}
+    if isinstance(raw_ts, dict):
+        for k, v in raw_ts.items():
+            try:
+                i = int(v)
+            except (TypeError, ValueError):
+                continue
+            name = str(k).strip()
+            if name and 0 <= i and (nsteps == 0 or i < nsteps):
+                ts[name] = i
+    s["tool_steps"] = ts
     # display_template : pilote l'affichage carte/log/ItemCard. Décidé à la
     # création selon `consolidates` (consolidant = tentatives+retenus comme
     # enrich ; explorateur = log d'exploration + items produits). Surchargeable.
@@ -347,6 +365,35 @@ def split_workflow_and_brief(text: str) -> tuple[str, str]:
     return wf, brief
 
 
+def extract_tool_steps(text: str) -> dict:
+    """Extrait le mapping {outil: indice_étape} de la section `TOOL_STEPS:` —
+    un OBJET JSON affecté PAR LE LLM (pas de parsing de texte libre). On lit le
+    premier objet `{…}` équilibré après le marqueur et on le passe à json.loads.
+    Renvoie {} si absent/illisible (animation simplement désactivée)."""
+    t = text or ""
+    m = re.search(r"TOOL_STEPS\s*:\s*", t, re.IGNORECASE)
+    if not m:
+        return {}
+    rest = t[m.end():]
+    start = rest.find("{")
+    if start < 0:
+        return {}
+    depth = 0
+    for i in range(start, len(rest)):
+        c = rest[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(rest[start:i + 1])
+                except Exception:
+                    return {}
+                return obj if isinstance(obj, dict) else {}
+    return {}
+
+
 def build_workflow_generation_prompt(spec: dict) -> str:
     """Méta-prompt DÉTERMINISTE (l'« aide ») demandant à l'orchestrateur LLM de
     CRÉER, à la manière des outils `*_workflow` de JDM (qui renvoient un flux
@@ -423,7 +470,7 @@ def build_card_meta_prompt(spec: dict, workflow: str, used_icons=()) -> str:
     )
     return (
         "Voici le workflow d'un agent JDM :\n\n" + (workflow or "").strip() + "\n\n"
-        "Produis UNIQUEMENT, sans préambule ni phrase de conclusion, ces trois "
+        "Produis UNIQUEMENT, sans préambule ni phrase de conclusion, ces quatre "
         "sections (rien d'autre), DANS CET ORDRE :\n"
         "RÉSUMÉ:\n"
         "1. <Nom (1-3 mots)> — <courte description>\n"
@@ -432,7 +479,11 @@ def build_card_meta_prompt(spec: dict, workflow: str, used_icons=()) -> str:
         "ce que fait l'agent, ses étapes clés, sa sortie. PAS de question, PAS de "
         "demande de confirmation, PAS de « je ».>\n"
         "ICÔNE: <UN SEUL emoji, le plus représentatif de la mission de cet agent>\n"
-        + excl_line
+        + excl_line +
+        "TOOL_STEPS: <objet JSON sur UNE ligne qui AFFECTE chaque outil du "
+        "workflow à l'indice (0-based) de la phase RÉSUMÉ où il intervient. "
+        "Clés = noms EXACTS des outils ; valeurs = entier (indice de phase). "
+        "Exemple : {\"verify_claim\": 1, \"write_submission_file\": 2}>\n"
     )
 
 

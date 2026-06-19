@@ -334,6 +334,17 @@ function _allocSlot(agentId) {
   }
   return agentId + '#' + Math.floor(Date.now() / 1000);   // garde-fou
 }
+// Mapping outil→étape pour animer l'étape courante : natifs via AGENT_TOOL_STEPS
+// (codé en dur), sur mesure via flow._spec.tool_steps (affecté par le LLM à la
+// création). Accepte un flow OU un id (résolu via _flowById).
+function _toolSteps(flowOrId) {
+  const flow = (flowOrId && typeof flowOrId === 'object') ? flowOrId
+    : ((typeof _flowById === 'function') ? _flowById(flowOrId) : null);
+  const id = flow ? flow.id : flowOrId;
+  return (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[id])
+      || (flow && flow._spec && flow._spec.tool_steps)
+      || {};
+}
 // Slot local qui OBSERVE déjà un run_id donné (pour rouvrir une carte « en
 // cours » sur SON run, et non en lancer un nouveau). Fallback = slot primaire.
 function _slotForRun(agentId, runId) {
@@ -2481,7 +2492,7 @@ function JRegistryRow({ flow, num, cols, last, onOpen, onLaunch }) {
 // AGENT_TOOL_STEPS (mapping reel tool -> etape par flux) croise avec
 // TOOL_DOCS (fetched : kind par tool).
 function flowToolKinds(flow) {
-  const steps = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
+  const steps = _toolSteps(flow);
   const kinds = new Set();
   for (const t of Object.keys(steps)) {
     const d = TOOL_DOCS[t];
@@ -2850,6 +2861,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   // Picker cosmétique d'icône (clic sur l'emoji du titre) — purement visuel,
   // ne touche NI au prompt NI au fonctionnel ; choix limité aux non-utilisées.
   const [iconPick, setIconPick] = React.useState(false);
+  // Mapping outil→étape AFFECTÉ par le LLM à la génération (anime l'étape
+  // courante au runtime). Conservé tel quel + persisté dans la fiche.
+  const [toolSteps, setToolSteps] = React.useState(_isEdit ? (editSpec.tool_steps || null) : null);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
   const [genLoading, setGenLoading] = React.useState(false);
@@ -2936,6 +2950,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
       brief: description.trim(),
     };
     if (icon) spec.icon = icon;  // emoji choisi par l'orchestrateur
+    if (toolSteps && Object.keys(toolSteps).length) spec.tool_steps = toolSteps;  // outil→étape
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
     const _def = {};
     if (target > 0) _def.target_count = Number(target);
@@ -2980,6 +2995,8 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         setWorkflow(d.workflow);
         // Icône (emoji) choisie par l'orchestrateur — distincte des autres agents.
         if (d.icon) setIcon(d.icon);
+        // Mapping outil→étape (JSON) affecté par l'orchestrateur → anime l'étape.
+        if (d.tool_steps && typeof d.tool_steps === 'object') setToolSteps(d.tool_steps);
         // Description (carte) rédigée par le LLM en 3 lignes.
         if (d.brief) setDescription(d.brief);
         // Outils PRÉ-CHARGÉS selon ce que le LLM a jugé nécessaire (au lieu de
@@ -3853,7 +3870,7 @@ function RunDetailModal({ runId, onClose, onPreview }) {
                 )}
                 {leftView === 'log' ? (
                   (() => {
-                    const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[agentId]) || {};
+                    const fts = _toolSteps(agentId);
                     const _norm = (s) => (s == null ? '' : String(s)).trim().toLowerCase();
                     const validatedSet = new Set();
                     if (Array.isArray(accepted)) {
@@ -4213,7 +4230,7 @@ function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
   // step 0 compte aussi pour 1.
   //   ex annot : workflow(0) → lookup(0) → get_relations(1) → lookup(0=>+1)
   //              → get_relations(1) → write_submission(2)  ⇒ 2 tentatives
-  const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
+  const fts = _toolSteps(flow);
   let iter = 0;
   {
     let prevStep = -1;
@@ -5255,7 +5272,7 @@ function JToolDialog({ flow, tool, onClose }) {
   //              on signale juste que l'agent mobilise cet outil.
   const _stepOf = (f) => {
     if (f._custom) return null;
-    const s = (AGENT_TOOL_STEPS[f.id] || {})[tool];
+    const s = _toolSteps(f)[tool];
     return s != null ? s : null;
   };
   const _usesTool = (f) => {
@@ -5263,7 +5280,7 @@ function JToolDialog({ flow, tool, onClose }) {
       const al = (f._spec && f._spec.allowed_tools) || [];
       return Array.isArray(al) && al.includes(tool);
     }
-    return (AGENT_TOOL_STEPS[f.id] || {})[tool] != null;
+    return _toolSteps(f)[tool] != null;
   };
   // Every flow (natif ou sur mesure) whose sequence calls this tool.
   const usages = allFlows.filter(_usesTool);
@@ -5287,7 +5304,7 @@ function JToolDialog({ flow, tool, onClose }) {
     // Utilise selectedFlow (= flow VIEWE dans le dialog), pas flow (=
     // flow d'ORIGINE). Permet la navigation : cliquer sur une autre
     // carte dans « Inscription » switch le prompt agreged sur ce flow.
-    const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[selectedFlow.id]) || {};
+    const fts = _toolSteps(selectedFlow);
     const ordered = Object.keys(fts).sort((a, b) => (fts[a] - fts[b]));
     if (ordered.length === 0) return doc.prompt;
     const parts = [
@@ -5517,7 +5534,7 @@ function JAgentPanel({ flow, index, panelPos: panelPosProp, total, onLaunch, onI
   // etait des donnees fictives ; les vraies candidats remontent dans
   // le ItemCard de la vue Run au moment du run, pas en preview.
   const isCustom = !!flow._custom;
-  const steps = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
+  const steps = _toolSteps(flow);
   const tools = Object.keys(steps);
   const samples = [];
   const params = defaultParamsFor(flow.id);
@@ -6655,7 +6672,7 @@ function JarvisRun({ flow, slot, nextFlow, onBack, onNext }) {
                   // On construit un Set de cles "term|rel|target" normalisees
                   // pour pouvoir teinter chaque ligne tentative.
                   (() => {
-                    const fts = (typeof AGENT_TOOL_STEPS !== 'undefined' && AGENT_TOOL_STEPS[flow.id]) || {};
+                    const fts = _toolSteps(flow);
                     const _norm = (s) => (s == null ? '' : String(s)).trim().toLowerCase();
                     const validatedSet = new Set();
                     if (Array.isArray(accepted)) {

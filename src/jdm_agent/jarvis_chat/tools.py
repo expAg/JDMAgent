@@ -688,6 +688,12 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
     _steps = _inv._parse_step_lines(summary) if (summary or "").strip() else _s0
     if _steps:
         spec["steps"] = _steps  # résumé d'étapes pour la carte (affichage)
+    # tool_steps : mapping outil→étape (JSON) si l'orchestrateur l'a fourni
+    # (section TOOL_STEPS dans la strategy ou le summary) — même mécanisme que
+    # l'endpoint UI. Validé/borné ensuite par _normalize_spec.
+    _ts = _inv.extract_tool_steps(strategy) or _inv.extract_tool_steps(summary or "")
+    if _ts:
+        spec["tool_steps"] = _ts
     # Outils : section OUTILS de la strategy en priorité, sinon param explicite.
     _ok = _inv.selectable_tool_names()
     _picked = _tools or (allowed_tools if isinstance(allowed_tools, list) else [])

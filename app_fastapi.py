@@ -2066,14 +2066,16 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         # `usedIcons` (fourni par le front : natifs + sur mesure) → exclusion pour
         # que le LLM choisisse un emoji DISTINCT.
         used_icons = [str(x) for x in (cfg.get("usedIcons") or []) if x]
-        brief, steps, icon = "", [], ""
+        brief, steps, icon, tool_steps = "", [], "", {}
         try:
             card = _invoke(agent, _inv.build_card_meta_prompt(spec, workflow, used_icons))
             _w, brief, _t, steps, icon = _inv.parse_generation_output(card)
+            tool_steps = _inv.extract_tool_steps(card)   # mapping outil→étape (JSON)
         except Exception:
             pass
         return {"ok": True, "workflow": workflow, "brief": brief, "tools": tools,
-                "steps": steps, "icon": icon, "meta_prompt": meta}
+                "steps": steps, "icon": icon, "tool_steps": tool_steps,
+                "meta_prompt": meta}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}
     finally:
