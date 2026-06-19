@@ -11242,7 +11242,16 @@ function JSupervisionPanel({ flows, onPick, onLaunch, onOpenRun, active }) {
     const _origin = (spec.run && spec.run.origin) || 'ui';
     return (
       <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
-        onOpen={() => { if (rid && _origin !== 'ui') setDetailRunId(rid); else onOpenRun(f.id, rid); }}
+        onOpen={() => {
+          if (!rid) { onOpenRun(f.id, null); return; }
+          // Un slot LOCAL observe-t-il CE run_id ? (live ou terminé, cette
+          // session) → moniteur sur son slot. Sinon (autre origine, ou run
+          // terminé après refresh) → vue par run_id en lecture seule. Plus de
+          // retour au « slot primaire » (= ancien run).
+          const _slot = _slotForRun(f.id, rid);
+          const _hasLocal = _JARVIS_RUNS[_slot] && _JARVIS_RUNS[_slot].runId === rid;
+          if (_hasLocal) onOpenRun(f.id, rid); else setDetailRunId(rid);
+        }}
         onDetail={() => onPick(f.id)}
         onLaunch={() => onLaunch(f.id)}
         onPreview={(p) => setPreviewPath(p)}
