@@ -10594,15 +10594,26 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   // Quand on change le template, aligne le format sur celui du template (sauf
   // si l'utilisateur a déjà personnalisé). L'extension par défaut suit le format
   // tant qu'elle n'a pas été touchée manuellement.
-  const _tplFirst = React.useRef(true);
+  // Alignement format/consolide/écrit sur le template — UNIQUEMENT quand
+  // l'utilisateur change le template lui-même (et, en création, une seule fois
+  // au 1er chargement du catalogue). En ÉDITION, on ne touche jamais aux valeurs
+  // sauvegardées tant que l'utilisateur ne rechoisit pas explicitement un
+  // template : sinon l'arrivée asynchrone de `templates` réécrasait fmt /
+  // consolide / écrit avec les défauts (bug : champs revenant au défaut).
+  const _userPickedTpl = React.useRef(false);
+  const _didInitAlign = React.useRef(false);
   React.useEffect(() => {
-    // En édition, ne PAS écraser le format sauvegardé au montage initial.
-    if (_tplFirst.current) { _tplFirst.current = false; if (_isEdit) return; }
+    if (!Object.keys(templates).length) return;   // attendre le catalogue
+    const userChange = _userPickedTpl.current;
+    _userPickedTpl.current = false;
+    if (!userChange) {
+      if (_isEdit) return;                // respecte le spec sauvegardé
+      if (_didInitAlign.current) return;  // création : aligner une seule fois
+    }
+    _didInitAlign.current = true;
     if (tpl.format && (tpl.format === 'jdm' || tpl.format === 'libre' || tpl.format === 'json')) {
       setFmt(tpl.format);
     }
-    // Préremplit `consolide` / `écrit` depuis le template tant que l'utilisateur
-    // ne les a pas réglés à la main (alors ils restent libres).
     if (!consTouched && typeof tpl.consolidates === 'boolean') setConsolidates(tpl.consolidates);
     if (!writesTouched && typeof tpl.writes === 'boolean') setWrites(tpl.writes);
   }, [template, templates]); // eslint-disable-line
@@ -10741,7 +10752,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           <Input value={name} onChange={setName} placeholder="ex. Enrichisseur de cuisine" />
         </Field>
         <Field label="Template (préremplit consolide / écrit / format — modifiables)">
-          <Select value={template} onChange={setTemplate}
+          <Select value={template} onChange={(v) => { _userPickedTpl.current = true; setTemplate(v); }}
             options={Object.keys(templates).length
               ? Object.entries(templates).map(([k, v]) => ({ value: k, label: v.label || k }))
               : [{ value: 'generation_endogene', label: 'Génération endogène' }]} />
