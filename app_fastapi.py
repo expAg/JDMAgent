@@ -2066,16 +2066,18 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         # `usedIcons` (fourni par le front : natifs + sur mesure) → exclusion pour
         # que le LLM choisisse un emoji DISTINCT.
         used_icons = [str(x) for x in (cfg.get("usedIcons") or []) if x]
-        brief, steps, icon, tool_steps = "", [], "", {}
+        brief, steps, icon = "", [], ""
         try:
             card = _invoke(agent, _inv.build_card_meta_prompt(spec, workflow, used_icons))
             _w, brief, _t, steps, icon = _inv.parse_generation_output(card)
-            tool_steps = _inv.extract_tool_steps(card)   # mapping outil→étape (JSON)
         except Exception:
             pass
+        # NB : tool_steps (mapping outil→étape) n'est PAS produit ici. Il est
+        # affecté au SITE UNIQUE save_agent_spec, à l'enregistrement, par un appel
+        # LLM dédié — sans régénérer le workflow, et seulement si workflow/étapes/
+        # outils ont changé.
         return {"ok": True, "workflow": workflow, "brief": brief, "tools": tools,
-                "steps": steps, "icon": icon, "tool_steps": tool_steps,
-                "meta_prompt": meta}
+                "steps": steps, "icon": icon, "meta_prompt": meta}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}
     finally:
@@ -2085,6 +2087,46 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
                 _rel(lease_id, _app)
             except Exception:
                 pass
+
+
+def _tool_steps_invoke(prompt_text: str) -> str:
+    """Invocateur LLM DÉDIÉ pour l'affectation outil→étape, enregistré sur
+    inventory et appelé au SITE UNIQUE save_agent_spec (UI ET outil chat). Bâtit
+    un orchestrateur par défaut (pool Gemini), invoque, libère le lease. Ne
+    régénère JAMAIS le workflow (le prompt ne demande qu'un mapping JSON)."""
+    from jdm_agent.jarvis_chat.agent import build_jarvis_chat_agent
+    from langchain_core.messages import HumanMessage
+    from jarvis import _content_to_text
+    model = "gemini-3.1-flash-lite"
+    lease_id = "tsteps-" + _uuid.uuid4().hex[:8]
+    gem_key = None
+    try:
+        try:
+            from jdm_agent.pool_lease import acquire_key as _acq
+            gem_key = _acq(model, lease_id, _app)
+        except Exception:
+            gem_key = None
+        llm = _app._build_llm(model, "", use_thinking=False, gemini_key_override=gem_key)
+        agent = build_jarvis_chat_agent(client=get_client(), llm=llm)
+        out = agent.invoke({"messages": [HumanMessage(content=prompt_text)]})
+        msgs = out.get("messages") if isinstance(out, dict) else None
+        raw = msgs[-1].content if msgs else ""
+        return (_content_to_text(raw) or "").strip()
+    finally:
+        if gem_key:
+            try:
+                from jdm_agent.pool_lease import release_key as _rel
+                _rel(lease_id, _app)
+            except Exception:
+                pass
+
+
+# Enregistre l'invocateur sur l'inventaire (SITE UNIQUE save_agent_spec l'utilise).
+try:
+    from jdm_agent.jarvis_chat import inventory as _inv_reg
+    _inv_reg.set_tool_steps_invoker(_tool_steps_invoke)
+except Exception:
+    pass
 
 
 @app.post("/api/jarvis/agents/preview")

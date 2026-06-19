@@ -252,24 +252,13 @@ def _normalize_spec(spec: dict) -> dict:
                       for x in st if isinstance(x, dict) and str(x.get("n", "")).strip()]
     else:
         s["steps"] = []
-    # tool_steps : mapping {outil: indice d'étape} AFFECTÉ PAR LE LLM à la
-    # génération (équivalent custom d'AGENT_TOOL_STEPS, codé en dur pour les
-    # natifs). Permet à l'UI d'animer l'étape courante via l'outil appelé. On
-    # ne fait que VALIDER le dict fourni (str -> int borné au nb d'étapes) ;
-    # aucun parsing de texte libre.
-    nsteps = len(s["steps"])
-    raw_ts = s.get("tool_steps")
-    ts = {}
-    if isinstance(raw_ts, dict):
-        for k, v in raw_ts.items():
-            try:
-                i = int(v)
-            except (TypeError, ValueError):
-                continue
-            name = str(k).strip()
-            if name and 0 <= i and (nsteps == 0 or i < nsteps):
-                ts[name] = i
-    s["tool_steps"] = ts
+    # tool_steps : mapping {outil: indice d'étape} pour animer l'étape courante
+    # (équivalent custom d'AGENT_TOOL_STEPS). AFFECTÉ par le LLM au SITE UNIQUE
+    # `save_agent_spec` (à l'enregistrement, seulement si workflow/étapes/outils
+    # ont changé). Ici on ne fait que valider/borner le dict existant ; jamais
+    # de parsing de texte. `tool_steps_sig` = empreinte de l'état ayant servi.
+    s["tool_steps"] = _clamp_tool_steps(s.get("tool_steps"), len(s["steps"]))
+    s["tool_steps_sig"] = str(s.get("tool_steps_sig") or "")
     # display_template : pilote l'affichage carte/log/ItemCard. Décidé à la
     # création selon `consolidates` (consolidant = tentatives+retenus comme
     # enrich ; explorateur = log d'exploration + items produits). Surchargeable.
@@ -371,10 +360,10 @@ def extract_tool_steps(text: str) -> dict:
     premier objet `{…}` équilibré après le marqueur et on le passe à json.loads.
     Renvoie {} si absent/illisible (animation simplement désactivée)."""
     t = text or ""
+    # Accepte soit une section « TOOL_STEPS: {…} », soit un objet JSON NU (la
+    # réponse de l'invocateur dédié) → on lit le 1er objet {…} équilibré.
     m = re.search(r"TOOL_STEPS\s*:\s*", t, re.IGNORECASE)
-    if not m:
-        return {}
-    rest = t[m.end():]
+    rest = t[m.end():] if m else t
     start = rest.find("{")
     if start < 0:
         return {}
@@ -470,7 +459,7 @@ def build_card_meta_prompt(spec: dict, workflow: str, used_icons=()) -> str:
     )
     return (
         "Voici le workflow d'un agent JDM :\n\n" + (workflow or "").strip() + "\n\n"
-        "Produis UNIQUEMENT, sans préambule ni phrase de conclusion, ces quatre "
+        "Produis UNIQUEMENT, sans préambule ni phrase de conclusion, ces trois "
         "sections (rien d'autre), DANS CET ORDRE :\n"
         "RÉSUMÉ:\n"
         "1. <Nom (1-3 mots)> — <courte description>\n"
@@ -479,11 +468,75 @@ def build_card_meta_prompt(spec: dict, workflow: str, used_icons=()) -> str:
         "ce que fait l'agent, ses étapes clés, sa sortie. PAS de question, PAS de "
         "demande de confirmation, PAS de « je ».>\n"
         "ICÔNE: <UN SEUL emoji, le plus représentatif de la mission de cet agent>\n"
-        + excl_line +
-        "TOOL_STEPS: <objet JSON sur UNE ligne qui AFFECTE chaque outil du "
-        "workflow à l'indice (0-based) de la phase RÉSUMÉ où il intervient. "
-        "Clés = noms EXACTS des outils ; valeurs = entier (indice de phase). "
-        "Exemple : {\"verify_claim\": 1, \"write_submission_file\": 2}>\n"
+        + excl_line
+    )
+
+
+# Hook d'affectation outil→étape — INJECTÉ par la couche serveur (app_fastapi)
+# au démarrage. inventory reste sans dépendance LLM ; save_agent_spec l'appelle
+# (SITE UNIQUE) si le workflow/les étapes/les outils ont changé.
+_TOOL_STEPS_INVOKER = None
+
+
+def set_tool_steps_invoker(fn) -> None:
+    """Enregistre l'invocateur LLM (prompt:str -> texte) utilisé à
+    l'enregistrement pour affecter les outils aux étapes. None = pas d'appel."""
+    global _TOOL_STEPS_INVOKER
+    _TOOL_STEPS_INVOKER = fn
+
+
+def _clamp_tool_steps(raw, nsteps: int) -> dict:
+    """Valide un mapping {outil: indice} : clés str non vides, valeurs int
+    bornées à [0, nsteps) (ou tout entier >=0 si nsteps==0). Aucun parsing de
+    texte : on attend déjà un dict."""
+    out = {}
+    if not isinstance(raw, dict):
+        return out
+    for k, v in raw.items():
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            continue
+        name = str(k).strip()
+        if name and i >= 0 and (nsteps == 0 or i < nsteps):
+            out[name] = i
+    return out
+
+
+def _tool_steps_signature(spec: dict) -> str:
+    """Empreinte des SEULS éléments dont dépend l'affectation : workflow
+    (system_prompt), étapes (n+d), outils autorisés. Si elle est inchangée, on
+    réutilise le mapping existant — aucun appel LLM."""
+    import hashlib
+    payload = json.dumps({
+        "wf": (spec.get("system_prompt") or "").strip(),
+        "steps": [(st.get("n", ""), st.get("d", "")) for st in (spec.get("steps") or [])],
+        "tools": sorted(spec.get("allowed_tools") or []),
+    }, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def build_tool_steps_prompt(spec: dict) -> str:
+    """Méta-prompt DÉDIÉ à l'affectation outil→étape. Le workflow est une
+    DONNÉE D'ENTRÉE (jamais régénéré). Sortie attendue : objet JSON
+    {outil: indice_étape}."""
+    wf = (spec.get("system_prompt") or "").strip()
+    steps = spec.get("steps") or []
+    tools = spec.get("allowed_tools") or []
+    steps_lines = "\n".join(
+        f"{i}. {st.get('n', '')} — {st.get('d', '')}" for i, st in enumerate(steps)
+    ) or "(aucune étape)"
+    tools_line = ", ".join(tools) if tools else "(les outils cités dans le workflow)"
+    hi = max(0, len(steps) - 1)
+    return (
+        "Voici le WORKFLOW d'un agent JDM. C'est une DONNÉE — ne le réécris pas, "
+        "ne le régénère pas :\n\n" + wf + "\n\n"
+        "Ses ÉTAPES d'affichage (indices 0-based) :\n" + steps_lines + "\n\n"
+        "Ses OUTILS : " + tools_line + "\n\n"
+        "Affecte CHAQUE outil à l'indice de l'étape où il intervient principalement. "
+        "Réponds UNIQUEMENT par un objet JSON sur une seule ligne au format "
+        "{\"nom_outil\": indice, …} — clés = noms EXACTS des outils ci-dessus, "
+        f"valeurs = entier entre 0 et {hi}. Rien d'autre (pas de phrase, pas de ```)."
     )
 
 
@@ -525,15 +578,23 @@ def save_agent_spec(spec: dict) -> dict:
     """Crée/écrase un agent sur mesure (id unique, slug auto). Refuse d'écraser
     un natif. Renvoie le spec normalisé persisté.
 
-    SITE UNIQUE d'attribution de l'icône : quelle que soit la voie de création
-    (formulaire UI ou outil chat `create_specialist_agent`), tout passe ici. On y
-    garantit un emoji DISTINCT par agent — on garde celui proposé (par le LLM) s'il
-    est exploitable et libre, sinon on en pioche un non encore utilisé."""
+    SITE UNIQUE (UI ET outil chat passent par ici — pas de drift) pour DEUX
+    affectations :
+      - icône DISTINCTE par agent (garde celle proposée si libre, sinon pioche) ;
+      - mapping outil→étape (`tool_steps`) : affecté par un appel LLM DÉDIÉ
+        (jamais de régénération du workflow), et SEULEMENT si le workflow / les
+        étapes / les outils ont changé depuis le dernier enregistrement
+        (comparaison de signature). Sinon on réutilise le mapping existant."""
     norm = _normalize_spec(spec)
     if norm["id"] in _BUILTINS:
         norm["id"] = norm["id"] + "_custom"
     with _LOCK:
         raw = _load_custom_raw()
+        # Spec existante (même id) : pour réutiliser tool_steps si rien de
+        # pertinent n'a changé.
+        existing = next((r for r in raw
+                         if slugify_agent_id(r.get("id") or r.get("title") or "") == norm["id"]),
+                        None)
         raw = [r for r in raw if slugify_agent_id(r.get("id") or r.get("title") or "") != norm["id"]]
         # Icônes déjà prises (natifs + autres sur mesure, l'agent courant exclu).
         used = {v.get("icon") for v in _BUILTINS.values() if v.get("icon")}
@@ -543,6 +604,26 @@ def save_agent_spec(spec: dict) -> dict:
             except Exception:
                 pass
         norm["icon"] = _distinct_icon(norm.get("icon"), used)
+        # tool_steps : réutiliser si signature inchangée, sinon (ré)affecter via
+        # l'invocateur LLM dédié — uniquement si workflow/étapes/outils ont bougé.
+        sig = _tool_steps_signature(norm)
+        ex_ts = (existing or {}).get("tool_steps") if isinstance(existing, dict) else None
+        ex_sig = (existing or {}).get("tool_steps_sig") if isinstance(existing, dict) else None
+        # Signature inchangée (même workflow/étapes/outils) → on RÉUTILISE, même
+        # si le mapping est vide : l'affectation a déjà été tentée pour cet état,
+        # on ne rappelle pas le LLM.
+        if ex_sig and ex_sig == sig:
+            norm["tool_steps"] = _clamp_tool_steps(ex_ts, len(norm["steps"]))
+        elif _TOOL_STEPS_INVOKER is not None:
+            try:
+                out = _TOOL_STEPS_INVOKER(build_tool_steps_prompt(norm))
+                norm["tool_steps"] = _clamp_tool_steps(extract_tool_steps(out or ""), len(norm["steps"]))
+            except Exception:
+                norm["tool_steps"] = _clamp_tool_steps(ex_ts, len(norm["steps"]))
+        else:
+            # pas d'invocateur (tests/offline) : on garde l'existant s'il y en a.
+            norm["tool_steps"] = _clamp_tool_steps(ex_ts, len(norm["steps"]))
+        norm["tool_steps_sig"] = sig
         raw.append(norm)
         _write_custom_raw(raw)
     return norm

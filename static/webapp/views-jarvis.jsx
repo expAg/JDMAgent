@@ -2872,9 +2872,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   // Picker cosmétique d'icône (clic sur l'emoji du titre) — purement visuel,
   // ne touche NI au prompt NI au fonctionnel ; choix limité aux non-utilisées.
   const [iconPick, setIconPick] = React.useState(false);
-  // Mapping outil→étape AFFECTÉ par le LLM à la génération (anime l'étape
-  // courante au runtime). Conservé tel quel + persisté dans la fiche.
-  const [toolSteps, setToolSteps] = React.useState(_isEdit ? (editSpec.tool_steps || null) : null);
+  // NB : le mapping outil→étape (tool_steps) n'est PAS géré ici. Il est affecté
+  // côté backend au SITE UNIQUE save_agent_spec (à l'enregistrement, seulement si
+  // workflow/étapes/outils changent). Le front ne l'envoie jamais (zéro drift).
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
   const [genLoading, setGenLoading] = React.useState(false);
@@ -2961,7 +2961,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
       brief: description.trim(),
     };
     if (icon) spec.icon = icon;  // emoji choisi par l'orchestrateur
-    if (toolSteps && Object.keys(toolSteps).length) spec.tool_steps = toolSteps;  // outil→étape
+    // tool_steps : NON envoyé — affecté côté backend (save_agent_spec).
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
     const _def = {};
     if (target > 0) _def.target_count = Number(target);
@@ -3006,8 +3006,6 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
         setWorkflow(d.workflow);
         // Icône (emoji) choisie par l'orchestrateur — distincte des autres agents.
         if (d.icon) setIcon(d.icon);
-        // Mapping outil→étape (JSON) affecté par l'orchestrateur → anime l'étape.
-        if (d.tool_steps && typeof d.tool_steps === 'object') setToolSteps(d.tool_steps);
         // Description (carte) rédigée par le LLM en 3 lignes.
         if (d.brief) setDescription(d.brief);
         // Outils PRÉ-CHARGÉS selon ce que le LLM a jugé nécessaire (au lieu de
