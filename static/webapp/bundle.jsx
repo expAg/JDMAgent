@@ -10716,7 +10716,10 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   );
 
   return ReactDOM.createPortal((
-    <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{
+    // Pas de fermeture au clic sur le fond : un clic hors de la carte ne doit
+    // PAS détruire le brouillon en cours (instructions, prompt généré…).
+    // Fermeture volontaire seulement via « × Fermer » / « Annuler » / Échap.
+    <div style={{
       position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)',
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '5vh 20px', overflow: 'auto',
     }}>
