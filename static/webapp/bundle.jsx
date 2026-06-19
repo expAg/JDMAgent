@@ -11253,13 +11253,11 @@ function JSupervisionPanel({ flows, onPick, onLaunch, onOpenRun, active }) {
     const _origin = (spec.run && spec.run.origin) || 'ui';
     return (
       <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
-        onOpen={() => {
-          // EN COURS → ouvrir le moniteur LIVE de CE run (son slot).
-          // TERMINÉ (ou pas de run) → ouvrir une Jarvis Run VIERGE pour
-          // (re)lancer un NOUVEAU run, jamais l'ancien run terminé.
-          if (live[i] && live[i].isRunning) onOpenRun(f.id, rid);
-          else onLaunch(f.id);
-        }}
+        // Carte EN COURS ou TERMINÉE → ouvre LE run lui-même (ses logs/résultats,
+        // son identité run_id). La carte « À lancer » (séparée, JLaunchCard) est
+        // la seule à ouvrir un run vierge. onOpenRun : slot local de ce run_id
+        // sinon rattachement par run_id (run hors mémoire, ex. après refresh).
+        onOpen={() => onOpenRun(f.id, rid)}
         onDetail={() => onPick(f.id)}
         onLaunch={() => onLaunch(f.id)}
         onPreview={(p) => setPreviewPath(p)}
