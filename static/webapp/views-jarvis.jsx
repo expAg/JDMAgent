@@ -326,11 +326,14 @@ function _emptyJarvisRun(agentId) {
 // libre (= non running/starting) pour cet agent.
 function _slotAgent(slot) { return String(slot || '').split('#')[0]; }
 function _allocSlot(agentId) {
-  const busy = (s) => s && (s.status === 'running' || s.status === 'starting');
-  if (!busy(_JARVIS_RUNS[agentId])) return agentId;       // primaire libre
+  // « Libre » = vide ou idle. Un slot running/starting (en cours) MAIS AUSSI
+  // done/error (terminé, contient l'ancien run) est occupé → on alloue un slot
+  // neuf, pour ouvrir une Jarvis Run VIERGE (relance) et non l'ancien run.
+  const free = (s) => !s || s.status === 'idle';
+  if (free(_JARVIS_RUNS[agentId])) return agentId;        // primaire libre
   for (let n = 2; n < 100; n++) {
     const k = agentId + '#' + n;
-    if (!busy(_JARVIS_RUNS[k])) return k;
+    if (free(_JARVIS_RUNS[k])) return k;
   }
   return agentId + '#' + Math.floor(Date.now() / 1000);   // garde-fou
 }
@@ -1777,7 +1780,15 @@ function ViewJarvis() {
         onTransitionEnd={(e) => { if (e.propertyName === 'transform') setTransitioning(false); }}>
 
           <JPanel basis={panelBasis}><JConfigPanel onAccueil={() => goToId('repertoire')} /></JPanel>
-          <JPanel basis={panelBasis}><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(_allocSlot(id))} onOpenRun={(aid, rid) => setRunning(_slotForRun(aid, rid))} active={activePanel === 'supervision'} /></JPanel>
+          <JPanel basis={panelBasis}><JSupervisionPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(_allocSlot(id))} onOpenRun={(aid, rid) => {
+              const _found = _slotForRun(aid, rid);
+              const _hasLocal = rid && _JARVIS_RUNS[_found] && _JARVIS_RUNS[_found].runId === rid;
+              if (_hasLocal) { setRunning(_found); return; }
+              // run en cours non observé localement (autre session/CLI) →
+              // rattache un slot neuf à son run_id pour le suivre en live.
+              if (rid) { const _s = _allocSlot(aid); JarvisStore.attach(_s, rid).catch(() => {}); setRunning(_s); return; }
+              setRunning(_allocSlot(aid));
+            }} active={activePanel === 'supervision'} /></JPanel>
           <JPanel basis={panelBasis}><JAccueilPanel flows={JARVIS_AGENTS} onPick={goToId} onLaunch={(id) => setRunning(_allocSlot(id))} /></JPanel>
 
           {allAgents.map((f, i) => {
@@ -3491,14 +3502,11 @@ function JSupervisionPanel({ flows, onPick, onLaunch, onOpenRun, active }) {
     return (
       <JAgentDashCard key={rid || f.id} flow={f} num={i + 1} live={live[i]}
         onOpen={() => {
-          if (!rid) { onOpenRun(f.id, null); return; }
-          // Un slot LOCAL observe-t-il CE run_id ? (live ou terminé, cette
-          // session) → moniteur sur son slot. Sinon (autre origine, ou run
-          // terminé après refresh) → vue par run_id en lecture seule. Plus de
-          // retour au « slot primaire » (= ancien run).
-          const _slot = _slotForRun(f.id, rid);
-          const _hasLocal = _JARVIS_RUNS[_slot] && _JARVIS_RUNS[_slot].runId === rid;
-          if (_hasLocal) onOpenRun(f.id, rid); else setDetailRunId(rid);
+          // EN COURS → ouvrir le moniteur LIVE de CE run (son slot).
+          // TERMINÉ (ou pas de run) → ouvrir une Jarvis Run VIERGE pour
+          // (re)lancer un NOUVEAU run, jamais l'ancien run terminé.
+          if (live[i] && live[i].isRunning) onOpenRun(f.id, rid);
+          else onLaunch(f.id);
         }}
         onDetail={() => onPick(f.id)}
         onLaunch={() => onLaunch(f.id)}
