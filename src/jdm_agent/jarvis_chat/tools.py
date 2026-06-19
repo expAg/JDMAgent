@@ -678,7 +678,7 @@ def create_specialist_agent(name: str, strategy: str, template: str = "libre",
     # La `strategy` = workflow FONCTIONNEL (+ OUTILS). La description et le résumé
     # d'étapes de la CARTE sont des PARAMÈTRES SÉPARÉS (jamais parsés depuis le
     # texte conversationnel) → pas de pollution.
-    _wf, _b0, _tools, _s0 = _inv.parse_generation_output(strategy.strip())
+    _wf, _b0, _tools, _s0, _ic0 = _inv.parse_generation_output(strategy.strip())
     spec = {"title": name.strip(), "template": template,
             "system_prompt": _wf, "instructions": strategy.strip(),
             "writes": bool(writes)}

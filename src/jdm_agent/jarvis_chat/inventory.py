@@ -282,8 +282,8 @@ def _parse_step_lines(block: str) -> list:
     return out
 
 
-def parse_generation_output(text: str) -> tuple[str, str, list, list]:
-    """Découpe la sortie de génération en (workflow, brief, outils, étapes_carte).
+def parse_generation_output(text: str) -> tuple[str, str, list, list, str]:
+    """Découpe la sortie de génération en (workflow, brief, outils, étapes_carte, icône).
 
     Le WORKFLOW (TITRE/ÉTAPES/RÈGLES) est le CŒUR FONCTIONNEL — il n'est ni
     allégé ni reformaté. Les sections suivantes sont AJOUTÉES, uniquement pour
@@ -294,7 +294,17 @@ def parse_generation_output(text: str) -> tuple[str, str, list, list]:
 
     SOURCE UNIQUE : endpoint UI (/generate) ET outil chat create_specialist_agent."""
     t = (text or "").strip()
-    brief, tools, steps = "", [], []
+    brief, tools, steps, icon = "", [], [], ""
+    # ICÔNE en DERNIER dans la sortie attendue → on l'extrait EN PREMIER (c'est
+    # la queue du texte) pour ne pas la laisser dans la DESCRIPTION.
+    for marker in ("ICÔNE:", "ICONE:", "ICÔNE :", "ICONE :", "EMOJI:", "EMOJI :"):
+        idx = t.rfind(marker)
+        if idx >= 0:
+            raw = t[idx + len(marker):].strip()
+            raw = raw.splitlines()[0] if raw else ""
+            t = t[:idx].strip()
+            icon = _first_glyph(raw)
+            break
     for marker in ("DESCRIPTION:", "DESCRIPTION :"):
         idx = t.rfind(marker)
         if idx >= 0:
@@ -314,12 +324,26 @@ def parse_generation_output(text: str) -> tuple[str, str, list, list]:
             t = t[:idx].strip()
             tools = [x.strip().strip("`") for x in re.split(r"[,\n;]+", raw) if x.strip()]
             break
-    return t, brief, tools, steps
+    return t, brief, tools, steps, icon
+
+
+def _first_glyph(raw: str) -> str:
+    """Extrait UN emoji/glyphe d'une chaîne libre rendue par le LLM.
+    Retire backticks/guillemets/espaces et garde le premier token, borné
+    (un emoji peut faire plusieurs codepoints : variation selectors, ZWJ,
+    tons de peau). Renvoie "" si rien d'exploitable."""
+    s = (raw or "").strip().strip("`\"'  ").strip()
+    if not s:
+        return ""
+    tok = s.split()[0] if s.split() else s
+    # Borne de sécurité : un emoji composé reste court ; on évite qu'une
+    # phrase entière ne devienne l'« icône ».
+    return tok[:8]
 
 
 def split_workflow_and_brief(text: str) -> tuple[str, str]:
     """Compat : (workflow, brief). Délègue à parse_generation_output."""
-    wf, brief, _, _ = parse_generation_output(text)
+    wf, brief, _, _, _ = parse_generation_output(text)
     return wf, brief
 
 
@@ -384,21 +408,31 @@ def build_workflow_generation_prompt(spec: dict) -> str:
     )
 
 
-def build_card_meta_prompt(spec: dict, workflow: str) -> str:
+def build_card_meta_prompt(spec: dict, workflow: str, used_icons=()) -> str:
     """Méta-prompt SÉPARÉ (2ᵉ appel) pour produire UNIQUEMENT les éléments
-    d'AFFICHAGE de la carte (résumé d'étapes + description courte) à partir du
-    workflow déjà rédigé. Séparé de la génération du workflow pour éviter toute
-    pollution par du texte conversationnel."""
+    d'AFFICHAGE de la carte (résumé d'étapes + description courte + ICÔNE) à
+    partir du workflow déjà rédigé. Séparé de la génération du workflow pour
+    éviter toute pollution par du texte conversationnel.
+
+    `used_icons` : emojis déjà utilisés (natifs + sur mesure) à NE PAS reprendre
+    — pour que chaque agent ait un glyphe distinct."""
+    excl = " ".join(x for x in (used_icons or []) if x)
+    excl_line = (
+        f"   N'utilise AUCUN de ces emojis déjà pris (choisis-en un DIFFÉRENT) : {excl}\n"
+        if excl else ""
+    )
     return (
         "Voici le workflow d'un agent JDM :\n\n" + (workflow or "").strip() + "\n\n"
-        "Produis UNIQUEMENT, sans préambule ni phrase de conclusion, ces deux "
-        "sections (rien d'autre) :\n"
+        "Produis UNIQUEMENT, sans préambule ni phrase de conclusion, ces trois "
+        "sections (rien d'autre), DANS CET ORDRE :\n"
         "RÉSUMÉ:\n"
         "1. <Nom (1-3 mots)> — <courte description>\n"
         "2. … (3 à 5 phases synthétiques, façon Proposition/Validation/…)\n"
         "DESCRIPTION: <description factuelle COURTE, 3 lignes max, pour la carte : "
         "ce que fait l'agent, ses étapes clés, sa sortie. PAS de question, PAS de "
-        "demande de confirmation, PAS de « je ».>"
+        "demande de confirmation, PAS de « je ».>\n"
+        "ICÔNE: <UN SEUL emoji, le plus représentatif de la mission de cet agent>\n"
+        + excl_line
     )
 
 

@@ -2058,19 +2058,22 @@ def api_jarvis_generate_workflow(req: AgentGenerateRequest) -> dict[str, Any]:
         full = _invoke(agent, meta)
         if not full:
             return {"ok": False, "error": "génération vide", "fallback": _fallback}
-        workflow, _b0, tools, _s0 = _inv.parse_generation_output(full)
+        workflow, _b0, tools, _s0, _ic0 = _inv.parse_generation_output(full)
         sel = _inv.selectable_tool_names()
         tools = [t for t in tools if t in sel] if sel else tools
-        # APPEL 2 — SÉPARÉ : éléments d'AFFICHAGE (résumé + description) à partir
-        # du workflow. Isolé → aucune pollution conversationnelle dans la carte.
-        brief, steps = "", []
+        # APPEL 2 — SÉPARÉ : éléments d'AFFICHAGE (résumé + description + ICÔNE) à
+        # partir du workflow. Isolé → aucune pollution conversationnelle.
+        # `usedIcons` (fourni par le front : natifs + sur mesure) → exclusion pour
+        # que le LLM choisisse un emoji DISTINCT.
+        used_icons = [str(x) for x in (cfg.get("usedIcons") or []) if x]
+        brief, steps, icon = "", [], ""
         try:
-            card = _invoke(agent, _inv.build_card_meta_prompt(spec, workflow))
-            _w, brief, _t, steps = _inv.parse_generation_output(card)
+            card = _invoke(agent, _inv.build_card_meta_prompt(spec, workflow, used_icons))
+            _w, brief, _t, steps, icon = _inv.parse_generation_output(card)
         except Exception:
             pass
         return {"ok": True, "workflow": workflow, "brief": brief, "tools": tools,
-                "steps": steps, "meta_prompt": meta}
+                "steps": steps, "icon": icon, "meta_prompt": meta}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "fallback": _fallback}
     finally:

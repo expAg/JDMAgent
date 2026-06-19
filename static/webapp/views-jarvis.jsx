@@ -2805,6 +2805,9 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
   // Soumission auto par défaut au lancement (case du formulaire de création).
   const [autoSubmit, setAutoSubmit] = React.useState(
     _isEdit ? !!(editSpec.defaults && editSpec.defaults.upload) : false);
+  // Icône (emoji) de l'agent — choisie par l'orchestrateur à la génération
+  // (un glyphe distinct par agent). Édition : on garde celle sauvegardée.
+  const [icon, setIcon] = React.useState(_isEdit ? (editSpec.icon || '') : '');
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState('');
   const [genLoading, setGenLoading] = React.useState(false);
@@ -2890,6 +2893,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
       writes, consolidates, output_format: fmt, output_ext: effExt,
       brief: description.trim(),
     };
+    if (icon) spec.icon = icon;  // emoji choisi par l'orchestrateur
     if (_isEdit) spec.id = editSpec.id;  // préserve l'identité en édition
     const _def = {};
     if (target > 0) _def.target_count = Number(target);
@@ -2912,13 +2916,26 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
     setGenLoading(true); setMsg('');
     try {
       const cfg = (typeof window !== 'undefined' && window.__JDM_JARVIS_CONFIG__) || {};
+      // Emojis déjà pris (natifs + sur mesure) → le LLM en choisira un AUTRE.
+      // En édition, on autorise l'agent à garder le sien (on le retire de la liste).
+      const usedIcons = (() => {
+        const s = new Set();
+        try {
+          Object.values(AGENT_ICON || {}).forEach(v => v && s.add(v));
+          Object.values(_CUSTOM_SPEC_REG || {}).forEach(sp => sp && sp.icon && s.add(sp.icon));
+        } catch (e) {}
+        if (_isEdit && editSpec.icon) s.delete(editSpec.icon);
+        return [...s];
+      })();
       const r = await fetch('api/jarvis/agents/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spec: _buildSpec(true), config: { llm: cfg.llm, poolActive: cfg.poolActive } }),
+        body: JSON.stringify({ spec: _buildSpec(true), config: { llm: cfg.llm, poolActive: cfg.poolActive, usedIcons } }),
       });
       const d = await r.json();
       if (d.ok && d.workflow) {
         setWorkflow(d.workflow);
+        // Icône (emoji) choisie par l'orchestrateur — distincte des autres agents.
+        if (d.icon) setIcon(d.icon);
         // Description (carte) rédigée par le LLM en 3 lignes.
         if (d.brief) setDescription(d.brief);
         // Outils PRÉ-CHARGÉS selon ce que le LLM a jugé nécessaire (au lieu de
@@ -3113,7 +3130,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
           en arrière pour ajuster.
         </div>
         <div style={{ marginBottom: 14 }}>
-          {recapRow('Nom', name.trim())}
+          {recapRow('Nom', icon ? <span><span style={{ marginRight: 6 }}>{icon}</span>{name.trim()}</span> : name.trim())}
           {description.trim() && recapRow('Description', description.trim())}
           {recapRow('Template', (tpl.label || template))}
           {recapRow('Format', fmtLabel)}
