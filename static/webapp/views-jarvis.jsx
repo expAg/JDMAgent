@@ -882,10 +882,11 @@ function ItemCard({ item, accent }) {
     audit_signalement:  { border: 'var(--jdm-magenta)', icon: '!', label: 'verdict' },
     sens:               { border: 'var(--line)',        icon: '·', label: 'sens' },
     meta:               { border: 'var(--accent)',      icon: '✎', label: 'observation' },
+    line:               { border: 'var(--line)',        icon: '·', label: 'ligne' },
   }[item.type] || { border: 'var(--line)', icon: '·', label: '' };
 
-  // Item meta = ligne de prose simple, pas un triplet.
-  if (item.type === 'meta') {
+  // Item meta / ligne libre = ligne brute, pas un triplet structuré.
+  if (item.type === 'meta' || item.type === 'line') {
     return (
       <div className="fade-up" style={{
         padding: '8px 10px',
@@ -1008,7 +1009,7 @@ function renderMarkdownJarvis(s) {
 //             =====SIGNALEMENT===== : sujet|rel|objet|JDM:x|LLM:y < arg >
 //   .audit  : sections === SENS ===, === SIGNALEMENTS ===, === META ===
 //             la section SIGNALEMENTS contient term|rel|target|verdict|justif
-function parseFilePreview(text, agentId) {
+function parseFilePreview(text, agentId, fmt) {
   text = (text || '').toString();
   if (!text.trim()) return { items: [], counts: {} };
   const lines = text.split(/\r?\n/);
@@ -1140,6 +1141,14 @@ function parseFilePreview(text, agentId) {
         target: piped[3].trim(),
         raw: line,
       });
+      continue;
+    }
+
+    // Format 'ligne libre' : une ligne non structurée reste un résultat à part
+    // entière (affichée brute dans la liste), sans gabarit imposé. Pour les
+    // autres formats, une ligne non reconnue est ignorée (comme avant).
+    if (fmt === 'ligne') {
+      items.push({ type: 'line', raw: line });
       continue;
     }
   }
@@ -2651,7 +2660,8 @@ function _specToFlow(spec) {
     if (brief) AGENT_BRIEF[spec.id] = brief;
   } catch (e) {}
   const fmt = spec.output_format || 'jdm';
-  const fmtLabel = fmt === 'json' ? 'JSON' : fmt === 'libre' ? 'texte libre' : 'soumission JDM';
+  const fmtLabel = fmt === 'json' ? 'JSON' : fmt === 'libre' ? 'texte libre'
+                 : fmt === 'ligne' ? 'lignes libres' : 'soumission JDM';
   // ÉTAPES affichées : 1) le RÉSUMÉ d'affichage stocké (spec.steps, n'affecte
   // pas l'exécution) ; 2) sinon parse du workflow fonctionnel ; 3) sinon générique.
   let steps = (Array.isArray(spec.steps) && spec.steps.length)
@@ -2747,10 +2757,11 @@ function _startCustomAgent(flow) {
 // LIBRE (texte), proposée par défaut selon le format.
 const _BUILDER_FORMATS = [
   { value: 'jdm', label: 'Soumission JDM (lignes terme|relation|cible)' },
+  { value: 'ligne', label: 'Ligne libre (1 ligne = 1 résultat, format libre)' },
   { value: 'libre', label: 'Libre (texte / prose)' },
   { value: 'json', label: 'JSON (données structurées)' },
 ];
-const _FMT_DEFAULT_EXT = { jdm: '.enrich', libre: '.txt', json: '.json' };
+const _FMT_DEFAULT_EXT = { jdm: '.enrich', ligne: '.txt', libre: '.txt', json: '.json' };
 
 // Sanitize une extension saisie librement (miroir du backend _normalize_spec).
 function _sanitizeExt(raw) {
@@ -2859,7 +2870,7 @@ function JAgentBuilderModal({ onClose, onCreated, editSpec }) {
       if (_didInitAlign.current) return;  // création : aligner une seule fois
     }
     _didInitAlign.current = true;
-    if (tpl.format && (tpl.format === 'jdm' || tpl.format === 'libre' || tpl.format === 'json')) {
+    if (tpl.format && (tpl.format === 'jdm' || tpl.format === 'ligne' || tpl.format === 'libre' || tpl.format === 'json')) {
       setFmt(tpl.format);
     }
     if (!consTouched && typeof tpl.consolidates === 'boolean') setConsolidates(tpl.consolidates);
@@ -3627,8 +3638,8 @@ function RunDetailModal({ runId, onClose, onPreview }) {
   const filePath = r.filePath || null;
   const baseMetrics = r.metrics || {};
   const parsed = React.useMemo(
-    () => parseFilePreview(r.filePreview || '', agentId),
-    [r.filePreview, agentId]
+    () => parseFilePreview(r.filePreview || '', agentId, flow && flow._format),
+    [r.filePreview, agentId, flow && flow._format]
   );
   // Compteur "produits" dérivé comme dans JarvisRun (registry pour enrich,
   // items parsés sinon).
@@ -4144,7 +4155,7 @@ function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
     items = store.accepted;
   }
   if (store && store.filePreview) {
-    const parsed = parseFilePreview(store.filePreview, flow.id);
+    const parsed = parseFilePreview(store.filePreview, flow.id, flow._format);
     if (!flow.consolidates) {
       for (const it of parsed.items) {
         if (it.type === 'flagged' || it.type === 'signalement' || it.type === 'audit_signalement') rejected++;
@@ -4192,7 +4203,7 @@ function computeAgentLive(flow, i, tick, serverRuns, _localActiveSet, opts) {
       ok: true,
     }));
   } else if (store && store.filePreview) {
-    const parsed = parseFilePreview(store.filePreview, flow.id);
+    const parsed = parseFilePreview(store.filePreview, flow.id, flow._format);
     recent = parsed.items.slice(-3).map((it, k) => {
       const tag = it.type === 'flagged'           ? (it.category || 'suspect')
                 : it.type === 'signalement'        ? 'JDM≠LLM'
@@ -6132,8 +6143,8 @@ function JarvisRun({ flow, nextFlow, onBack, onNext }) {
   // est cheap mais évite de re-allouer N fois par seconde pendant
   // que le fichier grandit.
   const parsed = React.useMemo(
-    () => parseFilePreview(filePreview, flow.id),
-    [filePreview, flow.id]
+    () => parseFilePreview(filePreview, flow.id, flow._format),
+    [filePreview, flow.id, flow._format]
   );
 
   // Synchronise le compteur "produced" du dashboard avec les items

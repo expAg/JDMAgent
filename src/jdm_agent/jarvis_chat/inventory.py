@@ -212,13 +212,16 @@ def _normalize_spec(spec: dict) -> dict:
     # Format de sortie SÉMANTIQUE choisi par l'utilisateur : jdm (pipe
     # A|R|B|annot, soumissible LLMDrops), libre (texte), ou json.
     fmt = (s.get("output_format") or tpl.get("format") or "jdm")
-    s["output_format"] = fmt if fmt in ("jdm", "libre", "json") else "jdm"
+    # `ligne` = une entrée par ligne, AU FORMAT LIBRE (pas de gabarit imposé) :
+    # parsée comme les lignes JDM pour l'affichage en liste, mais sans contrainte
+    # de structure (le format réel est demandé dans les instructions / le prompt).
+    s["output_format"] = fmt if fmt in ("jdm", "libre", "json", "ligne") else "jdm"
     # Extension du fichier : LIBRE (l'utilisateur la renseigne), sanitizée à
     # des caractères sûrs ; à défaut, dérivée du format ou du template.
     ext = (s.get("output_ext") or "").strip()
     if not ext:
-        ext = {"jdm": tpl["output_ext"], "json": ".json", "libre": ".txt"}.get(
-            s["output_format"], tpl["output_ext"])
+        ext = {"jdm": tpl["output_ext"], "json": ".json", "libre": ".txt",
+               "ligne": ".txt"}.get(s["output_format"], tpl["output_ext"])
     ext = "." + str(ext).lstrip(".").lower()
     ext = re.sub(r"[^a-z0-9._-]", "", ext) or ".txt"
     s["output_ext"] = ext
@@ -336,6 +339,7 @@ def build_workflow_generation_prompt(spec: dict) -> str:
         "jdm": "soumission JDM (lignes `terme|relation|cible|annotation`)",
         "json": "JSON structuré",
         "libre": "texte/rapport libre",
+        "ligne": "une entrée par ligne, format LIBRE (défini par les instructions ; aucun gabarit imposé)",
     }.get(fmt, fmt)
     # Catalogue PROPOSABLE (sans *_workflow) : on le donne au LLM pour qu'il
     # CHOISISSE les outils nécessaires (section OUTILS), au lieu de tout prendre.
@@ -611,6 +615,9 @@ def build_preprompt_for_spec(spec: dict, params: dict) -> str:
                    "(pipe-separated, soumissibles au LLMDrops).",
             "json": "Format JSON : un tableau JSON valide d'objets.",
             "libre": "Format LIBRE : texte/rapport lisible, structuré.",
+            "ligne": "Format LIGNES LIBRES : une entrée par ligne (une ligne = un "
+                     "résultat affiché). Le format de chaque ligne est LIBRE — "
+                     "suis celui demandé dans tes instructions ; aucun gabarit imposé.",
         }.get(fmt, "")
         ext = spec.get("output_ext") or ".txt"
         if fmt_hint:
