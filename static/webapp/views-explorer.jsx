@@ -251,26 +251,55 @@ function ViewExplorer() {
   );
 }
 
+// Histogramme DIVERGENT : positifs en haut (orange, à gauche), négatifs en bas
+// (rouge magenta, cantonnés à droite). Les barres sont dimensionnées par valeur
+// ABSOLUE, chaque demi-plan à SON propre maximum → un gros négatif (ex. -2074)
+// n'écrase plus les positifs. Ligne zéro au milieu.
 function Bars({ rows }) {
-  const max = Math.max(...rows.map(r => r.weight), 1);
+  const positives = rows.filter(r => r.weight >= 0);
+  const negatives = rows.filter(r => r.weight < 0);
+  const posMax = Math.max(...positives.map(r => r.weight), 1);
+  const negMax = Math.max(...negatives.map(r => Math.abs(r.weight)), 1);
+  const HALF = 48;  // hauteur de chaque demi-plan (px)
+
+  const col = (r, i, sign) => {
+    const mag = Math.abs(r.weight);
+    const ref = sign > 0 ? posMax : negMax;
+    const h = Math.max(2, (mag / ref) * (HALF - 3));
+    const color = sign > 0 ? 'var(--accent)' : 'var(--jdm-magenta)';
+    const bar = (
+      <div style={{
+        width: '100%', height: h, background: color,
+        opacity: 0.35 + 0.65 * (mag / ref),
+        borderRadius: sign > 0 ? '2px 2px 0 0' : '0 0 2px 2px',
+      }} />
+    );
+    return (
+      <div key={(sign > 0 ? 'p' : 'n') + i} title={`${r.target} · w=${r.weight}`}
+        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {/* demi-plan haut : positifs montent vers le haut (ancrés à la ligne 0) */}
+        <div style={{ height: HALF, display: 'flex', alignItems: 'flex-end' }}>
+          {sign > 0 && bar}
+        </div>
+        {/* demi-plan bas : négatifs descendent depuis la ligne 0 */}
+        <div style={{ height: HALF, display: 'flex', alignItems: 'flex-start' }}>
+          {sign < 0 && bar}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div style={{
-      display: 'flex',
-      gap: 2,
-      alignItems: 'flex-end',
-      height: 64,
-    }}>
-      {rows.map((r, i) => (
-        <div key={i} title={`${r.target} · w=${r.weight}`}
-          style={{
-            flex: 1,
-            height: `${(r.weight / max) * 100}%`,
-            minHeight: 2,
-            background: 'var(--accent)',
-            opacity: 0.3 + 0.7 * (r.weight / max),
-            borderRadius: '2px 2px 0 0',
-          }} />
-      ))}
+    <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 2, alignItems: 'stretch' }}>
+        {positives.map((r, i) => col(r, i, 1))}
+        {negatives.map((r, i) => col(r, i, -1))}
+      </div>
+      {/* ligne zéro */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0, top: HALF, height: 1,
+        background: 'var(--line)', pointerEvents: 'none',
+      }} />
     </div>
   );
 }
