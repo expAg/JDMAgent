@@ -573,6 +573,14 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
   // Le terme de base est polysémique = il a au moins un sens raffiné.
   const hasSenses = senses.length > 0;
 
+  // La liste vient TOUJOURS du terme de base (1er segment) — elle contient déjà
+  // tous les chemins (« avocat>personne>juriste »…). On la RÉDUIT en direct au
+  // préfixe tapé : taper « avocat>personne> » n'affiche plus que les sous-sens
+  // de personne. Repli sur la liste complète si le préfixe ne matche rien.
+  const _q = (typed || '').trim().toLowerCase();
+  const _filtered = senses.filter(s => (s.soft || '').toLowerCase().startsWith(_q));
+  const displayed = _filtered.length ? _filtered : senses;
+
   // Choisir un sens : remplit l'input avec la forme molle décodée, queryable.
   const pick = (s) => {
     const soft = s.soft || s.id;
@@ -615,7 +623,7 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
           {!loading && senses.length === 0 && (
             <div style={{ padding: 10, fontSize: 12, color: 'var(--ink-3)' }}>{msg || 'Aucun sens raffiné.'}</div>
           )}
-          {!loading && senses.map((s, i) => (
+          {!loading && displayed.map((s, i) => (
             <div key={i} onClick={() => pick(s)} className="focus-ring"
               style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 13, color: 'var(--ink)',
                        display: 'flex', justifyContent: 'space-between', gap: 8,
