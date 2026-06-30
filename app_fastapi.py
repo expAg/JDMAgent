@@ -457,6 +457,10 @@ def api_explore(req: ExploreRequest) -> dict[str, Any]:
     kept = positives + negatives
 
     idx = res.node_index()
+    # `term` est le nom RÉSOLU : pour un sens raffiné c'est le nom brut JDM
+    # (« chat>215126 »). On le décode pour l'affichage (source lisible), comme
+    # on décode déjà la cible. Terme simple → renvoyé tel quel.
+    src_label = c.decode_node_name(term, local_nodes=idx)["decoded"]
     rows: list[dict] = []
     for r in kept:
         node = idx.get(r.node2)
@@ -477,7 +481,7 @@ def api_explore(req: ExploreRequest) -> dict[str, Any]:
             except Exception:
                 annot_str = ""
         rows.append({
-            "source": term,
+            "source": src_label,
             "relation": req.relation,
             "target": dec["decoded"],
             "weight": round(r.w, 1),
