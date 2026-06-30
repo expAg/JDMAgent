@@ -32,6 +32,10 @@ const ORIGIN_LABEL = {
 function ViewClaim() {
   // Defaults alignés sur la branche deploy-self : baleine | r_isa | poisson / effort 0.
   const [subject, setSubject] = useState('baleine');
+  // Libellés d'affichage si un SENS raffiné est choisi (subject/object envoyés
+  // deviennent alors le nom brut du nœud raffiné).
+  const [subjectLabel, setSubjectLabel] = useState('');
+  const [objectLabel, setObjectLabel] = useState('');
   const [relation, setRelation] = useState('r_isa');
   // TOUTES les relations JDM depuis /api/relations ; CLAIM_RELATIONS_OPTS = fallback offline.
   const _allRels = useJdmRelations();
@@ -142,11 +146,21 @@ function ViewClaim() {
           gap: 10,
           alignItems: 'center',
         }}>
-          <Input value={subject} onChange={setSubject} placeholder="sujet" mono />
+          <TermSenseField
+            value={subject}
+            onChange={(v, label) => { setSubject(v); setSubjectLabel(label); }}
+            placeholder="sujet"
+            mono
+          />
           <Sep />
           <Select value={relation} options={relOptions} onChange={setRelation} searchable />
           <Sep />
-          <Input value={object_} onChange={setObject} placeholder="objet" mono />
+          <TermSenseField
+            value={object_}
+            onChange={(v, label) => { setObject(v); setObjectLabel(label); }}
+            placeholder="objet"
+            mono
+          />
         </div>
 
         {/* Options + run */}
@@ -195,6 +209,7 @@ function ViewClaim() {
               // l'ancien state). Fix la race « clic sur exemple → vérifie
               // le triplet précédent puis affiche le nouveau form ».
               setSubject(s); setRelation(r); setObject(o);
+              setSubjectLabel(''); setObjectLabel('');
               run({ subject: s, relation: r, object: o });
             }}
             style={{
@@ -258,9 +273,9 @@ function ViewClaim() {
       {result && (
         <ClaimResult
           result={result}
-          subject={result.submitted ? result.submitted.subject : subject}
+          subject={subjectLabel || (result.submitted ? result.submitted.subject : subject)}
           relation={result.submitted ? result.submitted.relation : relation}
-          object={result.submitted ? result.submitted.object : object_}
+          object={objectLabel || (result.submitted ? result.submitted.object : object_)}
         />
       )}
     </PageShell>

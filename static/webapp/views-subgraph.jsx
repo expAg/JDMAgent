@@ -488,6 +488,9 @@ function ViewSubgraph() {
   const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || _pending?.term || 'plat asiatique';
   if (typeof window !== 'undefined') window.__jdmPendingTerm = null;
   const [term, setTerm] = useState(initialTerm);
+  // Libellé d'affichage si un SENS raffiné est choisi (term envoyé devient
+  // alors le nom brut du nœud raffiné, ex. « avocat>116477>66699 »).
+  const [termLabel, setTermLabel] = useState('');
   // Défauts choisis pour le mode LIVE : profondeur 2 + Niveau 1 top-K=1
   // (= un voisin par type de relation, garde l'arbre lisible) + Niveau 2
   // top-K=3 (un peu plus de matière à explorer en profondeur).
@@ -675,6 +678,7 @@ function ViewSubgraph() {
   const recenterTo = React.useCallback((newTerm) => {
     if (!newTerm || newTerm === term) return;
     setTerm(newTerm);
+    setTermLabel('');
     setRunVersion(v => v + 1);
   }, [term]);
 
@@ -726,7 +730,11 @@ function ViewSubgraph() {
         }}>
           <Card padding={16}>
             <Field label="Terme racine">
-              <Input value={term} onChange={setTerm} mono />
+              <TermSenseField
+                value={term}
+                onChange={(v, label) => { setTerm(v); setTermLabel(label); }}
+                mono
+              />
             </Field>
             <Field label={`Profondeur · ${depth}`}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
@@ -976,7 +984,7 @@ function ViewSubgraph() {
               gap: 12, flexWrap: 'wrap',
             }}>
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                <span style={{ color: 'var(--ink)' }}>{term}</span>
+                <span style={{ color: 'var(--ink)' }}>{termLabel || term}</span>
                 {' · '}profondeur {depth}
                 {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_nodes ?? data.nodes.length}</span> nœuds
                 {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_edges ?? data.edges.length}</span> arêtes

@@ -502,6 +502,109 @@ function Input({ value, onChange, placeholder, mono, type, ...rest }) {
   );
 }
 
+// ───────── TermSenseField : terme + choix d'un SENS raffiné ─────────
+// Composant PARTAGÉ (Explorer, Claim checker, Sous-graphe — un seul site, pas
+// de drift). Saisie libre + bouton « ⟩ sens » qui interroge /api/disambiguate.
+// Choisir un sens fait cibler le NŒUD RAFFINÉ (nom brut `avocat>…`, déjà fourni
+// par l'API sous la clé `id`). `onChange(value, label)` : value = ce qu'on
+// envoie aux endpoints (terme générique OU nom brut du sens) ; label = libellé
+// lisible pour l'affichage (vide si terme générique).
+function TermSenseField({ value, onChange, placeholder, mono }) {
+  const [typed, setTyped] = React.useState(value || '');
+  const [sense, setSense] = React.useState(null);   // { id, decoded } | null
+  const [open, setOpen] = React.useState(false);
+  const [senses, setSenses] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [msg, setMsg] = React.useState('');
+
+  // Sync prefill externe (ex. Projet › Quick try) tant qu'aucun sens actif.
+  React.useEffect(() => {
+    if (!sense && (value || '') !== typed) setTyped(value || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const emit = (v, label) => { if (onChange) onChange(v, label || ''); };
+  const onType = (v) => { setTyped(v); emit(v, ''); };
+
+  const fetchSenses = async () => {
+    const t = (typed || '').trim();
+    if (!t) return;
+    setOpen(true); setLoading(true); setMsg(''); setSenses([]);
+    try {
+      const r = await fetch('api/disambiguate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ term: t }),
+      });
+      const d = await r.json();
+      setSenses(Array.isArray(d.senses) ? d.senses : []);
+      setMsg(d.message || '');
+    } catch (e) { setMsg(String(e && e.message ? e.message : e)); }
+    setLoading(false);
+  };
+
+  const pick = (s) => { setSense({ id: s.id, decoded: s.decoded }); setOpen(false); emit(s.id, s.decoded); };
+  const clearSense = () => { setSense(null); emit(typed, ''); };
+
+  if (sense) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+        background: 'var(--bg-card)', border: '1px solid var(--accent)',
+        borderRadius: 'var(--radius)', minHeight: 40, boxSizing: 'border-box',
+      }}>
+        <span style={{ fontSize: 13, color: 'var(--ink)' }}>🎯 {sense.decoded}</span>
+        <button type="button" onClick={clearSense} className="focus-ring"
+          title="Revenir au terme générique"
+          style={{ marginLeft: 'auto', cursor: 'pointer', background: 'transparent',
+                   border: 'none', color: 'var(--ink-3)', fontSize: 15, lineHeight: 1 }}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Input value={typed} onChange={onType} placeholder={placeholder} mono={mono} />
+        </div>
+        <button type="button" onClick={fetchSenses} className="focus-ring"
+          title="Choisir un sens précis (terme polysémique)"
+          style={{ flexShrink: 0, cursor: 'pointer', padding: '0 12px',
+                   background: 'var(--bg-elev)', border: '1px solid var(--line)',
+                   borderRadius: 'var(--radius)', color: 'var(--ink-2)', fontSize: 12,
+                   whiteSpace: 'nowrap' }}>⟩ sens</button>
+      </div>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
+          background: 'var(--bg-elev)', border: '1px solid var(--line)',
+          borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)',
+          maxHeight: 260, overflow: 'auto',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 6px' }}>
+            <button type="button" onClick={() => setOpen(false)}
+              style={{ cursor: 'pointer', background: 'transparent', border: 'none',
+                       color: 'var(--ink-3)', fontSize: 12 }}>fermer ✕</button>
+          </div>
+          {loading && <div style={{ padding: 10, fontSize: 12, color: 'var(--ink-3)' }}>… recherche des sens …</div>}
+          {!loading && senses.length === 0 && (
+            <div style={{ padding: 10, fontSize: 12, color: 'var(--ink-3)' }}>{msg || 'Aucun sens raffiné.'}</div>
+          )}
+          {!loading && senses.map((s, i) => (
+            <div key={i} onClick={() => pick(s)} className="focus-ring"
+              style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 13, color: 'var(--ink)',
+                       display: 'flex', justifyContent: 'space-between', gap: 8,
+                       borderTop: i ? '1px solid var(--line-soft)' : 'none' }}>
+              <span>{s.decoded}</span>
+              <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11 }}>w={s.weight}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ───────── Slider ─────────
 function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '', format }) {
   // `format(value)` optionnel : permet d'afficher autre chose que le nombre

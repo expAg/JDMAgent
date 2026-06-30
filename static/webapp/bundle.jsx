@@ -503,6 +503,109 @@ function Input({ value, onChange, placeholder, mono, type, ...rest }) {
   );
 }
 
+// ───────── TermSenseField : terme + choix d'un SENS raffiné ─────────
+// Composant PARTAGÉ (Explorer, Claim checker, Sous-graphe — un seul site, pas
+// de drift). Saisie libre + bouton « ⟩ sens » qui interroge /api/disambiguate.
+// Choisir un sens fait cibler le NŒUD RAFFINÉ (nom brut `avocat>…`, déjà fourni
+// par l'API sous la clé `id`). `onChange(value, label)` : value = ce qu'on
+// envoie aux endpoints (terme générique OU nom brut du sens) ; label = libellé
+// lisible pour l'affichage (vide si terme générique).
+function TermSenseField({ value, onChange, placeholder, mono }) {
+  const [typed, setTyped] = React.useState(value || '');
+  const [sense, setSense] = React.useState(null);   // { id, decoded } | null
+  const [open, setOpen] = React.useState(false);
+  const [senses, setSenses] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [msg, setMsg] = React.useState('');
+
+  // Sync prefill externe (ex. Projet › Quick try) tant qu'aucun sens actif.
+  React.useEffect(() => {
+    if (!sense && (value || '') !== typed) setTyped(value || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const emit = (v, label) => { if (onChange) onChange(v, label || ''); };
+  const onType = (v) => { setTyped(v); emit(v, ''); };
+
+  const fetchSenses = async () => {
+    const t = (typed || '').trim();
+    if (!t) return;
+    setOpen(true); setLoading(true); setMsg(''); setSenses([]);
+    try {
+      const r = await fetch('api/disambiguate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ term: t }),
+      });
+      const d = await r.json();
+      setSenses(Array.isArray(d.senses) ? d.senses : []);
+      setMsg(d.message || '');
+    } catch (e) { setMsg(String(e && e.message ? e.message : e)); }
+    setLoading(false);
+  };
+
+  const pick = (s) => { setSense({ id: s.id, decoded: s.decoded }); setOpen(false); emit(s.id, s.decoded); };
+  const clearSense = () => { setSense(null); emit(typed, ''); };
+
+  if (sense) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+        background: 'var(--bg-card)', border: '1px solid var(--accent)',
+        borderRadius: 'var(--radius)', minHeight: 40, boxSizing: 'border-box',
+      }}>
+        <span style={{ fontSize: 13, color: 'var(--ink)' }}>🎯 {sense.decoded}</span>
+        <button type="button" onClick={clearSense} className="focus-ring"
+          title="Revenir au terme générique"
+          style={{ marginLeft: 'auto', cursor: 'pointer', background: 'transparent',
+                   border: 'none', color: 'var(--ink-3)', fontSize: 15, lineHeight: 1 }}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Input value={typed} onChange={onType} placeholder={placeholder} mono={mono} />
+        </div>
+        <button type="button" onClick={fetchSenses} className="focus-ring"
+          title="Choisir un sens précis (terme polysémique)"
+          style={{ flexShrink: 0, cursor: 'pointer', padding: '0 12px',
+                   background: 'var(--bg-elev)', border: '1px solid var(--line)',
+                   borderRadius: 'var(--radius)', color: 'var(--ink-2)', fontSize: 12,
+                   whiteSpace: 'nowrap' }}>⟩ sens</button>
+      </div>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
+          background: 'var(--bg-elev)', border: '1px solid var(--line)',
+          borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)',
+          maxHeight: 260, overflow: 'auto',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 6px' }}>
+            <button type="button" onClick={() => setOpen(false)}
+              style={{ cursor: 'pointer', background: 'transparent', border: 'none',
+                       color: 'var(--ink-3)', fontSize: 12 }}>fermer ✕</button>
+          </div>
+          {loading && <div style={{ padding: 10, fontSize: 12, color: 'var(--ink-3)' }}>… recherche des sens …</div>}
+          {!loading && senses.length === 0 && (
+            <div style={{ padding: 10, fontSize: 12, color: 'var(--ink-3)' }}>{msg || 'Aucun sens raffiné.'}</div>
+          )}
+          {!loading && senses.map((s, i) => (
+            <div key={i} onClick={() => pick(s)} className="focus-ring"
+              style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 13, color: 'var(--ink)',
+                       display: 'flex', justifyContent: 'space-between', gap: 8,
+                       borderTop: i ? '1px solid var(--line-soft)' : 'none' }}>
+              <span>{s.decoded}</span>
+              <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11 }}>w={s.weight}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ───────── Slider ─────────
 function Slider({ value, onChange, min = 0, max = 100, step = 1, suffix = '', format }) {
   // `format(value)` optionnel : permet d'afficher autre chose que le nombre
@@ -5078,6 +5181,9 @@ function ViewExplorer() {
   }
   // Defaults alignés sur la branche deploy-self : chat / r_isa / 25 / 20 / true.
   const [term, setTerm] = useState(_pending?.term || 'chat');
+  // Libellé d'affichage quand un SENS raffiné est choisi (le `term` envoyé à
+  // l'API devient alors le nom brut du nœud raffiné).
+  const [termLabel, setTermLabel] = useState('');
   const [rel, setRel] = useState(_pending?.rel || 'r_isa');
   // TOUTES les relations JDM (180+) depuis /api/relations ; EXPLORE_RELATIONS
   // reste le fallback offline. Courantes en tête, le reste par nom.
@@ -5152,7 +5258,8 @@ function ViewExplorer() {
         marginBottom: 16,
       }}>
         <Field label="Terme">
-          <Input value={term} onChange={setTerm} placeholder="chat, avocat, courir…" mono />
+          <TermSenseField value={term} onChange={(v, label) => { setTerm(v); setTermLabel(label); }}
+            placeholder="chat, avocat, courir…" mono />
         </Field>
         <Field label="Type de relation">
           <Select value={rel} options={relOptions} onChange={setRel} searchable />
@@ -5235,7 +5342,7 @@ function ViewExplorer() {
             <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>
               <span style={{ color: 'var(--ink)' }}>{rows.length}</span> triplet{rows.length > 1 ? 's' : ''} trouvé{rows.length > 1 ? 's' : ''}
               {' · '}
-              <span style={{ color: 'var(--ink)' }}>{term}</span> | <span style={{ color: 'var(--accent)' }}>{rel}</span> | ?
+              <span style={{ color: 'var(--ink)' }}>{termLabel || term}</span> | <span style={{ color: 'var(--accent)' }}>{rel}</span> | ?
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <Button size="sm" variant="secondary"
@@ -5374,6 +5481,10 @@ const ORIGIN_LABEL = {
 function ViewClaim() {
   // Defaults alignés sur la branche deploy-self : baleine | r_isa | poisson / effort 0.
   const [subject, setSubject] = useState('baleine');
+  // Libellés d'affichage si un SENS raffiné est choisi (subject/object envoyés
+  // deviennent alors le nom brut du nœud raffiné).
+  const [subjectLabel, setSubjectLabel] = useState('');
+  const [objectLabel, setObjectLabel] = useState('');
   const [relation, setRelation] = useState('r_isa');
   // TOUTES les relations JDM depuis /api/relations ; CLAIM_RELATIONS_OPTS = fallback offline.
   const _allRels = useJdmRelations();
@@ -5484,11 +5595,21 @@ function ViewClaim() {
           gap: 10,
           alignItems: 'center',
         }}>
-          <Input value={subject} onChange={setSubject} placeholder="sujet" mono />
+          <TermSenseField
+            value={subject}
+            onChange={(v, label) => { setSubject(v); setSubjectLabel(label); }}
+            placeholder="sujet"
+            mono
+          />
           <Sep />
           <Select value={relation} options={relOptions} onChange={setRelation} searchable />
           <Sep />
-          <Input value={object_} onChange={setObject} placeholder="objet" mono />
+          <TermSenseField
+            value={object_}
+            onChange={(v, label) => { setObject(v); setObjectLabel(label); }}
+            placeholder="objet"
+            mono
+          />
         </div>
 
         {/* Options + run */}
@@ -5537,6 +5658,7 @@ function ViewClaim() {
               // l'ancien state). Fix la race « clic sur exemple → vérifie
               // le triplet précédent puis affiche le nouveau form ».
               setSubject(s); setRelation(r); setObject(o);
+              setSubjectLabel(''); setObjectLabel('');
               run({ subject: s, relation: r, object: o });
             }}
             style={{
@@ -5600,9 +5722,9 @@ function ViewClaim() {
       {result && (
         <ClaimResult
           result={result}
-          subject={result.submitted ? result.submitted.subject : subject}
+          subject={subjectLabel || (result.submitted ? result.submitted.subject : subject)}
           relation={result.submitted ? result.submitted.relation : relation}
-          object={result.submitted ? result.submitted.object : object_}
+          object={objectLabel || (result.submitted ? result.submitted.object : object_)}
         />
       )}
     </PageShell>
@@ -6233,6 +6355,9 @@ function ViewSubgraph() {
   const initialTerm = (typeof window !== 'undefined' && window.__jdmPendingTerm) || _pending?.term || 'plat asiatique';
   if (typeof window !== 'undefined') window.__jdmPendingTerm = null;
   const [term, setTerm] = useState(initialTerm);
+  // Libellé d'affichage si un SENS raffiné est choisi (term envoyé devient
+  // alors le nom brut du nœud raffiné, ex. « avocat>116477>66699 »).
+  const [termLabel, setTermLabel] = useState('');
   // Défauts choisis pour le mode LIVE : profondeur 2 + Niveau 1 top-K=1
   // (= un voisin par type de relation, garde l'arbre lisible) + Niveau 2
   // top-K=3 (un peu plus de matière à explorer en profondeur).
@@ -6420,6 +6545,7 @@ function ViewSubgraph() {
   const recenterTo = React.useCallback((newTerm) => {
     if (!newTerm || newTerm === term) return;
     setTerm(newTerm);
+    setTermLabel('');
     setRunVersion(v => v + 1);
   }, [term]);
 
@@ -6471,7 +6597,11 @@ function ViewSubgraph() {
         }}>
           <Card padding={16}>
             <Field label="Terme racine">
-              <Input value={term} onChange={setTerm} mono />
+              <TermSenseField
+                value={term}
+                onChange={(v, label) => { setTerm(v); setTermLabel(label); }}
+                mono
+              />
             </Field>
             <Field label={`Profondeur · ${depth}`}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
@@ -6721,7 +6851,7 @@ function ViewSubgraph() {
               gap: 12, flexWrap: 'wrap',
             }}>
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                <span style={{ color: 'var(--ink)' }}>{term}</span>
+                <span style={{ color: 'var(--ink)' }}>{termLabel || term}</span>
                 {' · '}profondeur {depth}
                 {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_nodes ?? data.nodes.length}</span> nœuds
                 {' · '}<span style={{ color: 'var(--ink)' }}>{stats.n_edges ?? data.edges.length}</span> arêtes

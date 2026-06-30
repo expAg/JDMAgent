@@ -35,6 +35,9 @@ function ViewExplorer() {
   }
   // Defaults alignés sur la branche deploy-self : chat / r_isa / 25 / 20 / true.
   const [term, setTerm] = useState(_pending?.term || 'chat');
+  // Libellé d'affichage quand un SENS raffiné est choisi (le `term` envoyé à
+  // l'API devient alors le nom brut du nœud raffiné).
+  const [termLabel, setTermLabel] = useState('');
   const [rel, setRel] = useState(_pending?.rel || 'r_isa');
   // TOUTES les relations JDM (180+) depuis /api/relations ; EXPLORE_RELATIONS
   // reste le fallback offline. Courantes en tête, le reste par nom.
@@ -109,7 +112,8 @@ function ViewExplorer() {
         marginBottom: 16,
       }}>
         <Field label="Terme">
-          <Input value={term} onChange={setTerm} placeholder="chat, avocat, courir…" mono />
+          <TermSenseField value={term} onChange={(v, label) => { setTerm(v); setTermLabel(label); }}
+            placeholder="chat, avocat, courir…" mono />
         </Field>
         <Field label="Type de relation">
           <Select value={rel} options={relOptions} onChange={setRel} searchable />
@@ -192,7 +196,7 @@ function ViewExplorer() {
             <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>
               <span style={{ color: 'var(--ink)' }}>{rows.length}</span> triplet{rows.length > 1 ? 's' : ''} trouvé{rows.length > 1 ? 's' : ''}
               {' · '}
-              <span style={{ color: 'var(--ink)' }}>{term}</span> | <span style={{ color: 'var(--accent)' }}>{rel}</span> | ?
+              <span style={{ color: 'var(--ink)' }}>{termLabel || term}</span> | <span style={{ color: 'var(--accent)' }}>{rel}</span> | ?
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <Button size="sm" variant="secondary"
