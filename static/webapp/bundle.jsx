@@ -556,19 +556,23 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
     setLoading(false);
   };
 
-  // Ouverture du menu → fetch immédiat.
+  // Ouverture du menu → fetch immédiat (réactivité au clic).
   React.useEffect(() => {
     if (open) fetchSenses(baseTerm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Frappe pendant que le menu est ouvert → rafraîchit la liste (debounce).
+  // Détection LIVE des sens du terme de base (debounce), même menu fermé :
+  // sert à (a) ALLUMER le bouton quand le terme est polysémique, (b) garder la
+  // liste à jour à la frappe quand elle est ouverte.
   React.useEffect(() => {
-    if (!open) return;
     const id = setTimeout(() => fetchSenses(baseTerm), 300);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseTerm]);
+
+  // Le terme de base est polysémique = il a au moins un sens raffiné.
+  const hasSenses = senses.length > 0;
 
   // Choisir un sens : remplit l'input avec la forme molle décodée, queryable.
   const pick = (s) => {
@@ -585,12 +589,15 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
           <Input value={typed} onChange={onType} placeholder={placeholder} mono={mono} />
         </div>
         <button type="button" onClick={() => setOpen(o => !o)} className="focus-ring"
-          title="Choisir un sens précis (terme polysémique)"
+          title={hasSenses
+            ? `« ${baseTerm} » est polysémique — ${senses.length} sens disponibles`
+            : 'Choisir un sens précis (terme polysémique)'}
           style={{ flexShrink: 0, cursor: 'pointer', padding: '0 12px',
                    background: open ? 'var(--accent)' : 'var(--bg-elev)',
-                   border: '1px solid var(--line)',
+                   border: `1px solid ${open ? 'var(--accent)' : (hasSenses ? 'var(--jdm-green)' : 'var(--line)')}`,
                    borderRadius: 'var(--radius)',
-                   color: open ? 'var(--bg)' : 'var(--ink-2)', fontSize: 12,
+                   color: open ? 'var(--bg)' : (hasSenses ? 'var(--jdm-green)' : 'var(--ink-2)'),
+                   fontSize: 12, fontWeight: hasSenses ? 700 : 400,
                    whiteSpace: 'nowrap' }}>&gt; sens</button>
       </div>
       {open && (
