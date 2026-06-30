@@ -5227,6 +5227,18 @@ function ViewExplorer() {
   const [rows, setRows] = useState([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // Survol d'une barre de la distribution → index de ligne affiché dans l'entête.
+  const [hoverRow, setHoverRow] = useState(-1);
+  // Clic sur une barre → ligne surlignée (effacée après ~1,6 s).
+  const [highlightRow, setHighlightRow] = useState(-1);
+
+  // Défile jusqu'à la ligne du triplet et la surligne brièvement.
+  const scrollToRow = (i) => {
+    setHighlightRow(i);
+    const el = document.getElementById('expl-row-' + i);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => setHighlightRow(h => (h === i ? -1 : h)), 1600);
+  };
 
   const onRun = async () => {
     setLoading(true);
@@ -5389,24 +5401,43 @@ function ViewExplorer() {
                 <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
                   Distribution des poids
                 </div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                  max {Math.max(...rows.map(r => r.weight))} · min {Math.min(...rows.map(r => r.weight))}
-                </div>
+                {hoverRow >= 0 && rows[hoverRow] ? (
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '70%' }}>
+                    <span style={{ color: 'var(--ink)' }}>{rows[hoverRow].source || term}</span>
+                    {' | '}
+                    <span style={{ color: rows[hoverRow].weight < 0 ? 'var(--jdm-magenta)' : 'var(--accent)' }}>{rows[hoverRow].relation || rel}</span>
+                    {' | '}
+                    <span style={{ color: 'var(--ink)' }}>{rows[hoverRow].target}</span>
+                    {' · '}<span style={{ color: rows[hoverRow].weight < 0 ? 'var(--jdm-magenta)' : 'var(--ink-3)' }}>w={rows[hoverRow].weight}</span>
+                  </div>
+                ) : (
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                    max {Math.max(...rows.map(r => r.weight))} · min {Math.min(...rows.map(r => r.weight))}
+                  </div>
+                )}
               </div>
-              <Bars rows={rows} />
+              <Bars rows={rows} onHover={setHoverRow} onPick={scrollToRow} />
             </Card>
           )}
 
           {/* Triplets list */}
           <div style={{ display: 'grid', gap: 6 }}>
             {rows.map((r, i) => (
-              <Triplet key={i}
-                subject={r.source || term}
-                relation={r.relation || rel}
-                object={r.target}
-                weight={r.weight}
-                annotations={annotations && r.annotations ? r.annotations : undefined}
-              />
+              <div key={i} id={'expl-row-' + i}
+                style={{
+                  borderRadius: 'var(--radius)',
+                  outline: highlightRow === i ? '2px solid var(--accent)' : '2px solid transparent',
+                  outlineOffset: 2,
+                  transition: 'outline-color 0.25s',
+                }}>
+                <Triplet
+                  subject={r.source || term}
+                  relation={r.relation || rel}
+                  object={r.target}
+                  weight={r.weight}
+                  annotations={annotations && r.annotations ? r.annotations : undefined}
+                />
+              </div>
             ))}
           </div>
 
@@ -5426,14 +5457,17 @@ function ViewExplorer() {
 // (rouge magenta, cantonnés à droite). Les barres sont dimensionnées par valeur
 // ABSOLUE, chaque demi-plan à SON propre maximum → un gros négatif (ex. -2074)
 // n'écrase plus les positifs. Ligne zéro au milieu.
-function Bars({ rows }) {
-  const positives = rows.filter(r => r.weight >= 0);
-  const negatives = rows.filter(r => r.weight < 0);
+function Bars({ rows, onHover, onPick }) {
+  // On garde l'INDEX d'ORIGINE (_i) de chaque triplet pour mapper barre↔ligne
+  // (survol = entête, clic = scroll vers la ligne #expl-row-_i).
+  const withIdx = rows.map((r, i) => ({ ...r, _i: i }));
+  const positives = withIdx.filter(r => r.weight >= 0);
+  const negatives = withIdx.filter(r => r.weight < 0);
   const posMax = Math.max(...positives.map(r => r.weight), 1);
   const negMax = Math.max(...negatives.map(r => Math.abs(r.weight)), 1);
   const HALF = 48;  // hauteur de chaque demi-plan (px)
 
-  const col = (r, i, sign) => {
+  const col = (r, sign) => {
     const mag = Math.abs(r.weight);
     const ref = sign > 0 ? posMax : negMax;
     const h = Math.max(2, (mag / ref) * (HALF - 3));
@@ -5446,8 +5480,12 @@ function Bars({ rows }) {
       }} />
     );
     return (
-      <div key={(sign > 0 ? 'p' : 'n') + i} title={`${r.target} · w=${r.weight}`}
-        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div key={(sign > 0 ? 'p' : 'n') + r._i}
+        title={`${r.source || ''} | ${r.relation || ''} | ${r.target} · w=${r.weight}`}
+        onMouseEnter={() => onHover && onHover(r._i)}
+        onMouseLeave={() => onHover && onHover(-1)}
+        onClick={() => onPick && onPick(r._i)}
+        style={{ flex: 1, display: 'flex', flexDirection: 'column', cursor: 'pointer' }}>
         {/* demi-plan haut : positifs montent vers le haut (ancrés à la ligne 0) */}
         <div style={{ height: HALF, display: 'flex', alignItems: 'flex-end' }}>
           {sign > 0 && bar}
@@ -5461,10 +5499,11 @@ function Bars({ rows }) {
   };
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }}
+      onMouseLeave={() => onHover && onHover(-1)}>
       <div style={{ display: 'flex', gap: 2, alignItems: 'stretch' }}>
-        {positives.map((r, i) => col(r, i, 1))}
-        {negatives.map((r, i) => col(r, i, -1))}
+        {positives.map(r => col(r, 1))}
+        {negatives.map(r => col(r, -1))}
       </div>
       {/* ligne zéro */}
       <div style={{
