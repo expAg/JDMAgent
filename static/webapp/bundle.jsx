@@ -526,7 +526,15 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
   }, [value]);
 
   const emit = (v, label) => { if (onChange) onChange(v, label || ''); };
-  const onType = (v) => { setTyped(v); emit(v, ''); };
+  const onType = (v) => {
+    // Taper un « > » (séparateur de sens) ouvre la liste déroulante : on
+    // détecte l'AJOUT d'un « > » (le compte augmente) pour ne pas la rouvrir
+    // si l'utilisateur l'a fermée alors qu'un « > » est déjà présent.
+    const added = (v.match(/>/g) || []).length > (typed.match(/>/g) || []).length;
+    setTyped(v);
+    emit(v, '');
+    if (added) setOpen(true);
+  };
 
   // Base = ce qui précède le premier « > » : un sens déjà choisi reste listable
   // (on re-désambiguïse toujours le terme générique).
