@@ -563,7 +563,16 @@ def api_disambiguate(req: TermRequest) -> dict[str, Any]:
         return {"senses": [], "message": f"Aucun sens raffiné pour « {raw} » (terme probablement monosémique)."}
     senses.sort(key=lambda s: -s.weight)
     rows = [
-        {"decoded": s.decoded, "weight": round(s.weight, 1), "id": s.name}
+        {
+            "decoded": s.decoded,
+            "weight": round(s.weight, 1),
+            "id": s.name,
+            # Forme « molle » décodée, queryable telle quelle (resolve_term la
+            # réapparie au nom brut) : « avocat>personne>juriste ». C'est ce
+            # qu'on écrit dans l'input quand on choisit un sens, et ce qu'un
+            # utilisateur peut taper directement.
+            "soft": ">".join(s.path),
+        }
         for s in senses[:30]
     ]
     return {"senses": rows, "message": f"{len(rows)} sens trouvé(s)."}

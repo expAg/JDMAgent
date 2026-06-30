@@ -505,32 +505,37 @@ function Input({ value, onChange, placeholder, mono, type, ...rest }) {
 
 // ───────── TermSenseField : terme + choix d'un SENS raffiné ─────────
 // Composant PARTAGÉ (Explorer, Claim checker, Sous-graphe — un seul site, pas
-// de drift). Saisie libre + bouton « ⟩ sens » qui interroge /api/disambiguate.
-// Choisir un sens fait cibler le NŒUD RAFFINÉ (nom brut `avocat>…`, déjà fourni
-// par l'API sous la clé `id`). `onChange(value, label)` : value = ce qu'on
-// envoie aux endpoints (terme générique OU nom brut du sens) ; label = libellé
-// lisible pour l'affichage (vide si terme générique).
+// de drift). Saisie libre + bouton « > sens » qui interroge /api/disambiguate.
+// Choisir un sens REMPLIT l'input avec la forme molle décodée « terme>sens »
+// (ex. « avocat>personne>juriste »), directement queryable : le backend la
+// réapparie au nom brut via resolve_term. On peut donc aussi taper « terme>sens »
+// à la main. La liste se rafraîchit en direct à la frappe tant qu'elle est
+// ouverte. `onChange(value, label)` : value = contenu de l'input (envoyé aux
+// endpoints) ; label = libellé lisible (gloss du sens choisi, vide sinon).
 function TermSenseField({ value, onChange, placeholder, mono }) {
   const [typed, setTyped] = React.useState(value || '');
-  const [sense, setSense] = React.useState(null);   // { id, decoded } | null
   const [open, setOpen] = React.useState(false);
   const [senses, setSenses] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [msg, setMsg] = React.useState('');
 
-  // Sync prefill externe (ex. Projet › Quick try) tant qu'aucun sens actif.
+  // Sync prefill externe (ex. Projet › Quick try).
   React.useEffect(() => {
-    if (!sense && (value || '') !== typed) setTyped(value || '');
+    if ((value || '') !== typed) setTyped(value || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   const emit = (v, label) => { if (onChange) onChange(v, label || ''); };
   const onType = (v) => { setTyped(v); emit(v, ''); };
 
-  const fetchSenses = async () => {
-    const t = (typed || '').trim();
-    if (!t) return;
-    setOpen(true); setLoading(true); setMsg(''); setSenses([]);
+  // Base = ce qui précède le premier « > » : un sens déjà choisi reste listable
+  // (on re-désambiguïse toujours le terme générique).
+  const baseTerm = (typed || '').split('>')[0].trim();
+
+  const fetchSenses = async (b) => {
+    const t = (b !== undefined ? b : baseTerm).trim();
+    if (!t) { setSenses([]); setMsg(''); setLoading(false); return; }
+    setLoading(true); setMsg('');
     try {
       const r = await fetch('api/disambiguate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -539,28 +544,31 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
       const d = await r.json();
       setSenses(Array.isArray(d.senses) ? d.senses : []);
       setMsg(d.message || '');
-    } catch (e) { setMsg(String(e && e.message ? e.message : e)); }
+    } catch (e) { setSenses([]); setMsg(String(e && e.message ? e.message : e)); }
     setLoading(false);
   };
 
-  const pick = (s) => { setSense({ id: s.id, decoded: s.decoded }); setOpen(false); emit(s.id, s.decoded); };
-  const clearSense = () => { setSense(null); emit(typed, ''); };
+  // Ouverture du menu → fetch immédiat.
+  React.useEffect(() => {
+    if (open) fetchSenses(baseTerm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-  if (sense) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-        background: 'var(--bg-card)', border: '1px solid var(--accent)',
-        borderRadius: 'var(--radius)', minHeight: 40, boxSizing: 'border-box',
-      }}>
-        <span style={{ fontSize: 13, color: 'var(--ink)' }}>🎯 {sense.decoded}</span>
-        <button type="button" onClick={clearSense} className="focus-ring"
-          title="Revenir au terme générique"
-          style={{ marginLeft: 'auto', cursor: 'pointer', background: 'transparent',
-                   border: 'none', color: 'var(--ink-3)', fontSize: 15, lineHeight: 1 }}>✕</button>
-      </div>
-    );
-  }
+  // Frappe pendant que le menu est ouvert → rafraîchit la liste (debounce).
+  React.useEffect(() => {
+    if (!open) return;
+    const id = setTimeout(() => fetchSenses(baseTerm), 300);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseTerm]);
+
+  // Choisir un sens : remplit l'input avec la forme molle décodée, queryable.
+  const pick = (s) => {
+    const soft = s.soft || s.id;
+    setTyped(soft);
+    emit(soft, s.decoded || '');
+    setOpen(false);
+  };
 
   return (
     <div style={{ position: 'relative' }}>
@@ -568,12 +576,14 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <Input value={typed} onChange={onType} placeholder={placeholder} mono={mono} />
         </div>
-        <button type="button" onClick={fetchSenses} className="focus-ring"
+        <button type="button" onClick={() => setOpen(o => !o)} className="focus-ring"
           title="Choisir un sens précis (terme polysémique)"
           style={{ flexShrink: 0, cursor: 'pointer', padding: '0 12px',
-                   background: 'var(--bg-elev)', border: '1px solid var(--line)',
-                   borderRadius: 'var(--radius)', color: 'var(--ink-2)', fontSize: 12,
-                   whiteSpace: 'nowrap' }}>⟩ sens</button>
+                   background: open ? 'var(--accent)' : 'var(--bg-elev)',
+                   border: '1px solid var(--line)',
+                   borderRadius: 'var(--radius)',
+                   color: open ? 'var(--bg)' : 'var(--ink-2)', fontSize: 12,
+                   whiteSpace: 'nowrap' }}>&gt; sens</button>
       </div>
       {open && (
         <div style={{
