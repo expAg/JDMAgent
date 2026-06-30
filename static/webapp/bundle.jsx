@@ -575,11 +575,19 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
   const hasSenses = senses.length > 0;
 
   // La liste vient TOUJOURS du terme de base (1er segment) — elle contient déjà
-  // tous les chemins (« avocat>personne>juriste »…). On la RÉDUIT en direct au
-  // préfixe tapé : taper « avocat>personne> » n'affiche plus que les sous-sens
-  // de personne. Repli sur la liste complète si le préfixe ne matche rien.
-  const _q = (typed || '').trim().toLowerCase();
-  const _filtered = senses.filter(s => (s.soft || '').toLowerCase().startsWith(_q));
+  // tous les chemins (« avocat>personne>juriste »…). On la RÉDUIT au bon niveau :
+  //   - si le chemin tapé a des SOUS-SENS (nœud polysémique, ex. « avocat>personne »
+  //     → juriste/médiateur) → on filtre sur TOUTE la chaîne (montre ses sous-sens) ;
+  //   - sinon (feuille, ex. « chat>jeu ») → on filtre sur le PARENT (avant le
+  //     dernier « > ») → montre les frères plutôt que la seule entrée tapée.
+  const _chain = (typed || '').trim().replace(/>+$/, '');   // sans « > » final
+  const _lc = _chain.toLowerCase();
+  const _hasChildren = !!_chain && senses.some(s => (s.soft || '').toLowerCase().startsWith(_lc + '>'));
+  let _prefix = _lc;
+  if (_chain.includes('>') && !_hasChildren) {
+    _prefix = _lc.slice(0, _lc.lastIndexOf('>'));   // remonte au parent
+  }
+  const _filtered = senses.filter(s => (s.soft || '').toLowerCase().startsWith(_prefix));
   const displayed = _filtered.length ? _filtered : senses;
 
   // Choisir un sens : remplit l'input avec la forme molle décodée, queryable.
