@@ -574,17 +574,22 @@ function TermSenseField({ value, onChange, placeholder, mono }) {
   const hasSenses = senses.length > 0;
 
   // La liste vient TOUJOURS du terme de base (1er segment) — elle contient déjà
-  // tous les chemins (« avocat>personne>juriste »…). On la RÉDUIT au bon niveau :
-  //   - si le chemin tapé a des SOUS-SENS (nœud polysémique, ex. « avocat>personne »
-  //     → juriste/médiateur) → on filtre sur TOUTE la chaîne (montre ses sous-sens) ;
-  //   - sinon (feuille, ex. « chat>jeu ») → on filtre sur le PARENT (avant le
-  //     dernier « > ») → montre les frères plutôt que la seule entrée tapée.
+  // tous les chemins (« avocat>personne>juriste »…). On la RÉDUIT au bon niveau.
+  // Par défaut on filtre sur TOUTE la chaîne tapée (préfixe) → narrue en direct
+  // pendant la frappe (« avocat>perso » garde les sens personne…). On ne remonte
+  // au PARENT (avant le dernier « > ») QUE pour une FEUILLE connue exactement
+  // (sens complet sans sous-sens, ex. « chat>jeu ») → on montre alors ses frères
+  // au lieu de la seule entrée tapée. Un nœud polysémique (« avocat>personne »,
+  // qui a des sous-sens) reste filtré sur la chaîne → montre ses sous-sens.
   const _chain = (typed || '').trim().replace(/>+$/, '');   // sans « > » final
   const _lc = _chain.toLowerCase();
-  const _hasChildren = !!_chain && senses.some(s => (s.soft || '').toLowerCase().startsWith(_lc + '>'));
   let _prefix = _lc;
-  if (_chain.includes('>') && !_hasChildren) {
-    _prefix = _lc.slice(0, _lc.lastIndexOf('>'));   // remonte au parent
+  if (_chain.includes('>')) {
+    const _hasChildren = senses.some(s => (s.soft || '').toLowerCase().startsWith(_lc + '>'));
+    const _isExact = senses.some(s => (s.soft || '').toLowerCase() === _lc);
+    if (_isExact && !_hasChildren) {
+      _prefix = _lc.slice(0, _lc.lastIndexOf('>'));   // feuille connue → frères
+    }
   }
   const _filtered = senses.filter(s => (s.soft || '').toLowerCase().startsWith(_prefix));
   const displayed = _filtered.length ? _filtered : senses;
