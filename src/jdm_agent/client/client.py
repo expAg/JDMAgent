@@ -199,34 +199,44 @@ class JDMClient:
         max_tries: int = 25,
         min_level: float = 60.0,
     ) -> Optional[Node]:
-        """Vrai uniform sampling sur l'espace ID de JeuxDeMots.
+        """Tire un terme au hasard dans JeuxDeMots.
 
-        On tire des IDs au hasard dans [id_min, id_max] et on garde le
-        premier qui ressemble a un VRAI terme du lexique : type == 1,
-        nom non vide, pas de chars techniques `: # _ | \\ /`, niveau de
-        popularite >= min_level. Les raffinements (`avocat>116477>66699`,
-        contenant `>`) sont AUTORISES — c'est au caller (cf. tool
-        pick_random_term) d'exposer la forme decodee en plus du brut.
+        Implémentation : on demande un bloc de relations au hasard
+        (`relations_random`) et on garde le premier NŒUD renvoyé qui ressemble
+        à un VRAI terme du lexique : type == 1, nom non vide, pas de chars
+        techniques `: # _ | \\ /`, niveau de popularité >= min_level. Les
+        raffinements (`avocat>116477>66699`, contenant `>`) sont AUTORISES —
+        c'est au caller (cf. tool pick_random_term) d'exposer la forme décodée
+        en plus du brut.
 
-        Renvoie None si max_tries epuises sans hit.
+        Signature INCHANGÉE (drop-in). `id_min`/`id_max` sont conservés pour
+        compat mais ne sont plus utilisés (on ne tire plus par ID) ; `max_tries`
+        borne le nombre d'appels au endpoint (un seul suffit en général, il
+        renvoie ~100 nœuds).
+
+        Renvoie None si max_tries épuisés sans hit.
         """
         import random as _random
         for _ in range(max_tries):
-            nid = _random.randint(id_min, id_max)
             try:
-                n = self.node_by_id(nid)
+                res = self.relations_random(limit=100)
             except Exception:
                 continue
-            if n.type != 1:
+            nodes = list(res.nodes)
+            if not nodes:
                 continue
-            if not n.name or len(n.name.strip()) < 2:
-                continue
-            # NB: `>` retire de la blacklist — les raffinements sont OK.
-            if any(ch in n.name for ch in (':', '#', '_', '|', '\\', '/')):
-                continue
-            if getattr(n, 'level', 0) is None or float(getattr(n, 'level', 0)) < min_level:
-                continue
-            return n
+            _random.shuffle(nodes)
+            for n in nodes:
+                if n.type != 1:
+                    continue
+                if not n.name or len(n.name.strip()) < 2:
+                    continue
+                # NB: `>` retire de la blacklist — les raffinements sont OK.
+                if any(ch in n.name for ch in (':', '#', '_', '|', '\\', '/')):
+                    continue
+                if getattr(n, 'level', 0) is None or float(getattr(n, 'level', 0)) < min_level:
+                    continue
+                return n
         return None
 
     def refinements(self, name: str) -> RefinementsResult:
@@ -576,6 +586,58 @@ class JDMClient:
         if isinstance(data, list):
             data = {"relations": data, "nodes": []}
         return RelationsResult.model_validate(data)
+
+    def relations_random(
+        self,
+        *,
+        types_ids: Optional[Sequence[int]] = None,
+        not_types_ids: Optional[Sequence[int]] = None,
+        min_weight: Optional[float] = None,
+        max_weight: Optional[float] = None,
+        limit: Optional[int] = None,
+        without_nodes: Optional[bool] = None,
+    ) -> RelationsResult:
+        """Tire un bloc de relations AU HASARD via `/v0/relations/random`.
+
+        Le serveur choisit un offset aléatoire dans la table des relations puis
+        renvoie jusqu'à `limit` relations (+ leurs nœuds), filtrées par
+        `types_ids` / `min_weight`… C'est LE moyen efficace d'échantillonner le
+        graphe (un seul appel HTTP), contrairement au sampling par ID.
+
+        ⚠️ Ce endpoint attend `types_ids` / `not_types_ids` en **paramètres
+        répétés** (convention tableau OpenAPI : `types_ids=6&types_ids=5`), PAS
+        en CSV comme `/relations/from`. On passe donc des LISTES brutes à httpx
+        (qui les sérialise en clés répétées) — surtout pas `_csv`.
+
+        Non caché (chaque appel doit renvoyer un tirage frais) : passe par
+        `_get_raw`, pas `_cached_get`.
+        """
+        params: dict = {}
+        if types_ids:
+            params["types_ids"] = [int(t) for t in types_ids]
+        if not_types_ids:
+            params["not_types_ids"] = [int(t) for t in not_types_ids]
+        if min_weight is not None:
+            params["min_weight"] = min_weight
+        if max_weight is not None:
+            params["max_weight"] = max_weight
+        if limit is not None:
+            params["limit"] = int(limit)
+        if without_nodes is not None:
+            params["without_nodes"] = str(without_nodes).lower()
+        try:
+            data = self._get_raw("/v0/relations/random", params=params)
+        except JDMNotFoundError:
+            return RelationsResult()
+        if isinstance(data, list):
+            data = {"relations": data, "nodes": []}
+        res = RelationsResult.model_validate(data)
+        # Le serveur IGNORE `limit` (renvoie toujours son bloc plein ~100) : on
+        # tronque côté client pour que le paramètre « nombre » soit réel. Les
+        # `nodes` restent complets (juste un index — surcoût nul).
+        if limit is not None and limit >= 0 and len(res.relations) > limit:
+            res.relations = res.relations[:limit]
+        return res
 
     # ---------- High-level helpers ----------
 

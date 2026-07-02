@@ -221,11 +221,10 @@ def pick_random_relation(
         de CE type précis — pratique pour échantillonner/auditer une relation
         ciblée sans tirer des termes en aveugle.
 
-    ⚠️ Détail technique : JeuxDeMots n'expose PAS d'endpoint « relation par
-    id » (contrairement aux nœuds). On ne peut donc pas faire un vrai uniform
-    sampling sur l'espace des relations. On tire ici un type puis on lit une
-    page à un `offset` aléatoire via `by_type_id`, et on en prend une au
-    hasard. C'est un échantillon raisonnable, PAS une loi uniforme stricte.
+    ⚠️ Détail technique : le tirage passe par le endpoint `/v0/relations/random`
+    (le serveur choisit un offset aléatoire dans la table des relations). C'est
+    un échantillon raisonnable, PAS une loi uniforme stricte, mais un seul appel
+    HTTP suffit — on cible un `types_ids` quand une relation est demandée.
 
     Le triplet renvoyé existe déjà — NE teste PAS son existence.
 
@@ -254,22 +253,14 @@ def pick_random_relation(
         _random.shuffle(rts)
         candidates = [(rt.id, rt.name) for rt in rts[:8]]   # cap d'essais de types
     mw = _mw(min_weight)
-    # 2) Pour chaque type candidat, on lit une page à offset aléatoire et on
-    #    pioche une relation. Faute d'endpoint relation-by-id, c'est le mieux
-    #    disponible (cf. docstring).
+    # 2) Pour chaque type candidat, on tire un bloc de relations au hasard via
+    #    /v0/relations/random (offset aléatoire côté serveur) et on en pioche
+    #    une. Deux essais par type pour absorber un bloc vide ponctuel.
     for tid, tname in candidates:
-        for _try in range(2):                # cap d'essais d'offset par type
-            # Offset VOLONTAIREMENT petit : un grand offset sur by_type_id est
-            # très lent côté serveur (jusqu'au timeout). La variété vient du
-            # type tiré + du random.choice dans la page (l'API tronque avant de
-            # trier, donc même offset=0 donne une tranche arbitraire).
-            off = _random.randint(0, 400)
+        for _try in range(2):
             try:
-                res = c.relations_by_type(tid, min_weight=mw, limit=100, offset=off)
+                res = c.relations_random(types_ids=[tid], min_weight=mw, limit=100)
                 rels = list(res.relations)
-                if not rels and off:         # offset trop grand → repli début
-                    res = c.relations_by_type(tid, min_weight=mw, limit=100, offset=0)
-                    rels = list(res.relations)
             except Exception:
                 # Hoquet réseau / type pathologique : on n'échoue pas l'outil,
                 # on tente l'essai/candidat suivant (cf. random_term).
