@@ -1,20 +1,27 @@
 // View: Outils — hub TALN. Sous-onglets par tâche, tous sous les couleurs du
 // site. Chaque tâche appelle un proxy backend /api/tools/<tâche> qui relaie vers
-// un service séparé (coref/syntaxe locaux ; génitif/analogies externes). Le
-// backend renvoie { ok, service, data|error } → jamais d'erreur brute ici.
+// un service séparé (coref/syntaxe locaux ; génitif/analogies/jdmrel externes).
+// Le backend renvoie { ok, service, data|error } → jamais d'erreur brute ici.
 
 const OUTILS_TABS = [
-  { id: 'coref',    label: 'Coréférence',       icon: '🔗' },
-  { id: 'syntax',   label: 'Analyse syntaxique', icon: '🌳' },
-  { id: 'genitive', label: 'Génitifs « A de B »', icon: '🧩' },
-  { id: 'analogy',  label: 'Analogies',          icon: '⚖️' },
+  { id: 'coref',    label: 'Coréférence' },
+  { id: 'syntax',   label: 'Analyse syntaxique' },
+  { id: 'genitive', label: 'Génitifs « A de B »' },
+  { id: 'analogy',  label: 'Analogies' },
+  { id: 'jdmrel',   label: 'Relations sémantiques (JDM)' },
 ];
 
-// Palette de chaînes (coréférence) — reprend les couleurs signature du site.
-const _COREF_COLORS = [
-  'var(--jdm-magenta)', 'var(--jdm-cyan)', 'var(--jdm-green)',
-  'var(--jdm-violet)', 'var(--jdm-orange)', 'var(--jdm-yellow)',
-];
+// Modèles proposés par onglet (liste déroulante). Placeholders pour l'instant —
+// on affinera les vrais modèles disponibles plus tard. Le `value` choisi est
+// transmis au backend (payload.model) ; les services l'ignorent tant qu'ils ne
+// le gèrent pas. {value, label}.
+const TOOL_MODELS = {
+  coref:    [{ value: 'corpipe25',      label: 'CorPipe 25 — mT5-large (défaut)' }],
+  syntax:   [{ value: 'udpipe2-fr-gsd', label: 'UDPipe 2 — french-gsd (défaut)' }],
+  genitive: [{ value: 'default',        label: '(par défaut)' }],
+  analogy:  [{ value: 'default',        label: '(par défaut)' }],
+  jdmrel:   [{ value: 'default',        label: '(par défaut)' }],
+};
 
 // Encart d'erreur / placeholder homogène (service down ou non branché).
 function ToolNotice({ msg, tone }) {
@@ -30,9 +37,7 @@ function ToolNotice({ msg, tone }) {
   );
 }
 
-// Poste un texte au proxy et renvoie { ok, data|error }. Enveloppe unifiée pour
-// tous les onglets — coref/syntaxe marchent tout de suite, génitif/analogies
-// renvoient le message « non branché » tant que leur URL n'est pas configurée.
+// Poste un payload au proxy et renvoie { ok, data|error }. Enveloppe unifiée.
 async function _callTool(path, payload) {
   try {
     const res = await fetch('api/tools/' + path, {
@@ -40,28 +45,50 @@ async function _callTool(path, payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const j = await res.json();
-    return j;
+    return await res.json();
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }
 }
+
+// Sélecteur de modèle (liste déroulante) — commun à tous les onglets.
+function ModelPicker({ value, onChange, options }) {
+  if (!options || options.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 12, maxWidth: 420 }}>
+      <Field label="Modèle">
+        <Select value={value} options={options} onChange={onChange} />
+      </Field>
+    </div>
+  );
+}
+
+// Grille verticale d'un panneau — minmax(0,1fr) empêche un enfant large (le SVG
+// des dépendances) de faire déborder la page horizontalement.
+function panelGrid() {
+  return { display: 'grid', gap: 14, gridTemplateColumns: 'minmax(0, 1fr)' };
+}
+
+// Palette des chaînes de coréférence (couleurs signature du site).
+const _COREF_COLORS = [
+  'var(--jdm-magenta)', 'var(--jdm-cyan)', 'var(--jdm-green)',
+  'var(--jdm-violet)', 'var(--jdm-orange)', 'var(--jdm-yellow)',
+];
 
 // ───────── Coréférence ─────────
 function CorefPanel() {
   const [text, setText] = React.useState(
     "Marie a appelé son frère parce qu'elle voulait lui rendre les clés. "
     + "Il les avait oubliées chez elle hier soir.");
+  const [model, setModel] = React.useState(TOOL_MODELS.coref[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
 
   const run = async () => {
     setLoading(true); setRes(null);
-    const j = await _callTool('coref', { text });
-    setRes(j); setLoading(false);
+    setRes(await _callTool('coref', { text, model })); setLoading(false);
   };
 
-  // token index → id de chaîne (pour le surlignage).
   const chainOf = {};
   if (res && res.ok && res.data && Array.isArray(res.data.chains)) {
     res.data.chains.forEach((c) => {
@@ -72,13 +99,13 @@ function CorefPanel() {
   }
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={panelGrid()}>
       <ToolForm text={text} setText={setText} run={run} loading={loading}
-        placeholder="Colle un texte français à résoudre…" />
+        placeholder="Colle un texte français à résoudre…"
+        model={model} setModel={setModel} models={TOOL_MODELS.coref} />
       {res && !res.ok && <ToolNotice msg={res.error} tone="error" />}
       {res && res.ok && res.data && (
         <Card padding={18}>
-          {/* Texte surligné par chaîne */}
           <div style={{ fontSize: 15, lineHeight: 2, marginBottom: 16 }}>
             {(res.data.tokens || []).map((t, i) => {
               const cid = chainOf[i];
@@ -95,7 +122,6 @@ function CorefPanel() {
               );
             })}
           </div>
-          {/* Liste des chaînes */}
           <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
             {(res.data.chains || []).length} chaîne(s) de coréférence
           </div>
@@ -125,19 +151,20 @@ function CorefPanel() {
 // ───────── Analyse syntaxique ─────────
 function SyntaxPanel() {
   const [text, setText] = React.useState("Le chat de la voisine dort sur le canapé.");
+  const [model, setModel] = React.useState(TOOL_MODELS.syntax[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
 
   const run = async () => {
     setLoading(true); setRes(null);
-    const j = await _callTool('syntax', { text });
-    setRes(j); setLoading(false);
+    setRes(await _callTool('syntax', { text, model })); setLoading(false);
   };
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={panelGrid()}>
       <ToolForm text={text} setText={setText} run={run} loading={loading}
-        placeholder="Une phrase à analyser en dépendances…" />
+        placeholder="Une phrase à analyser en dépendances…"
+        model={model} setModel={setModel} models={TOOL_MODELS.syntax} />
       {res && !res.ok && <ToolNotice msg={res.error} tone="error" />}
       {res && res.ok && res.data && res.data.ud_svg && (
         <Card padding={18}><UdSvg svg={res.data.ud_svg} /></Card>
@@ -146,57 +173,87 @@ function SyntaxPanel() {
   );
 }
 
-// SVG displaCy (thémé clair) — rendu dans un cadre à fond blanc, scroll horizontal.
+// SVG displaCy (thémé clair) — cadre à fond blanc, borné à la largeur dispo,
+// scroll horizontal interne (les arbres longs ne débordent plus la page).
 function UdSvg({ svg }) {
   return (
     <div style={{
       marginTop: 14, background: '#ffffff', borderRadius: 'var(--radius)',
-      border: '1px solid var(--line)', padding: 12, overflowX: 'auto',
+      border: '1px solid var(--line)', padding: 12,
+      maxWidth: '100%', overflowX: 'auto',
     }} dangerouslySetInnerHTML={{ __html: svg }} />
   );
 }
 
-// ───────── Génitifs « A de B » (placeholder branché) ─────────
+// Rendu générique d'un résultat JSON (onglets sans rendu dédié).
+function JsonResult({ data }) {
+  return (
+    <Card padding={18}>
+      <pre className="mono" style={{ fontSize: 12, color: 'var(--ink-2)', whiteSpace: 'pre-wrap', margin: 0, maxWidth: '100%', overflowX: 'auto' }}>
+        {JSON.stringify(data, null, 2)}
+      </pre>
+    </Card>
+  );
+}
+
+// ───────── Génitifs « A de B » ─────────
 function GenitivePanel() {
   const [phrase, setPhrase] = React.useState("pied de la table");
+  const [model, setModel] = React.useState(TOOL_MODELS.genitive[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const run = async () => {
     setLoading(true); setRes(null);
-    const j = await _callTool('genitive', { phrase });
-    setRes(j); setLoading(false);
+    setRes(await _callTool('genitive', { phrase, model })); setLoading(false);
   };
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={panelGrid()}>
       <ToolForm text={phrase} setText={setPhrase} run={run} loading={loading}
-        rows={2} placeholder="Un syntagme génitif « A de B » (ex. pied de la table)…" />
+        rows={2} placeholder="Un syntagme génitif « A de B » (ex. pied de la table)…"
+        model={model} setModel={setModel} models={TOOL_MODELS.genitive} />
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
-      {res && res.ok && res.data && (
-        <Card padding={18}>
-          <pre className="mono" style={{ fontSize: 12, color: 'var(--ink-2)', whiteSpace: 'pre-wrap', margin: 0 }}>
-            {JSON.stringify(res.data, null, 2)}
-          </pre>
-        </Card>
-      )}
+      {res && res.ok && res.data && <JsonResult data={res.data} />}
     </div>
   );
 }
 
-// ───────── Analogies (placeholder branché) ─────────
-function AnalogyPanel() {
-  const [a, setA] = React.useState('Paris');
-  const [b, setB] = React.useState('France');
-  const [c, setC] = React.useState('Rome');
+// ───────── Relations sémantiques pour JeuxDeMots ─────────
+function JdmRelPanel() {
+  const [text, setText] = React.useState("Le chat dort sur le canapé.");
+  const [model, setModel] = React.useState(TOOL_MODELS.jdmrel[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const run = async () => {
     setLoading(true); setRes(null);
-    const j = await _callTool('analogy', { a, b, c });
-    setRes(j); setLoading(false);
+    setRes(await _callTool('jdmrel', { text, model })); setLoading(false);
   };
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={panelGrid()}>
+      <ToolForm text={text} setText={setText} run={run} loading={loading}
+        placeholder="Un texte à analyser en relations sémantiques JDM…"
+        model={model} setModel={setModel} models={TOOL_MODELS.jdmrel} />
+      {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
+      {res && res.ok && res.data && <JsonResult data={res.data} />}
+    </div>
+  );
+}
+
+// ───────── Analogies ─────────
+function AnalogyPanel() {
+  const [a, setA] = React.useState('Paris');
+  const [b, setB] = React.useState('France');
+  const [c, setC] = React.useState('Rome');
+  const [model, setModel] = React.useState(TOOL_MODELS.analogy[0].value);
+  const [res, setRes] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const run = async () => {
+    setLoading(true); setRes(null);
+    setRes(await _callTool('analogy', { a, b, c, model })); setLoading(false);
+  };
+  return (
+    <div style={panelGrid()}>
       <Card padding={18}>
+        <ModelPicker value={model} onChange={setModel} options={TOOL_MODELS.analogy} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
           <Field label="A"><Input value={a} onChange={setA} mono /></Field>
           <Field label="est à B"><Input value={b} onChange={setB} mono /></Field>
@@ -208,21 +265,16 @@ function AnalogyPanel() {
         </div>
       </Card>
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
-      {res && res.ok && res.data && (
-        <Card padding={18}>
-          <pre className="mono" style={{ fontSize: 12, color: 'var(--ink-2)', whiteSpace: 'pre-wrap', margin: 0 }}>
-            {JSON.stringify(res.data, null, 2)}
-          </pre>
-        </Card>
-      )}
+      {res && res.ok && res.data && <JsonResult data={res.data} />}
     </div>
   );
 }
 
-// Formulaire textarea + bouton, mutualisé.
-function ToolForm({ text, setText, run, loading, placeholder, rows = 4 }) {
+// Formulaire textarea + sélecteur de modèle + bouton, mutualisé.
+function ToolForm({ text, setText, run, loading, placeholder, rows = 4, model, setModel, models }) {
   return (
     <Card padding={18}>
+      <ModelPicker value={model} onChange={setModel} options={models} />
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -254,7 +306,7 @@ function ViewOutils() {
         desc="Démonstrateurs d'outils de traitement automatique des langues, réunis ici sous une même interface. Chaque outil est un service à part, branché progressivement."
       />
 
-      {/* Barre de sous-onglets */}
+      {/* Barre de sous-onglets (sans glyphs) */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18 }}>
         {OUTILS_TABS.map((t) => {
           const active = tab === t.id;
@@ -263,7 +315,6 @@ function ViewOutils() {
               onClick={() => setTab(t.id)}
               className="focus-ring"
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '8px 14px',
                 background: active ? 'var(--accent)' : 'var(--bg-elev)',
                 color: active ? 'var(--bg)' : 'var(--ink)',
@@ -271,7 +322,7 @@ function ViewOutils() {
                 borderRadius: 999, cursor: 'pointer',
                 fontSize: 13, fontWeight: active ? 600 : 400,
               }}>
-              <span>{t.icon}</span>{t.label}
+              {t.label}
             </button>
           );
         })}
@@ -281,6 +332,7 @@ function ViewOutils() {
       {tab === 'syntax'   && <SyntaxPanel />}
       {tab === 'genitive' && <GenitivePanel />}
       {tab === 'analogy'  && <AnalogyPanel />}
+      {tab === 'jdmrel'   && <JdmRelPanel />}
     </PageShell>
   );
 }

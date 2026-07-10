@@ -2933,6 +2933,7 @@ TOOLS_COREF_URL    = os.environ.get("TOOLS_COREF_URL", "http://127.0.0.1:8901/ap
 TOOLS_SYNTAX_URL   = os.environ.get("TOOLS_SYNTAX_URL", "http://127.0.0.1:8901/api/syntax").strip()
 TOOLS_GENITIVE_URL = os.environ.get("TOOLS_GENITIVE_URL", "").strip()   # vide → placeholder
 TOOLS_ANALOGY_URL  = os.environ.get("TOOLS_ANALOGY_URL", "").strip()    # vide → placeholder
+TOOLS_JDMREL_URL   = os.environ.get("TOOLS_JDMREL_URL", "").strip()     # vide → placeholder
 # 300 s : le 1er appel de coréférence charge le modèle mT5-large (téléchargement
 # HF + init), ce qui peut être long. Les appels suivants sont rapides.
 _TOOLS_TIMEOUT     = float(os.environ.get("TOOLS_TIMEOUT", "300"))
@@ -2972,28 +2973,33 @@ async def _proxy_tool_json(url: str, payload: dict, service: str) -> dict:
 
 class ToolTextRequest(BaseModel):
     text: str = ""
+    model: str = ""      # modèle choisi dans l'UI (transmis tel quel au service)
 
 
 class ToolGenitiveRequest(BaseModel):
     phrase: str = ""
+    model: str = ""
 
 
 class ToolAnalogyRequest(BaseModel):
     a: str = ""
     b: str = ""
     c: str = ""
+    model: str = ""
 
 
 @app.post("/api/tools/coref")
 async def api_tools_coref(req: ToolTextRequest) -> dict:
     """Résolution de coréférences (service coref séparé)."""
-    return await _proxy_tool_json(TOOLS_COREF_URL, {"text": req.text}, "coréférence")
+    return await _proxy_tool_json(
+        TOOLS_COREF_URL, {"text": req.text, "model": req.model}, "coréférence")
 
 
 @app.post("/api/tools/syntax")
 async def api_tools_syntax(req: ToolTextRequest) -> dict:
     """Analyse syntaxique en dépendances UD (service coref séparé, chemin léger)."""
-    return await _proxy_tool_json(TOOLS_SYNTAX_URL, {"text": req.text}, "analyse syntaxique")
+    return await _proxy_tool_json(
+        TOOLS_SYNTAX_URL, {"text": req.text, "model": req.model}, "analyse syntaxique")
 
 
 @app.post("/api/tools/genitive")
@@ -3003,13 +3009,21 @@ async def api_tools_genitive(req: ToolGenitiveRequest) -> dict:
     Placeholder pour l'instant (TOOLS_GENITIVE_URL vide par défaut). Branchement
     de rezo-GEN1.php plus tard (le format d'appel exact reste à sonder).
     """
-    return await _proxy_tool_json(TOOLS_GENITIVE_URL, {"phrase": req.phrase}, "génitif")
+    return await _proxy_tool_json(
+        TOOLS_GENITIVE_URL, {"phrase": req.phrase, "model": req.model}, "génitif")
 
 
 @app.post("/api/tools/analogy")
 async def api_tools_analogy(req: ToolAnalogyRequest) -> dict:
     """Explication d'analogies (service externe — placeholder, URL à venir)."""
     return await _proxy_tool_json(TOOLS_ANALOGY_URL, req.model_dump(), "analogies")
+
+
+@app.post("/api/tools/jdmrel")
+async def api_tools_jdmrel(req: ToolTextRequest) -> dict:
+    """Extraction de relations sémantiques pour JeuxDeMots (service à venir — placeholder)."""
+    return await _proxy_tool_json(
+        TOOLS_JDMREL_URL, {"text": req.text, "model": req.model}, "relations sémantiques JDM")
 
 
 # ────────────────────────────────────────────────────────────────────
