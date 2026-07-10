@@ -1,0 +1,60 @@
+# Patrons morpho-lexicaux → relations JeuxDeMots.
+# Adapté de Rel-Sem (Haniiist) : au lieu d'énumérer chaque déterminant
+# (« composé de la / du / d'un / d'une … »), un DÉTERMINANT devant $x ou $y est
+# absorbé automatiquement par le moteur (un/une/des/le/la/les/du/de la/d'un…).
+# Un patron : "$x <mots> $y" (deux fentes de terme). Format de section :
+#   "# <relation_jdm>  <étiquette lisible>"
+# Les termes $x et $y peuvent être des MOTS COMPOSÉS (reconnus via JDM).
+
+# r_isa  hiérarchie — x est un y
+$x est une sorte de $y
+$x est un genre de $y
+$x est de la famille de $y
+$x est un type de $y
+
+# r_has_part  holonymie — x a pour partie y
+$x est composé de $y
+$x est constitué de $y
+$x se compose de $y
+$x a comme partie $y
+$x comporte $y
+$x contient $y
+
+# r_holo  méronymie — x est une partie de y
+$x fait partie de $y
+$x est une partie de $y
+$x compose $y
+$x forme $y
+$x constitue $y
+
+# r_has_conseq  causalité (cause → effet) — x provoque y
+$x cause $y
+$x provoque $y
+$x affecte $y
+$x entraîne $y
+$x déclenche $y
+$x peut produire $y
+$x mène à $y
+$x conduit à $y
+
+# r_causatif  causalité (effet ← cause) — x est causé par y
+$x est causé par $y
+$x est provoqué par $y
+$x résulte de $y
+$x est dû à $y
+$x est la conséquence de $y
+
+# r_carac  caractérisation
+$x est caractérisé par $y
+$x se caractérise par $y
+
+# r_anto  opposition
+$x est l'inverse de $y
+$x est le contraire de $y
+$x s'oppose à $y
+
+# r_lieu  localisation
+$x se trouve dans $y
+$x est situé dans $y
+$x se situe dans $y
+$x au niveau de $y

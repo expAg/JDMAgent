@@ -16026,7 +16026,7 @@ function GenitivePanel() {
 // Mutualise les outils qui prennent un texte + un modèle et rendent un résultat
 // JSON (WSD, thématique, polarité, relations JDM…). Un seul site : ajouter un
 // outil de ce type = une entrée OUTILS_TABS + TOOL_MODELS + un rendu ci-dessous.
-function TextToolPanel({ path, models, defaultText, placeholder, rows = 4 }) {
+function TextToolPanel({ path, models, defaultText, placeholder, rows = 4, renderData }) {
   const [text, setText] = React.useState(defaultText || '');
   const [model, setModel] = React.useState(models[0].value);
   const [res, setRes] = React.useState(null);
@@ -16041,8 +16041,42 @@ function TextToolPanel({ path, models, defaultText, placeholder, rows = 4 }) {
         rows={rows} placeholder={placeholder}
         model={model} setModel={setModel} models={models} />
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
-      {res && res.ok && res.data && <JsonResult data={res.data} />}
+      {res && res.ok && res.data && (
+        renderData ? renderData(res.data) : <JsonResult data={res.data} />
+      )}
     </div>
+  );
+}
+
+// Rendu des triplets extraits (onglet Relations sémantiques JDM).
+function JdmRelResult({ data }) {
+  const trips = (data && data.triplets) || [];
+  if (!trips.length) {
+    return <ToolNotice tone="warn"
+      msg="Aucune relation détectée (patrons morpho-lexicaux + lexique JeuxDeMots)." />;
+  }
+  return (
+    <Card padding={18}>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
+        {trips.length} relation(s) extraite(s)
+      </div>
+      <div style={{ display: 'grid', gap: 6 }}>
+        {trips.map((t, i) => (
+          <div key={i} title={t.pattern} style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            padding: '8px 10px', background: 'var(--bg-elev)',
+            border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
+          }}>
+            <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{t.source}</span>
+            <span className="mono" style={{ fontSize: 12, color: 'var(--accent)' }}>{t.relation}</span>
+            <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{t.target}</span>
+            {t.category && (
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ink-3)' }}>{t.category}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -16156,8 +16190,9 @@ function ViewOutils() {
       {tab === 'analogy'  && <AnalogyPanel />}
       {tab === 'jdmrel'   && (
         <TextToolPanel path="jdmrel" models={TOOL_MODELS.jdmrel}
-          defaultText="Le chat dort sur le canapé du salon."
-          placeholder="Un texte à analyser en relations sémantiques JDM…" />
+          defaultText="La pomme de terre est une sorte de légume. La grippe provoque de la fièvre. La roue fait partie de la voiture."
+          placeholder="Un texte à analyser en relations sémantiques JDM (patrons + JDM)…"
+          renderData={(d) => <JdmRelResult data={d} />} />
       )}
     </PageShell>
   );
