@@ -15,8 +15,12 @@ git+https://github.com/udapi/udapi-python@690281b   # lecture/écriture CoNLL-U 
 requests                                             # appel UDPipe 2 (texte -> CoNLL-U)
 
 # --- Visualisation des dépendances UD ---
-spacy==3.5.4          # uniquement pour displaCy (rendu des arbres UD)
+# spacy sert UNIQUEMENT au rendu displaCy des arbres. Série 3.8 : wheels
+# jusqu'à Python 3.13 (la 3.5.4 recompilait blis et cassait sur 3.12/3.13).
+# L'API displacy.render(..., manual=True) est inchangée.
+spacy>=3.8,<3.9
 
 # --- Épingles de compatibilité ---
-numpy<2
-pandas==2.2.3
+# numpy 2.x OK (torch 2.7 / transformers / spacy 3.8 le supportent ; CorPipe
+# n'en fait qu'un usage basique). pandas retiré : non importé par le service.
+numpy<3

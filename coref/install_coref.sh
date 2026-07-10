@@ -29,21 +29,17 @@ echo ""
 # 1. git (dep udapi installee depuis GitHub)
 command -v git >/dev/null 2>&1 || { err "git introuvable — requis pour la dep udapi (apt install git)."; exit 1; }
 
-# 2. Choix de l'interpreteur : spacy 3.5.4 (displaCy) + ses deps thinc/blis n'ont
-#    de wheels que pour Python 3.10/3.11. Sur 3.12/3.13 pip recompile blis et
-#    echoue. On exige donc 3.10 ou 3.11 (env de reference : 3.11).
-py_ver() { "$1" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null; }
-py_ok()  { case "$(py_ver "$1")" in 3.10|3.11) return 0;; *) return 1;; esac; }
+# 2. Choix de l'interpreteur : Python >= 3.10 (deps modernisees : spacy 3.8 a des
+#    wheels jusqu'a 3.13). On prend le python3 systeme s'il convient.
+py_ver()  { "$1" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null; }
+py_ge310(){ "$1" -c 'import sys;raise SystemExit(0 if sys.version_info[:2]>=(3,10) else 1)' 2>/dev/null; }
 
 PYBIN=""
-for c in python3.11 python3.10 python3; do
-    command -v "$c" >/dev/null 2>&1 && py_ok "$c" && { PYBIN="$c"; break; }
+for c in python3 python3.13 python3.12 python3.11 python3.10; do
+    command -v "$c" >/dev/null 2>&1 && py_ge310 "$c" && { PYBIN="$c"; break; }
 done
 if [ -z "$PYBIN" ]; then
-    err "Aucun Python 3.10/3.11 trouve (python3 = $(py_ver python3 || echo '?'))."
-    err "spacy 3.5.4 n'a pas de wheels pour 3.12/3.13. Installe 3.11 :"
-    err "   sudo apt install -y python3.11 python3.11-venv"
-    err "   (ou via deadsnakes PPA sur Ubuntu). Puis relance ./install_coref.sh"
+    err "Aucun Python >= 3.10 trouve. Installe-en un (apt install python3-full python3-venv)."
     exit 1
 fi
 step "Interpreteur : $PYBIN ($(py_ver "$PYBIN"))"
@@ -51,7 +47,7 @@ step "Interpreteur : $PYBIN ($(py_ver "$PYBIN"))"
 # 3. venv (creation / reparation). Recree si l'existant est sur un Python
 #    incompatible (ex. une tentative precedente en 3.13).
 create_venv() { step "Creation du venv .venv/ avec $PYBIN"; "$PYBIN" -m venv .venv; }
-if [ -x ".venv/bin/python" ] && py_ok ".venv/bin/python"; then
+if [ -x ".venv/bin/python" ] && py_ge310 ".venv/bin/python"; then
     warn "venv .venv/ deja present (Python $(py_ver .venv/bin/python)) — reutilise"
 else
     [ -d ".venv" ] && { warn ".venv/ absent/casse/incompatible — recreation"; rm -rf .venv; }
