@@ -326,7 +326,6 @@ function ViewOutils() {
   return (
     <PageShell>
       <SectionTitle
-        kicker="Hub · TALN"
         title="Outils"
         desc="Démonstrateurs d'outils de traitement automatique des langues, réunis ici sous une même interface. Chaque outil est un service à part, branché progressivement."
       />
