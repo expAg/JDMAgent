@@ -284,7 +284,7 @@ function JdmRelResult({ data }) {
   return (
     <Card padding={18}>
       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
-        {trips.length} relation(s) extraite(s)
+        {trips.length} relation(s) extraite(s){data.mode ? ` · ${data.mode}` : ''}
       </div>
       <div style={{ display: 'grid', gap: 6 }}>
         {trips.map((t, i) => (
@@ -416,8 +416,8 @@ function ViewOutils() {
       {tab === 'analogy'  && <AnalogyPanel />}
       {tab === 'jdmrel'   && (
         <TextToolPanel path="jdmrel" models={TOOL_MODELS.jdmrel}
-          defaultText="La pomme de terre est une sorte de légume. La grippe provoque de la fièvre. La roue fait partie de la voiture."
-          placeholder="Un texte à analyser en relations sémantiques JDM (patrons + JDM)…"
+          defaultText="Le Louisiana blues est un genre de blues qui se distingue par des rythmes lourds qui produisent une musique sombre et intense."
+          placeholder="Un texte à analyser en relations sémantiques JDM (syntaxe UDPipe + JDM)…"
           renderData={(d) => <JdmRelResult data={d} />} />
       )}
     </PageShell>

@@ -3035,13 +3035,14 @@ async def api_tools_jdmrel(req: ToolTextRequest) -> dict:
             TOOLS_JDMREL_URL, {"text": req.text, "model": req.model}, "relations sémantiques JDM")
     try:
         import anyio
-        from jdm_agent.relext import extract_relations
+        from jdm_agent.relext import extract_best
         c = get_client()
-        # extract_relations fait des appels HTTP JDM bloquants → thread.
-        triplets = await anyio.to_thread.run_sync(
-            lambda: extract_relations(req.text or "", client=c))
+        # UDPipe + JDM = appels HTTP bloquants → thread.
+        out = await anyio.to_thread.run_sync(
+            lambda: extract_best(req.text or "", client=c))
+        trips = out["triplets"]
         return {"ok": True, "service": "relations sémantiques JDM",
-                "data": {"triplets": triplets, "count": len(triplets)}}
+                "data": {"triplets": trips, "count": len(trips), "mode": out["mode"]}}
     except Exception as e:
         return {"ok": False, "service": "relations sémantiques JDM",
                 "error": f"Erreur extraction : {e!r}"}
