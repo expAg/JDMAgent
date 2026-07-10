@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import argparse
+import threading
 from functools import lru_cache
 
 import huggingface_hub
@@ -31,11 +32,14 @@ SEED, THREADS = 42, 4
 @lru_cache(maxsize=1)
 def _engine():
     """Charge tokenizer + modèle CorPipe (mT5-large) une seule fois."""
+    print("[coref] chargement du moteur CorPipe (premier appel, one-time)…", flush=True)
     os.makedirs(OUT_DIR, exist_ok=True)
     minnt.startup(SEED, THREADS)
 
     # Récupère le checkpoint + sa configuration d'entraînement (comme dans main())
+    print(f"[coref] récupération du checkpoint {MODEL_ID} (téléchargement si absent)…", flush=True)
     path = MODEL_ID if os.path.exists(MODEL_ID) else huggingface_hub.snapshot_download(MODEL_ID)
+    print(f"[coref] checkpoint prêt : {path}", flush=True)
     with open(os.path.join(path, "options.json")) as f:
         opts = {k: v for k, v in json.load(f).items()
                 if k in ["batch_size", "depth", "encoder", "right", "segment", "treebanks"]}
@@ -57,14 +61,34 @@ def _engine():
         tags = [ln.rstrip("\r\n") for ln in f]
     tags_map = {t: i for i, t in enumerate(tags)}
 
+    print("[coref] construction du modèle + chargement des poids (RAM CPU)…", flush=True)
     model = cp.Model(tokenizer, tags, args)
     model.load_weights(os.path.join(path, "model.pt"))
+    print("[coref] moteur CorPipe prêt.", flush=True)
     return model, tokenizer, tags_map, args
+
+
+# Verrou : sérialise le chargement du modèle. Sans lui, deux requêtes arrivées
+# PENDANT le tout premier chargement (cache lru pas encore peuplé) déclenchent
+# CHACUNE un chargement de mT5-large → deux modèles qui saturent CPU/RAM et ne
+# finissent jamais. Avec le verrou : un seul charge, les autres attendent le cache.
+_LOAD_LOCK = threading.Lock()
+
+
+def get_engine():
+    """Accès au moteur, chargement sérialisé (un seul à la fois)."""
+    with _LOAD_LOCK:
+        return _engine()
+
+
+def _warmup():
+    """Force le chargement du modèle (utile pour un warm-up au démarrage)."""
+    get_engine()
 
 
 def predict_conllu(in_conllu_path: str) -> str:
     """Annote un fichier CoNLL-U avec la coréférence ; renvoie le chemin de sortie."""
-    model, tokenizer, tags_map, args = _engine()
+    model, tokenizer, tags_map, args = get_engine()
     test = cp.Dataset(in_conllu_path, tokenizer)
     loader = torch.utils.data.DataLoader(
         test.dataset(tags_map, False, args),
