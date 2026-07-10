@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import argparse
+import threading
 from functools import lru_cache
 
 import huggingface_hub
@@ -67,14 +68,27 @@ def _engine():
     return model, tokenizer, tags_map, args
 
 
+# Verrou : sérialise le chargement du modèle. Sans lui, deux requêtes arrivées
+# PENDANT le tout premier chargement (cache lru pas encore peuplé) déclenchent
+# CHACUNE un chargement de mT5-large → deux modèles qui saturent CPU/RAM et ne
+# finissent jamais. Avec le verrou : un seul charge, les autres attendent le cache.
+_LOAD_LOCK = threading.Lock()
+
+
+def get_engine():
+    """Accès au moteur, chargement sérialisé (un seul à la fois)."""
+    with _LOAD_LOCK:
+        return _engine()
+
+
 def _warmup():
     """Force le chargement du modèle (utile pour un warm-up au démarrage)."""
-    _engine()
+    get_engine()
 
 
 def predict_conllu(in_conllu_path: str) -> str:
     """Annote un fichier CoNLL-U avec la coréférence ; renvoie le chemin de sortie."""
-    model, tokenizer, tags_map, args = _engine()
+    model, tokenizer, tags_map, args = get_engine()
     test = cp.Dataset(in_conllu_path, tokenizer)
     loader = torch.utils.data.DataLoader(
         test.dataset(tags_map, False, args),
