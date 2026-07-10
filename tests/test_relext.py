@@ -153,3 +153,29 @@ def test_auteur_pronoun_negative():
                (5, "par", "par", "ADP", 6, "case"),
                (6, "lui", "lui", "PRON", 4, "obl:agent", {"PronType": "Prs"})])
     assert not any(r == "r_has_auteur" for _, r, _ in _syn_keys(s))
+
+
+def test_own_indefinite_negative():
+    # « possède tel instrument » : objet indéfini → PAS de r_own
+    s = _sent([(1, "Lester", "Lester", "PROPN", 2, "nsubj"),
+               (2, "possède", "posséder", "VERB", 0, "root"),
+               (3, "tel", "tel", "ADJ", 4, "amod"),
+               (4, "instrument", "instrument", "NOUN", 2, "obj")])
+    assert not any(r == "r_own" for _, r, _ in _syn_keys(s))
+
+
+def test_jouer_de_conj_subject():
+    # « musicien qui chante et joue de l'harmonica » : sujet hérité par
+    # coordination (joue = conj de chante) + relatif → r_carac vers l'instrument.
+    s = _sent([(1, "Leslie", "Leslie", "PROPN", 4, "nsubj"),
+               (2, "est", "être", "AUX", 4, "cop"),
+               (3, "un", "un", "DET", 4, "det"),
+               (4, "musicien", "musicien", "NOUN", 0, "root"),
+               (5, "qui", "qui", "PRON", 6, "nsubj", {"PronType": "Rel"}),
+               (6, "chante", "chanter", "VERB", 4, "acl:relcl"),
+               (7, "et", "et", "CCONJ", 8, "cc"),
+               (8, "joue", "jouer", "VERB", 6, "conj"),
+               (9, "de", "de", "ADP", 11, "case"),
+               (10, "l'", "le", "DET", 11, "det"),
+               (11, "harmonica", "harmonica", "NOUN", 8, "obl:arg")])
+    assert ("leslie", "r_carac", "harmonica") in _syn_keys(s)

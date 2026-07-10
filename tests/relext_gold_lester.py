@@ -29,8 +29,8 @@ GOLD = [
     ("leslie johnson", "r_syn", "lazy lester", "now"),
     ("leslie johnson", "r_isa", "musicien de blues", "now"),
     ("leslie johnson", "r_isa", "pionnier du swamp blues", "coref"),   # « Il »
-    ("leslie johnson", "r_carac", "harmonica", "hard"),                # joue de
-    ("leslie johnson", "r_carac", "guitare", "hard"),
+    ("leslie johnson", "r_carac", "harmonica", "now"),                 # « joue de … »
+    ("leslie johnson", "r_carac", "guitare", "now"),
     ("lester", "r_lieu", "louisiane", "hard"),   # « scène blues DE Louisiane » : nmod, pas prédiqué de Lester
     ("lester", "r_lieu", "pontiac", "rule"),                           # déménage à
     ("lester", "r_lieu", "paradise", "rule"),                          # vit à
@@ -41,6 +41,9 @@ GOLD = [
 MUST_NOT = [
     ("lester", "r_isa", "marge"),          # « était en marge » (prépositionnel)
     ("il", "r_isa", "pionnier"),           # sujet pronom non résolu
+    ("lester", "r_own", "tel instrument"), # objet indéfini « tel ou tel »
+    ("vivre", "r_instr", "sœur"),          # comitatif « vit avec sa sœur »
+    ("vivre", "r_instr", "petite amie"),   # comitatif
 ]
 
 

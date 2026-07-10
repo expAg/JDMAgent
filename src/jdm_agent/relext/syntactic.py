@@ -73,6 +73,11 @@ def _subject(sent, verb) -> "str | None":
     """Sujet syntaxique d'un verbe, avec résolution du relatif « qui »."""
     sub = sent.child(verb.id, {"nsubj", "nsubj:pass"})
     if sub is None:
+        # verbe coordonné (« qui chante ET joue ») : hériter du sujet du 1er verbe
+        if verb.deprel == "conj":
+            head = sent.by_id.get(verb.head)
+            if head is not None and head.id != verb.id and head.upos in ("VERB", "AUX"):
+                return _subject(sent, head)
         return None
     if sub.feats.get("PronType") == "Rel" or sub.lemma in _REL:
         ant = sent.by_id.get(verb.head)
@@ -190,6 +195,14 @@ def _emit(results, seen, subj, rel, obj, trigger):
                     "category": trigger, "pattern": "(syntaxe)"})
 
 
+_INDEF = {"tel", "certain", "quelconque", "quelque", "aucun", "chaque"}
+
+
+def _indefinite(sent, tid):
+    """« tel ou tel instrument » : objet non spécifique → à écarter."""
+    return any(c.lemma in _INDEF for c in sent.children(tid))
+
+
 def _conj_ids(sent, tid):
     """Un token + ses coordonnés (« A et B » → [A, B])."""
     ids = [tid]
@@ -304,6 +317,12 @@ def extract_from_sentences(sentences: list) -> list:
                 par = _obl_by_case(sent, t.id, "par")
                 if par is not None:
                     _emit(results, seen, subj, "r_carac", _np(sent, par.id), L)
+            # r_carac : « joue DE l'harmonica / DU blues » (instrument ou genre
+            # pratiqué caractérise l'artiste). « et » coordonné géré via _emit_t.
+            if L == "jouer":
+                de = _obl_by_case(sent, t.id, "de")
+                if de is not None and de.upos in ("NOUN", "PROPN"):
+                    _emit_t(results, seen, subj, "r_carac", sent, de.id, "jouer de")
             if (L in _CARAC_OBJ and obj_tok is not None
                     and obj_tok.upos in ("NOUN", "PROPN")):  # pas le réfléchi « se présente »
                 _emit_t(results, seen, subj, "r_carac", sent, obj_tok.id, L)
@@ -342,7 +361,8 @@ def extract_from_sentences(sentences: list) -> list:
                 if par is not None and par.upos in ("NOUN", "PROPN"):  # pas « par lui »
                     _emit(results, seen, subj, "r_has_auteur", _np(sent, par.id), L)
             # r_own : « possède / détient Y »
-            if L in _OWN and obj_tok is not None and obj_tok.upos in ("NOUN", "PROPN"):
+            if (L in _OWN and obj_tok is not None and obj_tok.upos in ("NOUN", "PROPN")
+                    and not _indefinite(sent, obj_tok.id)):  # pas « tel ou tel instrument »
                 _emit(results, seen, subj, "r_own", _np(sent, obj_tok.id), L)
             # r_require : « nécessite / exige Y »
             if L in _REQUIRE:
