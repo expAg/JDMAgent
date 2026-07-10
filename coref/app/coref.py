@@ -52,38 +52,20 @@ def _ud_svg(doc) -> str:
 
 
 def resolve(text: str) -> dict:
-    """Analyse un texte : tokens, chaînes de coréférence (toutes mentions), SVG UD.
-
-    Chemin PAR DÉFAUT = document entier (comportement d'origine, inchangé).
-    Le découpage en fenêtres (pour textes longs) est OPT-IN : `COREF_CHUNK=1`.
-    """
+    """Analyse un texte : tokens, chaînes de coréférence (toutes mentions), SVG UD."""
     # 1) Texte -> CoNLL-U
     in_path = os.path.join(OUT_DIR, "request.conllu")
     os.makedirs(OUT_DIR, exist_ok=True)
-    full_conllu = _udpipe(text)
     with open(in_path, "w", encoding="utf-8") as f:
-        f.write(full_conllu)
+        f.write(_udpipe(text))
 
-    # Chemin FENÊTRÉ (opt-in explicite, textes longs) : CorPipe par fenêtres.
-    if os.getenv("COREF_CHUNK") == "1" and os.getenv("COREF_NEUROSYM") != "1":
-        from .chunking import split_sentences
-        window = int(os.getenv("COREF_WINDOW", "6"))
-        overlap = int(os.getenv("COREF_OVERLAP", "1"))
-        if len(split_sentences(full_conllu)) > window:
-            doc_in = udapi.Document(in_path)
-            nodes = [n for tree in doc_in.trees for n in tree.descendants]
-            tokens = [{
-                "i": i, "text": n.form,
-                "ws": "" if (n.misc and n.misc.get("SpaceAfter") == "No") else " ",
-            } for i, n in enumerate(nodes)]
-            chains = _chunked_chains(full_conllu, tokens, window, overlap)
-            return {"tokens": tokens, "chains": chains,
-                    "corrections": [], "ud_svg": _ud_svg(doc_in)}
-
-    # 2) Chemin d'ORIGINE : CorPipe 25 sur le document entier.
+    # 2) CorPipe 25 -> CoNLL-U annoté en coréférence
     out_path = predict_conllu(in_path)
+
+    # 3) Lecture via udapi
     doc = udapi.Document(out_path)
 
+    # Index global des tokens (mots, dans l'ordre du document)
     nodes = [n for tree in doc.trees for n in tree.descendants]
     idx = {id(n): i for i, n in enumerate(nodes)}
     tokens = [{
@@ -91,7 +73,12 @@ def resolve(text: str) -> dict:
         "ws": "" if (n.misc and n.misc.get("SpaceAfter") == "No") else " ",
     } for i, n in enumerate(nodes)]
 
-    # PAR DÉFAUT : CorPipe seul. Neuro-symbolique désactivé (COREF_NEUROSYM=1).
+    # Chaînes de coréférence.
+    # PAR DÉFAUT : CorPipe seul (mesuré à ~60.7 CoNLL F1 sur Democrat dev).
+    # La couche neuro-symbolique est DÉSACTIVÉE par défaut : l'évaluation
+    # (eval/run_eval.py) montre qu'elle dégrade le F1 de ~16-18 points — elle
+    # re-résout trop agressivement les pronoms et écrase CorPipe. À ne réactiver
+    # (COREF_NEUROSYM=1) qu'après l'avoir corrigée ET re-mesurée.
     if os.getenv("COREF_NEUROSYM") == "1":
         chains, corrections = resolve_chains(doc, jdm_scorer=None)
     else:
@@ -99,47 +86,6 @@ def resolve(text: str) -> dict:
 
     return {"tokens": tokens, "chains": chains,
             "corrections": corrections, "ud_svg": _ud_svg(doc)}
-
-
-def _chunked_chains(full_conllu: str, tokens: list, window: int, overlap: int) -> list:
-    """Coréférence NON BLOQUANTE : CorPipe par fenêtres de phrases, chaînes
-    recousues via les mentions partagées dans le chevauchement (indices globaux)."""
-    from .chunking import split_sentences, offsets, windows, stitch
-
-    blocks = split_sentences(full_conllu)
-    offs = offsets(blocks)
-    wins = windows(len(blocks), window, overlap)
-    print(f"[coref] {len(blocks)} phrases → {len(wins)} fenêtre(s) "
-          f"(taille={window}, chevauchement={overlap})", flush=True)
-    raw = []  # liste de chaînes ; chaque chaîne = liste de spans GLOBAUX
-    for k, (a, b) in enumerate(wins, 1):
-        print(f"[coref] fenêtre {k}/{len(wins)} : phrases {a}–{b - 1} (CorPipe…)", flush=True)
-        wpath = os.path.join(OUT_DIR, f"win_{a}_{b}.conllu")
-        with open(wpath, "w", encoding="utf-8") as f:
-            f.write("\n\n".join(blocks[a:b]) + "\n\n")
-        docw = udapi.Document(predict_conllu(wpath))
-        nodesw = [n for tree in docw.trees for n in tree.descendants]
-        localidx = {id(n): i for i, n in enumerate(nodesw)}
-        goff = offs[a]  # décalage global du 1er mot de la fenêtre
-        for ent in getattr(docw, "coref_entities", []):
-            spans = []
-            for m in ent.mentions:
-                span = sorted(localidx[id(w)] + goff for w in m.words if id(w) in localidx)
-                if span:
-                    spans.append(span)
-            if spans:
-                raw.append(spans)
-
-    chains = []
-    for spans in stitch(raw):
-        if len(spans) < 2:  # une chaîne = au moins 2 mentions
-            continue
-        label = " ".join(tokens[i]["text"] for i in spans[0])
-        chains.append({"id": 0, "label": label, "cat": "", "mentions": spans})
-    chains.sort(key=lambda c: c["mentions"][0][0])
-    for i, c in enumerate(chains):
-        c["id"] = i
-    return chains
 
 
 def syntax(text: str) -> dict:

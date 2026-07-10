@@ -22,16 +22,6 @@ async def _no_cache(request: Request, call_next):
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-
-@app.on_event("startup")
-def _warmup_model():
-    """Charge mT5-large UNE fois au démarrage, en tâche de fond (sérialisé par le
-    verrou de corpipe_engine). Ainsi aucune requête ne déclenche un 2ᵉ chargement
-    concurrent : la 1re requête trouve le modèle prêt ou attend le même chargement."""
-    import threading
-    from .corpipe_engine import get_engine
-    threading.Thread(target=get_engine, daemon=True, name="corpipe-warmup").start()
-
 EXEMPLE = (
     "Marie a appelé son frère parce qu'elle voulait lui rendre les clés. "
     "Il les avait oubliées chez elle hier soir."
