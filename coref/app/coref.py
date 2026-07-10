@@ -100,8 +100,12 @@ def _chunked_chains(full_conllu: str, tokens: list, window: int, overlap: int) -
 
     blocks = split_sentences(full_conllu)
     offs = offsets(blocks)
+    wins = windows(len(blocks), window, overlap)
+    print(f"[coref] {len(blocks)} phrases → {len(wins)} fenêtre(s) "
+          f"(taille={window}, chevauchement={overlap})", flush=True)
     raw = []  # liste de chaînes ; chaque chaîne = liste de spans GLOBAUX
-    for (a, b) in windows(len(blocks), window, overlap):
+    for k, (a, b) in enumerate(wins, 1):
+        print(f"[coref] fenêtre {k}/{len(wins)} : phrases {a}–{b - 1} (CorPipe…)", flush=True)
         wpath = os.path.join(OUT_DIR, f"win_{a}_{b}.conllu")
         with open(wpath, "w", encoding="utf-8") as f:
             f.write("\n\n".join(blocks[a:b]) + "\n\n")
