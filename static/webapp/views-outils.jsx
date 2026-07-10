@@ -6,6 +6,9 @@
 const OUTILS_TABS = [
   { id: 'coref',    label: 'Coréférence' },
   { id: 'syntax',   label: 'Analyse syntaxique' },
+  { id: 'wsd',      label: 'Désambiguïsation (WSD)' },
+  { id: 'thematic', label: 'Analyse thématique' },
+  { id: 'polarity', label: 'Analyse de polarité' },
   { id: 'genitive', label: 'Génitifs « A de B »' },
   { id: 'analogy',  label: 'Analogies' },
   { id: 'jdmrel',   label: 'Relations sémantiques (JDM)' },
@@ -18,6 +21,9 @@ const OUTILS_TABS = [
 const TOOL_MODELS = {
   coref:    [{ value: 'corpipe25',      label: 'CorPipe 25 — mT5-large (défaut)' }],
   syntax:   [{ value: 'udpipe2-fr-gsd', label: 'UDPipe 2 — french-gsd (défaut)' }],
+  wsd:      [{ value: 'default',        label: '(par défaut)' }],
+  thematic: [{ value: 'default',        label: '(par défaut)' }],
+  polarity: [{ value: 'default',        label: '(par défaut)' }],
   genitive: [{ value: 'default',        label: '(par défaut)' }],
   analogy:  [{ value: 'default',        label: '(par défaut)' }],
   jdmrel:   [{ value: 'default',        label: '(par défaut)' }],
@@ -242,21 +248,24 @@ function GenitivePanel() {
   );
 }
 
-// ───────── Relations sémantiques pour JeuxDeMots ─────────
-function JdmRelPanel() {
-  const [text, setText] = React.useState("Le chat dort sur le canapé.");
-  const [model, setModel] = React.useState(TOOL_MODELS.jdmrel[0].value);
+// ───────── Panneau générique « texte → résultat » ─────────
+// Mutualise les outils qui prennent un texte + un modèle et rendent un résultat
+// JSON (WSD, thématique, polarité, relations JDM…). Un seul site : ajouter un
+// outil de ce type = une entrée OUTILS_TABS + TOOL_MODELS + un rendu ci-dessous.
+function TextToolPanel({ path, models, defaultText, placeholder, rows = 4 }) {
+  const [text, setText] = React.useState(defaultText || '');
+  const [model, setModel] = React.useState(models[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const run = async () => {
     setLoading(true); setRes(null);
-    setRes(await _callTool('jdmrel', { text, model })); setLoading(false);
+    setRes(await _callTool(path, { text, model })); setLoading(false);
   };
   return (
     <div style={panelGrid()}>
       <ToolForm text={text} setText={setText} run={run} loading={loading}
-        placeholder="Un texte à analyser en relations sémantiques JDM…"
-        model={model} setModel={setModel} models={TOOL_MODELS.jdmrel} />
+        rows={rows} placeholder={placeholder}
+        model={model} setModel={setModel} models={models} />
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
       {res && res.ok && res.data && <JsonResult data={res.data} />}
     </div>
@@ -354,9 +363,28 @@ function ViewOutils() {
 
       {tab === 'coref'    && <CorefPanel />}
       {tab === 'syntax'   && <SyntaxPanel />}
+      {tab === 'wsd'      && (
+        <TextToolPanel path="wsd" models={TOOL_MODELS.wsd}
+          defaultText="L'avocat a plaidé toute la matinée, puis il a mangé un avocat bien mûr."
+          placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…" />
+      )}
+      {tab === 'thematic' && (
+        <TextToolPanel path="thematic" models={TOOL_MODELS.thematic}
+          defaultText="Le réchauffement climatique menace la biodiversité et l'agriculture."
+          placeholder="Un texte à analyser thématiquement…" />
+      )}
+      {tab === 'polarity' && (
+        <TextToolPanel path="polarity" models={TOOL_MODELS.polarity}
+          defaultText="Ce film était vraiment excellent, je l'ai adoré du début à la fin."
+          placeholder="Un texte dont analyser la polarité (positif / négatif)…" />
+      )}
       {tab === 'genitive' && <GenitivePanel />}
       {tab === 'analogy'  && <AnalogyPanel />}
-      {tab === 'jdmrel'   && <JdmRelPanel />}
+      {tab === 'jdmrel'   && (
+        <TextToolPanel path="jdmrel" models={TOOL_MODELS.jdmrel}
+          defaultText="Le chat dort sur le canapé du salon."
+          placeholder="Un texte à analyser en relations sémantiques JDM…" />
+      )}
     </PageShell>
   );
 }

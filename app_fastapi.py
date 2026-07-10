@@ -2934,6 +2934,9 @@ TOOLS_SYNTAX_URL   = os.environ.get("TOOLS_SYNTAX_URL", "http://127.0.0.1:8901/a
 TOOLS_GENITIVE_URL = os.environ.get("TOOLS_GENITIVE_URL", "").strip()   # vide → placeholder
 TOOLS_ANALOGY_URL  = os.environ.get("TOOLS_ANALOGY_URL", "").strip()    # vide → placeholder
 TOOLS_JDMREL_URL   = os.environ.get("TOOLS_JDMREL_URL", "").strip()     # vide → placeholder
+TOOLS_WSD_URL      = os.environ.get("TOOLS_WSD_URL", "").strip()        # vide → placeholder
+TOOLS_THEMATIC_URL = os.environ.get("TOOLS_THEMATIC_URL", "").strip()   # vide → placeholder
+TOOLS_POLARITY_URL = os.environ.get("TOOLS_POLARITY_URL", "").strip()   # vide → placeholder
 # 300 s : le 1er appel de coréférence charge le modèle mT5-large (téléchargement
 # HF + init), ce qui peut être long. Les appels suivants sont rapides.
 _TOOLS_TIMEOUT     = float(os.environ.get("TOOLS_TIMEOUT", "300"))
@@ -3024,6 +3027,28 @@ async def api_tools_jdmrel(req: ToolTextRequest) -> dict:
     """Extraction de relations sémantiques pour JeuxDeMots (service à venir — placeholder)."""
     return await _proxy_tool_json(
         TOOLS_JDMREL_URL, {"text": req.text, "model": req.model}, "relations sémantiques JDM")
+
+
+@app.post("/api/tools/wsd")
+async def api_tools_wsd(req: ToolTextRequest) -> dict:
+    """Désambiguïsation sémantique (WSD) : bon raffinement de chaque terme
+    polysémique selon le contexte (service à venir — placeholder)."""
+    return await _proxy_tool_json(
+        TOOLS_WSD_URL, {"text": req.text, "model": req.model}, "désambiguïsation (WSD)")
+
+
+@app.post("/api/tools/thematic")
+async def api_tools_thematic(req: ToolTextRequest) -> dict:
+    """Analyse thématique d'un texte (service à venir — placeholder)."""
+    return await _proxy_tool_json(
+        TOOLS_THEMATIC_URL, {"text": req.text, "model": req.model}, "analyse thématique")
+
+
+@app.post("/api/tools/polarity")
+async def api_tools_polarity(req: ToolTextRequest) -> dict:
+    """Analyse de polarité / sentiment d'un texte (service à venir — placeholder)."""
+    return await _proxy_tool_json(
+        TOOLS_POLARITY_URL, {"text": req.text, "model": req.model}, "analyse de polarité")
 
 
 # ────────────────────────────────────────────────────────────────────
