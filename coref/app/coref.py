@@ -52,49 +52,53 @@ def _ud_svg(doc) -> str:
 
 
 def resolve(text: str) -> dict:
-    """Analyse un texte : tokens, chaînes de coréférence (toutes mentions), SVG UD."""
-    # 1) Texte -> CoNLL-U (UDPipe, léger). Sert aux tokens + au SVG (indices GLOBAUX).
+    """Analyse un texte : tokens, chaînes de coréférence (toutes mentions), SVG UD.
+
+    Chemin PAR DÉFAUT = document entier (comportement d'origine, inchangé).
+    Le découpage en fenêtres (pour textes longs) est OPT-IN : `COREF_CHUNK=1`.
+    """
+    # 1) Texte -> CoNLL-U
     in_path = os.path.join(OUT_DIR, "request.conllu")
     os.makedirs(OUT_DIR, exist_ok=True)
-    print("[coref] UDPipe (tokenisation + parse)…", flush=True)
     full_conllu = _udpipe(text)
-    print("[coref] UDPipe ok.", flush=True)
     with open(in_path, "w", encoding="utf-8") as f:
         f.write(full_conllu)
 
-    doc_in = udapi.Document(in_path)
-    nodes = [n for tree in doc_in.trees for n in tree.descendants]
+    # Chemin FENÊTRÉ (opt-in explicite, textes longs) : CorPipe par fenêtres.
+    if os.getenv("COREF_CHUNK") == "1" and os.getenv("COREF_NEUROSYM") != "1":
+        from .chunking import split_sentences
+        window = int(os.getenv("COREF_WINDOW", "6"))
+        overlap = int(os.getenv("COREF_OVERLAP", "1"))
+        if len(split_sentences(full_conllu)) > window:
+            doc_in = udapi.Document(in_path)
+            nodes = [n for tree in doc_in.trees for n in tree.descendants]
+            tokens = [{
+                "i": i, "text": n.form,
+                "ws": "" if (n.misc and n.misc.get("SpaceAfter") == "No") else " ",
+            } for i, n in enumerate(nodes)]
+            chains = _chunked_chains(full_conllu, tokens, window, overlap)
+            return {"tokens": tokens, "chains": chains,
+                    "corrections": [], "ud_svg": _ud_svg(doc_in)}
+
+    # 2) Chemin d'ORIGINE : CorPipe 25 sur le document entier.
+    out_path = predict_conllu(in_path)
+    doc = udapi.Document(out_path)
+
+    nodes = [n for tree in doc.trees for n in tree.descendants]
+    idx = {id(n): i for i, n in enumerate(nodes)}
     tokens = [{
         "i": i, "text": n.form,
         "ws": "" if (n.misc and n.misc.get("SpaceAfter") == "No") else " ",
     } for i, n in enumerate(nodes)]
-    ud_svg = _ud_svg(doc_in)
 
-    # 2) Chaînes de coréférence.
-    # PAR DÉFAUT : CorPipe seul (mesuré à ~60.7 CoNLL F1 sur Democrat dev).
-    # La couche neuro-symbolique est DÉSACTIVÉE par défaut (dégrade le F1) : à ne
-    # réactiver (COREF_NEUROSYM=1) qu'après correction + re-mesure.
-    # Sur texte long, CorPipe sur tout le document part en temps quasi infini :
-    # on passe par un découpage en FENÊTRES de phrases (COREF_CHUNK=1, défaut).
-    from .chunking import split_sentences
-    window = int(os.getenv("COREF_WINDOW", "6"))
-    overlap = int(os.getenv("COREF_OVERLAP", "1"))
-    n_sent = len(split_sentences(full_conllu))
-
+    # PAR DÉFAUT : CorPipe seul. Neuro-symbolique désactivé (COREF_NEUROSYM=1).
     if os.getenv("COREF_NEUROSYM") == "1":
-        doc = udapi.Document(predict_conllu(in_path))
         chains, corrections = resolve_chains(doc, jdm_scorer=None)
-    elif os.getenv("COREF_CHUNK", "1") == "1" and n_sent > window:
-        chains, corrections = _chunked_chains(full_conllu, tokens, window, overlap), []
     else:
-        print(f"[coref] CorPipe sur le document entier ({n_sent} phrase(s))…", flush=True)
-        doc = udapi.Document(predict_conllu(in_path))
-        print("[coref] CorPipe ok.", flush=True)
-        idx = {id(n): i for i, n in enumerate(n for tree in doc.trees for n in tree.descendants)}
         chains, corrections = _baseline_chains(doc, idx, tokens), []
 
     return {"tokens": tokens, "chains": chains,
-            "corrections": corrections, "ud_svg": ud_svg}
+            "corrections": corrections, "ud_svg": _ud_svg(doc)}
 
 
 def _chunked_chains(full_conllu: str, tokens: list, window: int, overlap: int) -> list:
