@@ -30,19 +30,20 @@ echo ""
 command -v git >/dev/null 2>&1 || { err "git introuvable — requis pour la dep udapi (apt install git)."; exit 1; }
 
 # 2. Choix de l'interpreteur : spacy 3.5.4 (displaCy) + ses deps thinc/blis n'ont
-#    PAS de wheels pour Python 3.13 et echouent a compiler. On exige 3.10-3.12.
+#    de wheels que pour Python 3.10/3.11. Sur 3.12/3.13 pip recompile blis et
+#    echoue. On exige donc 3.10 ou 3.11 (env de reference : 3.11).
 py_ver() { "$1" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null; }
-py_ok()  { case "$(py_ver "$1")" in 3.10|3.11|3.12) return 0;; *) return 1;; esac; }
+py_ok()  { case "$(py_ver "$1")" in 3.10|3.11) return 0;; *) return 1;; esac; }
 
 PYBIN=""
-for c in python3.12 python3.11 python3.10 python3; do
+for c in python3.11 python3.10 python3; do
     command -v "$c" >/dev/null 2>&1 && py_ok "$c" && { PYBIN="$c"; break; }
 done
 if [ -z "$PYBIN" ]; then
-    err "Aucun Python 3.10-3.12 trouve (python3 = $(py_ver python3 || echo '?'))."
-    err "spacy 3.5.4 ne s'installe pas sur 3.13. Installe une version compatible :"
-    err "   sudo apt install -y python3.12 python3.12-venv"
-    err "puis relance ./install_coref.sh"
+    err "Aucun Python 3.10/3.11 trouve (python3 = $(py_ver python3 || echo '?'))."
+    err "spacy 3.5.4 n'a pas de wheels pour 3.12/3.13. Installe 3.11 :"
+    err "   sudo apt install -y python3.11 python3.11-venv"
+    err "   (ou via deadsnakes PPA sur Ubuntu). Puis relance ./install_coref.sh"
     exit 1
 fi
 step "Interpreteur : $PYBIN ($(py_ver "$PYBIN"))"
