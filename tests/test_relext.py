@@ -113,3 +113,43 @@ def test_copula_anto_offline():
     keys = _syn_keys(s)
     assert ("couteau", "r_anto", "cuillère") in keys
     assert not any(r == "r_isa" for _, r, _ in keys)
+
+
+def test_instr_comitative_negative():
+    # « vit avec sa sœur » : comitatif (pas d'objet + personne) → PAS de r_instr
+    s = _sent([(1, "Lester", "Lester", "PROPN", 2, "nsubj"),
+               (2, "vit", "vivre", "VERB", 0, "root"),
+               (3, "avec", "avec", "ADP", 5, "case"),
+               (4, "sa", "son", "DET", 5, "det"),
+               (5, "sœur", "sœur", "NOUN", 2, "obl")])
+    assert not any(r == "r_instr" for _, r, _ in _syn_keys(s))
+
+
+def test_instr_transitive_positive():
+    # « coupe le bois avec une scie » : objet + outil → r_instr
+    s = _sent([(1, "menuisier", "menuisier", "NOUN", 2, "nsubj"),
+               (2, "coupe", "couper", "VERB", 0, "root"),
+               (3, "bois", "bois", "NOUN", 2, "obj"),
+               (4, "avec", "avec", "ADP", 6, "case"),
+               (5, "une", "un", "DET", 6, "det"),
+               (6, "scie", "scie", "NOUN", 2, "obl")])
+    assert ("couper", "r_instr", "scie") in _syn_keys(s)
+
+
+def test_carac_reflexive_negative():
+    # « se présente » : clitique réfléchi → PAS de r_carac vers « se »
+    s = _sent([(1, "harmoniciste", "harmoniciste", "NOUN", 3, "nsubj"),
+               (2, "se", "se", "PRON", 3, "expl:pass", {"PronType": "Prs"}),
+               (3, "présente", "présenter", "VERB", 0, "root")])
+    assert not any(r == "r_carac" for _, r, _ in _syn_keys(s))
+
+
+def test_auteur_pronoun_negative():
+    # « a été produit par lui » : agent pronom → PAS de r_has_auteur
+    s = _sent([(1, "album", "album", "NOUN", 4, "nsubj:pass"),
+               (2, "a", "avoir", "AUX", 4, "aux"),
+               (3, "été", "être", "AUX", 4, "aux:pass"),
+               (4, "produit", "produire", "VERB", 0, "root"),
+               (5, "par", "par", "ADP", 6, "case"),
+               (6, "lui", "lui", "PRON", 4, "obl:agent", {"PronType": "Prs"})])
+    assert not any(r == "r_has_auteur" for _, r, _ in _syn_keys(s))

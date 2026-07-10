@@ -136,7 +136,7 @@ _MATER = {"faire", "fabriquer", "confectionner", "construire", "bâtir", "forger
 # lemme de verbe → (relation JDM, mode de complément)
 _CONSEQ = {"produire", "provoquer", "causer", "entraîner", "engendrer",
            "déclencher", "générer", "induire"}
-_HASPART = {"composer", "constituer", "comporter", "contenir", "inclure"}
+_HASPART = {"composer", "constituer", "comporter", "contenir"}  # PAS « inclure » (trop générique)
 _CARAC_OBJ = {"souligner", "amplifier", "présenter", "arborer"}
 _LOC = {"développer", "situer", "trouver", "implanter", "établir", "naître",
         "apparaître", "vivre", "habiter", "résider", "déménager", "installer",
@@ -156,6 +156,17 @@ _MAKE = {"fabriquer", "sécréter", "pondre", "produire"}    # obj → r_make
 _LIGHT = {"être", "avoir", "faire", "aller", "pouvoir", "devoir", "vouloir",
           "falloir", "sembler", "paraître", "devenir", "rester", "venir",
           "commencer", "continuer", "finir", "s'agir"}
+# Prédicatives génériques r_agent/r_patient : DÉSACTIVÉES par défaut. Sur de la
+# prose réelle elles dominent en bruit (verbes support « passer / conduire /
+# décoller », sujets abstraits). Règles conservées et testables, mais non émises.
+EMIT_PREDICATIVE = False
+# Noms de personnes : « avec sa sœur » = comitatif, PAS un instrument (r_instr).
+_PERSON = {"sœur", "frère", "mère", "père", "ami", "amie", "épouse", "époux",
+           "mari", "femme", "fille", "fils", "cousin", "cousine", "oncle",
+           "tante", "compagnon", "compagne", "petit", "petite", "parent",
+           "enfant", "voisin", "voisine", "collègue", "membre"}
+# Saisons uniquement pour r_time (mois/« époque »/« années » = trop bruités).
+_SEASONS = {"hiver", "été", "printemps", "automne"}
 # Couleurs (lemmes de base) pour r_has_color.
 _COLORS = {"rouge", "bleu", "vert", "jaune", "noir", "blanc", "gris", "rose",
            "orange", "violet", "marron", "brun", "beige", "doré", "argenté",
@@ -277,10 +288,12 @@ def extract_from_sentences(sentences: list) -> list:
                 if second is not None and o1:
                     _emit(results, seen, o1, "r_syn", _np(sent, second.id), L)
 
-            # r_instr : « … AVEC Y » (source = ACTION/verbe ; Y = nom commun pour
-            # éviter le comitatif « avec Miller »). N'a pas besoin d'un sujet.
+            # r_instr : « … AVEC Y » (source = ACTION/verbe). On exige un OBJET
+            # direct (action transitive : « coupe le bois AVEC une scie ») et on
+            # exclut les personnes → tue le comitatif « vit AVEC sa sœur ».
             avec = _obl_by_case(sent, t.id, "avec")
-            if avec is not None and avec.upos == "NOUN":
+            if (avec is not None and avec.upos == "NOUN"
+                    and obj_tok is not None and avec.lemma not in _PERSON):
                 _emit(results, seen, L, "r_instr", _np(sent, avec.id), "avec (instrument)")
 
             # ── Règles à SUJET ──
@@ -291,7 +304,8 @@ def extract_from_sentences(sentences: list) -> list:
                 par = _obl_by_case(sent, t.id, "par")
                 if par is not None:
                     _emit(results, seen, subj, "r_carac", _np(sent, par.id), L)
-            if L in _CARAC_OBJ and obj_tok is not None:
+            if (L in _CARAC_OBJ and obj_tok is not None
+                    and obj_tok.upos in ("NOUN", "PROPN")):  # pas le réfléchi « se présente »
                 _emit_t(results, seen, subj, "r_carac", sent, obj_tok.id, L)
             if L in _CONSEQ:
                 comp = obj_tok or _obl_by_case(sent, t.id, "en") or _obl_by_case(sent, t.id, "à")
@@ -325,10 +339,10 @@ def extract_from_sentences(sentences: list) -> list:
             # r_has_auteur : passif « écrit / composé / produit PAR Y » (subj = œuvre)
             if L in _AUTEUR and sent.child(t.id, {"aux:pass"}) is not None:
                 par = _obl_by_case(sent, t.id, "par")
-                if par is not None:
+                if par is not None and par.upos in ("NOUN", "PROPN"):  # pas « par lui »
                     _emit(results, seen, subj, "r_has_auteur", _np(sent, par.id), L)
             # r_own : « possède / détient Y »
-            if L in _OWN and obj_tok is not None:
+            if L in _OWN and obj_tok is not None and obj_tok.upos in ("NOUN", "PROPN"):
                 _emit(results, seen, subj, "r_own", _np(sent, obj_tok.id), L)
             # r_require : « nécessite / exige Y »
             if L in _REQUIRE:
@@ -371,14 +385,15 @@ def extract_from_sentences(sentences: list) -> list:
                         mk = sent.child(c.id, {"mark"})
                         if mk is not None and mk.lemma == "à":
                             _emit(results, seen, subj, "r_telic_role", c.lemma, "servir à")
-            # r_time : « … EN hiver / le matin »
+            # r_time : « … EN hiver » (SAISONS seulement : mois / « époque » /
+            # « années » attachés à n'importe quel sujet = trop bruités).
             if L not in _LIGHT:
                 for c in sent.children(t.id):
-                    if c.deprel.startswith("obl") and c.lemma in _TIMEWORDS:
+                    if c.deprel.startswith("obl") and c.lemma in _SEASONS:
                         _emit(results, seen, subj, "r_time", _np(sent, c.id), "temporel")
-            # ── Prédicatives génériques (source = ACTION/verbe) ──
-            nsubj_tok = sent.child(t.id, {"nsubj"})
-            if L not in _LIGHT:
+            # ── Prédicatives génériques (source = ACTION/verbe) : OFF par défaut ──
+            if EMIT_PREDICATIVE and L not in _LIGHT:
+                nsubj_tok = sent.child(t.id, {"nsubj"})
                 if nsubj_tok is not None and nsubj_tok.upos == "NOUN":
                     _emit_t(results, seen, L, "r_agent", sent, nsubj_tok.id, "sujet→agent")
                 if obj_tok is not None and obj_tok.upos == "NOUN":
