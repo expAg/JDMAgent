@@ -144,8 +144,8 @@ _CONSEQ = {"produire", "provoquer", "causer", "entraîner", "engendrer",
 _HASPART = {"composer", "constituer", "comporter", "contenir"}  # PAS « inclure » (trop générique)
 _CARAC_OBJ = {"souligner", "amplifier", "présenter", "arborer"}
 _LOC = {"développer", "situer", "trouver", "implanter", "établir", "naître",
-        "apparaître", "vivre", "habiter", "résider", "déménager", "installer",
-        "retourner", "séjourner", "exercer", "jouer", "aller"}
+        "vivre", "habiter", "résider", "déménager", "installer",
+        "retourner", "séjourner", "exercer", "aller"}  # PAS « apparaître » (dans un film) ni « jouer » (d'un instrument)
 # Nouvelles familles (source = ENTITÉ / sujet, sauf indication)
 _SIMILAR = {"ressembler", "rappeler"}                      # à Y
 _DEATHCAUSE = {"décéder", "mourir", "succomber", "souffrir"}  # de Y → r_has_causatif
