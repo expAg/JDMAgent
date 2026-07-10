@@ -2933,7 +2933,9 @@ TOOLS_COREF_URL    = os.environ.get("TOOLS_COREF_URL", "http://127.0.0.1:8901/ap
 TOOLS_SYNTAX_URL   = os.environ.get("TOOLS_SYNTAX_URL", "http://127.0.0.1:8901/api/syntax").strip()
 TOOLS_GENITIVE_URL = os.environ.get("TOOLS_GENITIVE_URL", "").strip()   # vide → placeholder
 TOOLS_ANALOGY_URL  = os.environ.get("TOOLS_ANALOGY_URL", "").strip()    # vide → placeholder
-_TOOLS_TIMEOUT     = float(os.environ.get("TOOLS_TIMEOUT", "60"))
+# 300 s : le 1er appel de coréférence charge le modèle mT5-large (téléchargement
+# HF + init), ce qui peut être long. Les appels suivants sont rapides.
+_TOOLS_TIMEOUT     = float(os.environ.get("TOOLS_TIMEOUT", "300"))
 
 
 async def _proxy_tool_json(url: str, payload: dict, service: str) -> dict:
@@ -2958,9 +2960,14 @@ async def _proxy_tool_json(url: str, payload: dict, service: str) -> dict:
         return {"ok": False, "service": service,
                 "error": f"Service « {service} » injoignable — est-il démarré ? "
                          f"(URL : {url})"}
-    except Exception as e:  # timeout, JSON invalide, etc.
+    except httpx.TimeoutException:
         return {"ok": False, "service": service,
-                "error": f"Erreur proxy « {service} » : {e}"}
+                "error": f"Délai dépassé pour « {service} » (> {int(_TOOLS_TIMEOUT)} s). "
+                         f"Au 1er appel, le service coref télécharge/charge le modèle — "
+                         f"réessaie dans un moment, ou lance un appel de préchauffage en CLI."}
+    except Exception as e:  # JSON invalide, protocole, etc.
+        return {"ok": False, "service": service,
+                "error": f"Erreur proxy « {service} » : {e!r}"}
 
 
 class ToolTextRequest(BaseModel):
