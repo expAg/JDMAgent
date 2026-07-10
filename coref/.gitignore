@@ -1,0 +1,39 @@
+# Service coref (coréférence + analyse syntaxique). On versionne le CODE ;
+# le lourd est récupéré hors git au déploiement.
+
+# Environnement Python & caches (recréés : pip install -r requirements.txt)
+.venv/
+__pycache__/
+*.pyc
+.cache/
+# Cache JDM du module neuro-symbolique (runtime)
+app/neurosym/.jdm_cache/
+
+# Sorties runtime CorPipe (checkpoints locaux, conllu prédits, caches de
+# tokenisation des mentions) — régénérés à l'exécution.
+serve/
+corpipe/serve/
+corpipe/*.conllu
+corpipe/*.conllu.*
+corpipe/*.mentions
+corpipe/*.mentions.*
+corpipe/*.flat
+
+# Poids de modèle : NE PAS versionner.
+#   - CorPipe : téléchargé de HuggingFace au 1er appel (ufal/corpipe25…).
+#   - BookNLP-fr (camembert) : poids alternatifs non utilisés par le service.
+AntoineBourgois/
+
+# Datasets d'entraînement / éval (repo git imbriqué, ~300 Mo) — pas nécessaires
+# au service ; à cloner séparément si on veut ré-évaluer.
+cordb/
+
+# Logs & scratch / références
+*.log
+_dump.txt
+_survey.txt
+crac.txt
+thesis.txt
+
+# Divers
+.claude/

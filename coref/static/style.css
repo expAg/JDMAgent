@@ -1,0 +1,39 @@
+:root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { margin: 0; background: #f6f7f9; color: #1d2330; }
+main { max-width: 820px; margin: 2rem auto; padding: 0 1.25rem; }
+h1 { font-size: 1.6rem; margin-bottom: .2rem; }
+h1 small { color: #6b7280; font-weight: 400; }
+.sub { color: #6b7280; margin-top: 0; }
+code { background: #eceef1; padding: .1em .35em; border-radius: 4px; }
+
+textarea {
+  width: 100%; box-sizing: border-box; padding: .75rem;
+  border: 1px solid #cdd2da; border-radius: 8px; font-size: 1rem; resize: vertical;
+}
+button {
+  margin-top: .6rem; padding: .55rem 1.2rem; font-size: 1rem; cursor: pointer;
+  background: #457b9d; color: #fff; border: none; border-radius: 8px;
+}
+button:hover { background: #3a6a88; }
+
+.viz {
+  margin-top: 1.5rem; padding: 1.1rem 1.25rem; background: #fff;
+  border: 1px solid #e3e6ea; border-radius: 10px; line-height: 2.1; font-size: 1.1rem;
+}
+.mention { border-radius: 4px; padding: .05em .15em; transition: box-shadow .12s; cursor: default; }
+.mention.active { box-shadow: 0 0 0 2px currentColor; filter: brightness(.97); }
+
+.legend { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: .5rem; }
+.legend-item {
+  display: inline-flex; align-items: center; gap: .45rem; font-size: .9rem;
+  background: #fff; border: 1px solid #e3e6ea; border-radius: 20px; padding: .3rem .8rem; cursor: default;
+}
+.dot { width: .8rem; height: .8rem; border-radius: 50%; display: inline-block; }
+.empty { margin-top: 1.5rem; color: #6b7280; font-style: italic; }
+
+h2 { font-size: 1.15rem; margin: 1.8rem 0 .6rem; }
+.ud {
+  background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
+  padding: .5rem; overflow-x: auto;
+}
+.ud svg { max-width: none; height: auto; }

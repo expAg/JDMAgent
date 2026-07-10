@@ -1,0 +1,22 @@
+# --- Web ---
+fastapi==0.103.2
+uvicorn==0.30.1
+jinja2==3.1.4
+python-multipart==0.0.9
+
+# --- Coréférence SOTA : CorPipe 25 (ÚFAL, vainqueur CRAC 2025) ---
+# Le script corpipe25.py est vendu dans corpipe/ (téléchargé depuis le repo UFAL).
+minnt>=1.0.0
+torch>=2.7.1
+transformers>=4.52.4
+sentencepiece
+huggingface_hub
+git+https://github.com/udapi/udapi-python@690281b   # lecture/écriture CoNLL-U + CorefUD
+requests                                             # appel UDPipe 2 (texte -> CoNLL-U)
+
+# --- Visualisation des dépendances UD ---
+spacy==3.5.4          # uniquement pour displaCy (rendu des arbres UD)
+
+# --- Épingles de compatibilité ---
+numpy<2
+pandas==2.2.3

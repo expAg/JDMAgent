@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Résolution de coréférences — Français</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <h1>Résolution de coréférences <small>(français)</small></h1>
+    <p class="sub">Coréférence : <code>CorPipe 25</code> (mT5-large, SOTA) + couche neuro-symbolique <code>ARCS×JDM</code> · UD : UDPipe 2</p>
+
+    <form method="post" action="/">
+      <textarea name="text" rows="4" placeholder="Saisissez un texte en français…">{{ text }}</textarea>
+      <button type="submit">Analyser</button>
+    </form>
+
+    {% if result %}
+      {% if result.chains %}
+        <h2>Chaînes de coréférence</h2>
+        <section id="viz" class="viz"></section>
+        <section class="legend" id="legend"></section>
+        <script id="data" type="application/json">{{ result | tojson }}</script>
+        <script src="/static/render.js"></script>
+      {% else %}
+        <p class="empty">Aucune chaîne de coréférence (personnes) détectée dans ce texte.</p>
+      {% endif %}
+
+      {% if result.ud_svg %}
+        <h2>Dépendances universelles (UD) — spaCy</h2>
+        <section class="ud">{{ result.ud_svg | safe }}</section>
+      {% endif %}
+    {% endif %}
+  </main>
+</body>
+</html>
