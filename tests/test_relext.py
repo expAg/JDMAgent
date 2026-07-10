@@ -46,3 +46,16 @@ def test_no_determiner_captured_offline():
     srcs = {r["source"] for r in rows}
     assert "chien" in srcs
     assert "le chien" not in srcs
+
+
+def test_pronoun_substitution_offline():
+    # substitution pure (sans réseau) : la mention pronominale « Il » est
+    # remplacée par le représentant nominal de sa chaîne.
+    from jdm_agent.relext.coref import _substitute
+    words = ["Le", "chat", "dort", ".", "Il", "ronronne", "."]
+    tokens = [{"i": i, "text": w, "ws": ("" if w == "." else " ")}
+              for i, w in enumerate(words)]
+    chains = [{"id": 0, "mentions": [[0, 1], [4]]}]
+    out = _substitute(tokens, chains)
+    assert "le chat ronronne" in out.lower()
+    assert " il " not in (" " + out.lower() + " ")

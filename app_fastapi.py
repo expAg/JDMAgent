@@ -2977,6 +2977,7 @@ async def _proxy_tool_json(url: str, payload: dict, service: str) -> dict:
 class ToolTextRequest(BaseModel):
     text: str = ""
     model: str = ""      # modèle choisi dans l'UI (transmis tel quel au service)
+    resolve_anaphora: bool = False   # relations JDM : résoudre les pronoms (coref)
 
 
 class ToolGenitiveRequest(BaseModel):
@@ -3037,9 +3038,11 @@ async def api_tools_jdmrel(req: ToolTextRequest) -> dict:
         import anyio
         from jdm_agent.relext import extract_best
         c = get_client()
-        # UDPipe + JDM = appels HTTP bloquants → thread.
+        # UDPipe + JDM (+ coref optionnel) = appels HTTP bloquants → thread.
         out = await anyio.to_thread.run_sync(
-            lambda: extract_best(req.text or "", client=c))
+            lambda: extract_best(req.text or "", client=c,
+                                 resolve_anaphora=bool(req.resolve_anaphora),
+                                 coref_url=TOOLS_COREF_URL))
         trips = out["triplets"]
         return {"ok": True, "service": "relations sémantiques JDM",
                 "data": {"triplets": trips, "count": len(trips), "mode": out["mode"]}}

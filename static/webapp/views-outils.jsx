@@ -252,20 +252,34 @@ function GenitivePanel() {
 // Mutualise les outils qui prennent un texte + un modèle et rendent un résultat
 // JSON (WSD, thématique, polarité, relations JDM…). Un seul site : ajouter un
 // outil de ce type = une entrée OUTILS_TABS + TOOL_MODELS + un rendu ci-dessous.
-function TextToolPanel({ path, models, defaultText, placeholder, rows = 4, renderData }) {
+function TextToolPanel({ path, models, defaultText, placeholder, rows = 4, renderData, options }) {
   const [text, setText] = React.useState(defaultText || '');
   const [model, setModel] = React.useState(models[0].value);
+  const [opts, setOpts] = React.useState(() => {
+    const o = {}; (options || []).forEach(x => { o[x.key] = !!x.default; }); return o;
+  });
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const run = async () => {
     setLoading(true); setRes(null);
-    setRes(await _callTool(path, { text, model })); setLoading(false);
+    setRes(await _callTool(path, { text, model, ...opts })); setLoading(false);
   };
+  const checkboxes = (options && options.length > 0) ? (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12 }}>
+      {options.map(o => (
+        <label key={o.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!opts[o.key]}
+            onChange={(e) => setOpts(s => ({ ...s, [o.key]: e.target.checked }))} />
+          {o.label}
+        </label>
+      ))}
+    </div>
+  ) : null;
   return (
     <div style={panelGrid()}>
       <ToolForm text={text} setText={setText} run={run} loading={loading}
         rows={rows} placeholder={placeholder}
-        model={model} setModel={setModel} models={models} />
+        model={model} setModel={setModel} models={models} belowText={checkboxes} />
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
       {res && res.ok && res.data && (
         renderData ? renderData(res.data) : <JsonResult data={res.data} />
@@ -339,7 +353,7 @@ function AnalogyPanel() {
 }
 
 // Formulaire textarea + sélecteur de modèle + bouton, mutualisé.
-function ToolForm({ text, setText, run, loading, placeholder, rows = 4, model, setModel, models }) {
+function ToolForm({ text, setText, run, loading, placeholder, rows = 4, model, setModel, models, belowText }) {
   return (
     <Card padding={18}>
       <ModelPicker value={model} onChange={setModel} options={models} />
@@ -355,6 +369,7 @@ function ToolForm({ text, setText, run, loading, placeholder, rows = 4, model, s
           padding: '10px 12px', fontFamily: 'var(--font-mono)', fontSize: 13,
           lineHeight: 1.5,
         }} />
+      {belowText}
       <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
         <Button onClick={run} disabled={loading || !text.trim()}>
           {loading ? 'Analyse…' : 'Analyser'}
@@ -416,8 +431,9 @@ function ViewOutils() {
       {tab === 'analogy'  && <AnalogyPanel />}
       {tab === 'jdmrel'   && (
         <TextToolPanel path="jdmrel" models={TOOL_MODELS.jdmrel}
-          defaultText="Le Louisiana blues est un genre de blues qui se distingue par des rythmes lourds qui produisent une musique sombre et intense."
+          defaultText="Le Louisiana blues est un genre de blues qui se distingue par des rythmes lourds. Il s'est développé dans l'état de la Louisiane."
           placeholder="Un texte à analyser en relations sémantiques JDM (syntaxe UDPipe + JDM)…"
+          options={[{ key: 'resolve_anaphora', label: 'Résoudre les anaphores pronominales (coréférence)', default: false }]}
           renderData={(d) => <JdmRelResult data={d} />} />
       )}
     </PageShell>
