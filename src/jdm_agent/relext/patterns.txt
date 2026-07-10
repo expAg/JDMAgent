@@ -58,3 +58,34 @@ $x se trouve dans $y
 $x est situé dans $y
 $x se situe dans $y
 $x au niveau de $y
+
+# r_similar  similarité
+$x ressemble à $y
+$x est semblable à $y
+$x est similaire à $y
+$x est analogue à $y
+
+# r_object>mater  matière
+$x est fait de $y
+$x est faite de $y
+$x est fabriqué en $y
+$x est fabriquée en $y
+
+# r_can_eat  alimentation
+$x se nourrit de $y
+$x mange $y
+
+# r_own  possession
+$x possède $y
+$x détient $y
+
+# r_require  nécessité
+$x nécessite $y
+$x requiert $y
+$x exige $y
+$x a besoin de $y
+
+# r_lieu>origine  origine
+$x est originaire de $y
+$x provient de $y
+$x est issu de $y

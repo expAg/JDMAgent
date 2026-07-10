@@ -68,6 +68,50 @@ def eval_gold(resolve_anaphora: bool = False,
         print(f"  {t['source']} | {t['relation']} | {t['target']}  ({t['category']})")
 
 
+# ── Jeu de test « couverture » : une phrase par relation (portée now) ──
+TEXT_MULTI = (
+    "Le chien est un animal. Le chien ressemble au loup. "
+    "La table est faite de bois. Le couteau est l'inverse de la cuillère. "
+    "Le soldat possède un fusil. La voiture nécessite de l'essence. "
+    "Le chat mange une souris. Il coupe le pain avec un couteau. "
+    "L'album a été enregistré par Miller. Lester déménage à Pontiac. "
+    "Lester décède d'un cancer. La roue fait partie de la voiture. "
+    "La grippe provoque de la fièvre."
+)
+GOLD_MULTI = [
+    ("chien", "r_isa", "animal"),
+    ("chien", "r_similar", "loup"),
+    ("table", "r_object>mater", "bois"),
+    ("couteau", "r_anto", "cuillère"),
+    ("soldat", "r_own", "fusil"),
+    ("voiture", "r_require", "essence"),
+    ("chat", "r_can_eat", "souris"),
+    ("couper", "r_instr", "couteau"),
+    ("album", "r_has_auteur", "miller"),
+    ("lester", "r_lieu", "pontiac"),
+    ("lester", "r_has_causatif", "cancer"),
+    ("roue", "r_holo", "voiture"),
+    ("grippe", "r_has_conseq", "fièvre"),
+]
+
+
+def eval_multi() -> None:
+    from jdm_agent.relext.syntactic import extract_syntactic
+    got = {(t["source"], t["relation"], t["target"]) for t in extract_syntactic(TEXT_MULTI)}
+    gold = set(GOLD_MULTI)
+    print(f"couverture: {len(got & gold)}/{len(gold)}")
+    for m in sorted(gold - got):
+        print("  MANQUÉ:", m)
+    extra = got - gold
+    if extra:
+        print("en plus (à vérifier):")
+        for e in sorted(extra):
+            print("  +", e)
+
+
 if __name__ == "__main__":
     import sys
-    eval_gold(resolve_anaphora=("--coref" in sys.argv))
+    if "--multi" in sys.argv:
+        eval_multi()
+    else:
+        eval_gold(resolve_anaphora=("--coref" in sys.argv))

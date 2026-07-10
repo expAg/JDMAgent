@@ -100,3 +100,16 @@ def test_copula_pronoun_subject_negative():
                (2, "est", "être", "AUX", 4, "cop"),
                (3, "pionnier", "pionnier", "NOUN", 0, "root")])
     assert _syn_keys(s) == set()
+
+
+def test_copula_anto_offline():
+    # « couteau est l'inverse de cuillère » → r_anto (pas r_isa)
+    s = _sent([(1, "couteau", "couteau", "NOUN", 5, "nsubj"),
+               (2, "est", "être", "AUX", 5, "cop"),
+               (3, "l'", "le", "DET", 5, "det"),
+               (4, "de", "de", "ADP", 6, "case"),
+               (5, "inverse", "inverse", "NOUN", 0, "root"),
+               (6, "cuillère", "cuillère", "NOUN", 5, "nmod")])
+    keys = _syn_keys(s)
+    assert ("couteau", "r_anto", "cuillère") in keys
+    assert not any(r == "r_isa" for _, r, _ in keys)

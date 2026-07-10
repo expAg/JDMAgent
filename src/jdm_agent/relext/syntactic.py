@@ -94,11 +94,15 @@ def _subject(sent, verb) -> "str | None":
 
 
 def _place_obl(sent, verb_id):
-    """Complément de lieu d'un verbe (case dans/à/sur), en excluant les noms
-    temporels (« dans la période »)."""
+    """Complément de lieu d'un verbe : « dans/sur X » toujours, « à X » seulement
+    si X est un nom PROPRE (évite « jouer à la guitare »). Exclut le temporel."""
     for ch in sent.children(verb_id):
-        if (ch.deprel.startswith("obl") and _case_lemma(sent, ch.id) in {"dans", "à", "sur"}
-                and ch.lemma not in _TEMPORAL):
+        if not ch.deprel.startswith("obl") or ch.lemma in _TEMPORAL:
+            continue
+        cl = _case_lemma(sent, ch.id)
+        if cl in ("dans", "sur"):
+            return ch
+        if cl == "à" and ch.upos == "PROPN":
             return ch
     return None
 
@@ -113,14 +117,27 @@ def _obl_by_case(sent, verb_id, case_lemma):
 # Noms « prédicat de classe » : « est un genre/sorte de Y » → cible = Y.
 _GENRE = {"genre", "sorte", "type", "espèce", "famille", "catégorie", "forme",
           "variété", "sous-genre"}
+# Noms « prédicat d'opposition » : « est l'inverse/le contraire de Y » → r_anto.
+_ANTO_NOUN = {"inverse", "contraire", "opposé", "antonyme"}
+# Verbes de fabrication : passif « est fait/fabriqué DE/EN Y » → r_object>mater.
+_MATER = {"faire", "fabriquer", "confectionner", "construire", "bâtir", "forger"}
 
 # lemme de verbe → (relation JDM, mode de complément)
 _CONSEQ = {"produire", "provoquer", "causer", "entraîner", "engendrer",
            "déclencher", "générer", "induire"}
 _HASPART = {"composer", "constituer", "comporter", "contenir", "inclure"}
-_CARAC_OBJ = {"souligner", "amplifier", "présenter", "posséder", "arborer"}
+_CARAC_OBJ = {"souligner", "amplifier", "présenter", "arborer"}
 _LOC = {"développer", "situer", "trouver", "implanter", "établir", "naître",
-        "apparaître"}
+        "apparaître", "vivre", "habiter", "résider", "déménager", "installer",
+        "retourner", "séjourner", "exercer", "jouer", "aller"}
+# Nouvelles familles (source = ENTITÉ / sujet, sauf indication)
+_SIMILAR = {"ressembler", "rappeler"}                      # à Y
+_DEATHCAUSE = {"décéder", "mourir", "succomber", "souffrir"}  # de Y → r_has_causatif
+_AUTEUR = {"écrire", "composer", "réaliser", "peindre", "diriger", "produire",
+           "enregistrer", "interpréter", "publier", "signer"}   # passif « par Y »
+_OWN = {"posséder", "détenir"}                             # obj → r_own
+_REQUIRE = {"nécessiter", "requérir", "exiger", "réclamer"}   # obj → r_require
+_EAT = {"manger", "consommer", "dévorer", "grignoter", "ingérer"}  # obj → r_can_eat
 
 
 def _emit(results, seen, subj, rel, obj, trigger):
@@ -158,15 +175,29 @@ def extract_from_sentences(sentences: list) -> list:
                         if ch.deprel in ("nmod", "obl") and _case_lemma(sent, ch.id) == "de":
                             m = ch
                             break
-                    if t.lemma in _GENRE:
+                    if t.lemma in _ANTO_NOUN and m is not None:
+                        # « est l'inverse / le contraire de Y » → r_anto
+                        _emit(results, seen, subj, "r_anto", _np(sent, m.id), f"copule/{t.lemma}")
+                    elif t.lemma in _GENRE:
                         # « est un genre de blues » → cible = blues
-                        obj = _np(sent, m.id) if m else _np(sent, t.id)
+                        _emit(results, seen, subj, "r_isa",
+                              _np(sent, m.id) if m else _np(sent, t.id), f"copule/{t.lemma}")
                     elif m is not None:
                         # « est un musicien de blues » → cible = musicien de blues
-                        obj = f"{t.form.lower()} de {_np(sent, m.id)}"
+                        _emit(results, seen, subj, "r_isa",
+                              f"{t.form.lower()} de {_np(sent, m.id)}", f"copule/{t.lemma}")
                     else:
-                        obj = _np(sent, t.id)
-                    _emit(results, seen, subj, "r_isa", obj, f"copule/{t.lemma}")
+                        _emit(results, seen, subj, "r_isa", _np(sent, t.id), f"copule/{t.lemma}")
+
+            # ── Copule ADJECTIVE : « X est similaire à Y » → r_similar ──
+            if (t.upos == "ADJ" and sent.child(t.id, {"cop"}) is not None):
+                subj_tok = sent.child(t.id, {"nsubj", "nsubj:pass"})
+                subj = _term_np(sent, subj_tok) if subj_tok is not None else None
+                if subj and t.lemma in {"similaire", "semblable", "proche",
+                                        "analogue", "comparable", "identique"}:
+                    comp = _obl_by_case(sent, t.id, "à") or _obl_by_case(sent, t.id, "de")
+                    if comp is not None:
+                        _emit(results, seen, subj, "r_similar", _np(sent, comp.id), f"adj/{t.lemma}")
 
             # ── Verbes ──
             if t.upos != "VERB":
@@ -196,6 +227,12 @@ def extract_from_sentences(sentences: list) -> list:
                 if second is not None and o1:
                     _emit(results, seen, o1, "r_syn", _np(sent, second.id), L)
 
+            # r_instr : « … AVEC Y » (source = ACTION/verbe ; Y = nom commun pour
+            # éviter le comitatif « avec Miller »). N'a pas besoin d'un sujet.
+            avec = _obl_by_case(sent, t.id, "avec")
+            if avec is not None and avec.upos == "NOUN":
+                _emit(results, seen, L, "r_instr", _np(sent, avec.id), "avec (instrument)")
+
             # ── Règles à SUJET ──
             subj = _subject(sent, t)
             if subj is None:
@@ -218,8 +255,48 @@ def extract_from_sentences(sentences: list) -> list:
                 loc = _place_obl(sent, t.id)
                 if loc is not None:
                     _emit(results, seen, subj, "r_lieu", _loc(sent, loc.id), L)
-            if L == "faire" and obj_tok is not None and obj_tok.lemma == "partie":
-                for ch in sent.children(obj_tok.id):
-                    if ch.deprel in ("nmod", "obl") and _case_lemma(sent, ch.id) == "de":
-                        _emit(results, seen, subj, "r_holo", _np(sent, ch.id), "faire partie de")
+            # « faire partie de Y » : « partie » = obj:lvc, « Y » = obl du VERBE.
+            if L == "faire":
+                lvc = sent.child(t.id, {"obj", "obj:lvc"})
+                if lvc is not None and lvc.lemma == "partie":
+                    de = _obl_by_case(sent, t.id, "de")
+                    if de is not None:
+                        _emit(results, seen, subj, "r_holo", _np(sent, de.id), "faire partie de")
+            # r_similar : « ressemble à Y », « rappelle Y »
+            if L in _SIMILAR:
+                a = _obl_by_case(sent, t.id, "à") or obj_tok
+                if a is not None:
+                    _emit(results, seen, subj, "r_similar", _np(sent, a.id), L)
+            # r_has_causatif : « décède / meurt DE Y » (cause)
+            if L in _DEATHCAUSE:
+                de = _obl_by_case(sent, t.id, "de")
+                if de is not None and de.lemma not in _TEMPORAL:
+                    _emit(results, seen, subj, "r_has_causatif", _np(sent, de.id), L)
+            # r_has_auteur : passif « écrit / composé / produit PAR Y » (subj = œuvre)
+            if L in _AUTEUR and sent.child(t.id, {"aux:pass"}) is not None:
+                par = _obl_by_case(sent, t.id, "par")
+                if par is not None:
+                    _emit(results, seen, subj, "r_has_auteur", _np(sent, par.id), L)
+            # r_own : « possède / détient Y »
+            if L in _OWN and obj_tok is not None:
+                _emit(results, seen, subj, "r_own", _np(sent, obj_tok.id), L)
+            # r_require : « nécessite / exige Y »
+            if L in _REQUIRE:
+                comp = obj_tok or _obl_by_case(sent, t.id, "de")
+                if comp is not None:
+                    _emit(results, seen, subj, "r_require", _np(sent, comp.id), L)
+            # r_can_eat : « mange / se nourrit DE Y »
+            if L in _EAT:
+                comp = obj_tok or _obl_by_case(sent, t.id, "de")
+                if comp is not None:
+                    _emit(results, seen, subj, "r_can_eat", _np(sent, comp.id), L)
+            if L == "nourrir":
+                de = _obl_by_case(sent, t.id, "de")
+                if de is not None:
+                    _emit(results, seen, subj, "r_can_eat", _np(sent, de.id), "se nourrir de")
+            # r_object>mater : passif « est fait / fabriqué DE / EN Y »
+            if L in _MATER and sent.child(t.id, {"aux:pass"}) is not None:
+                mat = _obl_by_case(sent, t.id, "de") or _obl_by_case(sent, t.id, "en")
+                if mat is not None:
+                    _emit(results, seen, subj, "r_object>mater", _np(sent, mat.id), L)
     return results
