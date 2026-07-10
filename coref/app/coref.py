@@ -56,7 +56,9 @@ def resolve(text: str) -> dict:
     # 1) Texte -> CoNLL-U (UDPipe, léger). Sert aux tokens + au SVG (indices GLOBAUX).
     in_path = os.path.join(OUT_DIR, "request.conllu")
     os.makedirs(OUT_DIR, exist_ok=True)
+    print("[coref] UDPipe (tokenisation + parse)…", flush=True)
     full_conllu = _udpipe(text)
+    print("[coref] UDPipe ok.", flush=True)
     with open(in_path, "w", encoding="utf-8") as f:
         f.write(full_conllu)
 
@@ -85,7 +87,9 @@ def resolve(text: str) -> dict:
     elif os.getenv("COREF_CHUNK", "1") == "1" and n_sent > window:
         chains, corrections = _chunked_chains(full_conllu, tokens, window, overlap), []
     else:
+        print(f"[coref] CorPipe sur le document entier ({n_sent} phrase(s))…", flush=True)
         doc = udapi.Document(predict_conllu(in_path))
+        print("[coref] CorPipe ok.", flush=True)
         idx = {id(n): i for i, n in enumerate(n for tree in doc.trees for n in tree.descendants)}
         chains, corrections = _baseline_chains(doc, idx, tokens), []
 
