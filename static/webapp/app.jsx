@@ -358,7 +358,6 @@ function App() {
               ['chatbot', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
               ['productions', 'Productions'],
-              ['outils', 'Outils'],
               ['aide', 'Aide'],
             ].map(([id, label]) => (
               <button key={id}

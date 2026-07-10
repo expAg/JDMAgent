@@ -884,7 +884,8 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
     { id: 'chatbot',     label: 'Chatbot LLM' },
     { id: 'jarvis',      label: 'Jarvis' },
     { id: 'productions', label: 'Productions' },
-    { id: 'outils',      label: 'Outils' },
+    // 'outils' : route volontairement NON listée ici (accessible par URL /outils
+    // ou raccourci « G O ») — hub TALN interne, non exposé aux visiteurs.
     { id: 'aide',        label: 'Aide' },
   ];
   return (
@@ -17269,7 +17270,6 @@ function App() {
               ['chatbot', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
               ['productions', 'Productions'],
-              ['outils', 'Outils'],
               ['aide', 'Aide'],
             ].map(([id, label]) => (
               <button key={id}
