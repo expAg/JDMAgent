@@ -874,7 +874,7 @@ function Triplet({ subject, relation, object, weight, annotations }) {
 }
 
 // ───────── Top nav (horizontal) — used by all themes ─────────
-function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
+function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent, hubText }) {
   const items = [
     { id: 'projet',      label: 'Projet' },
     { id: 'explorer',    label: 'Explorer' },
@@ -949,6 +949,13 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
             <JDMWordmark />
           </button>
         </div>
+        {hubText ? (
+          <div style={{
+            marginLeft: 12, alignSelf: 'center',
+            fontFamily: 'var(--font-display)', fontSize: 15, color: 'var(--ink-2)',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>{hubText}</div>
+        ) : (
         <nav style={{ display: 'flex', gap: 2, marginLeft: 12, overflow: 'hidden', scrollbarWidth: 'none' }}>
           {items.map(it => {
             const isActive = active === it.id;
@@ -998,10 +1005,11 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
             );
           })}
         </nav>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
-          {active !== 'projet' && <CliCommandButton view={active} />}
+          {!hubText && active !== 'projet' && <CliCommandButton view={active} />}
           {setTheme && <ThemeSwitcher theme={theme} setTheme={setTheme} />}
-          <ProductionsCountPill />
+          {!hubText && <ProductionsCountPill />}
         </div>
       </div>
     </header>

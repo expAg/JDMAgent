@@ -298,37 +298,23 @@ function App() {
 
   return (
     <div>
-      {view === 'outils' ? (
-        // Hub de services autonome : pas la nav JDM Agent, juste un bandeau texte.
-        <div style={{
-          borderBottom: '1px solid var(--line)',
-          background: 'var(--bg-elev)',
-          padding: '16px 28px',
-        }}>
-          <div style={{
-            maxWidth: 1320, margin: '0 auto',
-            fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--ink)',
-          }}>
-            Hub de services{' '}
-            <span style={{ color: 'var(--ink-3)' }}>
-              : tâches de traitement automatique du langage
-            </span>
-          </div>
-        </div>
-      ) : (
-        <TopNav
-          active={view} setActive={setView}
-          theme={tweaks.theme}
-          setTheme={(t) => setTweak('theme', t)}
-          accent={tweaks.accent}
-          cycleAccent={() => {
-            const cur = tweaks.accent || TWEAK_ACCENTS[0];
-            const i = TWEAK_ACCENTS.indexOf(cur);
-            const next = TWEAK_ACCENTS[(i + 1) % TWEAK_ACCENTS.length];
-            setTweak('accent', next);
-          }}
-        />
-      )}
+      <TopNav
+        active={view} setActive={setView}
+        theme={tweaks.theme}
+        setTheme={(t) => setTweak('theme', t)}
+        accent={tweaks.accent}
+        cycleAccent={() => {
+          const cur = tweaks.accent || TWEAK_ACCENTS[0];
+          const i = TWEAK_ACCENTS.indexOf(cur);
+          const next = TWEAK_ACCENTS[(i + 1) % TWEAK_ACCENTS.length];
+          setTweak('accent', next);
+        }}
+        // Sur /outils : garder le logo JDM Agent mais remplacer les onglets par
+        // un simple texte (hub de services autonome).
+        hubText={view === 'outils'
+          ? 'Hub de services : tâches de traitement automatique du langage'
+          : undefined}
+      />
       <main>{VIEWS[view]}</main>
 
       <TweaksPanel title="Tweaks">
