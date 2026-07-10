@@ -68,43 +68,79 @@ def eval_gold(resolve_anaphora: bool = False,
         print(f"  {t['source']} | {t['relation']} | {t['target']}  ({t['category']})")
 
 
-# ── Jeu de test « couverture » : une phrase par relation (portée now) ──
+# ── Jeu de test « couverture » : texte VARIÉ, ≥1 exemple par relation (portée now) ──
+# Vocabulaire volontairement diversifié (animaux, objets, aliments, lieux, arts…)
+# pour ne pas surajuster l'extracteur à un champ lexical. Chaque phrase illustre
+# une relation JeuxDeMots exprimable par la syntaxe (UDPipe → dépendances).
 TEXT_MULTI = (
-    "Le chien est un animal. Le chien ressemble au loup. "
-    "La table est faite de bois. Le couteau est l'inverse de la cuillère. "
-    "Le soldat possède un fusil. La voiture nécessite de l'essence. "
-    "Le chat mange une souris. Il coupe le pain avec un couteau. "
-    "L'album a été enregistré par Miller. Lester déménage à Pontiac. "
-    "Lester décède d'un cancer. La roue fait partie de la voiture. "
-    "La grippe provoque de la fièvre."
+    "Le rouge-gorge est un oiseau. "                              # r_isa (copule)
+    "Le puma, connu sous le nom de couguar, est un félin. "       # r_syn + r_isa
+    "La bicyclette est composée de deux roues. "                  # r_has_part
+    "Le clavier fait partie de l'ordinateur. "                    # r_holo
+    "Le jour est le contraire de la nuit. "                       # r_anto
+    "Le congre ressemble à une anguille. "                        # r_similar
+    "Le désert se caractérise par une chaleur intense. "         # r_carac
+    "Le tabac provoque le cancer. "                               # r_has_conseq
+    "Le lion vit dans la savane. "                                # r_lieu
+    "La table est fabriquée en bois. "                            # r_object>mater
+    "La tomate est rouge. "                                       # r_has_color
+    "Le roi possède un château. "                                 # r_own
+    "La plante nécessite de l'eau. "                              # r_require
+    "Le koala mange des feuilles. "                               # r_can_eat
+    "Ce roman a été écrit par Hugo. "                             # r_has_auteur
+    "Le menuisier coupe le bois avec une scie. "                  # r_instr
+    "L'abeille fabrique du miel. "                                # r_make (partitif)
+    "Le moteur utilise de l'essence. "                            # r_make_use_of
+    "Le vaccin protège contre la maladie. "                       # r_against
+    "Le couteau sert à couper. "                                  # r_telic_role
+    "La fête se déroule en hiver. "                               # r_time
+    "Le cassoulet est originaire de Toulouse. "                   # r_lieu>origine
+    "Le patient décède d'un cancer."                              # r_has_causatif
 )
 GOLD_MULTI = [
-    ("chien", "r_isa", "animal"),
-    ("chien", "r_similar", "loup"),
+    ("rouge-gorge", "r_isa", "oiseau"),
+    ("puma", "r_syn", "couguar"),
+    ("puma", "r_isa", "félin"),
+    ("bicyclette", "r_has_part", "deux roues"),
+    ("clavier", "r_holo", "ordinateur"),
+    ("jour", "r_anto", "nuit"),
+    ("congre", "r_similar", "anguille"),
+    ("désert", "r_carac", "chaleur intense"),
+    ("tabac", "r_has_conseq", "cancer"),
+    ("lion", "r_lieu", "savane"),
     ("table", "r_object>mater", "bois"),
-    ("couteau", "r_anto", "cuillère"),
-    ("soldat", "r_own", "fusil"),
-    ("voiture", "r_require", "essence"),
-    ("chat", "r_can_eat", "souris"),
-    ("couper", "r_instr", "couteau"),
-    ("album", "r_has_auteur", "miller"),
-    ("lester", "r_lieu", "pontiac"),
-    ("lester", "r_has_causatif", "cancer"),
-    ("roue", "r_holo", "voiture"),
-    ("grippe", "r_has_conseq", "fièvre"),
+    ("tomate", "r_has_color", "rouge"),
+    ("roi", "r_own", "château"),
+    ("plante", "r_require", "eau"),
+    ("koala", "r_can_eat", "feuilles"),
+    ("roman", "r_has_auteur", "hugo"),
+    ("couper", "r_instr", "scie"),
+    ("abeille", "r_make", "miel"),
+    ("moteur", "r_make_use_of", "essence"),
+    ("vaccin", "r_against", "maladie"),
+    ("couteau", "r_telic_role", "couper"),
+    ("fête", "r_time", "hiver"),
+    ("cassoulet", "r_lieu>origine", "toulouse"),
+    ("patient", "r_has_causatif", "cancer"),
 ]
+
+# Relations prédicatives génériques (source = verbe) TOUJOURS émises en plus des
+# relations sémantiques ci-dessus : ce sont des bonus, pas des manques.
+_PREDICATIVE = {"r_agent", "r_patient"}
 
 
 def eval_multi() -> None:
     from jdm_agent.relext.syntactic import extract_syntactic
     got = {(t["source"], t["relation"], t["target"]) for t in extract_syntactic(TEXT_MULTI)}
     gold = set(GOLD_MULTI)
-    print(f"couverture: {len(got & gold)}/{len(gold)}")
+    rels = {r for _, r, _ in gold}
+    print(f"couverture triplets: {len(got & gold)}/{len(gold)}")
+    print(f"couverture relations distinctes: {len({r for _, r, _ in (got & gold)})}/{len(rels)}")
     for m in sorted(gold - got):
         print("  MANQUÉ:", m)
-    extra = got - gold
+    extra = {e for e in (got - gold) if e[1] not in _PREDICATIVE}
     if extra:
-        print("en plus (à vérifier):")
+        print("en plus (hors prédicatif agent/patient, à vérifier):")
         for e in sorted(extra):
             print("  +", e)
 

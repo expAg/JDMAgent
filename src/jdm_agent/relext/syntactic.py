@@ -114,6 +114,17 @@ def _obl_by_case(sent, verb_id, case_lemma):
     return None
 
 
+def _dobj(sent, verb_id):
+    """Objet direct OU partitif (« fabrique DU miel » = obl:arg avec case « de »)."""
+    o = sent.child(verb_id, {"obj"})
+    if o is not None:
+        return o
+    for ch in sent.children(verb_id):
+        if ch.deprel == "obl:arg" and _case_lemma(sent, ch.id) == "de":
+            return ch
+    return None
+
+
 # Noms « prédicat de classe » : « est un genre/sorte de Y » → cible = Y.
 _GENRE = {"genre", "sorte", "type", "espèce", "famille", "catégorie", "forme",
           "variété", "sous-genre"}
@@ -138,6 +149,23 @@ _AUTEUR = {"écrire", "composer", "réaliser", "peindre", "diriger", "produire",
 _OWN = {"posséder", "détenir"}                             # obj → r_own
 _REQUIRE = {"nécessiter", "requérir", "exiger", "réclamer"}   # obj → r_require
 _EAT = {"manger", "consommer", "dévorer", "grignoter", "ingérer"}  # obj → r_can_eat
+_AGAINST = {"combattre", "contrer", "empêcher", "vaincre", "éradiquer", "repousser"}
+_USE = {"utiliser", "employer", "exploiter"}               # obj → r_make_use_of
+_MAKE = {"fabriquer", "sécréter", "pondre", "produire"}    # obj → r_make
+# Verbes « légers » : exclus de r_agent/r_patient (bruit).
+_LIGHT = {"être", "avoir", "faire", "aller", "pouvoir", "devoir", "vouloir",
+          "falloir", "sembler", "paraître", "devenir", "rester", "venir",
+          "commencer", "continuer", "finir", "s'agir"}
+# Couleurs (lemmes de base) pour r_has_color.
+_COLORS = {"rouge", "bleu", "vert", "jaune", "noir", "blanc", "gris", "rose",
+           "orange", "violet", "marron", "brun", "beige", "doré", "argenté",
+           "pourpre", "turquoise", "bordeaux", "écarlate", "azur"}
+# Mots temporels (r_time) : saisons, mois, moments.
+_TIMEWORDS = _TEMPORAL | {
+    "hiver", "été", "printemps", "automne", "matin", "midi", "soir", "nuit",
+    "aube", "crépuscule", "week-end", "weekend", "janvier", "février", "mars",
+    "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+    "novembre", "décembre", "nuit", "journée", "soirée"}
 
 
 def _emit(results, seen, subj, rel, obj, trigger):
@@ -149,6 +177,21 @@ def _emit(results, seen, subj, rel, obj, trigger):
     seen.add(key)
     results.append({"source": subj, "relation": rel, "target": obj,
                     "category": trigger, "pattern": "(syntaxe)"})
+
+
+def _conj_ids(sent, tid):
+    """Un token + ses coordonnés (« A et B » → [A, B])."""
+    ids = [tid]
+    for c in sent.children(tid):
+        if c.deprel == "conj":
+            ids.append(c.id)
+    return ids
+
+
+def _emit_t(results, seen, subj, rel, sent, tid, trigger):
+    """Émet subj—rel→cible pour la cible ET ses coordonnés (conjonctions)."""
+    for i in _conj_ids(sent, tid):
+        _emit(results, seen, subj, rel, _np(sent, i), trigger)
 
 
 def extract_syntactic(text: str) -> list:
@@ -198,6 +241,13 @@ def extract_from_sentences(sentences: list) -> list:
                     comp = _obl_by_case(sent, t.id, "à") or _obl_by_case(sent, t.id, "de")
                     if comp is not None:
                         _emit(results, seen, subj, "r_similar", _np(sent, comp.id), f"adj/{t.lemma}")
+                if subj and t.lemma in _COLORS:
+                    # « la voiture est rouge » → r_has_color
+                    _emit(results, seen, subj, "r_has_color", t.lemma, "adj/couleur")
+                if subj and t.lemma in {"originaire", "issu", "natif"}:
+                    de = _obl_by_case(sent, t.id, "de")
+                    if de is not None:
+                        _emit(results, seen, subj, "r_lieu>origine", _np(sent, de.id), f"adj/{t.lemma}")
 
             # ── Verbes ──
             if t.upos != "VERB":
@@ -242,11 +292,11 @@ def extract_from_sentences(sentences: list) -> list:
                 if par is not None:
                     _emit(results, seen, subj, "r_carac", _np(sent, par.id), L)
             if L in _CARAC_OBJ and obj_tok is not None:
-                _emit(results, seen, subj, "r_carac", _np(sent, obj_tok.id), L)
+                _emit_t(results, seen, subj, "r_carac", sent, obj_tok.id, L)
             if L in _CONSEQ:
                 comp = obj_tok or _obl_by_case(sent, t.id, "en") or _obl_by_case(sent, t.id, "à")
                 if comp is not None:
-                    _emit(results, seen, subj, "r_has_conseq", _np(sent, comp.id), L)
+                    _emit_t(results, seen, subj, "r_has_conseq", sent, comp.id, L)
             if L in _HASPART:
                 comp = obj_tok or _obl_by_case(sent, t.id, "de")
                 if comp is not None:
@@ -299,4 +349,38 @@ def extract_from_sentences(sentences: list) -> list:
                 mat = _obl_by_case(sent, t.id, "de") or _obl_by_case(sent, t.id, "en")
                 if mat is not None:
                     _emit(results, seen, subj, "r_object>mater", _np(sent, mat.id), L)
+            # r_make : « fabrique / sécrète / produit Y » (objet direct OU partitif)
+            if L in _MAKE:
+                mk = _dobj(sent, t.id)
+                if mk is not None:
+                    _emit_t(results, seen, subj, "r_make", sent, mk.id, L)
+            # r_make_use_of : « utilise Y » (objet direct OU partitif « de l'essence »)
+            if L in _USE:
+                us = _dobj(sent, t.id)
+                if us is not None:
+                    _emit_t(results, seen, subj, "r_make_use_of", sent, us.id, L)
+            # r_against : « combat Y », « lutte / protège CONTRE Y »
+            if L in _AGAINST or L in {"lutter", "protéger", "prémunir"}:
+                comp = obj_tok or _obl_by_case(sent, t.id, "contre")
+                if comp is not None:
+                    _emit_t(results, seen, subj, "r_against", sent, comp.id, L)
+            # r_telic_role : « sert À <verbe> »
+            if L == "servir":
+                for c in sent.children(t.id):
+                    if c.upos == "VERB":
+                        mk = sent.child(c.id, {"mark"})
+                        if mk is not None and mk.lemma == "à":
+                            _emit(results, seen, subj, "r_telic_role", c.lemma, "servir à")
+            # r_time : « … EN hiver / le matin »
+            if L not in _LIGHT:
+                for c in sent.children(t.id):
+                    if c.deprel.startswith("obl") and c.lemma in _TIMEWORDS:
+                        _emit(results, seen, subj, "r_time", _np(sent, c.id), "temporel")
+            # ── Prédicatives génériques (source = ACTION/verbe) ──
+            nsubj_tok = sent.child(t.id, {"nsubj"})
+            if L not in _LIGHT:
+                if nsubj_tok is not None and nsubj_tok.upos == "NOUN":
+                    _emit_t(results, seen, L, "r_agent", sent, nsubj_tok.id, "sujet→agent")
+                if obj_tok is not None and obj_tok.upos == "NOUN":
+                    _emit_t(results, seen, L, "r_patient", sent, obj_tok.id, "objet→patient")
     return results
