@@ -15841,18 +15841,26 @@ const _COREF_COLORS = [
   'var(--jdm-violet)', 'var(--jdm-orange)', 'var(--jdm-yellow)',
 ];
 
+// Phrases d'exemple cliquables (anaphore). La 1re sert de texte par défaut.
+const COREF_EXAMPLES = [
+  "La chienne de la voisine est en chaleur. Elle braille sans arrêt. Pourtant elle lui donne la pilule.",
+  "Le chien de la voisine est tombé dans le puits. Il a aboyé toute la nuit. Il est très profond. Il l'a beaucoup ennuyée.",
+  "Julien a appelé son frère parce qu'il devait lui rendre sa clé. Il l'avait oubliée chez lui hier soir.",
+];
+
 // ───────── Coréférence ─────────
 function CorefPanel() {
-  const [text, setText] = React.useState(
-    "Marie a appelé son frère parce qu'elle voulait lui rendre les clés. "
-    + "Il les avait oubliées chez elle hier soir.");
+  const [text, setText] = React.useState(COREF_EXAMPLES[0]);
   const [model, setModel] = React.useState(TOOL_MODELS.coref[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
 
-  const run = async () => {
+  // `override` : texte explicite (clic sur un exemple) — évite la course avec
+  // le setState async de setText.
+  const run = async (override) => {
+    const t = (typeof override === 'string') ? override : text;
     setLoading(true); setRes(null);
-    setRes(await _callTool('coref', { text, model })); setLoading(false);
+    setRes(await _callTool('coref', { text: t, model })); setLoading(false);
   };
 
   const chainOf = {};
@@ -15869,6 +15877,23 @@ function CorefPanel() {
       <ToolForm text={text} setText={setText} run={run} loading={loading}
         placeholder="Colle un texte français à résoudre…"
         model={model} setModel={setModel} models={TOOL_MODELS.coref} />
+      {/* Exemples cliquables (anaphore) : clic = remplit + lance */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginRight: 4 }}>Exemples :</span>
+        {COREF_EXAMPLES.map((ex, i) => (
+          <button key={i} className="focus-ring" title={ex}
+            onClick={() => { setText(ex); run(ex); }}
+            style={{
+              padding: '4px 10px', maxWidth: 360,
+              background: 'transparent', border: '1px solid var(--line)',
+              borderRadius: 999, color: 'var(--ink-2)', fontSize: 11,
+              cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
+            {ex.length > 46 ? ex.slice(0, 45) + '…' : ex}
+          </button>
+        ))}
+      </div>
       {res && !res.ok && <ToolNotice msg={res.error} tone="error" />}
       {res && res.ok && res.data && (
         <Card padding={18}>
