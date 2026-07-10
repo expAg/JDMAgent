@@ -2,21 +2,20 @@
 
 Inspiré de Rel-Sem (github.com/Haniiist/Rel-Sem) — adapté à notre stack :
 
-  texte --patrons(regex)--> triplets (source, relation JDM, cible)
+  texte --patrons(tokens)--> triplets (source, relation JDM, cible)
 
-Idées clés reprises / adaptées :
-- un FICHIER DE PATRONS (`patterns.txt`) mappe des tournures françaises vers des
-  relations JDM (r_isa, r_has_part, r_holo, r_has_conseq, r_causatif, r_carac,
-  r_anto, r_lieu…). Éditable sans toucher au code.
-- les DÉTERMINANTS (un/une/des/le/la/du/de la/d'un…) sont absorbés
-  automatiquement — inutile de les énumérer (contrairement à la version Java).
-- réflexion MOTS COMPOSÉS : on interroge JDM pour reconnaître les termes
-  multi-mots (« pomme de terre », « moulin à vent ») comme UNE unité, de sorte
-  que les patrons ne les coupent pas ; JDM sert aussi de lexique-filtre (on ne
-  garde que des termes réellement connus de JDM).
+Idées reprises / adaptées :
+- FICHIER DE PATRONS (`patterns.txt`) : tournures FR → relations JDM (r_isa,
+  r_has_part, r_holo, r_has_conseq, r_causatif, r_carac, r_anto, r_lieu…).
+- DÉTERMINANTS (un/le/du/d'un…) absorbés automatiquement (pas d'énumération).
+- MOTS COMPOSÉS : extension locale d'un terme vers un composé connu de JDM
+  (« pomme de terre ») ; JDM sert aussi de lexique-filtre.
+- VERBES via JDM `r_lemma` : un mot du patron matche aussi une forme fléchie
+  quand leurs lemmes JDM coïncident (« provoque/provoquait/provoquera » →
+  « provoquer »). Pas besoin de lemmatiseur externe. Offline (sans client) : on
+  reste sur du surface (les patrons listent la forme fléchie usuelle).
 
-v1 : recherche de SURFACE (pas encore de lemmatisation ; les verbes sont listés
-à leur forme fléchie usuelle). Amélioration possible : lemmatiser via UDPipe.
+v1.5 : patrons à 2 fentes ($x, $y), matching par tokens.
 """
 from __future__ import annotations
 
@@ -27,16 +26,35 @@ from typing import Optional
 
 _PATTERNS_FILE = Path(__file__).with_name("patterns.txt")
 
-# Un déterminant (optionnel) devant un terme — absorbé, jamais capturé.
-_DET = (r"(?:un|une|des|le|la|les|l['’]|du|de\s+la|de\s+l['’]|"
-        r"d['’]un|d['’]une|de|d['’]|au|aux|à\s+la|à\s+l['’])")
-# Un token de terme (capturé par les patrons) : lettres accentuées + chiffres,
-# tiret/apostrophe internes.
-_TERMTOK = r"[a-zàâäéèêëïîôöùûüçœ0-9][a-zàâäéèêëïîôöùûüçœ0-9'’-]*"
+# Token de mot (dans le texte comme dans les patrons) : lettres accentuées +
+# chiffres, tiret/apostrophe internes (« l'inverse », « arc-en-ciel »).
+_TERM_WORD = re.compile(
+    r"[a-zàâäéèêëïîôöùûüçœ0-9]+(?:['’-][a-zàâäéèêëïîôöùûüçœ0-9]+)*", re.IGNORECASE)
+
+# Déterminants absorbés en tête d'une fente de terme.
+_DET_WORDS = {"le", "la", "les", "un", "une", "des", "du", "de", "d", "l",
+              "au", "aux", "à"}
+
+# Mots-outils : autorisés À L'INTÉRIEUR d'un composé (pomme DE terre, arc EN
+# ciel) mais jamais en BORD (on ne veut pas « la voiture », « de fièvre »).
+_FUNC = {
+    "le", "la", "les", "l", "un", "une", "des", "du", "de", "d", "au", "aux", "à",
+    "et", "ou", "ni", "ce", "cet", "cette", "ces", "son", "sa", "ses", "mon", "ma",
+    "mes", "ton", "ta", "tes", "notre", "votre", "nos", "vos", "leur", "leurs",
+    "se", "s", "qui", "que", "dont", "où", "ne", "n", "est", "sont", "a", "ont",
+    "il", "elle", "ils", "elles", "on", "je", "tu", "nous", "vous",
+    "dans", "sur", "sous", "par", "pour", "avec", "sans", "en", "aussi",
+}
+
+_MISSING = object()
+
+
+def _norm(w: str) -> str:
+    return w.replace("’", "'").strip().lower()
 
 
 def _load_raw_patterns(path: Path = _PATTERNS_FILE) -> list[tuple[str, str, str]]:
-    """Renvoie [(relation_jdm, étiquette, patron_brut)] depuis le fichier."""
+    """[(relation_jdm, étiquette, patron_brut)] depuis le fichier de patrons."""
     rel: Optional[str] = None
     label = ""
     out: list[tuple[str, str, str]] = []
@@ -54,42 +72,18 @@ def _load_raw_patterns(path: Path = _PATTERNS_FILE) -> list[tuple[str, str, str]
     return out
 
 
-def _compile(patron: str) -> re.Pattern:
-    """Compile « $x <mots> $y » en regex : termes capturés, déterminant optionnel
-    devant chaque terme, mots littéraux tolérants aux apostrophes."""
-    parts = []
-    for tk in patron.split():
-        if tk in ("$x", "$y"):
-            parts.append(("slot", tk))
-        else:
-            parts.append(("lit", tk))
-    rx = [r"\b"]
-    for j, (kind, val) in enumerate(parts):
-        if kind == "slot":
-            rx.append(r"(?:" + _DET + r"\s+)?(" + _TERMTOK + r")")
-        else:
-            lit = re.escape(val).replace("'", "['’]").replace("’", "['’]")
-            # Accord des participes passés : composé → composé(e)(s)
-            # (couvre composée/composés/composées, constitué…, caractérisé…, causé…).
-            if val.endswith("é"):
-                lit = lit[:-1] + "é(?:e?s?)"
-            rx.append(lit)
-        if j < len(parts) - 1:
-            rx.append(r"\s+")
-    rx.append(r"\b")
-    return re.compile("".join(rx), re.IGNORECASE)
-
-
 @lru_cache(maxsize=1)
 def load_patterns() -> list[dict]:
-    """Patrons compilés (mis en cache). Chaque entrée : relation, label, patron, rx."""
-    compiled = []
+    """Patrons → liste d'opérations (slot / littéral). Mis en cache."""
+    out = []
     for rel, label, patron in _load_raw_patterns():
-        compiled.append({"relation": rel, "label": label,
-                         "pattern": patron, "rx": _compile(patron)})
-    return compiled
+        ops = [("slot", tk) if tk in ("$x", "$y") else ("lit", _norm(tk))
+               for tk in patron.split()]
+        out.append({"relation": rel, "label": label, "pattern": patron, "ops": ops})
+    return out
 
 
+# ── Accès JDM (mots composés, lexique, lemmes) ───────────────────────────────
 def _jdm_knows(client, term: str) -> bool:
     if client is None:
         return True
@@ -99,29 +93,76 @@ def _jdm_knows(client, term: str) -> bool:
         return False
 
 
-_SENT_SPLIT = re.compile(r"[.!?;:\n]+")
-_TERM_WORD = re.compile(r"[a-zàâäéèêëïîôöùûüçœ0-9]+(?:['’-][a-zàâäéèêëïîôöùûüçœ0-9]+)*",
-                        re.IGNORECASE)
+def _jdm_lemmas(client, word: str) -> set:
+    """Ensemble des lemmes JDM d'un mot (toutes cibles r_lemma positives) +
+    le mot lui-même. Un ENSEMBLE (pas le plus fort) car les formes ambiguës
+    nom/verbe ont plusieurs lemmes : « cause » → {cause, causer}, ce qui permet
+    d'apparier « causera » → {causer} par intersection."""
+    out = {word}
+    if client is None:
+        return out
+    try:
+        rid = client.relation_type_id("r_lemma")
+        if rid is None:
+            return out
+        res = client.relations_from(word, types_ids=[rid])
+        idx = res.node_index()
+        for r in res.relations:
+            if r.w > 0 and r.node2 in idx:
+                out.add(idx[r.node2].name.lower())
+    except Exception:
+        pass
+    return out
 
 
-# Mots-outils : autorisés À L'INTÉRIEUR d'un composé (pomme DE terre, arc EN
-# ciel) mais jamais en BORD (on ne veut pas « la voiture », « de fièvre »).
-_FUNC = {
-    "le", "la", "les", "l", "un", "une", "des", "du", "de", "d", "au", "aux", "à",
-    "et", "ou", "ni", "ce", "cet", "cette", "ces", "son", "sa", "ses", "mon", "ma",
-    "mes", "ton", "ta", "tes", "notre", "votre", "nos", "vos", "leur", "leurs",
-    "se", "s", "qui", "que", "dont", "où", "ne", "n", "est", "sont", "a", "ont",
-    "il", "elle", "ils", "elles", "on", "je", "tu", "nous", "vous",
-    "dans", "sur", "sous", "par", "pour", "avec", "sans", "en",
-}
+def _lemmas_cached(client, word: str, cache: dict) -> set:
+    v = cache.get(word, _MISSING)
+    if v is _MISSING:
+        v = _jdm_lemmas(client, word)
+        cache[word] = v
+    return v
+
+
+def _lit_ok(lit: str, surface: str, client, cache: dict) -> bool:
+    """Un mot littéral du patron matche un token : égalité de surface, accord de
+    participe (composé→composée/…), ou INTERSECTION des ensembles de lemmes JDM
+    (formes fléchies des verbes). Repli lemme borné aux mots de contenu (≥4)."""
+    s = _norm(surface)
+    if s == lit:
+        return True
+    if lit.endswith("é") and s in (lit + "e", lit + "s", lit + "es"):
+        return True
+    if (client is not None and len(lit) >= 4 and len(s) >= 4
+            and lit not in _FUNC and s not in _FUNC):
+        if _lemmas_cached(client, s, cache) & _lemmas_cached(client, lit, cache):
+            return True
+    return False
+
+
+def _try_match(ops, tokens, pos, client, cache) -> Optional[list[int]]:
+    """Tente d'apparier `ops` à partir du token `pos`. Renvoie les index des
+    tokens capturés (têtes de terme), ou None."""
+    i = pos
+    caps: list[int] = []
+    for kind, val in ops:
+        if kind == "slot":
+            while i < len(tokens) and _norm(tokens[i]) in _DET_WORDS:
+                i += 1
+            if i >= len(tokens):
+                return None
+            caps.append(i)
+            i += 1
+        else:
+            if i >= len(tokens) or not _lit_ok(val, tokens[i], client, cache):
+                return None
+            i += 1
+    return caps
 
 
 def _expand_compound(toks, idx, client, direction: str, maxk: int = 3) -> str:
-    """Étend le terme au token `idx` vers un MOT COMPOSÉ connu de JDM en incluant
-    les tokens adjacents. Les « de/à/en… » sont acceptés à l'intérieur d'un
-    composé mais refusés en bord (pas de déterminant capturé). Garde le plus long
-    connu. Extension purement locale au terme — ne touche pas aux mots du patron.
-    """
+    """Étend le terme au token `idx` vers un MOT COMPOSÉ connu de JDM. Les
+    « de/à/en… » sont acceptés à l'intérieur mais refusés en bord (pas de
+    déterminant capturé). Garde le plus long composé connu."""
     base = toks[idx][0]
     if client is None:
         return base
@@ -138,12 +179,15 @@ def _expand_compound(toks, idx, client, direction: str, maxk: int = 3) -> str:
                 break
             words = [w for w, _ in toks[idx:j + 1]]
         edge = words[0] if direction == "left" else words[-1]
-        if edge.lower() in _FUNC:
-            continue  # bord = mot-outil → on saute (un k plus grand peut convenir)
+        if _norm(edge) in _FUNC:
+            continue
         cand = " ".join(words)
         if _jdm_knows(client, cand):
             best = cand
     return best
+
+
+_SENT_SPLIT = re.compile(r"[.!?;:\n]+")
 
 
 def extract_relations(text: str, client=None, *, validate: bool = True,
@@ -152,37 +196,35 @@ def extract_relations(text: str, client=None, *, validate: bool = True,
 
     Args:
         text: texte français.
-        client: JDMClient — sert à (a) étendre les termes en MOTS COMPOSÉS
-            connus (« pomme de terre »), (b) filtrer sur le lexique JDM.
-            None → hors-ligne (appariements de surface bruts, mono-mot).
+        client: JDMClient — mots composés, lexique-filtre, lemmes de verbes.
+            None → hors-ligne (surface brute, mono-mot).
         validate: ne garder que les triplets dont les DEUX termes sont connus de
-            JDM (lexique-filtre). Ignoré si client est None.
+            JDM (ignoré si client None).
 
-    Renvoie une liste de dicts dédupliqués :
-        {source, relation, target, category, pattern}
+    Renvoie [{source, relation, target, category, pattern}] dédupliqué.
     """
     patterns = load_patterns()
     seen: set[tuple[str, str, str]] = set()
     results: list[dict] = []
+    lemma_cache: dict = {}
 
     for sentence in _SENT_SPLIT.split(text):
-        sentence = sentence.strip().lower()
-        if not sentence:
+        low = sentence.strip().lower()
+        if not low:
             continue
-        # Tokens (mot, offset) → retrouver le token d'un terme par son offset,
-        # puis l'étendre en composé sur la séquence de tokens.
-        toks = [(m.group(0), m.start()) for m in _TERM_WORD.finditer(sentence)]
-        start_to_idx = {st: i for i, (w, st) in enumerate(toks)}
-
+        toks = [(m.group(0), m.start()) for m in _TERM_WORD.finditer(low)]
+        tokens = [w for w, _ in toks]
+        n = len(tokens)
         for p in patterns:
-            for m in p["rx"].finditer(sentence):
-                i1 = start_to_idx.get(m.start(1))
-                i2 = start_to_idx.get(m.start(2))
-                src = (_expand_compound(toks, i1, client, "left", max_expand)
-                       if i1 is not None else m.group(1))
-                tgt = (_expand_compound(toks, i2, client, "right", max_expand)
-                       if i2 is not None else m.group(2))
-                src, tgt = src.strip(), tgt.strip()
+            ops = p["ops"]
+            for start in range(n):
+                caps = _try_match(ops, tokens, start, client, lemma_cache)
+                if not caps or len(caps) < 2:
+                    continue
+                i1, i2 = caps[0], caps[1]
+                src = _expand_compound(toks, i1, client, "left", max_expand)
+                tgt = _expand_compound(toks, i2, client, "right", max_expand)
+                src, tgt = _norm(src), _norm(tgt)
                 if not src or not tgt or src == tgt:
                     continue
                 if validate and client is not None:

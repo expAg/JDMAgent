@@ -19,7 +19,7 @@ def test_patterns_load():
     # chaque patron a bien deux fentes et une regex compilée
     for p in pats:
         assert "$x" in p["pattern"] and "$y" in p["pattern"]
-        assert p["rx"] is not None
+        assert p["ops"] and any(k == "slot" for k, _ in p["ops"])
 
 
 def test_surface_extraction_offline():
