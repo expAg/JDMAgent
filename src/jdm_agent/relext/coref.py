@@ -27,15 +27,22 @@ def _substitute(tokens: list, chains: list) -> str:
     repl: dict = {}
     for ch in chains or []:
         mentions = ch.get("mentions") or []
-        # Représentant = la plus longue mention qui n'est pas un simple pronom.
-        rep = None
+        # Représentant = la PREMIÈRE mention nominale (par position) de la chaîne,
+        # typiquement le nom introduit en tête (« Leslie Johnson »). SURTOUT PAS la
+        # plus longue : dans « il a été un pionnier du swamp blues », le prédicat
+        # nominal est coréférent avec « il » mais le substituer donne une
+        # tautologie (« pionnier r_isa pionnier »).
+        rep = None  # (start_index, words)
         for span in mentions:
+            if not span:
+                continue
             words = " ".join(tokens[i]["text"] for i in span if i < len(tokens))
             if not words:
                 continue
             if len(span) > 1 or not _is_pron(words):
-                if rep is None or len(span) > rep[0]:
-                    rep = (len(span), words)
+                start = span[0]
+                if rep is None or start < rep[0]:
+                    rep = (start, words)
         if rep is None:
             continue
         rep_text = rep[1]

@@ -61,6 +61,21 @@ def test_pronoun_substitution_offline():
     assert " il " not in (" " + out.lower() + " ")
 
 
+def test_pronoun_substitution_prefers_first_name():
+    # « Leslie Johnson … Il est un pionnier du swamp blues » : la chaîne contient
+    # le NOM (tôt) ET le PRÉDICAT nominal (long). On doit substituer « Il » par le
+    # nom, pas par le prédicat (sinon tautologie « pionnier … est un pionnier »).
+    from jdm_agent.relext.coref import _substitute
+    words = ["Leslie", "Johnson", "chante", ".", "Il", "est", "un",
+             "pionnier", "du", "swamp", "blues", "."]
+    tokens = [{"i": i, "text": w, "ws": ("" if w == "." else " ")}
+              for i, w in enumerate(words)]
+    chains = [{"id": 0, "mentions": [[0, 1], [4], [6, 7, 8, 9, 10]]}]
+    out = _substitute(tokens, chains).lower()
+    assert "leslie johnson est un pionnier" in out
+    assert "pionnier du swamp blues est un pionnier" not in out
+
+
 # ── Tests des règles SYNTAXIQUES sur phrases synthétiques (hors-ligne) ──
 def _sent(rows):
     from jdm_agent.relext.udpipe import Token, Sentence
