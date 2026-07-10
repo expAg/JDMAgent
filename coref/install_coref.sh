@@ -26,17 +26,35 @@ echo "=== Service coref — Installation ==="
 echo "Repo : $SCRIPT_DIR   Port : $COREF_PORT"
 echo ""
 
-# 1. python3 + git
-command -v python3 >/dev/null 2>&1 || { err "python3 introuvable (apt install python3-full)."; exit 1; }
-command -v git     >/dev/null 2>&1 || { err "git introuvable — requis pour la dep udapi (apt install git)."; exit 1; }
+# 1. git (dep udapi installee depuis GitHub)
+command -v git >/dev/null 2>&1 || { err "git introuvable — requis pour la dep udapi (apt install git)."; exit 1; }
 
-# 2. venv (creation / reparation, comme install.sh de l'app)
-create_venv() { step "Creation du venv .venv/"; python3 -m venv .venv; }
-if [ ! -x ".venv/bin/python" ]; then
-    [ -d ".venv" ] && { warn ".venv/ present mais casse — recreation"; rm -rf .venv; }
-    create_venv
+# 2. Choix de l'interpreteur : spacy 3.5.4 (displaCy) + ses deps thinc/blis n'ont
+#    PAS de wheels pour Python 3.13 et echouent a compiler. On exige 3.10-3.12.
+py_ver() { "$1" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null; }
+py_ok()  { case "$(py_ver "$1")" in 3.10|3.11|3.12) return 0;; *) return 1;; esac; }
+
+PYBIN=""
+for c in python3.12 python3.11 python3.10 python3; do
+    command -v "$c" >/dev/null 2>&1 && py_ok "$c" && { PYBIN="$c"; break; }
+done
+if [ -z "$PYBIN" ]; then
+    err "Aucun Python 3.10-3.12 trouve (python3 = $(py_ver python3 || echo '?'))."
+    err "spacy 3.5.4 ne s'installe pas sur 3.13. Installe une version compatible :"
+    err "   sudo apt install -y python3.12 python3.12-venv"
+    err "puis relance ./install_coref.sh"
+    exit 1
+fi
+step "Interpreteur : $PYBIN ($(py_ver "$PYBIN"))"
+
+# 3. venv (creation / reparation). Recree si l'existant est sur un Python
+#    incompatible (ex. une tentative precedente en 3.13).
+create_venv() { step "Creation du venv .venv/ avec $PYBIN"; "$PYBIN" -m venv .venv; }
+if [ -x ".venv/bin/python" ] && py_ok ".venv/bin/python"; then
+    warn "venv .venv/ deja present (Python $(py_ver .venv/bin/python)) — reutilise"
 else
-    warn "venv .venv/ deja present — reutilise"
+    [ -d ".venv" ] && { warn ".venv/ absent/casse/incompatible — recreation"; rm -rf .venv; }
+    create_venv
 fi
 if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
     warn "pip absent du venv — ensurepip"
