@@ -148,7 +148,9 @@ _LOC = {"développer", "situer", "trouver", "implanter", "établir", "naître",
         "retourner", "séjourner", "exercer", "aller"}  # PAS « apparaître » (dans un film) ni « jouer » (d'un instrument)
 # Nouvelles familles (source = ENTITÉ / sujet, sauf indication)
 _SIMILAR = {"ressembler", "rappeler"}                      # à Y
-_DEATHCAUSE = {"décéder", "mourir", "succomber", "souffrir"}  # de Y → r_has_causatif
+# « X décède/meurt DE Y » : la CAUSE porte sur l'état résultant, pas sur X
+# (relation_definitions.md : blessure|r_has_causatif|chute). verbe → nom d'état.
+_DEATHCAUSE = {"décéder": "décès", "mourir": "mort", "succomber": "mort"}
 _AUTEUR = {"écrire", "composer", "réaliser", "peindre", "diriger", "produire",
            "enregistrer", "interpréter", "publier", "signer"}   # passif « par Y »
 _OWN = {"posséder", "détenir"}                             # obj → r_own
@@ -201,6 +203,13 @@ _INDEF = {"tel", "certain", "quelconque", "quelque", "aucun", "chaque"}
 def _indefinite(sent, tid):
     """« tel ou tel instrument » : objet non spécifique → à écarter."""
     return any(c.lemma in _INDEF for c in sent.children(tid))
+
+
+def _carac_rel(tok):
+    """r_carac pour un attribut ADJECTIVAL (eau|r_carac|liquide), r_carac_nominale
+    pour une caractéristique NOMINALE (stylo|r_carac_nominale|bille).
+    Cf. relation_definitions.md."""
+    return "r_carac" if tok.upos == "ADJ" else "r_carac_nominale"
 
 
 def _conj_ids(sent, tid):
@@ -316,10 +325,10 @@ def extract_from_sentences(sentences: list) -> list:
             if L in {"distinguer", "caractériser"}:
                 par = _obl_by_case(sent, t.id, "par")
                 if par is not None:
-                    _emit(results, seen, subj, "r_carac", _np(sent, par.id), L)
+                    _emit(results, seen, subj, _carac_rel(par), _np(sent, par.id), L)
             if (L in _CARAC_OBJ and obj_tok is not None
-                    and obj_tok.upos in ("NOUN", "PROPN")):  # pas le réfléchi « se présente »
-                _emit_t(results, seen, subj, "r_carac", sent, obj_tok.id, L)
+                    and obj_tok.upos in ("NOUN", "PROPN")):  # nom → r_carac_nominale ; pas le réfléchi « se présente »
+                _emit_t(results, seen, subj, "r_carac_nominale", sent, obj_tok.id, L)
             if L in _CONSEQ:
                 comp = obj_tok or _obl_by_case(sent, t.id, "en") or _obl_by_case(sent, t.id, "à")
                 if comp is not None:
@@ -344,11 +353,12 @@ def extract_from_sentences(sentences: list) -> list:
                 a = _obl_by_case(sent, t.id, "à") or obj_tok
                 if a is not None:
                     _emit(results, seen, subj, "r_similar", _np(sent, a.id), L)
-            # r_has_causatif : « décède / meurt DE Y » (cause)
+            # r_has_causatif : « X décède DE Y » → « décès/mort r_has_causatif Y »
+            # (source = état résultant, pas la personne). subj sert de garde.
             if L in _DEATHCAUSE:
                 de = _obl_by_case(sent, t.id, "de")
                 if de is not None and de.lemma not in _TEMPORAL:
-                    _emit(results, seen, subj, "r_has_causatif", _np(sent, de.id), L)
+                    _emit(results, seen, _DEATHCAUSE[L], "r_has_causatif", _np(sent, de.id), L)
             # r_has_auteur : passif « écrit / composé / produit PAR Y » (subj = œuvre)
             if L in _AUTEUR and sent.child(t.id, {"aux:pass"}) is not None:
                 par = _obl_by_case(sent, t.id, "par")

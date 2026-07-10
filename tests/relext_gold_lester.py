@@ -33,9 +33,9 @@ GOLD = [
     # (r_carac = attribut adjectival : liquide/blanche/acide — cf.
     # relation_definitions.md). On ne l'extrait donc pas.
     ("lester", "r_lieu", "louisiane", "hard"),   # « scène blues DE Louisiane » : nmod, pas prédiqué de Lester
-    ("lester", "r_lieu", "pontiac", "rule"),                           # déménage à
-    ("lester", "r_lieu", "paradise", "rule"),                          # vit à
-    ("lester", "r_has_causatif", "cancer", "rule"),                    # décède de
+    ("lester", "r_lieu", "pontiac", "now"),                            # déménage à
+    ("lester", "r_lieu", "paradise", "now"),                           # vit à
+    ("décès", "r_has_causatif", "cancer", "now"),                      # « décède de » → source = état
 ]
 
 # Faux positifs à NE JAMAIS produire.
@@ -109,7 +109,7 @@ GOLD_MULTI = [
     ("clavier", "r_holo", "ordinateur"),
     ("jour", "r_anto", "nuit"),
     ("congre", "r_similar", "anguille"),
-    ("désert", "r_carac", "chaleur intense"),
+    ("désert", "r_carac_nominale", "chaleur intense"),  # cible NOMINALE (cf. doc)
     ("tabac", "r_has_conseq", "cancer"),
     ("lion", "r_lieu", "savane"),
     ("table", "r_object>mater", "bois"),
@@ -125,7 +125,7 @@ GOLD_MULTI = [
     ("couteau", "r_telic_role", "couper"),
     ("fête", "r_time", "hiver"),
     ("cassoulet", "r_lieu>origine", "toulouse"),
-    ("patient", "r_has_causatif", "cancer"),
+    ("décès", "r_has_causatif", "cancer"),  # source = état résultant, pas le patient
 ]
 
 # Relations prédicatives génériques (source = verbe) TOUJOURS émises en plus des
