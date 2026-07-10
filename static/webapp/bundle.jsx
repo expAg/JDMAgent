@@ -15803,6 +15803,20 @@ const TOOL_MODELS = {
   jdmrel:   [{ value: 'default',        label: '(par défaut)' }],
 };
 
+// Texte d'exemple chargé par défaut dans l'onglet extraction JDM (biographie
+// Lazy Lester — banc d'essai réel discuté avec l'utilisateur).
+const JDMREL_DEFAULT = `Leslie Johnson (20 juin 1933 - 22 août 2018 (à 85 ans)), mieux connu sous le nom de Lazy Lester, est un musicien de blues américain qui chante, joue de l'harmonica et de la guitare. Au cours d'une carrière s'étendant des années 1950 à 2018, il a été un pionnier du swamp blues [1] et a également joué du blues harmonica, du rythme and blues et du blues de Louisiane[2].
+
+Mieux connu pour ses succès régionaux enregistrés avec les Excello Records d'Ernie Young, basé à Nashville, Lester a également contribué aux morceaux enregistrés par d'autres artistes Excello, notamment Slim Harpo, Lightnin' Slim et Katie Webster . Des reprises de ses chansons ont été enregistrées par (entre autres) les Kinks, les Flamin' Groovies, Freddy Fender, Dwight Yoakam, Dave Edmunds, Raful Neal, Anson Funderburgh et les Fabulous Thunderbirds . Après son comeback (depuis la fin des années 1980), il enregistre de nouveaux albums grâce à Mike Buck, Sue Foley, Gene Taylor, Kenny Neal, Lucky Peterson et Jimmie Vaughan.
+
+Leslie Johnson a commencé à jouer de la guitare vers l'âge de 11 ans et à se produire à l'adolescence autour de Baton Rouge avec Raful Neal, co-fondant plus tard les Rhythm Rockers. Au milieu des années 1950, Lester était en marge de la scène blues de Louisiane. Lorsque Buddy Guy part pour Chicago, en 1957, Lester le remplace, à la guitare, dans un groupe local – même si, à cette époque, Lester ne possède pas un tel instrument.
+
+La carrière de Lester décolle lorsqu'il rencontre Lightnin' Slim dans un bus transportant Slim à une session d'enregistrement Excello. Au studio, l'harmoniciste prévu ne se présente pas. Slim et Lester passent l'après-midi à essayer en vain de le retrouver, lorsque Lester se propose de le remplacer. Le travail de Lester lors de cette première session Lightnin' Slim conduit le producteur Jay Miller à enregistrer Lester en tant qu'artiste solo. Miller a surnommé Lester « Lazy Lester » en raison de son style laconique et décontracté.
+
+À la fin des années 1960, il abandonne la musique, travaillant manuellement et s'adonnant à son passe-temps favori : la pêche. Lester déménage finalement à Pontiac, Michigan, vivant avec la sœur de Slim Harpo. En 1971, Fred Reif organise un concert de Lightnin' Slim au Festival Folk de l'Université de Chicago, et amène Lester de Louisiane pour l'accompagner. Des années plus tard, Reif orchestre son comeback.
+
+En septembre 2002, la Boston Blues Society lui décerne un Lifetime Achievement Award. En 2003, Martin Scorsese inclut Lester dans son concert hommage au blues au Radio City Music Hall. Lester vit alors à Paradise, en Californie, avec sa petite amie et apparaît dans le film documentaire de 2015 I Am the Blues. Lester continue à se produire jusqu'en 2018, retournant souvent en Louisiane. Lester décède d'un cancer le 22 août 2018, à l'âge de 85 ans.`;
+
 // Encart d'erreur / placeholder homogène (service down ou non branché).
 function ToolNotice({ msg, tone }) {
   const color = tone === 'error' ? 'var(--jdm-magenta)' : 'var(--jdm-orange)';
@@ -16205,7 +16219,7 @@ function ViewOutils() {
       {tab === 'analogy'  && <AnalogyPanel />}
       {tab === 'jdmrel'   && (
         <TextToolPanel path="jdmrel" models={TOOL_MODELS.jdmrel}
-          defaultText="Le Louisiana blues est un genre de blues qui se distingue par des rythmes lourds. Il s'est développé dans l'état de la Louisiane."
+          defaultText={JDMREL_DEFAULT} rows={12}
           placeholder="Un texte à analyser en relations sémantiques JDM (syntaxe UDPipe + JDM)…"
           options={[{ key: 'resolve_anaphora', label: 'Résoudre les anaphores pronominales (coréférence)', default: false }]}
           renderData={(d) => <JdmRelResult data={d} />} />
