@@ -29,8 +29,9 @@ GOLD = [
     ("leslie johnson", "r_syn", "lazy lester", "now"),
     ("leslie johnson", "r_isa", "musicien de blues", "now"),
     ("leslie johnson", "r_isa", "pionnier du swamp blues", "coref"),   # « Il »
-    ("leslie johnson", "r_carac", "harmonica", "now"),                 # « joue de … »
-    ("leslie johnson", "r_carac", "guitare", "now"),
+    # NB : « joue de l'harmonica/la guitare » n'a PAS de relation JDM propre
+    # (r_carac = attribut adjectival : liquide/blanche/acide — cf.
+    # relation_definitions.md). On ne l'extrait donc pas.
     ("lester", "r_lieu", "louisiane", "hard"),   # « scène blues DE Louisiane » : nmod, pas prédiqué de Lester
     ("lester", "r_lieu", "pontiac", "rule"),                           # déménage à
     ("lester", "r_lieu", "paradise", "rule"),                          # vit à

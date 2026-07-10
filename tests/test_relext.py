@@ -164,18 +164,13 @@ def test_own_indefinite_negative():
     assert not any(r == "r_own" for _, r, _ in _syn_keys(s))
 
 
-def test_jouer_de_conj_subject():
-    # « musicien qui chante et joue de l'harmonica » : sujet hérité par
-    # coordination (joue = conj de chante) + relatif → r_carac vers l'instrument.
-    s = _sent([(1, "Leslie", "Leslie", "PROPN", 4, "nsubj"),
-               (2, "est", "être", "AUX", 4, "cop"),
-               (3, "un", "un", "DET", 4, "det"),
-               (4, "musicien", "musicien", "NOUN", 0, "root"),
-               (5, "qui", "qui", "PRON", 6, "nsubj", {"PronType": "Rel"}),
-               (6, "chante", "chanter", "VERB", 4, "acl:relcl"),
-               (7, "et", "et", "CCONJ", 8, "cc"),
-               (8, "joue", "jouer", "VERB", 6, "conj"),
-               (9, "de", "de", "ADP", 11, "case"),
-               (10, "l'", "le", "DET", 11, "det"),
-               (11, "harmonica", "harmonica", "NOUN", 8, "obl:arg")])
-    assert ("leslie", "r_carac", "harmonica") in _syn_keys(s)
+def test_conj_verb_subject_inheritance():
+    # « voiture qui roule et provoque un accident » : « provoque » (conj de
+    # « roule ») hérite le sujet → r_has_conseq bien attaché au sujet réel.
+    s = _sent([(1, "voiture", "voiture", "NOUN", 0, "root"),
+               (2, "qui", "qui", "PRON", 3, "nsubj", {"PronType": "Rel"}),
+               (3, "roule", "rouler", "VERB", 1, "acl:relcl"),
+               (4, "et", "et", "CCONJ", 5, "cc"),
+               (5, "provoque", "provoquer", "VERB", 3, "conj"),
+               (6, "accident", "accident", "NOUN", 5, "obj")])
+    assert ("voiture", "r_has_conseq", "accident") in _syn_keys(s)

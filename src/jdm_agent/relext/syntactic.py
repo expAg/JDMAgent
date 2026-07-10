@@ -317,12 +317,6 @@ def extract_from_sentences(sentences: list) -> list:
                 par = _obl_by_case(sent, t.id, "par")
                 if par is not None:
                     _emit(results, seen, subj, "r_carac", _np(sent, par.id), L)
-            # r_carac : « joue DE l'harmonica / DU blues » (instrument ou genre
-            # pratiqué caractérise l'artiste). « et » coordonné géré via _emit_t.
-            if L == "jouer":
-                de = _obl_by_case(sent, t.id, "de")
-                if de is not None and de.upos in ("NOUN", "PROPN"):
-                    _emit_t(results, seen, subj, "r_carac", sent, de.id, "jouer de")
             if (L in _CARAC_OBJ and obj_tok is not None
                     and obj_tok.upos in ("NOUN", "PROPN")):  # pas le réfléchi « se présente »
                 _emit_t(results, seen, subj, "r_carac", sent, obj_tok.id, L)
