@@ -60,6 +60,15 @@ def _loc(sent, tid: int) -> str:
     return _np(sent, tid)
 
 
+def _term_np(sent, tok) -> "str | None":
+    """Chunk nominal d'un argument, ou None si c'est un pronom personnel/
+    démonstratif non résolu (il/elle/ce…)."""
+    if tok.upos == "PRON" and (tok.feats.get("PronType") in ("Prs", "Dem")
+                               or tok.form.lower() in _SKIP_SUBJ):
+        return None
+    return _np(sent, tok.id)
+
+
 def _subject(sent, verb) -> "str | None":
     """Sujet syntaxique d'un verbe, avec résolution du relatif « qui »."""
     sub = sent.child(verb.id, {"nsubj", "nsubj:pass"})
@@ -101,6 +110,10 @@ def _obl_by_case(sent, verb_id, case_lemma):
     return None
 
 
+# Noms « prédicat de classe » : « est un genre/sorte de Y » → cible = Y.
+_GENRE = {"genre", "sorte", "type", "espèce", "famille", "catégorie", "forme",
+          "variété", "sous-genre"}
+
 # lemme de verbe → (relation JDM, mode de complément)
 _CONSEQ = {"produire", "provoquer", "causer", "entraîner", "engendrer",
            "déclencher", "générer", "induire"}
@@ -122,24 +135,35 @@ def _emit(results, seen, subj, rel, obj, trigger):
 
 
 def extract_syntactic(text: str) -> list:
-    """Extrait des triplets JDM par la syntaxe. Renvoie
-    [{source, relation, target, category, pattern}]."""
+    """Texte → triplets JDM (parse UDPipe puis règles)."""
+    return extract_from_sentences(analyse(text))
+
+
+def extract_from_sentences(sentences: list) -> list:
+    """Applique les règles syntaxiques à des phrases déjà parsées. Renvoie
+    [{source, relation, target, category, pattern}]. Testable hors-ligne."""
     results, seen = [], set()
-    for sent in analyse(text):
+    for sent in sentences:
         for t in sent.tokens:
             # ── Copule : « $x est un [genre/sorte de] $y » → r_isa ──
-            if t.upos in ("NOUN", "PROPN") and sent.child(t.id, {"cop"}) is not None:
+            # On EXCLUT les prédicats prépositionnels (« en marge », « dans X » :
+            # le nom porte un `case`) → ce n'est pas une copule attributive.
+            if (t.upos in ("NOUN", "PROPN") and sent.child(t.id, {"cop"}) is not None
+                    and sent.child(t.id, {"case"}) is None):
                 subj_tok = sent.child(t.id, {"nsubj", "nsubj:pass"})
-                if subj_tok is not None:
-                    subj = _np(sent, subj_tok.id)
-                    if t.lemma in {"genre", "sorte", "type", "espèce", "famille",
-                                   "catégorie", "forme", "variété", "sous-genre"}:
-                        m = None
-                        for ch in sent.children(t.id):
-                            if ch.deprel in ("nmod", "obl") and _case_lemma(sent, ch.id) == "de":
-                                m = ch
-                                break
+                subj = _term_np(sent, subj_tok) if subj_tok is not None else None
+                if subj:
+                    m = None
+                    for ch in sent.children(t.id):
+                        if ch.deprel in ("nmod", "obl") and _case_lemma(sent, ch.id) == "de":
+                            m = ch
+                            break
+                    if t.lemma in _GENRE:
+                        # « est un genre de blues » → cible = blues
                         obj = _np(sent, m.id) if m else _np(sent, t.id)
+                    elif m is not None:
+                        # « est un musicien de blues » → cible = musicien de blues
+                        obj = f"{t.form.lower()} de {_np(sent, m.id)}"
                     else:
                         obj = _np(sent, t.id)
                     _emit(results, seen, subj, "r_isa", obj, f"copule/{t.lemma}")
@@ -148,11 +172,34 @@ def extract_syntactic(text: str) -> list:
             if t.upos != "VERB":
                 continue
             L = t.lemma
+            obj_tok = sent.child(t.id, {"obj"})
+
+            # ── Alias / synonymie (n'ont pas besoin d'un nsubj) ──
+            # « connu sous le nom de X » : E (tête de l'acl) r_syn X
+            if L == "connaître":
+                nom = next((c for c in sent.children(t.id)
+                            if c.deprel.startswith("obl") and c.lemma == "nom"), None)
+                ent = sent.by_id.get(t.head)
+                if nom is not None and ent is not None:
+                    alias = next((c for c in sent.children(nom.id)
+                                  if c.deprel in ("nmod", "appos") and _case_lemma(sent, c.id) == "de"), None)
+                    e = _term_np(sent, ent)
+                    if alias is not None and e:
+                        _emit(results, seen, e, "r_syn", _np(sent, alias.id), "connu sous le nom de")
+            # « surnommer / appeler / nommer X Y » → X r_syn Y
+            if L in {"surnommer", "appeler", "nommer"} and obj_tok is not None:
+                second = next((c for c in sent.children(t.id)
+                               if c.deprel in ("xcomp", "obl:mod", "obj") and c.id != obj_tok.id), None)
+                if second is None:
+                    second = sent.child(obj_tok.id, {"appos"})
+                o1 = _term_np(sent, obj_tok)
+                if second is not None and o1:
+                    _emit(results, seen, o1, "r_syn", _np(sent, second.id), L)
+
+            # ── Règles à SUJET ──
             subj = _subject(sent, t)
             if subj is None:
                 continue
-            obj_tok = sent.child(t.id, {"obj"})
-
             if L in {"distinguer", "caractériser"}:
                 par = _obl_by_case(sent, t.id, "par")
                 if par is not None:

@@ -59,3 +59,44 @@ def test_pronoun_substitution_offline():
     out = _substitute(tokens, chains)
     assert "le chat ronronne" in out.lower()
     assert " il " not in (" " + out.lower() + " ")
+
+
+# ── Tests des règles SYNTAXIQUES sur phrases synthétiques (hors-ligne) ──
+def _sent(rows):
+    from jdm_agent.relext.udpipe import Token, Sentence
+    toks = [Token(r[0], r[1], r[2], r[3], (r[6] if len(r) > 6 else {}), r[4], r[5])
+            for r in rows]
+    s = Sentence(tokens=toks)
+    s.by_id = {t.id: t for t in toks}
+    return s
+
+
+def _syn_keys(sent):
+    from jdm_agent.relext.syntactic import extract_from_sentences
+    return {(r["source"], r["relation"], r["target"])
+            for r in extract_from_sentences([sent])}
+
+
+def test_copula_isa_positive():
+    # « chat est un félin »
+    s = _sent([(1, "chat", "chat", "NOUN", 3, "nsubj"),
+               (2, "est", "être", "AUX", 3, "cop"),
+               (3, "félin", "félin", "NOUN", 0, "root")])
+    assert ("chat", "r_isa", "félin") in _syn_keys(s)
+
+
+def test_copula_en_marge_negative():
+    # « Lester était en marge » : « marge » porte un case → PAS de r_isa
+    s = _sent([(1, "Lester", "Lester", "PROPN", 4, "nsubj"),
+               (2, "était", "être", "AUX", 4, "cop"),
+               (3, "en", "en", "ADP", 4, "case"),
+               (4, "marge", "marge", "NOUN", 0, "root")])
+    assert _syn_keys(s) == set()
+
+
+def test_copula_pronoun_subject_negative():
+    # « Il est un pionnier » : sujet pronom personnel → pas d'attache (sans coref)
+    s = _sent([(1, "Il", "lui", "PRON", 4, "nsubj", {"PronType": "Prs"}),
+               (2, "est", "être", "AUX", 4, "cop"),
+               (3, "pionnier", "pionnier", "NOUN", 0, "root")])
+    assert _syn_keys(s) == set()
