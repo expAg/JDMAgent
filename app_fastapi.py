@@ -2923,6 +2923,89 @@ def api_admin_info() -> dict[str, Any]:
 
 
 # ────────────────────────────────────────────────────────────────────
+# Outils TALN — proxys vers des services SÉPARÉS (coref/syntaxe locaux,
+# génitif/analogies externes). Tout passe par le backend (pas d'appel
+# navigateur→service : CORS + « couleurs du site »). Pilotés par config
+# env ; on ne renvoie JAMAIS de 500 à l'UI : service down / non configuré
+# → { ok:false, error } pour un placeholder gracieux côté onglet.
+# ────────────────────────────────────────────────────────────────────
+TOOLS_COREF_URL    = os.environ.get("TOOLS_COREF_URL", "http://127.0.0.1:8901/api/coref").strip()
+TOOLS_SYNTAX_URL   = os.environ.get("TOOLS_SYNTAX_URL", "http://127.0.0.1:8901/api/syntax").strip()
+TOOLS_GENITIVE_URL = os.environ.get("TOOLS_GENITIVE_URL", "").strip()   # vide → placeholder
+TOOLS_ANALOGY_URL  = os.environ.get("TOOLS_ANALOGY_URL", "").strip()    # vide → placeholder
+_TOOLS_TIMEOUT     = float(os.environ.get("TOOLS_TIMEOUT", "60"))
+
+
+async def _proxy_tool_json(url: str, payload: dict, service: str) -> dict:
+    """POST JSON vers un service amont ; renvoie { ok, service, data|error }.
+
+    URL vide → placeholder ; connexion refusée / timeout / statut ≠ 200 →
+    message lisible (jamais d'exception propagée à l'UI).
+    """
+    if not url:
+        return {"ok": False, "service": service,
+                "error": f"Service « {service} » non branché pour l'instant "
+                         f"(définis son URL dans .env pour l'activer)."}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=_TOOLS_TIMEOUT) as client:
+            r = await client.post(url, json=payload)
+        if r.status_code != 200:
+            return {"ok": False, "service": service,
+                    "error": f"Le service « {service} » a répondu {r.status_code}."}
+        return {"ok": True, "service": service, "data": r.json()}
+    except httpx.ConnectError:
+        return {"ok": False, "service": service,
+                "error": f"Service « {service} » injoignable — est-il démarré ? "
+                         f"(URL : {url})"}
+    except Exception as e:  # timeout, JSON invalide, etc.
+        return {"ok": False, "service": service,
+                "error": f"Erreur proxy « {service} » : {e}"}
+
+
+class ToolTextRequest(BaseModel):
+    text: str = ""
+
+
+class ToolGenitiveRequest(BaseModel):
+    phrase: str = ""
+
+
+class ToolAnalogyRequest(BaseModel):
+    a: str = ""
+    b: str = ""
+    c: str = ""
+
+
+@app.post("/api/tools/coref")
+async def api_tools_coref(req: ToolTextRequest) -> dict:
+    """Résolution de coréférences (service coref séparé)."""
+    return await _proxy_tool_json(TOOLS_COREF_URL, {"text": req.text}, "coréférence")
+
+
+@app.post("/api/tools/syntax")
+async def api_tools_syntax(req: ToolTextRequest) -> dict:
+    """Analyse syntaxique en dépendances UD (service coref séparé, chemin léger)."""
+    return await _proxy_tool_json(TOOLS_SYNTAX_URL, {"text": req.text}, "analyse syntaxique")
+
+
+@app.post("/api/tools/genitive")
+async def api_tools_genitive(req: ToolGenitiveRequest) -> dict:
+    """Extraction de relations sémantiques dans les génitifs « A de B ».
+
+    Placeholder pour l'instant (TOOLS_GENITIVE_URL vide par défaut). Branchement
+    de rezo-GEN1.php plus tard (le format d'appel exact reste à sonder).
+    """
+    return await _proxy_tool_json(TOOLS_GENITIVE_URL, {"phrase": req.phrase}, "génitif")
+
+
+@app.post("/api/tools/analogy")
+async def api_tools_analogy(req: ToolAnalogyRequest) -> dict:
+    """Explication d'analogies (service externe — placeholder, URL à venir)."""
+    return await _proxy_tool_json(TOOLS_ANALOGY_URL, req.model_dump(), "analogies")
+
+
+# ────────────────────────────────────────────────────────────────────
 # Static files — IMPORTANT : déclarer EN DERNIER (catch-all)
 # ────────────────────────────────────────────────────────────────────
 STATIC_DIR = _root / "static"

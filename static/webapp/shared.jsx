@@ -883,6 +883,7 @@ function TopNav({ active, setActive, theme, setTheme, accent, cycleAccent }) {
     { id: 'chatbot',     label: 'Chatbot LLM' },
     { id: 'jarvis',      label: 'Jarvis' },
     { id: 'productions', label: 'Productions' },
+    { id: 'outils',      label: 'Outils' },
     { id: 'aide',        label: 'Aide' },
   ];
   return (

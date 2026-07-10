@@ -31,6 +31,7 @@ FILES = [
     "views-chat.jsx",
     "views-jarvis.jsx",
     "views-productions.jsx",
+    "views-outils.jsx",
     "views-aide.jsx",
     "app.jsx",
 ]

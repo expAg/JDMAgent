@@ -24,7 +24,7 @@ const TWEAK_ACCENTS = ['#c0411a', '#1f97b1', '#c83a73', '#4ea63c', '#7a4fbe', '#
 // sous-routes /jarvis/<flow> qui pré-remplissent
 // window.__jdmPendingPayload.jarvis.flow (lu par ViewJarvis au mount).
 const _VALID_VIEWS = ['projet', 'explorer', 'claim', 'subgraph',
-                       'chatbot', 'chat', 'jarvis', 'productions', 'aide'];
+                       'chatbot', 'chat', 'jarvis', 'productions', 'outils', 'aide'];
 
 function _appBase() {
   if (typeof document === 'undefined') return '';
@@ -168,6 +168,7 @@ function App() {
       chatbot:     'JDM Agent - Chatbot',
       chat:        'Jarvis : Chat',
       productions: 'JDM Agent - Productions',
+      outils:      'JDM Agent - Outils',
       aide:        'JDM Agent - Aide',
       jarvis:      'Jarvis : Orchestrateur',
     };
@@ -241,7 +242,7 @@ function App() {
     const SHORTCUTS_G = {
       'KeyE': 'explorer', 'KeyC': 'claim',  'KeyS': 'subgraph',
       'KeyA': 'chatbot',  'KeyJ': 'jarvis', 'KeyP': 'productions',
-      'KeyH': 'aide',
+      'KeyO': 'outils',   'KeyH': 'aide',
     };
     const isTyping = (target) => {
       if (!target) return false;
@@ -288,6 +289,7 @@ function App() {
     chat:        <ViewChat />,
     jarvis:      <ViewJarvis />,
     productions: <ViewProductions />,
+    outils:      <ViewOutils />,
     aide:        <ViewAide />,
   };
 
@@ -356,6 +358,7 @@ function App() {
               ['chatbot', 'Chatbot LLM'],
               ['jarvis', 'Jarvis'],
               ['productions', 'Productions'],
+              ['outils', 'Outils'],
               ['aide', 'Aide'],
             ].map(([id, label]) => (
               <button key={id}
