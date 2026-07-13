@@ -3053,10 +3053,23 @@ async def api_tools_jdmrel(req: ToolTextRequest) -> dict:
 
 @app.post("/api/tools/wsd")
 async def api_tools_wsd(req: ToolTextRequest) -> dict:
-    """Désambiguïsation sémantique (WSD) : bon raffinement de chaque terme
-    polysémique selon le contexte (service à venir — placeholder)."""
-    return await _proxy_tool_json(
-        TOOLS_WSD_URL, {"text": req.text, "model": req.model}, "désambiguïsation (WSD)")
+    """Désambiguïsation sémantique (WSD) via raffinements JeuxDeMots.
+
+    Si TOOLS_WSD_URL est défini → proxy. Sinon → modèle LOCAL v1 (jdm_agent.wsd) :
+    pour chaque mot polysémique, choisit le sens (r_raff_sem) le mieux associé au
+    contexte dans le graphe JDM."""
+    if TOOLS_WSD_URL:
+        return await _proxy_tool_json(
+            TOOLS_WSD_URL, {"text": req.text, "model": req.model}, "désambiguïsation (WSD)")
+    try:
+        import anyio
+        from jdm_agent.wsd import disambiguate
+        c = get_client()
+        out = await anyio.to_thread.run_sync(lambda: disambiguate(req.text or "", c))
+        return {"ok": True, "service": "désambiguïsation (WSD)", "data": out}
+    except Exception as e:
+        return {"ok": False, "service": "désambiguïsation (WSD)",
+                "error": f"Erreur WSD : {e!r}"}
 
 
 @app.post("/api/tools/thematic")

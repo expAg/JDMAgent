@@ -15795,7 +15795,7 @@ const OUTILS_TABS = [
 const TOOL_MODELS = {
   coref:    [{ value: 'corpipe25',      label: 'CorPipe 25 — mT5-large (défaut)' }],
   syntax:   [{ value: 'udpipe2-fr-gsd', label: 'UDPipe 2 — french-gsd (défaut)' }],
-  wsd:      [{ value: 'default',        label: '(par défaut)' }],
+  wsd:      [{ value: 'jdm-raffinements', label: 'JeuxDeMots · raffinements (défaut)' }],
   thematic: [{ value: 'jdm-domain',     label: 'JeuxDeMots · r_domain (défaut)' }],
   polarity: [{ value: 'default',        label: '(par défaut)' }],
   genitive: [{ value: 'default',        label: '(par défaut)' }],
@@ -16111,6 +16111,51 @@ function JdmRelResult({ data }) {
   );
 }
 
+// ───────── Désambiguïsation (WSD par raffinements JDM) ─────────
+function WsdResult({ data }) {
+  const words = (data && data.words) || [];
+  if (!words.length) {
+    return <ToolNotice tone="warn"
+      msg="Aucun mot polysémique trouvé (les termes ont un seul sens dans JeuxDeMots)." />;
+  }
+  return (
+    <Card padding={18}>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>
+        {words.length} mot(s) polysémique(s) · {data.analyzed} mots analysés
+      </div>
+      <div style={{ display: 'grid', gap: 12 }}>
+        {words.map((w, i) => (
+          <div key={i} style={{
+            padding: '10px 12px', background: 'var(--bg-elev)',
+            border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span className="mono" style={{ fontSize: 14, color: 'var(--ink)', fontWeight: 600 }}>{w.word}</span>
+              <span style={{ color: 'var(--ink-3)' }}>→</span>
+              <span className="mono" style={{ fontSize: 13, color: 'var(--accent)' }}>{w.chosen.sense}</span>
+              <span title="score d'association au contexte" className="mono"
+                style={{ fontSize: 11, color: 'var(--ink-3)' }}>({w.chosen.score})</span>
+              <span style={{
+                marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
+                color: w.confident ? 'var(--bg)' : 'var(--ink-2)',
+                background: w.confident ? 'var(--accent)' : 'var(--bg)',
+                border: '1px solid var(--line)',
+              }}>{w.confident ? 'confiant' : 'incertain'}</span>
+            </div>
+            {w.senses.length > 1 && (
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                {w.senses.slice(1).map((s, j) => (
+                  <span key={j}>{s.sense} <span style={{ opacity: 0.7 }}>({s.score})</span></span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // ───────── Analyse thématique (domaines JeuxDeMots) ─────────
 function ThematicPanel() {
   const [text, setText] = React.useState(THEMATIC_DEFAULT);
@@ -16282,8 +16327,9 @@ function ViewOutils() {
       {tab === 'syntax'   && <SyntaxPanel />}
       {tab === 'wsd'      && (
         <TextToolPanel path="wsd" models={TOOL_MODELS.wsd}
-          defaultText="L'avocat a plaidé toute la matinée, puis il a mangé un avocat bien mûr."
-          placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…" />
+          defaultText="L'avocat a plaidé au tribunal devant le juge, défendant son client contre l'accusation."
+          placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…"
+          renderData={(d) => <WsdResult data={d} />} />
       )}
       {tab === 'thematic' && <ThematicPanel />}
       {tab === 'polarity' && (
