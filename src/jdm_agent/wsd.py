@@ -36,10 +36,20 @@ _MAX_SENSES = 10          # on montre tous les sens sémantiques (pas juste 3)
 _FETCH_LIMIT = 250
 
 
+def _wordlike(w: str) -> bool:
+    """Écarte les tokens malformés (« normandie[ », chiffres, ponctuation collée)."""
+    return bool(w) and not any(c in w for c in "[](){}<>0123456789")
+
+
 def _semantic_senses(client, word: str, max_senses: int) -> list:
     """Raffinements SÉMANTIQUES d'un mot (on écarte les purement morphologiques
-    « Nom:/Adj: » sans label discriminant), triés par consensus r_raff_sem."""
-    senses = [s for s in client.refinements_decoded(word) if _discriminants(s)]
+    « Nom:Mas+SG », « Ver:Inf »… sans label discriminant), triés par consensus.
+    Robuste : un terme absent de JDM (500/404) → aucun sens, pas d'erreur."""
+    try:
+        raw = client.refinements_decoded(word)
+    except Exception:
+        return []
+    senses = [s for s in raw if _discriminants(s)]
     return sorted(senses, key=lambda s: -s.weight)[:max_senses]
 
 # Valeurs d'annotation (§20/§22) → facteur de pertinence de l'arête.
@@ -81,8 +91,9 @@ def _neigh_of(rels: list) -> dict:
 
 
 def _discriminants(sense) -> list:
+    # On écarte toute étiquette de POS (« Nom:Mas+SG », « Ver:Inf »… → contient « : »).
     parts = sense.path[1:] if getattr(sense, "path", None) else []
-    return [p.strip().lower() for p in parts if p and not p.rstrip().endswith(":")]
+    return [p.strip().lower() for p in parts if p and ":" not in p]
 
 
 def _annot_factor(client, rel_id) -> float:
@@ -293,7 +304,7 @@ def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES):
                 yield {"type": "occ", "occurrence": _mwe_occ(surface, span, role, verb)}
                 continue
             w = (t.lemma or t.form or "").lower()
-            if len(w) < 3:
+            if len(w) < 3 or not _wordlike(w):
                 continue
             senses = _semantic_senses(client, w, max_senses)
             if len(senses) < 2:
@@ -341,7 +352,7 @@ def resolved_terms(text: str, client, *, max_senses: int = _MAX_SENSES) -> list:
                 out.append((surface, surface, None))
                 continue
             w = (t.lemma or t.form or "").lower()
-            if len(w) < 3:
+            if len(w) < 3 or not _wordlike(w):
                 continue
             senses = _semantic_senses(client, w, max_senses)
             if len(senses) < 2:
