@@ -43,8 +43,8 @@ _PENALTY = 0.15
 
 
 def _content_words(text: str, min_len: int = 3) -> list:
-    """Mots de contenu candidats : lettres, minuscule, hors mots-outils, dédupliqués
-    (ordre d'apparition préservé)."""
+    """Repli SANS syntaxe : mots de contenu par regex (lettres, minuscule, hors
+    mots-outils, dédupliqués, ordre d'apparition)."""
     seen, out = set(), []
     for m in _WORD.finditer(text or ""):
         w = m.group(0).lower()
@@ -56,34 +56,91 @@ def _content_words(text: str, min_len: int = 3) -> list:
     return out
 
 
+# POS porteuses de thème (on écarte verbes/adverbes/déterminants…).
+_CONTENT_POS = {"NOUN", "PROPN", "ADJ"}
+# Poids d'influence par rôle syntaxique : un sujet/objet/tête pèse plus qu'un
+# simple modificateur ou complément périphérique.
+_ROLE_CORE = {"nsubj", "nsubj:pass", "obj", "iobj", "root"}
+_ROLE_MID = {"nmod", "amod", "appos", "conj", "obl", "obl:arg", "xcomp", "ccomp"}
+
+
+def _role_weight(deprel: str) -> float:
+    if deprel in _ROLE_CORE:
+        return 1.0
+    if deprel in _ROLE_MID or deprel.split(":")[0] in {"nmod", "obl", "nsubj", "obj"}:
+        return 0.6
+    return 0.4
+
+
+def _syntactic_units(text: str) -> dict:
+    """Texte → {lemme de contenu: poids syntaxique cumulé}, via UDPipe.
+
+    Ne garde que NOUN/PROPN/ADJ, travaille sur les LEMMES (meilleur rappel JDM :
+    « musiciens »→« musicien »), et cumule le poids de rôle des occurrences (un
+    lemme répété ou en position centrale pèse plus). Réseau requis (lindat)."""
+    from jdm_agent.relext.udpipe import analyse
+    units: dict = {}
+    for sent in analyse(text or ""):
+        for t in sent.tokens:
+            if t.upos not in _CONTENT_POS:
+                continue
+            lem = (t.lemma or t.form or "").lower()
+            if len(lem) < 3 or lem in _STOP:
+                continue
+            units[lem] = units.get(lem, 0.0) + _role_weight(t.deprel)
+    return units
+
+
 def analyze_thematic(text: str, client, *, max_words: int = 150,
-                     per_word: int = 15, min_weight: float = 1.0) -> dict:
+                     per_word: int = 15, min_weight: float = 1.0,
+                     use_syntax: bool = False) -> dict:
     """Texte → thèmes (domaines JDM agrégés + classés).
+
+    `use_syntax` : OPT-IN. Mesuré comme DÉGRADANT la discrimination sur nos textes
+    (la lemmatisation ramène « genres/rythmes » vers des singuliers fourre-tout et
+    la pondération de rôle gonfle les noms abstraits sujets). Par défaut : mots par
+    regex, poids uniforme. Le scoring par dispersion (poids×part) fait le tri.
+    Si activé et réseau OK : UDPipe (POS de contenu + lemmes + poids de rôle).
 
     Renvoie `{themes, word_count, analyzed, truncated}` où chaque thème est
     `{theme, score, rel, count, words}` (`rel` = score normalisé 0-100 par
-    rapport au thème dominant ; `count` = nb de mots-source ; `words` = ces mots).
+    rapport au thème dominant ; `count` = nb de contributions ; `words` = lemmes).
     """
     rid = client.relation_type_id("r_domain")
-    words = _content_words(text)
-    truncated = len(words) > max_words
-    analyzed = words[:max_words]
+
+    units = None
+    if use_syntax:
+        try:
+            units = _syntactic_units(text)
+        except Exception:
+            units = None
+    if not units:
+        units = {w: 1.0 for w in _content_words(text)}
+
+    items = list(units.items())  # (lemme, poids_syntaxique)
+    truncated = len(items) > max_words
+    analyzed = items[:max_words]
 
     agg: dict = {}
     if rid is not None:
-        for w in analyzed:
+        for w, rw in analyzed:
             res = client.relations_from(w, types_ids=[rid],
                                         min_weight=min_weight, limit=per_word)
             idx = res.node_index()
-            for r in res.relations:
-                node = idx.get(r.node2)
-                if node is None or r.w <= 0:
-                    continue
-                key = node.name.strip().lower()  # fusionne « Musique »/« musique »
-                if not key:
-                    continue
+            # Domaines du mot (clé minuscule → fusionne « Musique »/« musique »).
+            doms = [(idx[r.node2].name.strip().lower(), r.w)
+                    for r in res.relations
+                    if r.node2 in idx and r.w > 0 and idx[r.node2].name.strip()]
+            total = sum(wt for _, wt in doms)
+            if total <= 0:
+                continue
+            # Score = MAGNITUDE du poids JDM × PART focalisée (poids/total). Un
+            # domaine définitionnel fort (blues→musique) ressort ; les domaines
+            # éparpillés des mots génériques (genre→sociologie/biologie/…)
+            # s'effondrent. `rw` = influence de rôle (1.0 si sans syntaxe).
+            for key, wt in doms:
                 e = agg.setdefault(key, {"score": 0.0, "count": 0, "words": []})
-                e["score"] += r.w
+                e["score"] += rw * wt * (wt / total)
                 e["count"] += 1
                 if w not in e["words"]:
                     e["words"].append(w)
@@ -110,5 +167,5 @@ def analyze_thematic(text: str, client, *, max_words: int = 150,
     maxs = themes[0]["score"] if themes else 0.0
     for t in themes:
         t["rel"] = round(100.0 * t["score"] / maxs, 1) if maxs > 0 else 0.0
-    return {"themes": themes, "word_count": len(words),
+    return {"themes": themes, "word_count": len(items),
             "analyzed": len(analyzed), "truncated": truncated}
