@@ -38,7 +38,7 @@ _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)  # suites de lettres (sans chiffres
 # (grammaire → linguistique, nombres → mathématique, corps → médecine), ce qui
 # les fait remonter à tort comme thèmes. On les PÉNALISE (facteur réducteur, pas
 # suppression) plutôt que de les retirer.
-_PENALIZED = {"linguistique", "mathématique", "mathématiques", "médecine"}
+_PENALIZED = {"linguistique", "mathématique", "mathématiques", "médecine", "droit"}
 _PENALTY = 0.15
 
 
