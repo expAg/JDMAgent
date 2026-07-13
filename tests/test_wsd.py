@@ -14,14 +14,14 @@ class _Node:
 
 
 class _Rel:
-    def __init__(self, rid, node2, w):
-        self.id, self.node2, self.w = rid, node2, w
+    def __init__(self, rid, node2, w, typ):
+        self.id, self.node2, self.w, self.type = rid, node2, w, typ
 
 
 class _Res:
-    def __init__(self, triples):  # triples: [(rel_id, name, w)]
-        self._nodes = [_Node(i, n) for i, (_r, n, _w) in enumerate(triples)]
-        self._rels = [_Rel(r, i, w) for i, (r, _n, w) in enumerate(triples)]
+    def __init__(self, quads):  # quads: [(rel_id, name, w, type)]
+        self._nodes = [_Node(i, n) for i, (_r, n, _w, _t) in enumerate(quads)]
+        self._rels = [_Rel(r, i, w, t) for i, (r, _n, w, t) in enumerate(quads)]
 
     @property
     def relations(self):
@@ -49,7 +49,7 @@ class _FakeClient:
         return self._REFS.get(name.lower(), [])
 
     def relations_from(self, name, types_ids=None, min_weight=None, limit=None):
-        return _Res([(0, n, w) for (n, w) in self._NEIGH.get(name.lower(), [])])
+        return _Res([(0, n, w, 0) for (n, w) in self._NEIGH.get(name.lower(), [])])
 
 
 def test_fallback_by_type_generic():
@@ -60,21 +60,21 @@ def test_fallback_by_type_generic():
     assert occ["souris"]["chosen"]["sense"] == "souris (rongeur)"
 
 
-# ── Cœur nouveau : repondération de l'arête actancielle par l'annotation ──
+# ── Cœur : repondération de l'arête actancielle par l'annotation ──
 class _AnnotClient:
-    """« avocat » : juriste & fruit ont TOUS DEUX r_patient-1 manger = +204, mais le
-    juriste est annoté « improbable » (arête héritée à réfuter), le fruit « pertinent »."""
-    _EDGES = {  # (node, type_id) -> [(rel_id, target, w)]
-        ("avocat>juriste", 24): [(1, "manger", -11)],   # r_agent-1
-        ("avocat>juriste", 26): [(2, "manger", 204)],   # r_patient-1 (improbable)
-        ("avocat>fruit", 24): [(3, "manger", -43)],
-        ("avocat>fruit", 26): [(4, "manger", 204)],      # r_patient-1 (pertinent)
+    """juriste & fruit ont TOUS DEUX r_patient-1 manger = +204 ; juriste est annoté
+    « improbable » (arête héritée à réfuter), fruit « pertinent »."""
+    _EDGES = {  # node -> [(rel_id, target, w, type)]  (24 = r_agent-1, 26 = r_patient-1)
+        "avocat>juriste": [(1, "manger", -11, 24), (2, "manger", 204, 26)],
+        "avocat>fruit": [(3, "manger", -43, 24), (4, "manger", 204, 26)],
     }
     _ANNOT = {2: "improbable", 4: "pertinent"}
 
     def relations_from(self, name, types_ids=None, min_weight=None, limit=None):
-        key = (name, types_ids[0] if types_ids else None)
-        return _Res(self._EDGES.get(key, []))
+        edges = self._EDGES.get(name, [])
+        if types_ids:  # requête TYPÉE : ne renvoyer que les arêtes de ce type
+            edges = [e for e in edges if e[3] == types_ids[0]]
+        return _Res(edges)
 
     def get_annotations_for_triplet(self, rel_id):
         v = self._ANNOT.get(rel_id)
@@ -85,7 +85,7 @@ def test_selectional_annotation_flips_polluted_edge():
     c = _AnnotClient()
     juriste = _Sense("avocat>juriste", "avocat (juriste)", ["avocat", "juriste"], 90)
     fruit = _Sense("avocat>fruit", "avocat (fruit)", ["avocat", "fruit"], 80)
-    # juriste : patient 204 × (improbable=-0.7) = -142.8 → asym positif → AGENT
+    # juriste : patient 204 × (improbable=-0.7) → asym positif → AGENT
     assert _selectional_asym(c, juriste, "manger") > 0
-    # fruit : patient 204 × (pertinent=1.0) = 204 → asym négatif → PATIENT
+    # fruit : patient 204 × (pertinent=1.0) → asym négatif → PATIENT
     assert _selectional_asym(c, fruit, "manger") < 0
