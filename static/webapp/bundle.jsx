@@ -16113,28 +16113,32 @@ function JdmRelResult({ data }) {
 
 // ───────── Désambiguïsation (WSD par raffinements JDM) ─────────
 function WsdResult({ data }) {
-  const words = (data && data.words) || [];
-  if (!words.length) {
+  const occ = (data && data.occurrences) || [];
+  if (!occ.length) {
     return <ToolNotice tone="warn"
       msg="Aucun mot polysémique trouvé (les termes ont un seul sens dans JeuxDeMots)." />;
   }
   return (
     <Card padding={18}>
       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>
-        {words.length} mot(s) polysémique(s) · {data.analyzed} mots analysés
+        {occ.length} occurrence(s) ambiguë(s){data.mode ? ` · ${data.mode}` : ''}
       </div>
       <div style={{ display: 'grid', gap: 12 }}>
-        {words.map((w, i) => (
+        {occ.map((w, i) => (
           <div key={i} style={{
             padding: '10px 12px', background: 'var(--bg-elev)',
             border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span className="mono" style={{ fontSize: 14, color: 'var(--ink)', fontWeight: 600 }}>{w.word}</span>
+              {w.role && (
+                <span title={`${w.role} de « ${w.verb} »`} style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 999, color: 'var(--ink-2)',
+                  background: 'var(--bg)', border: '1px solid var(--line)',
+                }}>{w.role} · {w.verb}</span>
+              )}
               <span style={{ color: 'var(--ink-3)' }}>→</span>
               <span className="mono" style={{ fontSize: 13, color: 'var(--accent)' }}>{w.chosen.sense}</span>
-              <span title="score d'association au contexte" className="mono"
-                style={{ fontSize: 11, color: 'var(--ink-3)' }}>({w.chosen.score})</span>
               <span style={{
                 marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
                 color: w.confident ? 'var(--bg)' : 'var(--ink-2)',
@@ -16142,13 +16146,13 @@ function WsdResult({ data }) {
                 border: '1px solid var(--line)',
               }}>{w.confident ? 'confiant' : 'incertain'}</span>
             </div>
-            {w.senses.length > 1 && (
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                {w.senses.slice(1).map((s, j) => (
-                  <span key={j}>{s.sense} <span style={{ opacity: 0.7 }}>({s.score})</span></span>
-                ))}
-              </div>
-            )}
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              {w.senses.map((s, j) => (
+                <span key={j} style={{ color: j === 0 ? 'var(--ink)' : 'var(--ink-3)' }}>
+                  {s.sense} <span style={{ opacity: 0.7 }}>(gén {s.generic} · sél {s.selectional})</span>
+                </span>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -16327,7 +16331,7 @@ function ViewOutils() {
       {tab === 'syntax'   && <SyntaxPanel />}
       {tab === 'wsd'      && (
         <TextToolPanel path="wsd" models={TOOL_MODELS.wsd}
-          defaultText="L'avocat a plaidé au tribunal devant le juge, défendant son client contre l'accusation."
+          defaultText="L'avocat mange l'avocat. Au tribunal, l'avocat défend son client."
           placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…"
           renderData={(d) => <WsdResult data={d} />} />
       )}
