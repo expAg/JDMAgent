@@ -17,8 +17,20 @@ _POL_POS, _POL_NEG, _POL_NEU = "_pol-pos", "_pol-neg", "_pol-neutre"
 _NEG = {"ne", "pas", "plus", "jamais", "rien", "aucun", "nul", "sans", "non",
         "guère", "point", "ni"}
 _POL_POS_LABEL, _POL_NEG_LABEL, _POL_NEUTRE = "positif", "négatif", "neutre"
-_CONTENT_POS = {"NOUN", "PROPN", "ADJ", "VERB", "ADV"}
+# NOM en position de MODIFIEUR oblique/adverbial = souvent un connecteur
+# (« en revanche », « de toute façon ») → à exclure de la polarité.
+_EXCL_NOUN_DEP = {"obl", "advmod", "discourse", "vocative", "dislocated"}
 _BAND = 0.15  # bande morte autour de 0 → neutre
+
+
+def _opinion_token(t) -> bool:
+    """Porte-t-il potentiellement une opinion ? ADJ/VERB/ADV oui ; NOM seulement
+    en position d'argument (on écarte les NOM obliques = connecteurs)."""
+    if t.upos in ("ADJ", "VERB", "ADV"):
+        return True
+    if t.upos in ("NOUN", "PROPN"):
+        return t.deprel.split(":")[0] not in _EXCL_NOUN_DEP
+    return False
 
 
 def _pol_of(client, word: str):
@@ -69,7 +81,7 @@ def analyze_polarity(text: str, client, *, max_words: int = 200) -> dict:
                 if lem in _NEG or t.feats.get("Polarity") == "Neg":
                     negated.add(t.head)
             for t in sent.tokens:
-                if t.upos not in _CONTENT_POS:
+                if not _opinion_token(t):
                     continue
                 w = (t.lemma or t.form or "").lower()
                 if len(w) < 2 or w in _NEG:      # mots de négation : pas de polarité propre

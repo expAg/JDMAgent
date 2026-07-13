@@ -9,9 +9,10 @@ const OUTILS_TABS = [
   { id: 'wsd',      label: 'Désambiguïsation (WSD)' },
   { id: 'thematic', label: 'Analyse thématique' },
   { id: 'polarity', label: 'Analyse de polarité' },
-  { id: 'genitive', label: 'Génitifs « A de B »' },
-  { id: 'analogy',  label: 'Analogies' },
-  { id: 'jdmrel',   label: 'Relations sémantiques (JDM)' },
+  { id: 'jdmrel',   label: 'Extraction de relations' },
+  { id: 'semviz',   label: 'Visualisation sémantique', disabled: true },
+  { id: 'genitive', label: 'Génitifs « A de B »',      disabled: true },
+  { id: 'analogy',  label: 'Analogies',                disabled: true },
 ];
 
 // Modèles proposés par onglet (liste déroulante). Placeholders pour l'instant —
@@ -19,11 +20,11 @@ const OUTILS_TABS = [
 // transmis au backend (payload.model) ; les services l'ignorent tant qu'ils ne
 // le gèrent pas. {value, label}.
 const TOOL_MODELS = {
-  coref:    [{ value: 'corpipe25',      label: 'CorPipe 25 — mT5-large (défaut)' }],
+  coref:    [{ value: 'corpipe25',      label: '(par défaut)' }],
   syntax:   [{ value: 'udpipe2-fr-gsd', label: 'UDPipe 2 — french-gsd (défaut)' }],
   wsd:      [{ value: 'jdm-raffinements', label: 'JDM WSD' }],
   thematic: [{ value: 'jdm-domain',     label: 'JDM DOMAIN' }],
-  polarity: [{ value: 'jdm-infopot',    label: 'JDM POLARITÉ' }],
+  polarity: [{ value: 'jdm-infopot',    label: 'JDM POL' }],
   genitive: [{ value: 'default',        label: '(par défaut)' }],
   analogy:  [{ value: 'default',        label: '(par défaut)' }],
   jdmrel:   [{ value: 'default',        label: '(par défaut)' }],
@@ -702,24 +703,28 @@ function ViewOutils() {
   return (
     <PageShell>
       <SectionTitle
-        title="Outils"
-        desc="Démonstrateurs d'outils de traitement automatique des langues, réunis ici sous une même interface. Chaque outil est un service à part, branché progressivement."
+        title="Services : Tâche TALN"
+        desc="Démonstrateurs d'outils de traitement automatique des langues assistés par le réseau lexico-sémantique JeuxDeMots"
       />
 
-      {/* Barre de sous-onglets (sans glyphs) */}
+      {/* Barre de sous-onglets (sans glyphs ; services à venir grisés) */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18 }}>
         {OUTILS_TABS.map((t) => {
           const active = tab === t.id;
+          const off = !!t.disabled;
           return (
             <button key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => { if (!off) setTab(t.id); }}
+              disabled={off}
+              title={off ? 'À venir' : undefined}
               className="focus-ring"
               style={{
                 padding: '8px 14px',
                 background: active ? 'var(--accent)' : 'var(--bg-elev)',
-                color: active ? 'var(--bg)' : 'var(--ink)',
+                color: off ? 'var(--ink-3)' : (active ? 'var(--bg)' : 'var(--ink)'),
                 border: '1px solid var(--line)',
-                borderRadius: 999, cursor: 'pointer',
+                borderRadius: 999, cursor: off ? 'not-allowed' : 'pointer',
+                opacity: off ? 0.5 : 1,
                 fontSize: 13, fontWeight: active ? 600 : 400,
               }}>
               {t.label}
