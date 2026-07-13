@@ -32,8 +32,15 @@ _AGENT_DEP = {"nsubj"}
 _PATIENT_DEP = {"obj", "iobj", "nsubj:pass"}
 _AGENT_INV_ID, _PATIENT_INV_ID = 24, 26
 _LAMBDA = 1.0
-_MAX_SENSES = 3
+_MAX_SENSES = 10          # on montre tous les sens sémantiques (pas juste 3)
 _FETCH_LIMIT = 250
+
+
+def _semantic_senses(client, word: str, max_senses: int) -> list:
+    """Raffinements SÉMANTIQUES d'un mot (on écarte les purement morphologiques
+    « Nom:/Adj: » sans label discriminant), triés par consensus r_raff_sem."""
+    senses = [s for s in client.refinements_decoded(word) if _discriminants(s)]
+    return sorted(senses, key=lambda s: -s.weight)[:max_senses]
 
 # Valeurs d'annotation (§20/§22) → facteur de pertinence de l'arête.
 _ANNOT_FACTOR = {
@@ -223,10 +230,9 @@ def _fallback_by_type(text: str, client, cache) -> dict:
     ctx_neigh = {w: _neigh_of(_node_rels(client, w, cache)) for w in words}
     occ = []
     for w in words:
-        senses = client.refinements_decoded(w)
+        senses = _semantic_senses(client, w, _MAX_SENSES)
         if len(senses) < 2:
             continue
-        senses = sorted(senses, key=lambda s: -s.weight)[:_MAX_SENSES]
         others = [cw for cw in words if cw != w]
         occ.append(_occ(w, None, None, None, _rank(client, senses, others, ctx_neigh, None, None, cache)))
     return {"tokens": [], "occurrences": occ, "analyzed": len(words),
@@ -289,11 +295,10 @@ def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES):
             w = (t.lemma or t.form or "").lower()
             if len(w) < 3:
                 continue
-            senses = client.refinements_decoded(w)
+            senses = _semantic_senses(client, w, max_senses)
             if len(senses) < 2:
                 continue
             n_words += 1
-            senses = sorted(senses, key=lambda s: -s.weight)[:max_senses]
             others = [cw for cw in ctx if cw != w]
             scored = _rank(client, senses, others, ctx_neigh, role, verb, cache)
             yield {"type": "occ", "occurrence": _occ(w, g, role, verb, scored)}

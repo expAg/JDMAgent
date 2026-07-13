@@ -370,31 +370,56 @@ function _senseTag(sense) {
   return m ? m[1] : sense;
 }
 
-// Classement des raffinements d'une occurrence en BARRES VERTICALES (scroll horizontal).
-function WsdBars({ occ }) {
-  const senses = occ.senses || [];
-  if (occ.mwe || senses.length === 0) return null;
-  const vals = senses.map((s) => s.score);
-  const min = Math.min(0, ...vals), max = Math.max(0, ...vals);
-  const range = (max - min) || 1;
-  const H = 84;
+// Une OCCURRENCE = une COLONNE verticale : en-tête + classement des sens empilés
+// (chaque sens avec son score et l'explication gén/sél). Les colonnes défilent
+// horizontalement (voir WsdView).
+function WsdColumn({ occ: w }) {
+  const senses = w.senses || [];
+  const accent = w.mwe ? 'var(--jdm-cyan)' : (w.confident ? 'var(--accent)' : 'var(--jdm-yellow)');
   return (
-    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', overflowX: 'auto', padding: '6px 0 2px' }}>
-      {senses.map((s, j) => {
-        const h = Math.max(2, ((s.score - min) / range) * H);
-        const col = j === 0 ? 'var(--accent)' : (s.score < 0 ? 'var(--jdm-magenta)' : 'var(--line)');
-        return (
-          <div key={j} title={`${s.sense}\ngénérique ${s.generic} · sélectionnel ${s.selectional} · total ${s.score}`}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 auto', minWidth: 62 }}>
-            <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)' }}>{s.score}</span>
-            <div style={{ width: 26, height: h, background: col, borderRadius: '3px 3px 0 0' }} />
-            <span className="mono" title={s.sense}
-              style={{ fontSize: 10, color: j === 0 ? 'var(--ink)' : 'var(--ink-3)', marginTop: 4, maxWidth: 68, textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {_senseTag(s.sense)}
-            </span>
-          </div>
-        );
-      })}
+    <div style={{
+      flex: '0 0 250px', minWidth: 250, display: 'flex', flexDirection: 'column', gap: 8,
+      padding: 12, background: 'var(--bg-elev)', border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
+    }}>
+      {/* En-tête de la colonne */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span className="mono" style={{ fontSize: 14, color: 'var(--ink)', fontWeight: 700 }}>{w.word}</span>
+        <span style={{
+          marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
+          color: (w.mwe || w.confident) ? 'var(--bg)' : 'var(--ink-2)',
+          background: accent, border: '1px solid var(--line)',
+        }}>{w.mwe ? 'composé' : (w.confident ? 'confiant' : 'incertain')}</span>
+      </div>
+      {w.role && (
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{w.role} de « {w.verb} »</span>
+      )}
+
+      {/* Classement des raffinements, empilé */}
+      <div style={{ display: 'grid', gap: 5 }}>
+        {senses.map((s, j) => {
+          const top = j === 0;
+          const scoreCol = s.score < 0 ? 'var(--jdm-magenta)' : (top ? accent : 'var(--ink-2)');
+          return (
+            <div key={j} style={{
+              padding: '6px 8px', borderRadius: 8,
+              background: top ? `color-mix(in srgb, ${accent} 16%, transparent)` : 'var(--bg)',
+              border: `1px solid ${top ? accent : 'var(--line-soft)'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span className="mono" style={{ fontSize: 12, color: top ? 'var(--ink)' : 'var(--ink-2)', fontWeight: top ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {j + 1}. {_senseTag(s.sense)}
+                </span>
+                <span className="mono" style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: scoreCol }}>{s.score}</span>
+              </div>
+              {!w.mwe && (
+                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 2 }}>
+                  générique {s.generic} · sélectionnel {s.selectional}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -433,26 +458,9 @@ function WsdView({ tokens, occ, mode, loading }) {
         </div>
       )}
 
-      {/* Une carte par occurrence : en-tête + classement des sens en barres */}
-      <div style={{ display: 'grid', gap: 10 }}>
-        {occ.map((w, i) => (
-          <div key={i} style={{ padding: '8px 12px', background: 'var(--bg-elev)', border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span className="mono" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>{w.word}</span>
-              {w.role && (
-                <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, color: 'var(--ink-2)', background: 'var(--bg)', border: '1px solid var(--line)' }}>{w.role} · {w.verb}</span>
-              )}
-              <span style={{ color: 'var(--ink-3)' }}>→</span>
-              <span className="mono" style={{ fontSize: 13, color: w.mwe ? 'var(--jdm-cyan)' : 'var(--accent)' }}>{w.chosen.sense}</span>
-              <span style={{
-                marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
-                color: (w.mwe || w.confident) ? 'var(--bg)' : 'var(--ink-2)',
-                background: w.mwe ? 'var(--jdm-cyan)' : (w.confident ? 'var(--accent)' : 'var(--bg)'), border: '1px solid var(--line)',
-              }}>{w.mwe ? 'composé JDM' : (w.confident ? 'confiant' : 'incertain')}</span>
-            </div>
-            <WsdBars occ={w} />
-          </div>
-        ))}
+      {/* Une COLONNE par occurrence, défilement horizontal */}
+      <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 6, alignItems: 'stretch' }}>
+        {occ.map((w, i) => <WsdColumn key={i} occ={w} />)}
       </div>
     </Card>
   );
