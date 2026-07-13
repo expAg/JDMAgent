@@ -1,6 +1,14 @@
 # -*- coding: utf-8 -*-
 """Tests hors-ligne de l'analyse thématique (client JDM factice, aucun réseau)."""
-from jdm_agent.thematic import _content_words, analyze_thematic
+from jdm_agent.thematic import _content_words, _suggested_cut, analyze_thematic
+
+
+def test_suggested_cut_at_largest_gap():
+    # plus grand écart entre 100 et 44 → seuil au milieu (72)
+    themes = [{"rel": 100.0}, {"rel": 44.0}, {"rel": 35.0}, {"rel": 30.0}]
+    assert _suggested_cut(themes) == 72.0
+    # un seul thème → pas de seuil
+    assert _suggested_cut([{"rel": 100.0}]) == 0.0
 
 
 def test_content_words_filters():

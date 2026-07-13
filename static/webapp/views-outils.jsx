@@ -346,9 +346,14 @@ function ThematicPanel() {
   const [thr, setThr] = React.useState(12);   // seuil sur le score normalisé (0-100)
   const run = async () => {
     setLoading(true); setRes(null);
-    setRes(await _callTool('thematic', { text, model })); setLoading(false);
+    const r = await _callTool('thematic', { text, model });
+    setRes(r); setLoading(false);
+    if (r && r.ok && r.data && typeof r.data.suggested_threshold === 'number') {
+      setThr(r.data.suggested_threshold);   // seuil auto (au plus grand écart)
+    }
   };
   const data = (res && res.ok) ? res.data : null;
+  const suggested = data && typeof data.suggested_threshold === 'number' ? data.suggested_threshold : null;
   const themes = (data && data.themes) || [];
   const shown = themes.filter((t) => t.rel >= thr);
   return (
@@ -363,13 +368,22 @@ function ThematicPanel() {
             {themes.length} thème(s) · {shown.length} affiché(s) · {data.analyzed}/{data.word_count} mots analysés
             {data.truncated ? ' (tronqué)' : ''}
           </div>
-          {/* Barre de seuil */}
+          {/* Barre de seuil (placée automatiquement au plus grand écart) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 18px' }}>
             <span style={{ fontSize: 12, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>Seuil</span>
             <input type="range" min="0" max="100" step="1" value={thr}
               onChange={(e) => setThr(Number(e.target.value))}
               style={{ flex: 1, accentColor: 'var(--accent)', cursor: 'pointer' }} />
             <span className="mono" style={{ fontSize: 12, color: 'var(--accent)', minWidth: 36, textAlign: 'right' }}>{thr}%</span>
+            {suggested !== null && (
+              <button onClick={() => setThr(suggested)} className="focus-ring"
+                title={`Seuil auto au plus grand écart (${suggested}%)`}
+                style={{
+                  fontSize: 11, padding: '3px 8px', borderRadius: 999, cursor: 'pointer',
+                  color: 'var(--ink-2)', background: 'var(--bg-elev)',
+                  border: '1px solid var(--line)', whiteSpace: 'nowrap',
+                }}>auto {suggested}%</button>
+            )}
           </div>
           {/* Nuage de bulles : taille ∝ importance du thème */}
           {shown.length ? (

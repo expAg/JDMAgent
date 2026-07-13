@@ -168,4 +168,22 @@ def analyze_thematic(text: str, client, *, max_words: int = 150,
     for t in themes:
         t["rel"] = round(100.0 * t["score"] / maxs, 1) if maxs > 0 else 0.0
     return {"themes": themes, "word_count": len(items),
-            "analyzed": len(analyzed), "truncated": truncated}
+            "analyzed": len(analyzed), "truncated": truncated,
+            "suggested_threshold": _suggested_cut(themes)}
+
+
+def _suggested_cut(themes: list) -> float:
+    """Seuil adaptatif : au MILIEU du plus grand écart entre deux thèmes
+    consécutifs (en score normalisé) → ne garde que la tête du classement.
+    Ne scrute que le haut (s'arrête quand on descend sous 12 %)."""
+    rels = [t["rel"] for t in themes]
+    if len(rels) < 2:
+        return 0.0
+    best_gap, cut = -1.0, 0.0
+    for i in range(len(rels) - 1):
+        gap = rels[i] - rels[i + 1]
+        if gap > best_gap:
+            best_gap, cut = gap, rels[i + 1] + gap / 2.0
+        if rels[i + 1] < 12:   # inutile de chercher un écart plus bas
+            break
+    return round(cut, 1)
