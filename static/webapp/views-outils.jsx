@@ -352,7 +352,10 @@ function WsdResult({ data }) {
   }
   const tokens = data.tokens || [];
   const byToken = {};
-  occ.forEach((o) => { if (o.token != null) byToken[o.token] = o; });
+  occ.forEach((o) => {
+    const idxs = (o.span && o.span.length) ? o.span : (o.token != null ? [o.token] : []);
+    idxs.forEach((ti) => { byToken[ti] = o; });
+  });
 
   return (
     <Card padding={18}>
@@ -366,7 +369,10 @@ function WsdResult({ data }) {
           {tokens.map((t, i) => {
             const o = byToken[t.i];
             if (!o) return <React.Fragment key={i}><span>{t.text}</span>{t.ws}</React.Fragment>;
-            const col = o.confident ? 'var(--accent)' : 'var(--jdm-yellow)';
+            const span = (o.span && o.span.length) ? o.span : [o.token];
+            const isLast = t.i === span[span.length - 1];
+            const col = o.mwe ? 'var(--jdm-cyan)' : (o.confident ? 'var(--accent)' : 'var(--jdm-yellow)');
+            const tag = o.mwe ? 'composé' : _senseTag(o.chosen.sense);
             return (
               <React.Fragment key={i}>
                 <span title={`${o.role ? o.role + ' de « ' + o.verb + ' » — ' : ''}${o.chosen.sense}`}
@@ -374,7 +380,7 @@ function WsdResult({ data }) {
                     background: `color-mix(in srgb, ${col} 20%, transparent)`,
                     borderBottom: `2px solid ${col}`, borderRadius: 3, padding: '1px 2px', cursor: 'help',
                   }}>{t.text}</span>
-                <sub style={{ fontSize: 10, color: col, marginLeft: 1, whiteSpace: 'nowrap' }}>{_senseTag(o.chosen.sense)}</sub>
+                {isLast && <sub style={{ fontSize: 10, color: col, marginLeft: 1, whiteSpace: 'nowrap' }}>{tag}</sub>}
                 {t.ws}
               </React.Fragment>
             );
@@ -396,12 +402,13 @@ function WsdResult({ data }) {
               <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, color: 'var(--ink-2)', background: 'var(--bg)', border: '1px solid var(--line)' }}>{w.role} · {w.verb}</span>
             )}
             <span style={{ color: 'var(--ink-3)' }}>→</span>
-            <span className="mono" style={{ fontSize: 13, color: 'var(--accent)' }}>{w.chosen.sense}</span>
+            <span className="mono" style={{ fontSize: 13, color: w.mwe ? 'var(--jdm-cyan)' : 'var(--accent)' }}>{w.chosen.sense}</span>
             <span style={{
               marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
-              color: w.confident ? 'var(--bg)' : 'var(--ink-2)',
-              background: w.confident ? 'var(--accent)' : 'var(--bg)', border: '1px solid var(--line)',
-            }}>{w.confident ? 'confiant' : 'incertain'}</span>
+              color: (w.mwe || w.confident) ? 'var(--bg)' : 'var(--ink-2)',
+              background: w.mwe ? 'var(--jdm-cyan)' : (w.confident ? 'var(--accent)' : 'var(--bg)'),
+              border: '1px solid var(--line)',
+            }}>{w.mwe ? 'composé JDM' : (w.confident ? 'confiant' : 'incertain')}</span>
           </div>
         ))}
       </div>

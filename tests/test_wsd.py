@@ -89,3 +89,21 @@ def test_selectional_annotation_flips_polluted_edge():
     assert _direct_asym(c, juriste, "manger") > 0
     # fruit : patient 204 × (pertinent=1.0) → asym négatif → PATIENT
     assert _direct_asym(c, fruit, "manger") < 0
+
+
+def test_mwe_detection():
+    # « chef d'orchestre » = composé connu de JDM → absorbé comme une unité
+    from jdm_agent.wsd import _mwe_span
+    from jdm_agent.relext.udpipe import Token, Sentence
+    toks = [Token(1, "chef", "chef", "NOUN", {}, 0, "root"),
+            Token(2, "d'", "de", "ADP", {}, 3, "case"),
+            Token(3, "orchestre", "orchestre", "NOUN", {}, 1, "nmod")]
+    s = Sentence(tokens=toks)
+    s.by_id = {t.id: t for t in toks}
+
+    class _C:
+        def term_exists(self, name):
+            return name.lower() == "chef d'orchestre"
+
+    span = _mwe_span(s, 0, _C())
+    assert span is not None and span[2] == "chef d'orchestre"

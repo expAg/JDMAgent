@@ -175,6 +175,49 @@ def _ws_after(toks, k) -> str:
     return " "
 
 
+_MWE_MAXK = 3
+
+
+def _span_surface(toks, a: int, b: int) -> str:
+    """Surface des tokens a..b (élisions/ponctuation respectées)."""
+    out = []
+    for i in range(a, b + 1):
+        out.append(toks[i].form or "")
+        if i < b:
+            out.append(_ws_after(toks, i))
+    return "".join(out).strip()
+
+
+def _mwe_span(sent, k: int, client):
+    """Plus long COMPOSÉ connu de JDM commençant au token k (« chef d'orchestre »,
+    « joueur de piano »). Renvoie (k, end, surface) ou None. On ne sonde JDM que
+    si le motif s'y prête (mot suivant = préposition ou nom)."""
+    toks = sent.tokens
+    nxt = toks[k + 1] if k + 1 < len(toks) else None
+    if nxt is None or nxt.upos not in ("ADP", "NOUN", "PROPN"):
+        return None
+    best = None
+    for end in range(k + 1, min(k + 1 + _MWE_MAXK, len(toks))):
+        if toks[end].upos in ("ADP", "DET", "PUNCT", "CCONJ"):
+            continue  # bord droit fonctionnel
+        surface = _span_surface(toks, k, end)
+        try:
+            if client.term_exists(surface):
+                best = (k, end, surface)   # garde le plus long
+        except Exception:
+            pass
+    return best
+
+
+def _mwe_occ(surface, span_gids, role, verb) -> dict:
+    """Occurrence d'un composé JDM (unité lexicale, non ambiguë ici)."""
+    chosen = {"sense": surface, "name": surface, "consensus": 0.0,
+              "generic": 0.0, "selectional": 0.0, "score": 0.0}
+    return {"word": surface, "token": span_gids[0], "span": span_gids,
+            "role": role, "verb": verb, "mwe": True,
+            "chosen": chosen, "senses": [chosen], "confident": True}
+
+
 def _fallback_by_type(text: str, client, cache) -> dict:
     words = _content_words(text)
     ctx_neigh = {w: _neigh_of(_node_rels(client, w, cache)) for w in words}
@@ -203,6 +246,8 @@ def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
     tokens_out, occ, n_words, gidx = [], [], 0, 0
     for sent in sents:
         toks = sent.tokens
+        base = gidx                       # index global du 1er token de la phrase
+        absorbed = set()                  # indices de tokens couverts par un composé
         ctx = [(t.lemma or t.form or "").lower() for t in toks if t.upos in _CONTENT_POS]
         ctx = [w for w in ctx if len(w) >= 3]
         ctx_neigh = {w: _neigh_of(_node_rels(client, w, cache)) for w in set(ctx)}
@@ -210,8 +255,19 @@ def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
             g = gidx
             gidx += 1
             tokens_out.append({"i": g, "text": t.form or "", "ws": _ws_after(toks, k)})
-            if t.upos not in _CAND_POS:
+            if g in absorbed or t.upos not in _CAND_POS:
                 continue
+            role, verb = _role_and_verb(sent, t)
+            # 1) COMPOSÉ connu de JDM ? (« chef d'orchestre ») → unité, pas de WSD
+            mwe = _mwe_span(sent, k, client)
+            if mwe is not None:
+                _a, end, surface = mwe
+                span = [base + i for i in range(k, end + 1)]
+                absorbed.update(span[1:])
+                n_words += 1
+                occ.append(_mwe_occ(surface, span, role, verb))
+                continue
+            # 2) mot simple ambigu → désambiguïsation
             w = (t.lemma or t.form or "").lower()
             if len(w) < 3:
                 continue
@@ -220,7 +276,6 @@ def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
             if len(senses) < 2:
                 continue
             senses = sorted(senses, key=lambda s: -s.weight)[:max_senses]
-            role, verb = _role_and_verb(sent, t)
             others = [cw for cw in ctx if cw != w]
             scored = _rank(client, senses, others, ctx_neigh, role, verb, cache)
             occ.append(_occ(w, g, role, verb, scored))
