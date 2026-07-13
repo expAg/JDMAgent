@@ -3119,9 +3119,22 @@ async def api_tools_thematic(req: ToolTextRequest) -> dict:
 
 @app.post("/api/tools/polarity")
 async def api_tools_polarity(req: ToolTextRequest) -> dict:
-    """Analyse de polarité / sentiment d'un texte (service à venir — placeholder)."""
-    return await _proxy_tool_json(
-        TOOLS_POLARITY_URL, {"text": req.text, "model": req.model}, "analyse de polarité")
+    """Analyse de polarité via JeuxDeMots (relation r_infopot : _POL-POS/NEG/NEUTRE).
+
+    Si TOOLS_POLARITY_URL est défini → proxy. Sinon → modèle LOCAL (jdm_agent.polarity) :
+    agrège les polarités des mots, inverse sur négation, rend positif/négatif/neutre."""
+    if TOOLS_POLARITY_URL:
+        return await _proxy_tool_json(
+            TOOLS_POLARITY_URL, {"text": req.text, "model": req.model}, "analyse de polarité")
+    try:
+        import anyio
+        from jdm_agent.polarity import analyze_polarity
+        c = get_client()
+        out = await anyio.to_thread.run_sync(lambda: analyze_polarity(req.text or "", c))
+        return {"ok": True, "service": "analyse de polarité", "data": out}
+    except Exception as e:
+        return {"ok": False, "service": "analyse de polarité",
+                "error": f"Erreur polarité : {e!r}"}
 
 
 # ────────────────────────────────────────────────────────────────────

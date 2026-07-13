@@ -15797,7 +15797,7 @@ const TOOL_MODELS = {
   syntax:   [{ value: 'udpipe2-fr-gsd', label: 'UDPipe 2 — french-gsd (défaut)' }],
   wsd:      [{ value: 'jdm-raffinements', label: 'JDM WSD' }],
   thematic: [{ value: 'jdm-domain',     label: 'JDM DOMAIN' }],
-  polarity: [{ value: 'default',        label: '(par défaut)' }],
+  polarity: [{ value: 'jdm-infopot',    label: 'JDM POLARITÉ' }],
   genitive: [{ value: 'default',        label: '(par défaut)' }],
   analogy:  [{ value: 'default',        label: '(par défaut)' }],
   jdmrel:   [{ value: 'default',        label: '(par défaut)' }],
@@ -16137,6 +16137,55 @@ function JdmRelResult({ data }) {
   );
 }
 
+// ───────── Analyse de polarité (r_infopot) ─────────
+// Charte du claim-checker : positif=vert, négatif=magenta, neutre=jaune.
+const _POL_STYLE = {
+  positif: { color: 'var(--jdm-green)',   bg: 'rgba(78,166,60,0.15)',  border: 'rgba(78,166,60,0.45)' },
+  négatif: { color: 'var(--jdm-magenta)', bg: 'rgba(200,58,115,0.15)', border: 'rgba(200,58,115,0.45)' },
+  neutre:  { color: 'var(--jdm-yellow)',  bg: 'rgba(212,169,10,0.15)', border: 'rgba(212,169,10,0.45)' },
+};
+
+function PolarityResult({ data }) {
+  const s = _POL_STYLE[data.label] || _POL_STYLE.neutre;
+  const words = data.words || [];
+  const denom = (data.pos + data.neg) || 1;
+  const posPct = Math.round((data.pos / denom) * 100);
+  return (
+    <Card padding={18}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: 18, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+          padding: '8px 20px', borderRadius: 999, color: s.color, background: s.bg, border: `1px solid ${s.border}`,
+        }}>{data.label}</span>
+        <span className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          score {data.score >= 0 ? '+' : ''}{data.score} · pos {data.pos} / neg {data.neg}
+        </span>
+      </div>
+      {/* Barre positif (vert) vs négatif (magenta) */}
+      <div style={{ display: 'flex', height: 10, borderRadius: 999, overflow: 'hidden', marginBottom: 16, border: '1px solid var(--line-soft)' }}>
+        <div style={{ width: `${posPct}%`, background: 'var(--jdm-green)' }} />
+        <div style={{ flex: 1, background: 'var(--jdm-magenta)' }} />
+      </div>
+      {/* Mots polarisés (négation marquée ⊘) */}
+      {words.length ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {words.map((w, i) => {
+            const ws = _POL_STYLE[w.polarity] || _POL_STYLE.neutre;
+            return (
+              <span key={i} title={`positif ${w.pos} · négatif ${w.neg}${w.negated ? ' · NÉGATION → inversé' : ''}`}
+                style={{ fontSize: 12, padding: '3px 10px', borderRadius: 999, color: ws.color, background: ws.bg, border: `1px solid ${ws.border}`, cursor: 'help' }}>
+                {w.word}{w.negated ? ' ⊘' : ''}
+              </span>
+            );
+          })}
+        </div>
+      ) : (
+        <ToolNotice tone="warn" msg="Aucun mot porteur de polarité trouvé dans JeuxDeMots." />
+      )}
+    </Card>
+  );
+}
+
 // ───────── Désambiguïsation (WSD par raffinements JDM) ─────────
 // Étiquette courte d'un sens : le contenu entre parenthèses (« avocat (fruit) » → « fruit »).
 function _senseTag(sense) {
@@ -16459,8 +16508,9 @@ function ViewOutils() {
       {tab === 'thematic' && <ThematicPanel />}
       {tab === 'polarity' && (
         <TextToolPanel path="polarity" models={TOOL_MODELS.polarity}
-          defaultText="Ce film était vraiment excellent, je l'ai adoré du début à la fin."
-          placeholder="Un texte dont analyser la polarité (positif / négatif)…" />
+          defaultText="Ce film n'est pas excellent, quelle horreur. En revanche j'ai adoré la musique."
+          placeholder="Un texte dont analyser la polarité (positif / négatif / neutre)…"
+          renderData={(d) => <PolarityResult data={d} />} />
       )}
       {tab === 'genitive' && <GenitivePanel />}
       {tab === 'analogy'  && <AnalogyPanel />}
