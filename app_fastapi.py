@@ -3072,6 +3072,27 @@ async def api_tools_wsd(req: ToolTextRequest) -> dict:
                 "error": f"Erreur WSD : {e!r}"}
 
 
+@app.post("/api/tools/wsd/stream")
+def api_tools_wsd_stream(req: ToolTextRequest):
+    """WSD en flux NDJSON — chaque occurrence est émise dès qu'elle est traitée
+    (affichage temps réel). Une ligne JSON par événement : tokens / occ / done."""
+    from fastapi.responses import StreamingResponse
+    import json as _json
+
+    def gen():
+        try:
+            from jdm_agent.wsd import disambiguate_iter
+            c = get_client()
+            for ev in disambiguate_iter(req.text or "", c):
+                yield _json.dumps(ev, ensure_ascii=False) + "\n"
+        except Exception as e:
+            yield _json.dumps({"type": "error", "error": f"Erreur WSD : {e!r}"},
+                              ensure_ascii=False) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson",
+                             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
+
+
 @app.post("/api/tools/thematic")
 async def api_tools_thematic(req: ToolTextRequest) -> dict:
     """Analyse thématique d'un texte via JeuxDeMots (relation r_domain).

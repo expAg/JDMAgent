@@ -74,6 +74,32 @@ async function _callTool(path, payload) {
   }
 }
 
+// Flux NDJSON : appelle onEvent(obj) pour chaque ligne JSON reçue (temps réel).
+async function _streamTool(path, payload, onEvent) {
+  const res = await fetch('api/tools/' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.body) { const j = await res.json(); onEvent(j); return; }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) { try { onEvent(JSON.parse(line)); } catch (e) { /* ligne partielle */ } }
+    }
+  }
+  const rest = buf.trim();
+  if (rest) { try { onEvent(JSON.parse(rest)); } catch (e) { /* ignore */ } }
+}
+
 // Sélecteur de modèle (liste déroulante) — commun à tous les onglets.
 function ModelPicker({ value, onChange, options }) {
   if (!options || options.length === 0) return null;
@@ -344,26 +370,48 @@ function _senseTag(sense) {
   return m ? m[1] : sense;
 }
 
-function WsdResult({ data }) {
-  const occ = (data && data.occurrences) || [];
-  if (!occ.length) {
-    return <ToolNotice tone="warn"
-      msg="Aucun mot polysémique trouvé (les termes ont un seul sens dans JeuxDeMots)." />;
-  }
-  const tokens = data.tokens || [];
+// Classement des raffinements d'une occurrence en BARRES VERTICALES (scroll horizontal).
+function WsdBars({ occ }) {
+  const senses = occ.senses || [];
+  if (occ.mwe || senses.length === 0) return null;
+  const vals = senses.map((s) => s.score);
+  const min = Math.min(0, ...vals), max = Math.max(0, ...vals);
+  const range = (max - min) || 1;
+  const H = 84;
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', overflowX: 'auto', padding: '6px 0 2px' }}>
+      {senses.map((s, j) => {
+        const h = Math.max(2, ((s.score - min) / range) * H);
+        const col = j === 0 ? 'var(--accent)' : (s.score < 0 ? 'var(--jdm-magenta)' : 'var(--line)');
+        return (
+          <div key={j} title={`${s.sense}\ngénérique ${s.generic} · sélectionnel ${s.selectional} · total ${s.score}`}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 auto', minWidth: 62 }}>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)' }}>{s.score}</span>
+            <div style={{ width: 26, height: h, background: col, borderRadius: '3px 3px 0 0' }} />
+            <span className="mono" title={s.sense}
+              style={{ fontSize: 10, color: j === 0 ? 'var(--ink)' : 'var(--ink-3)', marginTop: 4, maxWidth: 68, textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {_senseTag(s.sense)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Vue WSD : texte surligné (occurrences au fil de l'eau) + barres par occurrence.
+function WsdView({ tokens, occ, mode, loading }) {
   const byToken = {};
   occ.forEach((o) => {
     const idxs = (o.span && o.span.length) ? o.span : (o.token != null ? [o.token] : []);
     idxs.forEach((ti) => { byToken[ti] = o; });
   });
-
   return (
     <Card padding={18}>
       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>
-        {occ.length} occurrence(s) ambiguë(s){data.mode ? ` · ${data.mode}` : ''}
+        {occ.length} occurrence(s){loading ? ' · analyse en cours…' : ''}{mode ? ` · ${mode}` : ''}
       </div>
 
-      {/* Texte avec chaque occurrence désambiguïsée surlignée + sens en exposant */}
       {tokens.length > 0 && (
         <div style={{ fontSize: 15, lineHeight: 2.4, marginBottom: 16 }}>
           {tokens.map((t, i) => {
@@ -376,10 +424,7 @@ function WsdResult({ data }) {
             return (
               <React.Fragment key={i}>
                 <span title={`${o.role ? o.role + ' de « ' + o.verb + ' » — ' : ''}${o.chosen.sense}`}
-                  style={{
-                    background: `color-mix(in srgb, ${col} 20%, transparent)`,
-                    borderBottom: `2px solid ${col}`, borderRadius: 3, padding: '1px 2px', cursor: 'help',
-                  }}>{t.text}</span>
+                  style={{ background: `color-mix(in srgb, ${col} 20%, transparent)`, borderBottom: `2px solid ${col}`, borderRadius: 3, padding: '1px 2px', cursor: 'help' }}>{t.text}</span>
                 {isLast && <sub style={{ fontSize: 10, color: col, marginLeft: 1, whiteSpace: 'nowrap' }}>{tag}</sub>}
                 {t.ws}
               </React.Fragment>
@@ -388,31 +433,61 @@ function WsdResult({ data }) {
         </div>
       )}
 
-      {/* Détail compact par occurrence */}
-      <div style={{ display: 'grid', gap: 6 }}>
+      {/* Une carte par occurrence : en-tête + classement des sens en barres */}
+      <div style={{ display: 'grid', gap: 10 }}>
         {occ.map((w, i) => (
-          <div key={i} title={w.senses.map((s) => `${s.sense} (gén ${s.generic} · sél ${s.selectional})`).join('\n')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-              padding: '6px 10px', background: 'var(--bg-elev)',
-              border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
-            }}>
-            <span className="mono" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>{w.word}</span>
-            {w.role && (
-              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, color: 'var(--ink-2)', background: 'var(--bg)', border: '1px solid var(--line)' }}>{w.role} · {w.verb}</span>
-            )}
-            <span style={{ color: 'var(--ink-3)' }}>→</span>
-            <span className="mono" style={{ fontSize: 13, color: w.mwe ? 'var(--jdm-cyan)' : 'var(--accent)' }}>{w.chosen.sense}</span>
-            <span style={{
-              marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
-              color: (w.mwe || w.confident) ? 'var(--bg)' : 'var(--ink-2)',
-              background: w.mwe ? 'var(--jdm-cyan)' : (w.confident ? 'var(--accent)' : 'var(--bg)'),
-              border: '1px solid var(--line)',
-            }}>{w.mwe ? 'composé JDM' : (w.confident ? 'confiant' : 'incertain')}</span>
+          <div key={i} style={{ padding: '8px 12px', background: 'var(--bg-elev)', border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span className="mono" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>{w.word}</span>
+              {w.role && (
+                <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, color: 'var(--ink-2)', background: 'var(--bg)', border: '1px solid var(--line)' }}>{w.role} · {w.verb}</span>
+              )}
+              <span style={{ color: 'var(--ink-3)' }}>→</span>
+              <span className="mono" style={{ fontSize: 13, color: w.mwe ? 'var(--jdm-cyan)' : 'var(--accent)' }}>{w.chosen.sense}</span>
+              <span style={{
+                marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
+                color: (w.mwe || w.confident) ? 'var(--bg)' : 'var(--ink-2)',
+                background: w.mwe ? 'var(--jdm-cyan)' : (w.confident ? 'var(--accent)' : 'var(--bg)'), border: '1px solid var(--line)',
+              }}>{w.mwe ? 'composé JDM' : (w.confident ? 'confiant' : 'incertain')}</span>
+            </div>
+            <WsdBars occ={w} />
           </div>
         ))}
       </div>
     </Card>
+  );
+}
+
+// Panneau WSD : streaming NDJSON → occurrences affichées en temps réel.
+function WsdPanel() {
+  const [text, setText] = React.useState("L'avocat mange l'avocat. Au tribunal, l'avocat défend son client.");
+  const [model, setModel] = React.useState(TOOL_MODELS.wsd[0].value);
+  const [tokens, setTokens] = React.useState([]);
+  const [occ, setOcc] = React.useState([]);
+  const [mode, setMode] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const run = async () => {
+    setLoading(true); setErr(null); setTokens([]); setOcc([]); setMode('');
+    try {
+      await _streamTool('wsd/stream', { text, model }, (ev) => {
+        if (ev.type === 'tokens') { setTokens(ev.tokens || []); setMode(ev.mode || ''); }
+        else if (ev.type === 'occ') { setOcc((prev) => [...prev, ev.occurrence]); }
+        else if (ev.type === 'error') { setErr(ev.error); }
+      });
+    } catch (e) { setErr(String(e && e.message ? e.message : e)); }
+    setLoading(false);
+  };
+  return (
+    <div style={panelGrid()}>
+      <ToolForm text={text} setText={setText} run={run} loading={loading}
+        placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…"
+        model={model} setModel={setModel} models={TOOL_MODELS.wsd} />
+      {err && <ToolNotice tone="warn" msg={err} />}
+      {(tokens.length > 0 || occ.length > 0) && (
+        <WsdView tokens={tokens} occ={occ} mode={mode} loading={loading} />
+      )}
+    </div>
   );
 }
 
@@ -585,12 +660,7 @@ function ViewOutils() {
 
       {tab === 'coref'    && <CorefPanel />}
       {tab === 'syntax'   && <SyntaxPanel />}
-      {tab === 'wsd'      && (
-        <TextToolPanel path="wsd" models={TOOL_MODELS.wsd}
-          defaultText="L'avocat mange l'avocat. Au tribunal, l'avocat défend son client."
-          placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…"
-          renderData={(d) => <WsdResult data={d} />} />
-      )}
+      {tab === 'wsd'      && <WsdPanel />}
       {tab === 'thematic' && <ThematicPanel />}
       {tab === 'polarity' && (
         <TextToolPanel path="polarity" models={TOOL_MODELS.polarity}

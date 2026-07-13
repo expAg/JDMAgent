@@ -233,52 +233,82 @@ def _fallback_by_type(text: str, client, cache) -> dict:
             "mode": "générique (par type, sans syntaxe)"}
 
 
-def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
-    """Texte → sens choisi PAR OCCURRENCE. Renvoie aussi `tokens` (avec position)
-    pour surligner chaque occurrence désambiguïsée dans le texte."""
+_MODE = "syntaxe (UDPipe) + sélectionnel + générique"
+
+
+def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES):
+    """Générateur d'ÉVÉNEMENTS pour un affichage TEMPS RÉEL :
+      {"type":"tokens", ...}  d'abord (le texte peut se rendre tout de suite),
+      {"type":"occ", ...}     à chaque occurrence traitée,
+      {"type":"done", ...}    à la fin.
+    """
     cache: dict = {}
     try:
         from jdm_agent.relext.udpipe import analyse
         sents = analyse(text or "")
     except Exception:
-        return _fallback_by_type(text or "", client, cache)
+        fb = _fallback_by_type(text or "", client, cache)
+        yield {"type": "tokens", "tokens": fb["tokens"], "mode": fb["mode"]}
+        for o in fb["occurrences"]:
+            yield {"type": "occ", "occurrence": o}
+        yield {"type": "done", "analyzed": fb["analyzed"]}
+        return
 
-    tokens_out, occ, n_words, gidx = [], [], 0, 0
+    # 1) Tous les tokens d'abord (rapide) → le texte s'affiche immédiatement.
+    tokens_out, sent_base, g = [], [], 0
     for sent in sents:
+        sent_base.append(g)
         toks = sent.tokens
-        base = gidx                       # index global du 1er token de la phrase
-        absorbed = set()                  # indices de tokens couverts par un composé
+        for k, t in enumerate(toks):
+            tokens_out.append({"i": g, "text": t.form or "", "ws": _ws_after(toks, k)})
+            g += 1
+    yield {"type": "tokens", "tokens": tokens_out, "mode": _MODE}
+
+    # 2) Occurrences, émises une par une au fil du traitement.
+    n_words = 0
+    for si, sent in enumerate(sents):
+        toks = sent.tokens
+        base = sent_base[si]
+        absorbed = set()
         ctx = [(t.lemma or t.form or "").lower() for t in toks if t.upos in _CONTENT_POS]
         ctx = [w for w in ctx if len(w) >= 3]
         ctx_neigh = {w: _neigh_of(_node_rels(client, w, cache)) for w in set(ctx)}
         for k, t in enumerate(toks):
-            g = gidx
-            gidx += 1
-            tokens_out.append({"i": g, "text": t.form or "", "ws": _ws_after(toks, k)})
+            g = base + k
             if g in absorbed or t.upos not in _CAND_POS:
                 continue
             role, verb = _role_and_verb(sent, t)
-            # 1) COMPOSÉ connu de JDM ? (« chef d'orchestre ») → unité, pas de WSD
             mwe = _mwe_span(sent, k, client)
             if mwe is not None:
                 _a, end, surface = mwe
                 span = [base + i for i in range(k, end + 1)]
                 absorbed.update(span[1:])
                 n_words += 1
-                occ.append(_mwe_occ(surface, span, role, verb))
+                yield {"type": "occ", "occurrence": _mwe_occ(surface, span, role, verb)}
                 continue
-            # 2) mot simple ambigu → désambiguïsation
             w = (t.lemma or t.form or "").lower()
             if len(w) < 3:
                 continue
-            n_words += 1
             senses = client.refinements_decoded(w)
             if len(senses) < 2:
                 continue
+            n_words += 1
             senses = sorted(senses, key=lambda s: -s.weight)[:max_senses]
             others = [cw for cw in ctx if cw != w]
             scored = _rank(client, senses, others, ctx_neigh, role, verb, cache)
-            occ.append(_occ(w, g, role, verb, scored))
+            yield {"type": "occ", "occurrence": _occ(w, g, role, verb, scored)}
 
-    return {"tokens": tokens_out, "occurrences": occ, "analyzed": n_words,
-            "mode": "syntaxe (UDPipe) + sélectionnel + générique"}
+    yield {"type": "done", "analyzed": n_words}
+
+
+def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
+    """Version non-streaming (collecte le générateur) — pour tests / thématique."""
+    tokens, occ, analyzed, mode = [], [], 0, _MODE
+    for ev in disambiguate_iter(text, client, max_senses=max_senses):
+        if ev["type"] == "tokens":
+            tokens, mode = ev["tokens"], ev["mode"]
+        elif ev["type"] == "occ":
+            occ.append(ev["occurrence"])
+        elif ev["type"] == "done":
+            analyzed = ev["analyzed"]
+    return {"tokens": tokens, "occurrences": occ, "analyzed": analyzed, "mode": mode}
