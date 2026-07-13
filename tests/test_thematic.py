@@ -66,3 +66,24 @@ def test_aggregate_merge_normalize():
     # comptage de mots-source
     assert themes["musique"]["count"] == 3           # guitare + piano(x2 mentions)
     assert set(themes["sport"]["words"]) == {"but", "stade"}
+
+
+class _PenClient:
+    """« mot » → linguistique (fourre-tout) ; « note » → musique, poids égaux."""
+    _DB = {"mot": [(1, "linguistique", 100)], "note": [(2, "musique", 100)]}
+
+    def relation_type_id(self, name):
+        return 27 if name == "r_domain" else None
+
+    def relations_from(self, name, types_ids=None, min_weight=None, limit=None):
+        rows = self._DB.get(name.lower(), [])
+        return _Res([_Rel(i, w) for i, _n, w in rows],
+                    [_Node(i, n, w) for i, n, w in rows])
+
+
+def test_penalty_generic_domains():
+    out = analyze_thematic("mot note", _PenClient())
+    th = {t["theme"]: t for t in out["themes"]}
+    assert th["linguistique"]["score"] == 15.0       # 100 × 0.15 (pénalisé)
+    assert th["musique"]["score"] == 100.0
+    assert out["themes"][0]["theme"] == "musique"    # linguistique repasse dessous

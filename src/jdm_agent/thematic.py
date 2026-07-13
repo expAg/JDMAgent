@@ -34,6 +34,13 @@ _STOP = {
 
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)  # suites de lettres (sans chiffres)
 
+# Domaines « fourre-tout » : beaucoup de mots courants portent r_domain vers eux
+# (grammaire → linguistique, nombres → mathématique, corps → médecine), ce qui
+# les fait remonter à tort comme thèmes. On les PÉNALISE (facteur réducteur, pas
+# suppression) plutôt que de les retirer.
+_PENALIZED = {"linguistique", "mathématique", "mathématiques", "médecine"}
+_PENALTY = 0.15
+
 
 def _content_words(text: str, min_len: int = 3) -> list:
     """Mots de contenu candidats : lettres, minuscule, hors mots-outils, dédupliqués
@@ -91,6 +98,11 @@ def analyze_thematic(text: str, client, *, max_words: int = 150,
         for w in plur["words"]:
             if w not in sing["words"]:
                 sing["words"].append(w)
+
+    # Pénalité sur les domaines fourre-tout (les fait redescendre dans le classement).
+    for key in agg:
+        if key in _PENALIZED:
+            agg[key]["score"] *= _PENALTY
 
     themes = [{"theme": d, "score": round(v["score"], 1), "count": v["count"],
                "words": v["words"]} for d, v in agg.items()]
