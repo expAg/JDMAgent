@@ -15801,7 +15801,7 @@ const TOOL_MODELS = {
   polarity: [{ value: 'jdm-infopot',    label: 'JDM POL' }],
   genitive: [{ value: 'default',        label: '(par défaut)' }],
   analogy:  [{ value: 'default',        label: '(par défaut)' }],
-  jdmrel:   [{ value: 'default',        label: '(par défaut)' }],
+  jdmrel:   [{ value: 'default',        label: 'JDM EXTRACT' }],
 };
 
 // Texte d'exemple chargé par défaut dans l'onglet extraction JDM (biographie
@@ -16085,8 +16085,9 @@ function TextToolPanel({ path, models, defaultText, placeholder, rows = 4, rende
   const checkboxes = (options && options.length > 0) ? (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12 }}>
       {options.map(o => (
-        <label key={o.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!opts[o.key]}
+        <label key={o.key} title={o.disabled ? 'À venir (coréférence trop lente)' : undefined}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: o.disabled ? 'not-allowed' : 'pointer', opacity: o.disabled ? 0.5 : 1 }}>
+          <input type="checkbox" checked={!o.disabled && !!opts[o.key]} disabled={o.disabled}
             onChange={(e) => setOpts(s => ({ ...s, [o.key]: e.target.checked }))} />
           {o.label}
         </label>
@@ -16523,7 +16524,7 @@ function ViewOutils() {
         <TextToolPanel path="jdmrel" models={TOOL_MODELS.jdmrel}
           defaultText={JDMREL_DEFAULT} rows={12}
           placeholder="Un texte à analyser en relations sémantiques JDM (syntaxe UDPipe + JDM)…"
-          options={[{ key: 'resolve_anaphora', label: 'Résoudre les anaphores pronominales (coréférence)', default: false }]}
+          options={[{ key: 'resolve_anaphora', label: 'Résoudre les anaphores pronominales (coréférence)', default: false, disabled: true }]}
           renderData={(d) => <JdmRelResult data={d} />} />
       )}
     </PageShell>
