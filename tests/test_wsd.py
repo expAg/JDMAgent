@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests hors-ligne du WSD (client JDM factice, aucun réseau)."""
-from jdm_agent.wsd import disambiguate, _selectional_asym
+from jdm_agent.wsd import disambiguate, _direct_asym
 
 
 class _Sense:
@@ -86,6 +86,6 @@ def test_selectional_annotation_flips_polluted_edge():
     juriste = _Sense("avocat>juriste", "avocat (juriste)", ["avocat", "juriste"], 90)
     fruit = _Sense("avocat>fruit", "avocat (fruit)", ["avocat", "fruit"], 80)
     # juriste : patient 204 × (improbable=-0.7) → asym positif → AGENT
-    assert _selectional_asym(c, juriste, "manger") > 0
+    assert _direct_asym(c, juriste, "manger") > 0
     # fruit : patient 204 × (pertinent=1.0) → asym négatif → PATIENT
-    assert _selectional_asym(c, fruit, "manger") < 0
+    assert _direct_asym(c, fruit, "manger") < 0

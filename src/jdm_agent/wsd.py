@@ -11,12 +11,15 @@ Deux signaux combinés, PAR OCCURRENCE :
    est plutôt agent ou patient de ce verbe, via les relations actancielles
    INVERSES `r_agent-1` / `r_patient-1`, REPONDÉRÉES par leur ANNOTATION
    (« improbable » réfute l'arête héritée du sens dominant — c'est le signal qui
-   tranche). Trou sur le nœud → repli INFÉRENCE (comble via r_isa) mais COÛTEUX,
-   donc OPT-IN (`_USE_INFERENCE`) : par défaut, sel=0 et le générique tranche.
+   tranche).
 
-Perf : voisinage générique = 1 fetch tous-types par nœud (mis en cache) ; arêtes
-actancielles = requêtes typées ciblées. Pas d'inférence dans le chemin par défaut
-(elle faisait exploser le temps). Une phrase = quelques appels, pas des centaines.
+INFÉRENCE (effort 1) : déclenchée AUTOMATIQUEMENT, mais UNIQUEMENT quand le signal
+direct ne permet pas de décider (candidats de tête à égalité) et seulement sur les
+candidats à TROU (pas d'arête directe) — comble le manque via r_isa. On ne paie
+donc son coût que lorsqu'on en a réellement besoin.
+
+Perf : voisinage générique = 1 fetch tous-types par nœud (caché) ; arêtes
+actancielles = requêtes typées ciblées.
 """
 from __future__ import annotations
 
@@ -31,10 +34,6 @@ _AGENT_INV_ID, _PATIENT_INV_ID = 24, 26
 _LAMBDA = 1.0
 _MAX_SENSES = 3
 _FETCH_LIMIT = 250
-# Inférence en repli sur les TROUS (sens sans arête actancielle directe) : puissante
-# mais COÛTEUSE (~0.7s/appel). OFF par défaut → interactif. Le signal direct annoté
-# suffit dans l'immense majorité des cas ; sinon sel=0 et le générique tranche.
-_USE_INFERENCE = False
 
 # Valeurs d'annotation (§20/§22) → facteur de pertinence de l'arête.
 _ANNOT_FACTOR = {
@@ -67,7 +66,6 @@ def _node_rels(client, name: str, cache: dict) -> list:
 
 
 def _neigh_of(rels: list) -> dict:
-    """Voisinage {nom↓: poids max > 0} dérivé des relations déjà fetchées."""
     d: dict = {}
     for _t, name, w, _id in rels:
         if w > 0 and w > d.get(name, 0.0):
@@ -81,7 +79,6 @@ def _discriminants(sense) -> list:
 
 
 def _annot_factor(client, rel_id) -> float:
-    """Facteur ∈ [-1,1] de l'annotation dominante d'un triplet (1.0 si non annoté)."""
     if rel_id is None:
         return 1.0
     try:
@@ -108,9 +105,7 @@ def _generic_score(sense_neigh: dict, discs: list, context: list, ctx_neigh: dic
 
 
 def _gated_edge(client, node: str, tid: int, verb: str):
-    """Poids de l'arête `node -tid-> verb` REPONDÉRÉ par annotation. None si absente.
-    Requête TYPÉE (ciblée, fiable) : l'arête actancielle peut être basse dans le
-    classement général, donc introuvable dans un fetch tous-types plafonné."""
+    """Arête `node -tid-> verb` REPONDÉRÉE par annotation. None si absente (requête typée)."""
     try:
         res = client.relations_from(node, types_ids=[tid], limit=200)
     except Exception:
@@ -123,15 +118,17 @@ def _gated_edge(client, node: str, tid: int, verb: str):
     return None
 
 
-def _selectional_asym(client, sense, verb: str) -> float:
-    """asym = agent − patient (annotation-repondéré) ; inférence en repli sur trou."""
+def _direct_asym(client, sense, verb: str):
+    """asym directe = agent − patient (annotation-repondéré). None si TROU (aucune arête)."""
     a = _gated_edge(client, sense.name, _AGENT_INV_ID, verb)
     p = _gated_edge(client, sense.name, _PATIENT_INV_ID, verb)
-    if a is not None or p is not None:
-        return (a or 0.0) - (p or 0.0)
+    if a is None and p is None:
+        return None
+    return (a or 0.0) - (p or 0.0)
 
-    if not _USE_INFERENCE:
-        return 0.0
+
+def _infer_asym(client, sense, verb: str) -> float:
+    """asym par INFÉRENCE (effort 1) sur le label discriminant — comble le trou via r_isa."""
     from jdm_agent.inference.engine import infer
     best = 0.0
     for d in _discriminants(sense):
@@ -156,29 +153,64 @@ def _role_and_verb(sent, tok):
     return None, None
 
 
+def _decided(scored: list) -> bool:
+    """Vrai si un sens ressort NETTEMENT (marge ≥ 1.5× le 2ᵉ, score positif)."""
+    if len(scored) < 2:
+        return True
+    top, second = scored[0]["score"], scored[1]["score"]
+    return top > 0 and top >= 1.5 * abs(second)
+
+
 def _rank(client, senses, context, ctx_neigh, role, verb, cache) -> list:
-    scored = []
+    entries = []  # [sense, entry_dict, is_gap]
     for s in senses:
         gen = _generic_score(_neigh_of(_node_rels(client, s.name, cache)),
                              _discriminants(s), context, ctx_neigh)
-        sel = 0.0
+        sel, gap = 0.0, False
         if role and verb:
-            asym = _selectional_asym(client, s, verb)
-            sel = asym if role == "agent" else -asym
-        scored.append({"sense": s.decoded, "name": s.name,
-                       "consensus": round(s.weight, 1),
-                       "generic": round(gen, 1), "selectional": round(sel, 1),
-                       "score": round(gen + _LAMBDA * sel, 1)})
-    scored.sort(key=lambda x: -x["score"])
-    return scored
+            asym = _direct_asym(client, s, verb)
+            if asym is None:
+                gap = True
+            else:
+                sel = asym if role == "agent" else -asym
+        entries.append([s, {"sense": s.decoded, "name": s.name,
+                            "consensus": round(s.weight, 1),
+                            "generic": round(gen, 1), "selectional": round(sel, 1),
+                            "score": round(gen + _LAMBDA * sel, 1)}, gap])
+    entries.sort(key=lambda e: -e[1]["score"])
+
+    # INFÉRENCE seulement si INDÉCIS, sur les candidats de tête à TROU.
+    if role and verb and not _decided([e[1] for e in entries]):
+        changed = False
+        for s, ent, gap in entries[:3]:
+            if gap:
+                asym = _infer_asym(client, s, verb)
+                ent["selectional"] = round(asym if role == "agent" else -asym, 1)
+                ent["score"] = round(ent["generic"] + _LAMBDA * ent["selectional"], 1)
+                changed = True
+        if changed:
+            entries.sort(key=lambda e: -e[1]["score"])
+
+    return [e[1] for e in entries]
 
 
-def _occ(word, role, verb, scored) -> dict:
+def _occ(word, token, role, verb, scored) -> dict:
     best = scored[0]
     second = scored[1]["score"] if len(scored) > 1 else 0.0
-    return {"word": word, "role": role, "verb": verb, "chosen": best,
-            "senses": scored,
+    return {"word": word, "token": token, "role": role, "verb": verb,
+            "chosen": best, "senses": scored,
             "confident": best["score"] > 0 and best["score"] >= 1.5 * abs(second)}
+
+
+def _ws_after(toks, k) -> str:
+    """Espace après le token k : rien avant une ponctuation ni après une élision."""
+    form = toks[k].form or ""
+    nxt = toks[k + 1] if k + 1 < len(toks) else None
+    if form.endswith("'") or form.endswith("’"):
+        return ""
+    if nxt is not None and nxt.upos == "PUNCT":
+        return ""
+    return " "
 
 
 def _fallback_by_type(text: str, client, cache) -> dict:
@@ -191,27 +223,31 @@ def _fallback_by_type(text: str, client, cache) -> dict:
             continue
         senses = sorted(senses, key=lambda s: -s.weight)[:_MAX_SENSES]
         others = [cw for cw in words if cw != w]
-        occ.append(_occ(w, None, None, _rank(client, senses, others, ctx_neigh, None, None, cache)))
-    return {"occurrences": occ, "analyzed": len(words),
+        occ.append(_occ(w, None, None, None, _rank(client, senses, others, ctx_neigh, None, None, cache)))
+    return {"tokens": [], "occurrences": occ, "analyzed": len(words),
             "mode": "générique (par type, sans syntaxe)"}
 
 
 def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
-    """Texte → sens choisi PAR OCCURRENCE des mots ambigus. Réseau requis (JDM)."""
-    cache: dict = {}   # nom de nœud → relations (fetch unique)
+    """Texte → sens choisi PAR OCCURRENCE. Renvoie aussi `tokens` (avec position)
+    pour surligner chaque occurrence désambiguïsée dans le texte."""
+    cache: dict = {}
     try:
         from jdm_agent.relext.udpipe import analyse
         sents = analyse(text or "")
     except Exception:
         return _fallback_by_type(text or "", client, cache)
 
-    occ, n_words = [], 0
+    tokens_out, occ, n_words, gidx = [], [], 0, 0
     for sent in sents:
-        ctx = [(t.lemma or t.form or "").lower() for t in sent.tokens
-               if t.upos in _CONTENT_POS]
+        toks = sent.tokens
+        ctx = [(t.lemma or t.form or "").lower() for t in toks if t.upos in _CONTENT_POS]
         ctx = [w for w in ctx if len(w) >= 3]
         ctx_neigh = {w: _neigh_of(_node_rels(client, w, cache)) for w in set(ctx)}
-        for t in sent.tokens:
+        for k, t in enumerate(toks):
+            g = gidx
+            gidx += 1
+            tokens_out.append({"i": g, "text": t.form or "", "ws": _ws_after(toks, k)})
             if t.upos not in _CAND_POS:
                 continue
             w = (t.lemma or t.form or "").lower()
@@ -224,7 +260,8 @@ def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
             senses = sorted(senses, key=lambda s: -s.weight)[:max_senses]
             role, verb = _role_and_verb(sent, t)
             others = [cw for cw in ctx if cw != w]
-            occ.append(_occ(w, role, verb, _rank(client, senses, others, ctx_neigh, role, verb, cache)))
+            scored = _rank(client, senses, others, ctx_neigh, role, verb, cache)
+            occ.append(_occ(w, g, role, verb, scored))
 
-    return {"occurrences": occ, "analyzed": n_words,
-            "mode": "syntaxe (UDPipe) + rôles + générique"}
+    return {"tokens": tokens_out, "occurrences": occ, "analyzed": n_words,
+            "mode": "syntaxe (UDPipe) + inférence si besoin + générique"}

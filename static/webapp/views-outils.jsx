@@ -338,47 +338,70 @@ function JdmRelResult({ data }) {
 }
 
 // ───────── Désambiguïsation (WSD par raffinements JDM) ─────────
+// Étiquette courte d'un sens : le contenu entre parenthèses (« avocat (fruit) » → « fruit »).
+function _senseTag(sense) {
+  const m = (sense || '').match(/\(([^)]+)\)/);
+  return m ? m[1] : sense;
+}
+
 function WsdResult({ data }) {
   const occ = (data && data.occurrences) || [];
   if (!occ.length) {
     return <ToolNotice tone="warn"
       msg="Aucun mot polysémique trouvé (les termes ont un seul sens dans JeuxDeMots)." />;
   }
+  const tokens = data.tokens || [];
+  const byToken = {};
+  occ.forEach((o) => { if (o.token != null) byToken[o.token] = o; });
+
   return (
     <Card padding={18}>
       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>
         {occ.length} occurrence(s) ambiguë(s){data.mode ? ` · ${data.mode}` : ''}
       </div>
-      <div style={{ display: 'grid', gap: 12 }}>
+
+      {/* Texte avec chaque occurrence désambiguïsée surlignée + sens en exposant */}
+      {tokens.length > 0 && (
+        <div style={{ fontSize: 15, lineHeight: 2.4, marginBottom: 16 }}>
+          {tokens.map((t, i) => {
+            const o = byToken[t.i];
+            if (!o) return <React.Fragment key={i}><span>{t.text}</span>{t.ws}</React.Fragment>;
+            const col = o.confident ? 'var(--accent)' : 'var(--jdm-yellow)';
+            return (
+              <React.Fragment key={i}>
+                <span title={`${o.role ? o.role + ' de « ' + o.verb + ' » — ' : ''}${o.chosen.sense}`}
+                  style={{
+                    background: `color-mix(in srgb, ${col} 20%, transparent)`,
+                    borderBottom: `2px solid ${col}`, borderRadius: 3, padding: '1px 2px', cursor: 'help',
+                  }}>{t.text}</span>
+                <sub style={{ fontSize: 10, color: col, marginLeft: 1, whiteSpace: 'nowrap' }}>{_senseTag(o.chosen.sense)}</sub>
+                {t.ws}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Détail compact par occurrence */}
+      <div style={{ display: 'grid', gap: 6 }}>
         {occ.map((w, i) => (
-          <div key={i} style={{
-            padding: '10px 12px', background: 'var(--bg-elev)',
-            border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span className="mono" style={{ fontSize: 14, color: 'var(--ink)', fontWeight: 600 }}>{w.word}</span>
-              {w.role && (
-                <span title={`${w.role} de « ${w.verb} »`} style={{
-                  fontSize: 10, padding: '2px 8px', borderRadius: 999, color: 'var(--ink-2)',
-                  background: 'var(--bg)', border: '1px solid var(--line)',
-                }}>{w.role} · {w.verb}</span>
-              )}
-              <span style={{ color: 'var(--ink-3)' }}>→</span>
-              <span className="mono" style={{ fontSize: 13, color: 'var(--accent)' }}>{w.chosen.sense}</span>
-              <span style={{
-                marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
-                color: w.confident ? 'var(--bg)' : 'var(--ink-2)',
-                background: w.confident ? 'var(--accent)' : 'var(--bg)',
-                border: '1px solid var(--line)',
-              }}>{w.confident ? 'confiant' : 'incertain'}</span>
-            </div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              {w.senses.map((s, j) => (
-                <span key={j} style={{ color: j === 0 ? 'var(--ink)' : 'var(--ink-3)' }}>
-                  {s.sense} <span style={{ opacity: 0.7 }}>(gén {s.generic} · sél {s.selectional})</span>
-                </span>
-              ))}
-            </div>
+          <div key={i} title={w.senses.map((s) => `${s.sense} (gén ${s.generic} · sél ${s.selectional})`).join('\n')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              padding: '6px 10px', background: 'var(--bg-elev)',
+              border: '1px solid var(--line-soft)', borderRadius: 'var(--radius)',
+            }}>
+            <span className="mono" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600 }}>{w.word}</span>
+            {w.role && (
+              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, color: 'var(--ink-2)', background: 'var(--bg)', border: '1px solid var(--line)' }}>{w.role} · {w.verb}</span>
+            )}
+            <span style={{ color: 'var(--ink-3)' }}>→</span>
+            <span className="mono" style={{ fontSize: 13, color: 'var(--accent)' }}>{w.chosen.sense}</span>
+            <span style={{
+              marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999,
+              color: w.confident ? 'var(--bg)' : 'var(--ink-2)',
+              background: w.confident ? 'var(--accent)' : 'var(--bg)', border: '1px solid var(--line)',
+            }}>{w.confident ? 'confiant' : 'incertain'}</span>
           </div>
         ))}
       </div>
