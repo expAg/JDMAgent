@@ -21,8 +21,8 @@ const OUTILS_TABS = [
 const TOOL_MODELS = {
   coref:    [{ value: 'corpipe25',      label: 'CorPipe 25 — mT5-large (défaut)' }],
   syntax:   [{ value: 'udpipe2-fr-gsd', label: 'UDPipe 2 — french-gsd (défaut)' }],
-  wsd:      [{ value: 'jdm-raffinements', label: 'JeuxDeMots · raffinements (défaut)' }],
-  thematic: [{ value: 'jdm-domain',     label: 'JeuxDeMots · r_domain (défaut)' }],
+  wsd:      [{ value: 'jdm-raffinements', label: 'JDM WSD' }],
+  thematic: [{ value: 'jdm-domain',     label: 'JDM DOMAIN' }],
   polarity: [{ value: 'default',        label: '(par défaut)' }],
   genitive: [{ value: 'default',        label: '(par défaut)' }],
   analogy:  [{ value: 'default',        label: '(par défaut)' }],
@@ -412,8 +412,13 @@ function WsdColumn({ occ: w }) {
                 <span className="mono" style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: scoreCol }}>{s.score}</span>
               </div>
               {!w.mwe && (
-                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 2 }}>
-                  générique {s.generic} · sélectionnel {s.selectional}
+                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 3, lineHeight: 1.55 }}>
+                  <div>gén <b style={{ color: 'var(--ink-2)' }}>{s.generic}</b>
+                    {s.why_gen && s.why_gen.length ? <span> ← {s.why_gen.join(', ')}</span> : null}</div>
+                  {(s.selectional !== 0 || (s.why_sel && s.why_sel.length)) && (
+                    <div>sél <b style={{ color: s.selectional < 0 ? 'var(--jdm-magenta)' : 'var(--ink-2)' }}>{s.selectional}</b>
+                      {s.why_sel && s.why_sel.length ? <span> ← {s.why_sel.join(' · ')}</span> : null}</div>
+                  )}
                 </div>
               )}
             </div>
@@ -506,7 +511,7 @@ function ThematicPanel() {
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [thr, setThr] = React.useState(12);   // seuil sur le score normalisé (0-100)
-  const [wsd, setWsd] = React.useState(false);
+  const [wsd, setWsd] = React.useState(true);
   const run = async () => {
     setLoading(true); setRes(null);
     const r = await _callTool('thematic', { text, model, wsd });
@@ -525,9 +530,10 @@ function ThematicPanel() {
         rows={6} model={model} setModel={setModel} models={TOOL_MODELS.thematic}
         placeholder="Un texte à analyser thématiquement (thèmes = domaines JeuxDeMots)…"
         belowText={
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginTop: 12 }}>
+          <label title="Désambiguïser chaque mot puis filtrer les domaines par le sens choisi (plus lent, retire la polysémie)"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginTop: 12 }}>
             <input type="checkbox" checked={wsd} onChange={(e) => setWsd(e.target.checked)} />
-            Désambiguïser les mots avant le domaine (WSD — plus lent, filtre la polysémie)
+            WSD
           </label>
         } />
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}

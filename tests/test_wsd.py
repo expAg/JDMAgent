@@ -86,9 +86,9 @@ def test_selectional_annotation_flips_polluted_edge():
     juriste = _Sense("avocat>juriste", "avocat (juriste)", ["avocat", "juriste"], 90)
     fruit = _Sense("avocat>fruit", "avocat (fruit)", ["avocat", "fruit"], 80)
     # juriste : patient 204 × (improbable=-0.7) → asym positif → AGENT
-    assert _direct_asym(c, juriste, "manger") > 0
+    assert _direct_asym(c, juriste, "manger")[0] > 0
     # fruit : patient 204 × (pertinent=1.0) → asym négatif → PATIENT
-    assert _direct_asym(c, fruit, "manger") < 0
+    assert _direct_asym(c, fruit, "manger")[0] < 0
 
 
 def test_mwe_detection():

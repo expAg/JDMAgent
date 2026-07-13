@@ -96,21 +96,11 @@ def _discriminants(sense) -> list:
     return [p.strip().lower() for p in parts if p and ":" not in p]
 
 
-def _annot_factor(client, rel_id) -> float:
-    if rel_id is None:
-        return 1.0
-    try:
-        for a in client.get_annotations_for_triplet(rel_id):
-            v = (a.value or "").strip().lower()
-            if v in _ANNOT_FACTOR:
-                return _ANNOT_FACTOR[v]
-    except Exception:
-        pass
-    return 1.0
-
-
-def _generic_score(sense_neigh: dict, discs: list, context: list, ctx_neigh: dict) -> float:
+def _generic_score(sense_neigh: dict, discs: list, context: list, ctx_neigh: dict):
+    """Renvoie (score, top_mots) : les mots de contexte qui ont le plus contribué
+    (explicabilité)."""
     sc = 0.0
+    contrib = []
     for cw in context:
         best = sense_neigh.get(cw, 0.0)
         cwn = ctx_neigh.get(cw, {})
@@ -118,12 +108,29 @@ def _generic_score(sense_neigh: dict, discs: list, context: list, ctx_neigh: dic
             v = cwn.get(d, 0.0)
             if v > best:
                 best = v
+        if best > 0:
+            contrib.append((cw, best))
         sc += best
-    return sc
+    contrib.sort(key=lambda x: -x[1])
+    return sc, [cw for cw, _ in contrib[:3]]
+
+
+def _annot(client, rel_id):
+    """(facteur, label) de l'annotation dominante d'un triplet (1.0, None si aucune)."""
+    if rel_id is None:
+        return 1.0, None
+    try:
+        for a in client.get_annotations_for_triplet(rel_id):
+            v = (a.value or "").strip().lower()
+            if v in _ANNOT_FACTOR:
+                return _ANNOT_FACTOR[v], v
+    except Exception:
+        pass
+    return 1.0, None
 
 
 def _gated_edge(client, node: str, tid: int, verb: str):
-    """Arête `node -tid-> verb` REPONDÉRÉE par annotation. None si absente (requête typée)."""
+    """(poids annoté, label) de l'arête `node -tid-> verb`. None si absente (typée)."""
     try:
         res = client.relations_from(node, types_ids=[tid], limit=200)
     except Exception:
@@ -132,17 +139,19 @@ def _gated_edge(client, node: str, tid: int, verb: str):
     for r in res.relations:
         n = idx.get(r.node2)
         if n is not None and n.name.strip().lower() == verb:
-            return r.w * _annot_factor(client, r.id)
+            factor, label = _annot(client, r.id)
+            return (r.w * factor, label)
     return None
 
 
 def _direct_asym(client, sense, verb: str):
-    """asym directe = agent − patient (annotation-repondéré). None si TROU (aucune arête)."""
+    """(asym, info_agent, info_patient) où info = (poids, label) ou None. asym =
+    agent − patient (annotation-repondéré). Renvoie None si TROU (aucune arête)."""
     a = _gated_edge(client, sense.name, _AGENT_INV_ID, verb)
     p = _gated_edge(client, sense.name, _PATIENT_INV_ID, verb)
     if a is None and p is None:
         return None
-    return (a or 0.0) - (p or 0.0)
+    return ((a[0] if a else 0.0) - (p[0] if p else 0.0), a, p)
 
 
 def _role_and_verb(sent, tok):
@@ -159,17 +168,23 @@ def _role_and_verb(sent, tok):
 def _rank(client, senses, context, ctx_neigh, role, verb, cache) -> list:
     scored = []
     for s in senses:
-        gen = _generic_score(_neigh_of(_node_rels(client, s.name, cache)),
-                             _discriminants(s), context, ctx_neigh)
-        sel = 0.0
+        gen, gen_top = _generic_score(_neigh_of(_node_rels(client, s.name, cache)),
+                                      _discriminants(s), context, ctx_neigh)
+        sel, why_sel = 0.0, []
         if role and verb:
-            asym = _direct_asym(client, s, verb)   # None si trou → sel reste 0
-            if asym is not None:
+            da = _direct_asym(client, s, verb)   # None si trou → sel reste 0
+            if da is not None:
+                asym, a, p = da
                 sel = asym if role == "agent" else -asym
+                if a is not None:
+                    why_sel.append(f"agent {round(a[0])}" + (f" [{a[1]}]" if a[1] else ""))
+                if p is not None:
+                    why_sel.append(f"patient {round(p[0])}" + (f" [{p[1]}]" if p[1] else ""))
         scored.append({"sense": s.decoded, "name": s.name,
                        "consensus": round(s.weight, 1),
                        "generic": round(gen, 1), "selectional": round(sel, 1),
-                       "score": round(gen + _LAMBDA * sel, 1)})
+                       "score": round(gen + _LAMBDA * sel, 1),
+                       "why_gen": gen_top, "why_sel": why_sel})
     scored.sort(key=lambda x: -x["score"])
     return scored
 
