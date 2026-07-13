@@ -15796,7 +15796,7 @@ const TOOL_MODELS = {
   coref:    [{ value: 'corpipe25',      label: 'CorPipe 25 — mT5-large (défaut)' }],
   syntax:   [{ value: 'udpipe2-fr-gsd', label: 'UDPipe 2 — french-gsd (défaut)' }],
   wsd:      [{ value: 'default',        label: '(par défaut)' }],
-  thematic: [{ value: 'default',        label: '(par défaut)' }],
+  thematic: [{ value: 'jdm-domain',     label: 'JeuxDeMots · r_domain (défaut)' }],
   polarity: [{ value: 'default',        label: '(par défaut)' }],
   genitive: [{ value: 'default',        label: '(par défaut)' }],
   analogy:  [{ value: 'default',        label: '(par défaut)' }],
@@ -15816,6 +15816,9 @@ La carrière de Lester décolle lorsqu'il rencontre Lightnin' Slim dans un bus t
 À la fin des années 1960, il abandonne la musique, travaillant manuellement et s'adonnant à son passe-temps favori : la pêche. Lester déménage finalement à Pontiac, Michigan, vivant avec la sœur de Slim Harpo. En 1971, Fred Reif organise un concert de Lightnin' Slim au Festival Folk de l'Université de Chicago, et amène Lester de Louisiane pour l'accompagner. Des années plus tard, Reif orchestre son comeback.
 
 En septembre 2002, la Boston Blues Society lui décerne un Lifetime Achievement Award. En 2003, Martin Scorsese inclut Lester dans son concert hommage au blues au Radio City Music Hall. Lester vit alors à Paradise, en Californie, avec sa petite amie et apparaît dans le film documentaire de 2015 I Am the Blues. Lester continue à se produire jusqu'en 2018, retournant souvent en Louisiane. Lester décède d'un cancer le 22 août 2018, à l'âge de 85 ans.`;
+
+// Texte d'exemple pour l'analyse thématique (domaines JeuxDeMots variés).
+const THEMATIC_DEFAULT = "Le guitariste et le pianiste ont joué une symphonie lors du concert. Le chef d'orchestre a dirigé les musiciens sur la scène du théâtre, et le public a applaudi la mélodie. Plus tard, l'équipe a marqué un but au stade : l'attaquant a dribblé le défenseur avant de tirer, et l'arbitre a sifflé la fin du match.";
 
 // Encart d'erreur / placeholder homogène (service down ou non branché).
 function ToolNotice({ msg, tone }) {
@@ -16108,6 +16111,69 @@ function JdmRelResult({ data }) {
   );
 }
 
+// ───────── Analyse thématique (domaines JeuxDeMots) ─────────
+function ThematicPanel() {
+  const [text, setText] = React.useState(THEMATIC_DEFAULT);
+  const [model, setModel] = React.useState(TOOL_MODELS.thematic[0].value);
+  const [res, setRes] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [thr, setThr] = React.useState(12);   // seuil sur le score normalisé (0-100)
+  const run = async () => {
+    setLoading(true); setRes(null);
+    setRes(await _callTool('thematic', { text, model })); setLoading(false);
+  };
+  const data = (res && res.ok) ? res.data : null;
+  const themes = (data && data.themes) || [];
+  const shown = themes.filter((t) => t.rel >= thr);
+  return (
+    <div style={panelGrid()}>
+      <ToolForm text={text} setText={setText} run={run} loading={loading}
+        rows={6} model={model} setModel={setModel} models={TOOL_MODELS.thematic}
+        placeholder="Un texte à analyser thématiquement (thèmes = domaines JeuxDeMots)…" />
+      {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
+      {data && (
+        <Card padding={18}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>
+            {themes.length} thème(s) · {shown.length} affiché(s) · {data.analyzed}/{data.word_count} mots analysés
+            {data.truncated ? ' (tronqué)' : ''}
+          </div>
+          {/* Barre de seuil */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 18px' }}>
+            <span style={{ fontSize: 12, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>Seuil</span>
+            <input type="range" min="0" max="100" step="1" value={thr}
+              onChange={(e) => setThr(Number(e.target.value))}
+              style={{ flex: 1, accentColor: 'var(--accent)', cursor: 'pointer' }} />
+            <span className="mono" style={{ fontSize: 12, color: 'var(--accent)', minWidth: 36, textAlign: 'right' }}>{thr}%</span>
+          </div>
+          {/* Nuage de bulles : taille ∝ importance du thème */}
+          {shown.length ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              {shown.map((t) => {
+                const fs = 13 + (t.rel / 100) * 24;               // 13 → 37 px
+                const pct = Math.round(18 + (t.rel / 100) * 52);  // opacité 18 → 70 %
+                return (
+                  <span key={t.theme}
+                    title={`score ${t.score} · ${t.count} mot(s) : ${t.words.join(', ')}`}
+                    style={{
+                      display: 'inline-block', padding: '6px 14px', borderRadius: 999,
+                      fontSize: fs, lineHeight: 1.15, fontWeight: 600, color: 'var(--ink)',
+                      background: `color-mix(in srgb, var(--accent) ${pct}%, transparent)`,
+                      border: '1px solid var(--line-soft)', cursor: 'default',
+                    }}>
+                    {t.theme}
+                  </span>
+                );
+              })}
+            </div>
+          ) : (
+            <ToolNotice tone="warn" msg="Aucun thème au-dessus du seuil — baisse la barre." />
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
 // ───────── Analogies ─────────
 function AnalogyPanel() {
   const [a, setA] = React.useState('Paris');
@@ -16205,11 +16271,7 @@ function ViewOutils() {
           defaultText="L'avocat a plaidé toute la matinée, puis il a mangé un avocat bien mûr."
           placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…" />
       )}
-      {tab === 'thematic' && (
-        <TextToolPanel path="thematic" models={TOOL_MODELS.thematic}
-          defaultText="Le réchauffement climatique menace la biodiversité et l'agriculture."
-          placeholder="Un texte à analyser thématiquement…" />
-      )}
+      {tab === 'thematic' && <ThematicPanel />}
       {tab === 'polarity' && (
         <TextToolPanel path="polarity" models={TOOL_MODELS.polarity}
           defaultText="Ce film était vraiment excellent, je l'ai adoré du début à la fin."

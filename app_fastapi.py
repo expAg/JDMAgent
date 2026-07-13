@@ -3061,9 +3061,25 @@ async def api_tools_wsd(req: ToolTextRequest) -> dict:
 
 @app.post("/api/tools/thematic")
 async def api_tools_thematic(req: ToolTextRequest) -> dict:
-    """Analyse thématique d'un texte (service à venir — placeholder)."""
-    return await _proxy_tool_json(
-        TOOLS_THEMATIC_URL, {"text": req.text, "model": req.model}, "analyse thématique")
+    """Analyse thématique d'un texte via JeuxDeMots (relation r_domain).
+
+    Si TOOLS_THEMATIC_URL est défini → proxy. Sinon → modèle LOCAL v1
+    (jdm_agent.thematic) : agrège et classe les domaines (r_domain) de chaque
+    mot ; les domaines dominants = les thèmes. Le seuil d'affichage est réglé
+    côté interface (barre) sur le score normalisé renvoyé."""
+    if TOOLS_THEMATIC_URL:
+        return await _proxy_tool_json(
+            TOOLS_THEMATIC_URL, {"text": req.text, "model": req.model}, "analyse thématique")
+    try:
+        import anyio
+        from jdm_agent.thematic import analyze_thematic
+        c = get_client()
+        out = await anyio.to_thread.run_sync(
+            lambda: analyze_thematic(req.text or "", c))
+        return {"ok": True, "service": "analyse thématique", "data": out}
+    except Exception as e:
+        return {"ok": False, "service": "analyse thématique",
+                "error": f"Erreur analyse thématique : {e!r}"}
 
 
 @app.post("/api/tools/polarity")
