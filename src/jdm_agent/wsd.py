@@ -13,13 +13,14 @@ Deux signaux combinés, PAR OCCURRENCE :
    (« improbable » réfute l'arête héritée du sens dominant — c'est le signal qui
    tranche).
 
-INFÉRENCE (effort 1) : déclenchée AUTOMATIQUEMENT, mais UNIQUEMENT quand le signal
-direct ne permet pas de décider (candidats de tête à égalité) et seulement sur les
-candidats à TROU (pas d'arête directe) — comble le manque via r_isa. On ne paie
-donc son coût que lorsqu'on en a réellement besoin.
+Quand ni le générique ni le direct ne tranchent → « incertain » (honnête), pas de
+réponse fabriquée. L'inférence de graphe n'est PAS utilisée ici : mesurée trop
+coûteuse (≈20 s/phrase) et surtout génératrice de faux positifs confiants (elle
+sur-généralise via r_isa : « un cuisinier est une personne, une personne peut
+diriger » → sens erroné). Elle reste dispo hors-ligne (jdm_agent.inference).
 
 Perf : voisinage générique = 1 fetch tous-types par nœud (caché) ; arêtes
-actancielles = requêtes typées ciblées.
+actancielles = requêtes typées ciblées. Une phrase = quelques appels.
 """
 from __future__ import annotations
 
@@ -29,7 +30,6 @@ _CONTENT_POS = {"NOUN", "PROPN", "ADJ", "VERB"}   # contexte
 _CAND_POS = {"NOUN", "PROPN"}                       # mots à désambiguïser
 _AGENT_DEP = {"nsubj"}
 _PATIENT_DEP = {"obj", "iobj", "nsubj:pass"}
-_R_AGENT_INV, _R_PATIENT_INV = "r_agent-1", "r_patient-1"
 _AGENT_INV_ID, _PATIENT_INV_ID = 24, 26
 _LAMBDA = 1.0
 _MAX_SENSES = 3
@@ -127,21 +127,6 @@ def _direct_asym(client, sense, verb: str):
     return (a or 0.0) - (p or 0.0)
 
 
-def _infer_asym(client, sense, verb: str) -> float:
-    """asym par INFÉRENCE (effort 1) sur le label discriminant — comble le trou via r_isa."""
-    from jdm_agent.inference.engine import infer
-    best = 0.0
-    for d in _discriminants(sense):
-        try:
-            ia = infer(client, d, _R_AGENT_INV, verb, effort=1).signed_weight
-            ip = infer(client, d, _R_PATIENT_INV, verb, effort=1).signed_weight
-        except Exception:
-            continue
-        if abs(ia - ip) > abs(best):
-            best = ia - ip
-    return best
-
-
 def _role_and_verb(sent, tok):
     head = sent.by_id.get(tok.head)
     if head is None or head.upos != "VERB":
@@ -153,45 +138,22 @@ def _role_and_verb(sent, tok):
     return None, None
 
 
-def _decided(scored: list) -> bool:
-    """Vrai si un sens ressort NETTEMENT (marge ≥ 1.5× le 2ᵉ, score positif)."""
-    if len(scored) < 2:
-        return True
-    top, second = scored[0]["score"], scored[1]["score"]
-    return top > 0 and top >= 1.5 * abs(second)
-
-
 def _rank(client, senses, context, ctx_neigh, role, verb, cache) -> list:
-    entries = []  # [sense, entry_dict, is_gap]
+    scored = []
     for s in senses:
         gen = _generic_score(_neigh_of(_node_rels(client, s.name, cache)),
                              _discriminants(s), context, ctx_neigh)
-        sel, gap = 0.0, False
+        sel = 0.0
         if role and verb:
-            asym = _direct_asym(client, s, verb)
-            if asym is None:
-                gap = True
-            else:
+            asym = _direct_asym(client, s, verb)   # None si trou → sel reste 0
+            if asym is not None:
                 sel = asym if role == "agent" else -asym
-        entries.append([s, {"sense": s.decoded, "name": s.name,
-                            "consensus": round(s.weight, 1),
-                            "generic": round(gen, 1), "selectional": round(sel, 1),
-                            "score": round(gen + _LAMBDA * sel, 1)}, gap])
-    entries.sort(key=lambda e: -e[1]["score"])
-
-    # INFÉRENCE seulement si INDÉCIS, sur les candidats de tête à TROU.
-    if role and verb and not _decided([e[1] for e in entries]):
-        changed = False
-        for s, ent, gap in entries[:3]:
-            if gap:
-                asym = _infer_asym(client, s, verb)
-                ent["selectional"] = round(asym if role == "agent" else -asym, 1)
-                ent["score"] = round(ent["generic"] + _LAMBDA * ent["selectional"], 1)
-                changed = True
-        if changed:
-            entries.sort(key=lambda e: -e[1]["score"])
-
-    return [e[1] for e in entries]
+        scored.append({"sense": s.decoded, "name": s.name,
+                       "consensus": round(s.weight, 1),
+                       "generic": round(gen, 1), "selectional": round(sel, 1),
+                       "score": round(gen + _LAMBDA * sel, 1)})
+    scored.sort(key=lambda x: -x["score"])
+    return scored
 
 
 def _occ(word, token, role, verb, scored) -> dict:
@@ -264,4 +226,4 @@ def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
             occ.append(_occ(w, g, role, verb, scored))
 
     return {"tokens": tokens_out, "occurrences": occ, "analyzed": n_words,
-            "mode": "syntaxe (UDPipe) + inférence si besoin + générique"}
+            "mode": "syntaxe (UDPipe) + sélectionnel + générique"}
