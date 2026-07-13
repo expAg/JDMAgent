@@ -93,57 +93,70 @@ def _syntactic_units(text: str) -> dict:
 
 def analyze_thematic(text: str, client, *, max_words: int = 150,
                      per_word: int = 15, min_weight: float = 1.0,
-                     use_syntax: bool = False) -> dict:
+                     use_syntax: bool = False, use_wsd: bool = False) -> dict:
     """Texte → thèmes (domaines JDM agrégés + classés).
 
-    `use_syntax` : OPT-IN. Mesuré comme DÉGRADANT la discrimination sur nos textes
-    (la lemmatisation ramène « genres/rythmes » vers des singuliers fourre-tout et
-    la pondération de rôle gonfle les noms abstraits sujets). Par défaut : mots par
-    regex, poids uniforme. Le scoring par dispersion (poids×part) fait le tri.
-    Si activé et réseau OK : UDPipe (POS de contenu + lemmes + poids de rôle).
+    `use_wsd` : OPT-IN. On désambiguïse chaque mot puis on FILTRE les domaines
+    (riches) du mot brut par ceux du sens choisi / du composé (« chef d'orchestre »)
+    → retire du bruit de polysémie. Mesuré : nettoie la queue mais peut affaiblir un
+    thème secondaire réel, et ~8× plus lent → désactivé par défaut.
 
-    Renvoie `{themes, word_count, analyzed, truncated}` où chaque thème est
-    `{theme, score, rel, count, words}` (`rel` = score normalisé 0-100 par
-    rapport au thème dominant ; `count` = nb de contributions ; `words` = lemmes).
+    `use_syntax` : variante lemmes+rôles (mesurée dégradante, opt-in).
+
+    Le scoring par DISPERSION (poids JDM × part focalisée) fait le tri des domaines.
+    Renvoie `{themes, word_count, analyzed, truncated, suggested_threshold}`.
     """
     rid = client.relation_type_id("r_domain")
 
-    units = None
-    if use_syntax:
+    # items = liste de (mot_affiché, terme_jdm, nœud_de_sens_pour_filtre, poids)
+    items = None
+    if use_wsd:
         try:
-            units = _syntactic_units(text)
+            from jdm_agent.wsd import resolved_terms
+            items = [(disp, term, sense, 1.0) for disp, term, sense in resolved_terms(text, client)]
         except Exception:
-            units = None
-    if not units:
-        units = {w: 1.0 for w in _content_words(text)}
+            items = None
+    if items is None and use_syntax:
+        try:
+            items = [(w, w, None, rw) for w, rw in _syntactic_units(text).items()]
+        except Exception:
+            items = None
+    if items is None:
+        items = [(w, w, None, 1.0) for w in _content_words(text)]
 
-    items = list(units.items())  # (lemme, poids_syntaxique)
     truncated = len(items) > max_words
     analyzed = items[:max_words]
 
+    def _domains(term):
+        res = client.relations_from(term, types_ids=[rid], min_weight=min_weight, limit=per_word)
+        idx = res.node_index()
+        return [(idx[r.node2].name.strip().lower(), r.w)
+                for r in res.relations
+                if r.node2 in idx and r.w > 0 and idx[r.node2].name.strip()]
+
     agg: dict = {}
     if rid is not None:
-        for w, rw in analyzed:
-            res = client.relations_from(w, types_ids=[rid],
-                                        min_weight=min_weight, limit=per_word)
-            idx = res.node_index()
-            # Domaines du mot (clé minuscule → fusionne « Musique »/« musique »).
-            doms = [(idx[r.node2].name.strip().lower(), r.w)
-                    for r in res.relations
-                    if r.node2 in idx and r.w > 0 and idx[r.node2].name.strip()]
+        for disp, term, sense, rw in analyzed:
+            doms = _domains(term)
+            # FILTRE par le sens désambiguïsé : on garde les domaines RICHES du mot
+            # brut mais seulement ceux cohérents avec le sens choisi (avocat→juriste
+            # ⇒ droit, pas botanique/cuisine). Sens sans domaine → pas de filtre.
+            if sense:
+                keep = {k for k, _ in _domains(sense)}
+                if keep:
+                    filtered = [(k, wt) for k, wt in doms if k in keep]
+                    if filtered:          # ne filtre que si ça laisse des domaines
+                        doms = filtered
             total = sum(wt for _, wt in doms)
             if total <= 0:
                 continue
-            # Score = MAGNITUDE du poids JDM × PART focalisée (poids/total). Un
-            # domaine définitionnel fort (blues→musique) ressort ; les domaines
-            # éparpillés des mots génériques (genre→sociologie/biologie/…)
-            # s'effondrent. `rw` = influence de rôle (1.0 si sans syntaxe).
+            # Score = MAGNITUDE du poids JDM × PART focalisée (poids/total).
             for key, wt in doms:
                 e = agg.setdefault(key, {"score": 0.0, "count": 0, "words": []})
                 e["score"] += rw * wt * (wt / total)
                 e["count"] += 1
-                if w not in e["words"]:
-                    e["words"].append(w)
+                if disp not in e["words"]:
+                    e["words"].append(disp)
 
     # Fusion pluriel → singulier (« sports »→« sport », « spectacles »→« spectacle »).
     # Cheap et sûr sur des noms de domaine ; la vraie lemmatisation viendra avec UDPipe.

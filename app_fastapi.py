@@ -2978,6 +2978,7 @@ class ToolTextRequest(BaseModel):
     text: str = ""
     model: str = ""      # modèle choisi dans l'UI (transmis tel quel au service)
     resolve_anaphora: bool = False   # relations JDM : résoudre les pronoms (coref)
+    wsd: bool = False                # thématique : désambiguïser avant r_domain
 
 
 class ToolGenitiveRequest(BaseModel):
@@ -3109,7 +3110,7 @@ async def api_tools_thematic(req: ToolTextRequest) -> dict:
         from jdm_agent.thematic import analyze_thematic
         c = get_client()
         out = await anyio.to_thread.run_sync(
-            lambda: analyze_thematic(req.text or "", c))
+            lambda: analyze_thematic(req.text or "", c, use_wsd=bool(req.wsd)))
         return {"ok": True, "service": "analyse thématique", "data": out}
     except Exception as e:
         return {"ok": False, "service": "analyse thématique",

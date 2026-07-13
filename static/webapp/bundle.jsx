@@ -16280,9 +16280,10 @@ function ThematicPanel() {
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [thr, setThr] = React.useState(12);   // seuil sur le score normalisé (0-100)
+  const [wsd, setWsd] = React.useState(false);
   const run = async () => {
     setLoading(true); setRes(null);
-    const r = await _callTool('thematic', { text, model });
+    const r = await _callTool('thematic', { text, model, wsd });
     setRes(r); setLoading(false);
     if (r && r.ok && r.data && typeof r.data.suggested_threshold === 'number') {
       setThr(r.data.suggested_threshold);   // seuil auto (au plus grand écart)
@@ -16296,7 +16297,13 @@ function ThematicPanel() {
     <div style={panelGrid()}>
       <ToolForm text={text} setText={setText} run={run} loading={loading}
         rows={6} model={model} setModel={setModel} models={TOOL_MODELS.thematic}
-        placeholder="Un texte à analyser thématiquement (thèmes = domaines JeuxDeMots)…" />
+        placeholder="Un texte à analyser thématiquement (thèmes = domaines JeuxDeMots)…"
+        belowText={
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer', marginTop: 12 }}>
+            <input type="checkbox" checked={wsd} onChange={(e) => setWsd(e.target.checked)} />
+            Désambiguïser les mots avant le domaine (WSD — plus lent, filtre la polysémie)
+          </label>
+        } />
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
       {data && (
         <Card padding={18}>

@@ -306,6 +306,53 @@ def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES):
     yield {"type": "done", "analyzed": n_words}
 
 
+_THEMATIC_POS = {"NOUN", "PROPN", "ADJ"}
+
+
+def resolved_terms(text: str, client, *, max_senses: int = _MAX_SENSES) -> list:
+    """Pour l'analyse THÉMATIQUE. Pour chaque mot de contenu renvoie un triplet
+    `(mot_affiché, terme_à_interroger, nœud_de_sens_ou_None)` :
+      - composé connu (« chef d'orchestre ») → (surface, surface, None) ;
+      - mot ambigu → (mot, MOT BRUT, nœud du sens choisi) : on interroge le mot
+        brut (domaines RICHES) mais on FILTRERA ses domaines par ceux du sens ;
+      - monosémique → (mot, mot, None).
+    Réseau requis (UDPipe + JDM)."""
+    cache: dict = {}
+    try:
+        from jdm_agent.relext.udpipe import analyse
+        sents = analyse(text or "")
+    except Exception:
+        return [(w, w, None) for w in _content_words(text or "")]
+
+    out = []
+    for sent in sents:
+        toks = sent.tokens
+        absorbed = set()
+        ctx = [(t.lemma or t.form or "").lower() for t in toks if t.upos in _CONTENT_POS]
+        ctx = [w for w in ctx if len(w) >= 3]
+        ctx_neigh = {w: _neigh_of(_node_rels(client, w, cache)) for w in set(ctx)}
+        for k, t in enumerate(toks):
+            if k in absorbed or t.upos not in _THEMATIC_POS:
+                continue
+            mwe = _mwe_span(sent, k, client)
+            if mwe is not None:
+                _a, end, surface = mwe
+                absorbed.update(range(k + 1, end + 1))
+                out.append((surface, surface, None))
+                continue
+            w = (t.lemma or t.form or "").lower()
+            if len(w) < 3:
+                continue
+            senses = _semantic_senses(client, w, max_senses)
+            if len(senses) < 2:
+                out.append((w, w, None))          # monosémique → mot brut
+                continue
+            others = [cw for cw in ctx if cw != w]
+            scored = _rank(client, senses, others, ctx_neigh, None, None, cache)  # générique seul
+            out.append((w, w, scored[0]["name"]))   # mot brut + nœud du sens (pour filtre)
+    return out
+
+
 def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
     """Version non-streaming (collecte le générateur) — pour tests / thématique."""
     tokens, occ, analyzed, mode = [], [], 0, _MODE
