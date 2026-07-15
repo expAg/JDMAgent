@@ -84,14 +84,11 @@ def _pair_feats(client, a, b, cache):
 
 
 def _vec(client, pairs, cache):
+    # Utilise EXACTEMENT les features déployées (genitive.featurize, filtrées).
+    from jdm_agent.genitive import featurize
     dicts, y = [], []
     for i, (a, b, c) in enumerate(pairs):
-        fv = {}
-        for k, v in _term_feats(client, a, cache).items():
-            fv["A_" + k] = v
-        for k, v in _term_feats(client, b, cache).items():
-            fv["B_" + k] = v
-        fv.update(_pair_feats(client, a, b, cache))
+        fv, _ev = featurize(client, a, b, cache)
         dicts.append(fv)
         y.append(c)
         if (i + 1) % 100 == 0:

@@ -16088,17 +16088,36 @@ function GenitivePanel() {
             </div>
           )}
 
-          {/* Évidence : relation directe A↔B trouvée dans JDM */}
-          {d.evidence && d.evidence.length > 0 && (
-            <div>
-              <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>évidence (relations JDM A↔B)</div>
+          {/* Signaux de type (explicabilité : A est-il une action ? B une personne/lieu ?) */}
+          {d.signals && (
+            <div style={{ marginBottom: 14, display: 'grid', gap: 6 }}>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>signaux de type</div>
+              {[['a', d.a], ['b', d.b]].map(([k, w]) => {
+                const s = d.signals[k] || { types: [], isa: [] };
+                return (
+                  <div key={k} className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
+                    <b style={{ color: 'var(--ink)' }}>{w}</b>
+                    {s.types.length ? ' — ' + s.types.join(' · ') : ''}
+                    {s.isa.length ? <span style={{ color: 'var(--ink-3)' }}> (isa : {s.isa.join(', ')})</span> : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Évidence : relation directe A↔B discriminante (r_associated exclu) */}
+          <div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>évidence (relations JDM A↔B)</div>
+            {d.evidence && d.evidence.length > 0 ? (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {d.evidence.map((e, i) => (
                   <span key={i} className="mono" style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, color: 'var(--ink-2)', background: 'var(--bg-elev)', border: '1px solid var(--line-soft)' }}>{e}</span>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>aucune relation directe discriminante</span>
+            )}
+          </div>
         </Card>
       )}
     </div>

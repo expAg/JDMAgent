@@ -22,6 +22,18 @@ _TYPE_TAGS = {70: "procag", 76: "procpa", 24: "ag1", 26: "pa1", 28: "lieu1",
               30: "lieuact", 122: "own1", 171: "origin", 50: "mater", 10: "holo",
               9: "haspart", 100: "auteur", 37: "telic", 3: "domain"}
 
+# Étiquettes lisibles des signaux de type (pour l'explication).
+_OUT_LABEL = {"procag": "action (agent d'un processus)", "procpa": "action (objet d'un processus)",
+              "ag1": "peut agir", "pa1": "peut subir", "lieu1": "lieu (contient des choses)",
+              "lieuact": "lieu (d'actions)", "own1": "possédé par", "origin": "a une origine",
+              "mater": "matière", "holo": "a des parties", "haspart": "a des parties",
+              "auteur": "a un auteur", "telic": "a une fonction", "domain": "a un domaine"}
+
+# Relations JDM NON discriminantes / bruit → écartées des features et de l'évidence.
+_SKIP_REL = {"r_associated", "r_aki", "r_wiki", "r_raff_sem", "r_raff_morpho",
+             "r_raff_sem-1", "r_pos", "r_lemma", "r_meaning/glose", "r_data",
+             "r_pos_seq", "r_annotation", "r_annotation_context", "r_annotation_exception"}
+
 # Formulation en langage naturel : « A <prédicat> B ».
 _NL = {
     "r_agent": "{a} a pour agent {b}",
@@ -102,11 +114,14 @@ def _pair_feats(client, a, b, cache):
         try:
             res = client.relations_between(x, y)
             for rel in res.relations:
-                if rel.w > 0:
-                    tn = client.relation_type_name(rel.type) or str(rel.type)
-                    k = pref + ":" + tn
-                    f[k] = max(f.get(k, 0.0), math.log1p(rel.w))
-                    ev.append((f"{x}→{y}", tn, rel.w))
+                if rel.w <= 0:
+                    continue
+                tn = client.relation_type_name(rel.type) or str(rel.type)
+                if tn in _SKIP_REL:          # relations génériques : ni feature ni évidence
+                    continue
+                k = pref + ":" + tn
+                f[k] = max(f.get(k, 0.0), math.log1p(rel.w))
+                ev.append((f"{x}→{y}", tn, rel.w))
         except Exception:
             pass
     ev.sort(key=lambda e: -e[2])
@@ -169,6 +184,15 @@ def _proba(model, fv: dict):
     return [e / tot for e in exps]
 
 
+def _signals(fv: dict) -> dict:
+    """Explique les signaux de type par côté : A est-il une action ? B un lieu/personne ?"""
+    def side(pref):
+        types = [_OUT_LABEL.get(k[6:], k[6:]) for k in fv if k.startswith(pref + "OUT:")]
+        isa = [k[6:] for k in fv if k.startswith(pref + "ISA:")]
+        return {"types": types, "isa": isa[:4]}
+    return {"a": side("A_"), "b": side("B_")}
+
+
 def predict(text: str, client, *, top_k: int = 3) -> dict:
     """« A de B » → {a, b, relation, nl, top[], evidence[]}."""
     p = parse_pair(text)
@@ -184,5 +208,5 @@ def predict(text: str, client, *, top_k: int = 3) -> dict:
             "nl": nl(classes[i], a, b)} for i in order[:top_k]]
     best = classes[order[0]]
     return {"ok": True, "a": a, "b": b, "relation": best, "nl": nl(best, a, b),
-            "top": top,
+            "top": top, "signals": _signals(fv),
             "evidence": [f"{d} : {t} ({int(w)})" for d, t, w in ev[:6]]}
