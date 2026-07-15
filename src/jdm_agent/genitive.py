@@ -3,16 +3,17 @@
 features SYMBOLIQUES JeuxDeMots (INFO-SEM r_infopot, hyperonymes r_isa, relations
 prédicatives sortantes, et relation DIRECTE A↔B).
 
-Le modèle (pipeline sklearn) est entraîné hors-ligne (scripts/gen_build_model.py)
-et sérialisé dans models/grasp_it.joblib ; ce module fournit la MÊME extraction de
-features (train == serving) et la prédiction + formulation en langage naturel.
+SERVING SANS DÉPENDANCE : le modèle (régression logistique) est exporté en JSON
+portable (models/grasp_it.json) par scripts/gen_build_model.py, et la prédiction
+est réimplémentée en Python pur (pas de scikit-learn / joblib / numpy à installer
+sur le serveur). scikit-learn ne sert qu'à l'entraînement hors-ligne.
 """
 from __future__ import annotations
 
+import json
+import math
 import os
 import re
-
-import numpy as np
 
 _CONN = re.compile(r"(?<= )(de la |de l'|de l’|du |des |de |d'|d’)")
 
@@ -42,8 +43,7 @@ _NL = {
 
 
 def nl(relation: str, a: str, b: str) -> str:
-    tpl = _NL.get(relation, "{a} — " + relation + " — {b}")
-    return tpl.format(a=a, b=b)
+    return _NL.get(relation, "{a} — " + relation + " — {b}").format(a=a, b=b)
 
 
 def parse_pair(text: str):
@@ -85,7 +85,7 @@ def _term_feats(client, term, cache):
         for r in res.relations:
             n = idx.get(r.node2)
             if n and n.name.upper().startswith("_INFO") and r.w > 0:
-                f["INFO:" + n.name.lower()] = float(np.log1p(r.w))
+                f["INFO:" + n.name.lower()] = math.log1p(r.w)
     except Exception:
         pass
     cache[term] = f
@@ -105,7 +105,7 @@ def _pair_feats(client, a, b, cache):
                 if rel.w > 0:
                     tn = client.relation_type_name(rel.type) or str(rel.type)
                     k = pref + ":" + tn
-                    f[k] = max(f.get(k, 0.0), float(np.log1p(rel.w)))
+                    f[k] = max(f.get(k, 0.0), math.log1p(rel.w))
                     ev.append((f"{x}→{y}", tn, rel.w))
         except Exception:
             pass
@@ -129,18 +129,44 @@ def featurize(client, a, b, cache=None):
 
 
 def model_path():
-    return os.path.join(os.path.dirname(__file__), "..", "..", "models", "grasp_it.joblib")
+    return os.path.join(os.path.dirname(__file__), "..", "..", "models", "grasp_it.json")
 
 
 _MODEL = None
 
 
 def _load():
+    """Charge le modèle JSON : {classes, features, index, mean, scale, coef, intercept}."""
     global _MODEL
     if _MODEL is None:
-        import joblib
-        _MODEL = joblib.load(model_path())
+        with open(model_path(), encoding="utf-8") as fh:
+            m = json.load(fh)
+        m["index"] = {name: i for i, name in enumerate(m["features"])}
+        _MODEL = m
     return _MODEL
+
+
+def _proba(model, fv: dict):
+    """Régression logistique multinomiale en Python pur → liste de probas."""
+    feats, idx = model["features"], model["index"]
+    mean, scale = model["mean"], model["scale"]
+    # vecteur standardisé (features absentes = 0)
+    x = [0.0] * len(feats)
+    for k, v in fv.items():
+        i = idx.get(k)
+        if i is not None:
+            x[i] = (v - mean[i]) / (scale[i] or 1.0)
+    logits = []
+    for c, coef_c in enumerate(model["coef"]):
+        s = model["intercept"][c]
+        for i, w in enumerate(coef_c):
+            if w:
+                s += w * x[i]
+        logits.append(s)
+    mx = max(logits)
+    exps = [math.exp(l - mx) for l in logits]
+    tot = sum(exps) or 1.0
+    return [e / tot for e in exps]
 
 
 def predict(text: str, client, *, top_k: int = 3) -> dict:
@@ -151,12 +177,12 @@ def predict(text: str, client, *, top_k: int = 3) -> dict:
     a, b = p
     model = _load()
     fv, ev = featurize(client, a, b)
-    classes = list(model.classes_)
-    proba = model.predict_proba([fv])[0]
-    order = np.argsort(proba)[::-1]
-    top = [{"relation": classes[i], "proba": round(float(proba[i]), 3),
+    proba = _proba(model, fv)
+    classes = model["classes"]
+    order = sorted(range(len(classes)), key=lambda i: -proba[i])
+    top = [{"relation": classes[i], "proba": round(proba[i], 3),
             "nl": nl(classes[i], a, b)} for i in order[:top_k]]
-    best = classes[int(order[0])]
+    best = classes[order[0]]
     return {"ok": True, "a": a, "b": b, "relation": best, "nl": nl(best, a, b),
             "top": top,
             "evidence": [f"{d} : {t} ({int(w)})" for d, t, w in ev[:6]]}

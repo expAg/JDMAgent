@@ -38,7 +38,7 @@ uvicorn[standard]>=0.30
 sse-starlette>=2.1
 python-multipart>=0.0.9
 
-# GRASP-IT — classifieur de génitifs « A de B » (onglet Génitifs). Le modèle
-# sérialisé models/grasp_it.joblib est construit avec scikit-learn 1.8.
-scikit-learn>=1.6
-joblib>=1.3
+# GRASP-IT (onglet Génitifs) : le SERVING est sans dépendance — le modèle est
+# exporté en JSON portable (models/grasp_it.json) et la prédiction est en Python
+# pur (cf. src/jdm_agent/genitive.py). scikit-learn/joblib ne sont nécessaires
+# QUE pour ré-entraîner hors-ligne (scripts/gen_build_model.py), pas au runtime.

@@ -9,7 +9,6 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
-import joblib
 from jdm_agent.client.client import JDMClient
 from jdm_agent.genitive import featurize, model_path
 from gen_train import load_corpus
@@ -37,10 +36,26 @@ def main():
                           StandardScaler(),
                           LogisticRegression(max_iter=3000, C=1.0))
     model.fit(X, y)
-    os.makedirs(os.path.dirname(model_path()), exist_ok=True)
-    joblib.dump(model, model_path())
-    print("modèle sauvé →", os.path.abspath(model_path()))
     print("train accuracy :", round(model.score(X, y), 3))
+
+    # Export JSON PORTABLE (serving sans sklearn/joblib/numpy — cf. genitive.py).
+    import json
+    vec = model.named_steps["dictvectorizer"]
+    sca = model.named_steps["standardscaler"]
+    clf = model.named_steps["logisticregression"]
+    out = {
+        "classes": [str(c) for c in clf.classes_],
+        "features": [str(f) for f in vec.get_feature_names_out()],
+        "mean": sca.mean_.tolist(),
+        "scale": sca.scale_.tolist(),
+        "coef": clf.coef_.tolist(),
+        "intercept": clf.intercept_.tolist(),
+    }
+    os.makedirs(os.path.dirname(model_path()), exist_ok=True)
+    with open(model_path(), "w", encoding="utf-8") as fh:
+        json.dump(out, fh, ensure_ascii=False)
+    print("modèle JSON sauvé →", os.path.abspath(model_path()),
+          f"({len(out['features'])} features, {len(out['classes'])} classes)")
 
 
 if __name__ == "__main__":
