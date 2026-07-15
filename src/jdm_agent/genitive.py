@@ -269,62 +269,75 @@ def _verb_feats(client, a, b, fv, cache):
     return f
 
 
-# Transitivité CARACTÉRISATION : nom de qualité → adjectif → r_carac du porteur.
-_RID_NOMADJ, _RID_CARAC = 165, 17
+# Transitivité CARACTÉRISATION : nom de qualité ↔ adjectif ↔ r_carac du porteur.
+#   r_nom>adj (165) nom→adj ; r_adj>nom (164) conversif ; r_fem (60)/r_masc (59)
+#   pour l'accord ; r_carac (17) porteur→adjectifs ; r_lemma (19) normalisation.
+_RID_NOMADJ, _RID_ADJNOM, _RID_FEM, _RID_MASC, _RID_CARAC = 165, 164, 60, 59, 17
 
 
-def _adj_of(client, term, cache):
-    """Adjectif d'un nom de qualité via r_nom>adj (165) : dureté→dur, douceur→doux."""
-    key = ("ADJ", term)
+def _targets(client, term, rid, cache, k=8):
+    """Cibles (nom minuscule, poids) d'un terme pour un type de relation, cachées."""
+    key = ("T", term, rid)
     if key in cache:
         return cache[key]
-    adj, best = None, 0.0
+    out = []
     try:
-        res = client.relations_from(term, types_ids=[_RID_NOMADJ], limit=20)
+        res = client.relations_from(term, types_ids=[rid], limit=40)
         idx = res.node_index()
-        for r in res.relations:
-            n = idx.get(r.node2)
-            if n and r.w > best:
-                best, adj = r.w, n.name.strip().lower()
-    except Exception:
-        pass
-    cache[key] = adj
-    return adj
-
-
-def _carac_adjs(client, term, cache):
-    """{adjectif: poids} caractérisant le terme (r_carac 17) : diamant→{dur, brillant…}."""
-    key = ("CARAC", term)
-    if key in cache:
-        return cache[key]
-    m = {}
-    try:
-        res = client.relations_from(term, types_ids=[_RID_CARAC], limit=80)
-        idx = res.node_index()
-        for r in sorted(res.relations, key=lambda x: -x.w)[:30]:
+        for r in sorted(res.relations, key=lambda x: -x.w)[:k]:
             n = idx.get(r.node2)
             if n and r.w > 0:
-                m[n.name.strip().lower().split(">")[0]] = float(r.w)
+                out.append((n.name.strip().lower().split(">")[0], float(r.w)))
     except Exception:
         pass
-    cache[key] = m
-    return m
+    cache[key] = out
+    return out
 
 
-def _adj_match(a, b):
-    """Égalité tolérant l'accord simple (dur/dure, brillant/brillante)."""
-    return a == b or (len(a) >= 3 and len(b) >= 3 and (a.startswith(b) or b.startswith(a)))
+def _adj_forms(client, noun, cache):
+    """Adjectif(s) d'un nom de qualité : masculin (r_nom>adj) + féminin (r_fem),
+    pour matcher un porteur dont l'adjectif r_carac est accordé (belle, douce…)."""
+    key = ("ADJF", noun)
+    if key in cache:
+        return cache[key]
+    forms = set()
+    for adj, _w in _targets(client, noun, _RID_NOMADJ, cache, k=3):
+        forms.add(adj)
+        for fem, _wf in _targets(client, adj, _RID_FEM, cache, k=2):
+            forms.add(fem)                       # beau→belle, doux→douce, dur→dure
+    cache[key] = forms
+    return forms
+
+
+def _adj_noun(client, adj, cache):
+    """CONVERSIF : nom(s) de qualité d'un adjectif — via r_adj>nom (164), en
+    normalisant d'abord le féminin en masculin (r_masc) car r_adj>nom n'est peuplé
+    que sur la base masculine (« belle »→beau→beauté, « courageuse »→courageux→courage)."""
+    mascs = {adj} | {m for m, _ in _targets(client, adj, _RID_MASC, cache, k=2)}
+    noms = set()
+    for m in mascs:
+        for nom, _w in _targets(client, m, _RID_ADJNOM, cache, k=3):
+            noms.add(nom)
+    return noms
 
 
 def _carac_feats(client, a, b, cache):
-    """Par TRANSITIVITÉ : A(nom de qualité) →r_nom>adj→ adjectif ; si le porteur B
-    a ce même adjectif en r_carac (« diamant r_carac dur » pour « dureté du diamant »),
-    c'est une caractérisation. Haute précision (ne se déclenche pas hors qualité)."""
-    adj = _adj_of(client, a, cache)
-    if not adj:
+    """Par TRANSITIVITÉ : « caractérisation » si l'adjectif r_carac du porteur B
+    correspond au nom de qualité A. Deux sens, robustes à l'accord :
+      DIRECT : A →r_nom>adj(+r_fem)→ {adj} ∩ adjectifs r_carac de B ;
+      CONVERSIF (fallback) : adjectifs r_carac de B →r_masc→r_adj>nom→ nom == A.
+    Haute précision (ne se déclenche pas hors qualité)."""
+    cadj = _targets(client, b, _RID_CARAC, cache, k=30)   # [(adjectif, poids)] de B
+    if not cadj:
         return {}
-    cadj = _carac_adjs(client, b, cache)
-    best = max((w for bad, w in cadj.items() if _adj_match(adj, bad)), default=0.0)
+    forms = _adj_forms(client, a, cache)
+    best = max((w for bad, w in cadj if bad in forms), default=0.0)
+    if best == 0.0:                                        # fallback conversif
+        a_low = (a or "").strip().lower()
+        for bad, w in sorted(cadj, key=lambda x: -x[1])[:6]:
+            if a_low in _adj_noun(client, bad, cache):
+                best = w
+                break
     return {"VW:B_carac_of_A": math.log1p(best)} if best > 0 else {}
 
 
