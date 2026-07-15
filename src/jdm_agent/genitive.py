@@ -34,6 +34,28 @@ _SKIP_REL = {"r_associated", "r_aki", "r_wiki", "r_raff_sem", "r_raff_morpho",
              "r_raff_sem-1", "r_pos", "r_lemma", "r_meaning/glose", "r_data",
              "r_pos_seq", "r_annotation", "r_annotation_context", "r_annotation_exception"}
 
+# Couche de LOOKUP direct : relation JDM A↔B → classe génitive. Quand JDM contient
+# déjà la relation entre A et B, on la remonte directement (plus fiable que le
+# modèle pour les paires connues). Direction-agnostique.
+_REL2CLASS = {
+    "r_processus>agent": "r_agent", "r_agent": "r_agent", "r_agent-1": "r_agent",
+    "r_processus>patient": "r_patient", "r_patient": "r_patient", "r_patient-1": "r_patient",
+    "r_object>mater": "r_composition", "r_mater>object": "r_composition",
+    "r_holo": "r_holonymie", "r_has_part": "r_holonymie",
+    "r_lieu": "r_lieu", "r_lieu-1": "r_lieu",
+    "r_lieu>origine": "r_origine", "r_product_of": "r_origine",
+    "r_own": "r_possession", "r_own-1": "r_possession",
+    "r_has_auteur": "r_auteur", "r_has_auteur-1": "r_auteur",
+    "r_carac": "r_caractérisation", "r_carac-1": "r_caractérisation",
+    "r_has_topic": "r_topique", "r_domain": "r_topique", "r_domain-1": "r_topique",
+    "r_quantificateur": "r_quantification", "r_quantificateur-1": "r_quantification",
+    "r_has_causatif": "r_causalité", "r_has_conseq": "r_causalité",
+    "r_depict": "r_dépiction",
+    "r_has_social_tie_with": "r_relationnel", "r_family": "r_relationnel",
+    "r_instr": "r_instrument", "r_instr-1": "r_instrument",
+    "r_telic_role": "r_instrument", "r_processus>instr": "r_instrument",
+}
+
 # Formulation en langage naturel : « A <prédicat> B ».
 _NL = {
     "r_agent": "{a} a pour agent {b}",
@@ -207,6 +229,23 @@ def predict(text: str, client, *, top_k: int = 3) -> dict:
     top = [{"relation": classes[i], "proba": round(proba[i], 3),
             "nl": nl(classes[i], a, b)} for i in order[:top_k]]
     best = classes[order[0]]
+
+    # Couche DIRECTE : relations JDM A↔B qui concernent les génitifs (toutes,
+    # dédupliquées par classe = poids max), triées par poids.
+    direct = {}
+    for d, tn, w in ev:
+        cls = _REL2CLASS.get(tn)
+        if cls and w > direct.get(cls, (0, None, None))[0]:
+            direct[cls] = (w, tn, d)
+    # Les relations « lieu-like » (r_lieu, r_domain…) ont des poids JDM souvent
+    # très élevés (association spatiale) mais sont de faux amis pour le génitif →
+    # on classe APRÈS les relations structurelles/prédicatives.
+    _lieu_like = {"r_lieu", "r_lieu-1", "r_domain", "r_domain-1", "r_has_topic"}
+    direct_list = sorted(
+        [{"relation": c, "via": via, "weight": int(w), "nl": nl(c, a, b)}
+         for c, (w, via, d) in direct.items()],
+        key=lambda x: (x["via"] in _lieu_like, -x["weight"]))
+
     return {"ok": True, "a": a, "b": b, "relation": best, "nl": nl(best, a, b),
-            "top": top, "signals": _signals(fv),
+            "top": top, "signals": _signals(fv), "direct": direct_list,
             "evidence": [f"{d} : {t} ({int(w)})" for d, t, w in ev[:6]]}

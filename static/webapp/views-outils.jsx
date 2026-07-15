@@ -290,7 +290,24 @@ function GenitivePanel() {
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
       {d && (
         <Card padding={18}>
-          {/* Relation prédite + formulation naturelle */}
+          {/* Couche DIRECTE : relations JDM A↔B qui concernent les génitifs */}
+          {d.direct && d.direct.length > 0 && (
+            <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid var(--line-soft)' }}>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--jdm-green)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>relations JeuxDeMots directes (A↔B)</div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                {d.direct.map((x, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                    <span className="mono" style={{ fontSize: 13, fontWeight: i === 0 ? 700 : 500, color: i === 0 ? 'var(--jdm-green)' : 'var(--ink-2)', minWidth: 130 }}>{x.relation}</span>
+                    <span style={{ fontSize: 13, color: 'var(--ink)' }}>« {x.nl} »</span>
+                    <span className="mono" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--ink-3)' }}>{x.via} ({x.weight})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Prédiction du modèle GRASP-IT (pour les paires inconnues de JDM) */}
+          <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>prédiction du modèle</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
             <span className="mono" style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>{d.relation}</span>
             {d.top && d.top[0] && (
