@@ -35,3 +35,6 @@ _tmp_redesign/
 # Jarvis chat runtime (mascotte)
 .jarvis_runs.jsonl
 .env.runtime.json
+
+# Corpus génitifs (non versionnés — cf. GRASP-IT)
+data/genitive/
