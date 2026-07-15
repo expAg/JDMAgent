@@ -172,6 +172,93 @@ def _term_feats(client, term, cache):
     return f
 
 
+# Transitivité nom déverbal → verbe → agent/patient du verbe.
+_RID_ACTVERB, _RID_AG, _RID_PA = 40, 13, 14
+
+# Termes trop génériques : présents dans les agents ET patients de beaucoup de verbes
+# (un « malade » isa « personne » matcherait l'agent générique) → exclus du matching.
+_GENERIC = {"personne", "individu", "gens", "être humain", "être vivant", "humain",
+            "animal", "être", "chose", "objet", "truc", "quelqu'un", "quelque chose",
+            "entité", "agent", "patient", "quelque_chose"}
+
+
+def _verb_of(client, term, cache):
+    """Verbe d'un nom d'action via r_action-verbe (40) : auscultation→ausculter."""
+    key = ("VERB", term)
+    if key in cache:
+        return cache[key]
+    v, best = None, 0.0
+    try:
+        res = client.relations_from(term, types_ids=[_RID_ACTVERB], limit=20)
+        idx = res.node_index()
+        for r in res.relations:
+            n = idx.get(r.node2)
+            if n and r.w > best:
+                best, v = r.w, n.name.strip().lower()
+    except Exception:
+        pass
+    cache[key] = v
+    return v
+
+
+def _verb_roles(client, verb, cache):
+    """(agents typiques, patients typiques) du verbe (r_agent 13 / r_patient 14),
+    noms normalisés (raffinements « docteur>59071 » → « docteur »)."""
+    key = ("VROLE", verb)
+    if key in cache:
+        return cache[key]
+
+    def roleset(tid):
+        s = set()
+        try:
+            res = client.relations_from(verb, types_ids=[tid], limit=40)
+            idx = res.node_index()
+            for r in sorted(res.relations, key=lambda x: -x.w)[:15]:
+                n = idx.get(r.node2)
+                if n and r.w > 0:
+                    nm = n.name.strip().lower().split(">")[0]
+                    if nm not in _GENERIC:
+                        s.add(nm)
+        except Exception:
+            pass
+        return s
+
+    out = (roleset(_RID_AG), roleset(_RID_PA))
+    cache[key] = out
+    return out
+
+
+def _verb_feats(client, a, b, fv, cache):
+    """Par TRANSITIVITÉ : remonte au verbe de A et exploite ses agents/patients.
+      - A_VERB_AG / A_VERB_PA : A est une action (à agent/patient) — SEULEMENT quand
+        r_processus>agent/patient (70/76) manque sur le nom (fallback demandé) ;
+      - X:B_verb_agent / X:B_verb_patient : B (ou un de ses hyperonymes) est l'agent
+        vs le patient typique du verbe → discrimine r_agent de r_patient."""
+    verb = _verb_of(client, a, cache)
+    if not verb:
+        return {}
+    ag, pa = _verb_roles(client, verb, cache)
+    if not ag and not pa:
+        return {}
+    f = {}
+    if "A_OUT:procag" not in fv and "A_OUT:procpa" not in fv:   # fallback 70/76 absents
+        if ag:
+            f["A_VERB_AG"] = 1.0
+        if pa:
+            f["A_VERB_PA"] = 1.0
+    bset = {b.strip().lower()}
+    for k in fv:
+        if k.startswith("B_ISA:"):
+            nm = k[6:].split(">")[0]
+            if nm not in _GENERIC:      # pas de match via un hyperonyme trop générique
+                bset.add(nm)
+    if bset & ag:
+        f["X:B_verb_agent"] = 1.0
+    if bset & pa:
+        f["X:B_verb_patient"] = 1.0
+    return f
+
+
 def _pair_feats(client, a, b, cache):
     """Relation DIRECTE A↔B (les deux sens). Renvoie (dict_features, evidence)."""
     key = ("PAIR", a, b)
@@ -260,6 +347,7 @@ def featurize(client, a, b, cache=None, conn=None):
         fv["B_" + k] = v
     pf, ev = _pair_feats(client, a, b, cache)
     fv.update(pf)
+    fv.update(_verb_feats(client, a, b, fv, cache))
     fv.update(_conjunctions(fv))
     d = _definite(conn)
     if d is True:
