@@ -145,11 +145,17 @@ def parse_pair(text: str):
 
 
 def _term_feats(client, term, cache):
+    # IMPORTANT : l'API JDM ne trie PAS par poids avant d'appliquer `limit` (ordre
+    # natif par id) → un petit limit jette les relations les plus FORTES. On passe
+    # donc `min_weight` (pattern canonique du client : synonyms/hypernyms) pour ne
+    # pas tronquer les signaux forts (ex. « fille r_carac belle » w=106).
     if term in cache:
         return cache[term]
     f = {}
-    try:
-        res = client.relations_from(term, limit=500)
+    try:                # UN seul appel tous-types (l'API rejette une LISTE de types_ids
+                        # → 500) ; min_weight pour ne pas tronquer les relations fortes,
+                        # d'où hyperonymes forts (r_isa=6) ET présence de types sortants.
+        res = client.relations_from(term, min_weight=25, limit=1000)
         idx = res.node_index()
         isa, seen = [], set()
         for r in res.relations:
@@ -158,7 +164,7 @@ def _term_feats(client, term, cache):
                 continue
             seen.add(r.type)
             if r.type == 6:
-                isa.append((n.name.strip().lower(), r.w))
+                isa.append((n.name.strip().lower().split(">")[0], r.w))
         for nm, _w in sorted(isa, key=lambda x: -x[1])[:6]:
             f["ISA:" + nm] = 1.0
         for tid, tag in _TYPE_TAGS.items():
@@ -166,8 +172,8 @@ def _term_feats(client, term, cache):
                 f["OUT:" + tag] = 1.0
     except Exception:
         pass
-    try:
-        res = client.relations_from(term, types_ids=[36], limit=80)
+    try:                                    # INFO-SEM (r_infopot=36)
+        res = client.relations_from(term, types_ids=[36], min_weight=1, limit=200)
         idx = res.node_index()
         for r in res.relations:
             n = idx.get(r.node2)
@@ -196,7 +202,7 @@ def _verb_of(client, term, cache):
         return cache[key]
     v, best = None, 0.0
     try:
-        res = client.relations_from(term, types_ids=[_RID_ACTVERB], limit=20)
+        res = client.relations_from(term, types_ids=[_RID_ACTVERB], min_weight=1, limit=100)
         idx = res.node_index()
         for r in res.relations:
             n = idx.get(r.node2)
@@ -218,7 +224,7 @@ def _verb_roles(client, verb, cache):
     def rolemap(tid):
         m = {}
         try:
-            res = client.relations_from(verb, types_ids=[tid], limit=40)
+            res = client.relations_from(verb, types_ids=[tid], min_weight=25, limit=300)
             idx = res.node_index()
             for r in sorted(res.relations, key=lambda x: -x.w)[:15]:
                 n = idx.get(r.node2)
@@ -275,14 +281,15 @@ def _verb_feats(client, a, b, fv, cache):
 _RID_NOMADJ, _RID_ADJNOM, _RID_FEM, _RID_MASC, _RID_CARAC = 165, 164, 60, 59, 17
 
 
-def _targets(client, term, rid, cache, k=8):
-    """Cibles (nom minuscule, poids) d'un terme pour un type de relation, cachées."""
-    key = ("T", term, rid)
+def _targets(client, term, rid, cache, k=8, mw=1, limit=500):
+    """Cibles (nom minuscule, poids) fortes d'un terme pour un type de relation,
+    triées par poids, cachées. `min_weight` évite la troncature (l'API ne trie pas)."""
+    key = ("T", term, rid, mw)
     if key in cache:
         return cache[key]
     out = []
     try:
-        res = client.relations_from(term, types_ids=[rid], limit=40)
+        res = client.relations_from(term, types_ids=[rid], min_weight=mw, limit=limit)
         idx = res.node_index()
         for r in sorted(res.relations, key=lambda x: -x.w)[:k]:
             n = idx.get(r.node2)
@@ -327,7 +334,7 @@ def _carac_feats(client, a, b, cache):
       DIRECT : A →r_nom>adj(+r_fem)→ {adj} ∩ adjectifs r_carac de B ;
       CONVERSIF (fallback) : adjectifs r_carac de B →r_masc→r_adj>nom→ nom == A.
     Haute précision (ne se déclenche pas hors qualité)."""
-    cadj = _targets(client, b, _RID_CARAC, cache, k=30)   # [(adjectif, poids)] de B
+    cadj = _targets(client, b, _RID_CARAC, cache, k=30, mw=25)   # adjectifs FORTS de B
     if not cadj:
         return {}
     forms = _adj_forms(client, a, cache)
