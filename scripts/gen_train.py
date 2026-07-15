@@ -17,8 +17,36 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
 from jdm_agent.client.client import JDMClient
 from jdm_agent.genitive import parse_pair   # site UNIQUE du parse « A de B » (+ connecteur)
+
+# Plancher d'écart-type pour la standardisation. StandardScaler divise par l'écart-
+# type : un indicateur binaire RARE a un écart-type minuscule (vu 1 fois / 749 →
+# std≈0.036), donc quand il s'allume sa valeur z-scorée explose (×27) et un poids
+# appris modeste devient un logit énorme — c'est l'overfit « hyperonyme dentiste →
+# possession ». Plafonner l'amplification en imposant scale = max(std, FLOOR) tue ce
+# gonflement des traits rares sans toucher aux traits fréquents (std déjà > FLOOR).
+SCALE_FLOOR = 0.1
+
+
+class FlooredScaler(BaseEstimator, TransformerMixin):
+    """StandardScaler avec plancher d'écart-type (scale = max(std, SCALE_FLOOR)).
+    Export identique à StandardScaler (mean_/scale_) → serving Python pur inchangé."""
+
+    def __init__(self, floor=SCALE_FLOOR):
+        self.floor = floor
+
+    def fit(self, X, y=None):
+        X = np.asarray(X, float)
+        std = X.std(0)
+        std[std == 0] = 1.0
+        self.mean_ = X.mean(0)
+        self.scale_ = np.maximum(std, self.floor)
+        return self
+
+    def transform(self, X):
+        return (np.asarray(X, float) - self.mean_) / self.scale_
 
 
 def load_corpus(path):

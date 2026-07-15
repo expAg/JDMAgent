@@ -110,10 +110,10 @@ def main():
 
     from sklearn.feature_extraction import DictVectorizer
     from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import make_pipeline
     from sklearn.model_selection import StratifiedKFold, cross_val_predict
     from sklearn.metrics import accuracy_score, classification_report
+    from gen_train import FlooredScaler
 
     vec = DictVectorizer(sparse=False)
     Xtr = vec.fit_transform(Xtr_d)
@@ -121,7 +121,8 @@ def main():
     print(f"features: {Xtr.shape[1]}")
 
     def pipe():
-        return make_pipeline(StandardScaler(), LogisticRegression(max_iter=3000, C=1.0))
+        return make_pipeline(FlooredScaler(),
+                             LogisticRegression(max_iter=3000, C=1.0))
 
     cv = StratifiedKFold(5, shuffle=True, random_state=42)
     pcv = cross_val_predict(pipe(), Xtr, ytr, cv=cv)

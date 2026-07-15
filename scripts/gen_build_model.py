@@ -28,12 +28,12 @@ def main():
             print(f"  {i+1}/{len(learn)}", flush=True)
 
     from sklearn.feature_extraction import DictVectorizer
-    from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import make_pipeline
+    from gen_train import FlooredScaler
 
     model = make_pipeline(DictVectorizer(sparse=False),
-                          StandardScaler(),
+                          FlooredScaler(),
                           LogisticRegression(max_iter=3000, C=1.0))
     model.fit(X, y)
     print("train accuracy :", round(model.score(X, y), 3))
@@ -41,7 +41,7 @@ def main():
     # Export JSON PORTABLE (serving sans sklearn/joblib/numpy — cf. genitive.py).
     import json
     vec = model.named_steps["dictvectorizer"]
-    sca = model.named_steps["standardscaler"]
+    sca = model.named_steps["flooredscaler"]
     clf = model.named_steps["logisticregression"]
     out = {
         "classes": [str(c) for c in clf.classes_],
