@@ -11,7 +11,7 @@ const OUTILS_TABS = [
   { id: 'polarity', label: 'Analyse de polarité' },
   { id: 'jdmrel',   label: 'Extraction de relations' },
   { id: 'semviz',   label: 'Visualisation sémantique', disabled: true },
-  { id: 'genitive', label: 'Génitifs « A de B »',      disabled: true },
+  { id: 'genitive', label: 'Génitifs « A de B »' },
   { id: 'analogy',  label: 'Analogies',                disabled: true },
 ];
 
@@ -25,7 +25,7 @@ const TOOL_MODELS = {
   wsd:      [{ value: 'jdm-raffinements', label: 'JDM WSD' }],
   thematic: [{ value: 'jdm-domain',     label: 'JDM DOMAIN' }],
   polarity: [{ value: 'jdm-infopot',    label: 'JDM POL' }],
-  genitive: [{ value: 'default',        label: '(par défaut)' }],
+  genitive: [{ value: 'grasp-it',       label: 'GRASP-IT' }],
   analogy:  [{ value: 'default',        label: '(par défaut)' }],
   jdmrel:   [{ value: 'default',        label: 'JDM EXTRACT' }],
 };
@@ -273,7 +273,7 @@ function JsonResult({ data }) {
 
 // ───────── Génitifs « A de B » ─────────
 function GenitivePanel() {
-  const [phrase, setPhrase] = React.useState("pied de la table");
+  const [phrase, setPhrase] = React.useState("roue du vélo");
   const [model, setModel] = React.useState(TOOL_MODELS.genitive[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
@@ -281,13 +281,52 @@ function GenitivePanel() {
     setLoading(true); setRes(null);
     setRes(await _callTool('genitive', { phrase, model })); setLoading(false);
   };
+  const d = (res && res.ok) ? res.data : null;
   return (
     <div style={panelGrid()}>
       <ToolForm text={phrase} setText={setPhrase} run={run} loading={loading}
-        rows={2} placeholder="Un syntagme génitif « A de B » (ex. pied de la table)…"
+        rows={2} placeholder="Un syntagme génitif « A de B » (ex. roue du vélo)…"
         model={model} setModel={setModel} models={TOOL_MODELS.genitive} />
       {res && !res.ok && <ToolNotice msg={res.error} tone="warn" />}
-      {res && res.ok && res.data && <JsonResult data={res.data} />}
+      {d && (
+        <Card padding={18}>
+          {/* Relation prédite + formulation naturelle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+            <span className="mono" style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>{d.relation}</span>
+            {d.top && d.top[0] && (
+              <span className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{Math.round(d.top[0].proba * 100)}%</span>
+            )}
+          </div>
+          <div style={{ fontSize: 16, marginBottom: 16 }}>« {d.nl} »</div>
+
+          {/* Top-3 des classes */}
+          {d.top && d.top.length > 1 && (
+            <div style={{ display: 'grid', gap: 6, marginBottom: 14 }}>
+              {d.top.map((t, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className="mono" style={{ fontSize: 12, color: i === 0 ? 'var(--ink)' : 'var(--ink-3)', minWidth: 130 }}>{t.relation}</span>
+                  <div style={{ flex: 1, height: 8, background: 'var(--bg-elev)', borderRadius: 999, overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.round(t.proba * 100)}%`, height: '100%', background: i === 0 ? 'var(--accent)' : 'var(--line)' }} />
+                  </div>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', minWidth: 34, textAlign: 'right' }}>{Math.round(t.proba * 100)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Évidence : relation directe A↔B trouvée dans JDM */}
+          {d.evidence && d.evidence.length > 0 && (
+            <div>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>évidence (relations JDM A↔B)</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {d.evidence.map((e, i) => (
+                  <span key={i} className="mono" style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, color: 'var(--ink-2)', background: 'var(--bg-elev)', border: '1px solid var(--line-soft)' }}>{e}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

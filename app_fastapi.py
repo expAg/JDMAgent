@@ -3009,13 +3009,22 @@ async def api_tools_syntax(req: ToolTextRequest) -> dict:
 
 @app.post("/api/tools/genitive")
 async def api_tools_genitive(req: ToolGenitiveRequest) -> dict:
-    """Extraction de relations sémantiques dans les génitifs « A de B ».
-
-    Placeholder pour l'instant (TOOLS_GENITIVE_URL vide par défaut). Branchement
-    de rezo-GEN1.php plus tard (le format d'appel exact reste à sonder).
-    """
-    return await _proxy_tool_json(
-        TOOLS_GENITIVE_URL, {"phrase": req.phrase, "model": req.model}, "génitif")
+    """Classification de la relation d'un génitif « A de B » — modèle GRASP-IT
+    (features symboliques JDM + régression logistique). Renvoie la relation JDM,
+    une formulation naturelle, le top-3 et l'évidence (relation directe A↔B)."""
+    if TOOLS_GENITIVE_URL:
+        return await _proxy_tool_json(
+            TOOLS_GENITIVE_URL, {"phrase": req.phrase, "model": req.model}, "génitif (GRASP-IT)")
+    try:
+        import anyio
+        from jdm_agent.genitive import predict
+        c = get_client()
+        out = await anyio.to_thread.run_sync(lambda: predict(req.phrase or "", c))
+        if not out.get("ok"):
+            return {"ok": False, "service": "génitif (GRASP-IT)", "error": out.get("error", "")}
+        return {"ok": True, "service": "génitif (GRASP-IT)", "data": out}
+    except Exception as e:
+        return {"ok": False, "service": "génitif (GRASP-IT)", "error": f"Erreur GRASP-IT : {e!r}"}
 
 
 @app.post("/api/tools/analogy")
