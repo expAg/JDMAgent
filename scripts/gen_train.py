@@ -27,7 +27,10 @@ from jdm_agent.genitive import parse_pair   # site UNIQUE du parse « A de B » 
 # appris modeste devient un logit énorme — c'est l'overfit « hyperonyme dentiste →
 # possession ». Plafonner l'amplification en imposant scale = max(std, FLOOR) tue ce
 # gonflement des traits rares sans toucher aux traits fréquents (std déjà > FLOOR).
-SCALE_FLOOR = 0.1
+# Plancher réglé par balayage hold-out : 0.08 = meilleur compromis (agrégat ~0.826
+# ET bascule piqûre→agent avec marge confortable ; 0.05 monte à 0.836 mais ne corrige
+# pas piqûre, 0.10 corrige mais retombe à 0.817).
+SCALE_FLOOR = 0.08
 
 
 class FlooredScaler(BaseEstimator, TransformerMixin):
