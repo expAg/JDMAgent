@@ -202,14 +202,14 @@ def _verb_of(client, term, cache):
 
 
 def _verb_roles(client, verb, cache):
-    """(agents typiques, patients typiques) du verbe (r_agent 13 / r_patient 14),
+    """({agent: poids}, {patient: poids}) du verbe (r_agent 13 / r_patient 14),
     noms normalisés (raffinements « docteur>59071 » → « docteur »)."""
     key = ("VROLE", verb)
     if key in cache:
         return cache[key]
 
-    def roleset(tid):
-        s = set()
+    def rolemap(tid):
+        m = {}
         try:
             res = client.relations_from(verb, types_ids=[tid], limit=40)
             idx = res.node_index()
@@ -218,12 +218,12 @@ def _verb_roles(client, verb, cache):
                 if n and r.w > 0:
                     nm = n.name.strip().lower().split(">")[0]
                     if nm not in _GENERIC:
-                        s.add(nm)
+                        m[nm] = max(m.get(nm, 0.0), float(r.w))
         except Exception:
             pass
-        return s
+        return m
 
-    out = (roleset(_RID_AG), roleset(_RID_PA))
+    out = (rolemap(_RID_AG), rolemap(_RID_PA))
     cache[key] = out
     return out
 
@@ -232,8 +232,9 @@ def _verb_feats(client, a, b, fv, cache):
     """Par TRANSITIVITÉ : remonte au verbe de A et exploite ses agents/patients.
       - A_VERB_AG / A_VERB_PA : A est une action (à agent/patient) — SEULEMENT quand
         r_processus>agent/patient (70/76) manque sur le nom (fallback demandé) ;
-      - X:B_verb_agent / X:B_verb_patient : B (ou un de ses hyperonymes) est l'agent
-        vs le patient typique du verbe → discrimine r_agent de r_patient."""
+      - VW:B_verb_agent / VW:B_verb_patient : B (ou un hyperonyme spécifique) est
+        l'agent vs le patient du verbe, GRADUÉ par le poids JDM (log1p) → le modèle
+        apprend la marge agent−patient et discrimine r_agent de r_patient."""
     verb = _verb_of(client, a, cache)
     if not verb:
         return {}
@@ -252,10 +253,12 @@ def _verb_feats(client, a, b, fv, cache):
             nm = k[6:].split(">")[0]
             if nm not in _GENERIC:      # pas de match via un hyperonyme trop générique
                 bset.add(nm)
-    if bset & ag:
-        f["X:B_verb_agent"] = 1.0
-    if bset & pa:
-        f["X:B_verb_patient"] = 1.0
+    w_ag = max((ag.get(n, 0.0) for n in bset), default=0.0)
+    w_pa = max((pa.get(n, 0.0) for n in bset), default=0.0)
+    if w_ag > 0:
+        f["VW:B_verb_agent"] = math.log1p(w_ag)
+    if w_pa > 0:
+        f["VW:B_verb_patient"] = math.log1p(w_pa)
     return f
 
 
