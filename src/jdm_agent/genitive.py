@@ -43,7 +43,7 @@ _REL2CLASS = {
     "r_object>mater": "r_composition", "r_mater>object": "r_composition",
     "r_holo": "r_holonymie", "r_has_part": "r_holonymie",
     "r_lieu": "r_lieu", "r_lieu-1": "r_lieu",
-    "r_lieu>origine": "r_origine", "r_product_of": "r_origine",
+    "r_lieu>origine": "r_origine",   # r_product_of : arbitré à part (origine vs auteur selon B)
     "r_own": "r_possession", "r_own-1": "r_possession",
     "r_has_auteur": "r_auteur", "r_has_auteur-1": "r_auteur",
     "r_carac": "r_caractérisation", "r_carac-1": "r_caractérisation",
@@ -88,7 +88,7 @@ _CLASS2JDM = {
     "r_auteur": "r_product_of",
     "r_caractérisation": "r_has_property-1",
     "r_causalité": "r_has_causatif",
-    "r_composition": "r_objet>matière",
+    "r_composition": "r_object>mater",
     "r_dépiction": "r_depict",
     "r_holonymie": "r_holo",
     "r_instrument": "r_processus>instr-1",
@@ -96,8 +96,11 @@ _CLASS2JDM = {
     "r_origine": "r_lieu>origine",
     "r_quantification": "r_quantificateur",
     "r_relationnel": "r_has_social_tie_with",   # Table 1 dit 'r_social_tie' (coquille) → vrai nom JDM (id 113)
-    "r_topique": "r_topic",
+    "r_topique": "r_has_topic",                 # Table 1 'r_topic' = simplif. → vrai nom client/JDM (id 142)
 }
+# NB : la Table 1 note 'r_objet>matière' / 'r_topic' / 'r_social_tie' comme
+# simplifications rédactionnelles ; on affiche les noms qui résolvent réellement
+# dans JDM (r_object>mater 50, r_has_topic 142, r_has_social_tie_with 113).
 
 
 def jdm_name(relation: str) -> str:
@@ -431,9 +434,16 @@ def predict(text: str, client, *, top_k: int = 3) -> dict:
 
     # Couche DIRECTE : relations JDM A↔B qui concernent les génitifs (toutes,
     # dédupliquées par classe = poids max), triées par poids.
+    # r_product_of est AMBIGU dans JDM : « café de Colombie » (origine) et
+    # « gâteau du pâtissier » (auteur) l'emploient tous deux. On arbitre par le
+    # type de B : lieu → origine, personne → auteur (Table 1 : auteur = r_product_of).
+    b_pers = any(k in fv for k in ("B_INFO:_info-sem-pers", "B_INFO:_info-sem-living-being"))
     direct = {}
     for d, tn, w in ev:
-        cls = _REL2CLASS.get(tn)
+        if tn == "r_product_of":
+            cls = "r_auteur" if b_pers else "r_origine"   # personne → auteur, sinon (lieu) origine
+        else:
+            cls = _REL2CLASS.get(tn)
         if cls and w > direct.get(cls, (0, None, None))[0]:
             direct[cls] = (w, tn, d)
     # Les relations « lieu-like » (r_lieu, r_domain…) ont des poids JDM souvent
