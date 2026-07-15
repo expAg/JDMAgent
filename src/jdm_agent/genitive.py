@@ -198,40 +198,53 @@ def _pair_feats(client, a, b, cache):
     return out
 
 
-def _has(fv, *keys):
-    return any(k in fv for k in keys)
+# Catégories de type d'un terme, agrégées à partir des signaux GÉNÉRIQUES (INFO-SEM
+# r_infopot + relations sortantes typées) — volontairement PAS les hyperonymes
+# spécifiques (r_isa creux, sur-appris) : ces buckets se croisent proprement.
+def _type_tags(fv, pref):
+    keys = [k[len(pref):] for k in fv if k.startswith(pref)]
+    ks = set(keys)
 
+    def eq(*names):
+        return any(n in ks for n in names)
 
-def _has_pref(fv, *prefixes):
-    return any(any(k.startswith(p) for p in prefixes) for k in fv)
+    def pre(*subs):
+        return any(any(k.startswith(s) for s in subs) for k in keys)
+
+    tags = set()
+    if eq("OUT:procag", "OUT:procpa", "ISA:action") or pre("INFO:_info-sem-action",
+                                                           "INFO:_info-sem-event"):
+        tags.add("action")
+    if eq("OUT:mater", "OUT:holo", "OUT:haspart") or pre("INFO:_info-sem-thing",
+                                                         "INFO:_info-sem-artefact",
+                                                         "INFO:_info-sem-object"):
+        tags.add("object")
+    if pre("INFO:_info-sem-subst"):
+        tags.add("subst")
+    if eq("OUT:lieu1", "OUT:lieuact", "OUT:origin") or pre("INFO:_info-sem-place"):
+        tags.add("place")
+    if pre("INFO:_info-sem-pers", "INFO:_info-sem-living-being"):
+        tags.add("pers")
+    if pre("INFO:_info-sem-abstr"):
+        tags.add("abstr")
+    return tags
 
 
 def _conjunctions(fv):
-    """Traits d'INTERACTION A×B — un modèle linéaire ne peut pas ET-er les traits
-    d'un même côté (« A est une action » ET « B est une personne » → agent, PAS
-    possession). On matérialise les conjonctions utiles au génitif :
-      action × personne → agent ;  objet × personne → possession ;
-      action/objet × lieu → lieu.  (Une personne possède un OBJET, pas une action.)"""
-    a_action = _has(fv, "A_OUT:procag", "A_OUT:procpa", "A_INFO:_info-sem-action",
-                    "A_INFO:_info-sem-event", "A_ISA:action")
-    a_object = _has(fv, "A_OUT:mater", "A_OUT:holo") or _has_pref(
-        fv, "A_INFO:_info-sem-thing", "A_INFO:_info-sem-artefact",
-        "A_INFO:_info-sem-subst", "A_INFO:_info-sem-object")
-    b_pers = _has(fv, "B_INFO:_info-sem-pers", "B_INFO:_info-sem-living-being")
-    b_place = _has(fv, "B_INFO:_info-sem-place", "B_OUT:lieu1", "B_OUT:lieuact")
+    """Traits d'INTERACTION A×B — un modèle linéaire est ADDITIF : il ne peut pas
+    ET-er « A est une action » et « B est une personne » (→ agent, PAS possession).
+    On matérialise donc le CONJOINT sur l'exemple entier en croisant SYSTÉMATIQUEMENT
+    chaque type de A × chaque type de B (action/objet/subst/lieu/personne/abstrait).
+    (Une personne possède un OBJET, pas une action → action×pers ≠ object×pers.)"""
+    at, bt = _type_tags(fv, "A_"), _type_tags(fv, "B_")
     out = {}
-    if a_action:
-        out["X:A_action"] = 1.0
-    if a_object:
-        out["X:A_object"] = 1.0
-    if a_action and b_pers:
-        out["X:action×pers"] = 1.0
-    if a_object and b_pers:
-        out["X:object×pers"] = 1.0
-    if a_action and b_place:
-        out["X:action×place"] = 1.0
-    if a_object and b_place:
-        out["X:object×place"] = 1.0
+    for a in at:
+        out["XA:" + a] = 1.0            # type marginal de A (générique)
+    for b in bt:
+        out["XB:" + b] = 1.0            # type marginal de B
+    for a in at:
+        for b in bt:
+            out["X:" + a + "×" + b] = 1.0   # interaction A×B (conjoint)
     return out
 
 
