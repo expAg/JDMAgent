@@ -1,0 +1,822 @@
+
+
+r_agent
+
+préparation du cuisinier
+analyse du critique
+création de l'artiste
+direction du chef +d'orchestre
+interprétation de l'acteur
+conception de l'architecte
+exploration du voyageur
+résolution du détective
+transformation du magicien
+exécution du musicien
+écriture du romancier
+navigation du marin
+décoration du designer
+réservation du client
+commande du client
+présentation du conférencier
+découverte du chercheur
+gestion du manager
+mise en scène du réalisateur
+construction de l'ouvrier
+réalisation de l'ingénieur
+expérimentation du scientifique
+peinture de l'artiste
+capture du photographe
+cueillette du jardinier
+élaboration de stratège
+fabrication de l'usine
+élaboration du narrateur
+négociation du diplomate
+capture du chasseur
+sculpture de l'artiste
+composition de l'élève
+rédaction de l'écrivain
+transformation du sorcier
+aménagement du décorateur
+intégration du programmeur
+élaboration du stratège
+tir du tireur d'élite
+étude du chercheur
+collecte du collectionneur
+couture de la grand-mère
+inspection du directeur
+installation du technicien
+planification du président
+réparation du réparateur
+préservation du conservateur
+conduite du chauffeur
+appréciation du critique
+conception de l'ingénieur
+analyse du psychologue
+
+
+r_auteur
+
+album du musicien
+mode du styliste
+bijou du créateur de bijoux
+pièce de théâtre du dramaturge
+parfum du créateur
+architecture du designer
+gâteau du pâtissier
+affiche du designer graphique
+cuisine du cuisinier
+photographie du photographe
+film du cinéaste
+chanson du compositeur
+collection du créateur
+dessin du dessinateur
+bijou du bijoutier
+plat du cuisinier
+ballet du chorégraphe
+meuble du designer
+photographie du photographe
+poème du poète
+film du réalisateur
+série télévisée du scénariste
+mode du créateur de mode
+portrait du peintre
+dessin du dessinateur
+tableau de Picasso
+album des Beatles
+film de Spielberg
+poème de Baudelaire
+sculpture de Rodin
+roman de Jane Austen
+chanson de Bob Dylan
+photographie d'Ansel Adams
+opéra de Mozart
+film de Christopher Nolan
+tableau de Frida Kahlo
+album de Michael Jackson
+poème de Emily Dickinson
+sculpture de Michel-Ange
+roman de Gabriel García Márquez
+chanson de Adele
+photographie de Diane Arbus
+ballet de Tchaïkovski
+film de Quentin Tarantino
+tableau de Van Gogh
+album des Rolling Stones
+poème de Walt Whitman
+sculpture de Auguste Rodin
+roman de George Orwell
+chanson de Prince
+
+
+r_caractérisation
+
+beauté de la nature
+rapidité du cheval
+douceur du miel
+force du lion
+agilité du chat
+intelligence de l'enfant
+sincérité de l'ami
+générosité du donateur
+patience de l'enseignant
+énergie du soleil
+résistance du métal
+éclat du diamant
+élégance de la danse
+fragrance des fleurs
+bravoure du soldat
+vivacité du rire
+souplesse du serpent
+douleur du chagrin
+dextérité du jongleur
+ingéniosité de l'inventeur
+loyauté du chien
+imagination de l'écrivain
+curiosité de l'enfant
+saveur du chocolat
+rigueur du jugement
+humilité du sage
+humour du comédien
+vivacité du regard
+éloquence du discours
+mystère de la nuit
+délicatesse du parfum
+fidélité du compagnon
+perfection du cercle
+harmonie du chant
+fierté du peuple
+détermination du leader
+chaleur du feu
+précision de la montre
+flexibilité du bambou
+douceur du sommeil
+réflexion du miroir
+liberté de l'oiseau
+harmonie du couple
+authenticité du document
+équilibre du funambule
+rareté du trésor
+valeur du succès
+inquiétude de la mère
+clarté de l'eau
+fermeté du poignet
+
+
+r_causalité
+
+blessures de guerre
+retards de la circulation
+échecs de la négligence
+succès du travail
+réussite de persévérance
+larmes de tristesse
+décès du vieillissement
+souffrance de la maladie
+crise de la dette
+réchauffement de la planète
+pauvreté de l'injustice
+défaite de la faiblesse
+pollutions de l'industrie
+rupture de la confiance
+anxiété de la pression
+malaise de la déception
+crises de la politique
+faillite de l'entreprise
+épuisement du stress
+naufrage de la tempête
+divorce de la mésentente
+négligence de l'entretien
+famine de la sécheresse
+chômage de la crise économique
+traces de l'usure
+incendie de la négligence
+effondrement du bâtiment
+disparition de la disparité
+séparation de la discorde
+tensions de la rivalité
+pertes de la spéculation
+divulgation de la vérité
+disparitions de l'oubli
+crispations de la rivalité
+accidents de la négligence
+hésitations de la peur
+détérioration de la qualité
+dommages de la négligence
+repli de la peur
+mécontentements de l'insatisfaction
+déboires de la malchance
+reculs de la prudence
+tensions de la compétition
+contraintes de la responsabilité
+frustrations de l'attente
+malaises de la confusion
+discrédit de la tromperie
+accusations de la trahison
+perturbations de la révolution
+controverses de l'opposition
+
+
+r_composition
+
+table de bois
+robe de soie
+maison de briques
+bague de diamant
+pizza de fromage
+étagère de métal
+vin de raisin
+porte de fer
+sandwich de jambon
+collier de perles
+plat de porcelaine
+gâteau de chocolat
+sculpture de bronze
+rideau de velours
+tasse de céramique
+pont de pierre
+chaise de bois
+crêpe de blé
+statue de marbre
+bouquet de fleurs
+parfum de roses
+guitare de bois
+couronne de laurier
+armoire de chêne
+pendentif d'or
+échelle de corde
+poupée de porcelaine
+tapis de laine
+écran de verre
+horloge de cuivre
+sac de cuir
+couronne de fleurs
+moulin de vent
+miroir d'argent
+soupe de légumes
+globe de verre
+clé de bronze
+boîte de cristal
+courroie de cuir
+linge de coton
+lettres de papier
+clavier de plastique
+cage de fer
+broche d'argent
+corbeille de fruits
+piano de bois
+cravate de soie
+arc de violon
+râteau de métal
+poêle de fer
+
+
+r_dépiction
+
+portrait de la dame
+photo du couple
+dessin du visage
+esquisse du modèle
+image du coucher +de soleil
+film de guerre
+photo du groupe
+peinture de nature morte
+chanson d'amour
+croquis du paysage
+portrait de famille
+film d'animation
+photo de vacances
+sculpture du héro
+dessin de l'arbre
+esquisse du modèle
+image du lever +de soleil
+sculpture de paix
+tableau de chaos
+script de drame
+script de drame familial
+photo du bébé
+portrait de l'enfant
+dessin du portrait
+image de la ville
+photo du mariage
+peinture de paysage
+chanson de nostalgie
+portrait de l'artiste
+statue du chef
+dessin du modèle
+esquisse du nu
+image de la nature
+film romantique
+photo de l'adolescent
+peinture de marine
+portrait du vieillard
+statue du président
+dessin de la scène
+esquisse du corps
+image de la montagne
+film d'horreur
+photo du groupe d'amis
+peinture de fleurs
+chanson de révolte
+portrait de la mariée
+statue du président
+dessin de l'objet
+esquisse du couple
+image du champ
+
+
+r_GEN_CORP_learn
+
+
+
+r_GEN_CORP_test
+
+
+
+r_GEN_CORP_test_clean
+
+
+
+r_holonymie
+
+bras de la chaise
+pétale de la fleur
+pales de l'éolienne
+branches de l'arbre
+roues de la voiture
+ailes de l'avion
+cordes du violon
+touches du piano
+pages du livre
+poignée de la porte
+dents de la scie
+sable de la plage
+pépins de la pomme
+feuilles de la plante
+murs de la maison
+gouttes de la pluie
+pattes de l'insecte
+nageoires du poisson
+gâteau de la fête
+pépites de chocolat
+membres de l'équipe
+boutons de la chemise
+pédoncule de la cerise
+feuillettes de la pâte
+pédales du vélo
+composants du circuit
+doigts de la main
+mèches de la bougie
+gorges de la montagne
+raisins de la vigne
+pattes de la grenouille
+pétale de la rose
+dossiers de l'entreprise
+galets de la rivière
+chaînons de la chaîne
+rayures du tigre
+mains de l'horloge
+écailles du poisson
+crans de la roue
+tiges de la plante
+pavés de la rue
+dossiers de l'ordinateur
+fils de la toile
+câbles de l'électroménager
+serres de la tortue
+boucles de la ceinture
+queue du chien
+pétales de la fleur
+branches de l'arbre
+plumes de l'oiseau
+
+
+r_instrument ou instrument d'une action portant sur
+
+peigne de coiffure
+tapis de danse
+brosse à dents de brossage
+lunettes de lecture
+parfum de vaporisation
+crayon de dessin
+brosse à chaussures de lustrage
+appareil photo de photographie
+fourchette de repas
+gant de jardinage
+radio de diffusion
+miroir de maquillage
+piano d'accompagnement
+rasoir d'épilation
+disque dur de stockage
+appareil de musculation
+bouilloire d'ébullition
+ventilateur de refroidissement
+ciseaux de papier
+porte-savon de support
+casque de protection
+clé de serrage
+brosse à cheveux de coiffure
+porte-monnaie de rangement
+tondeuse à gazon de coupe
+étagère de rangement
+pince à cravate de fixation
+chaise de repos
+fer à repasser de repassage
+oreiller de soutien
+pince à épiler d'épilation
+sèche-cheveux de séchage
+boussole d'orientation
+trousse de maquillage
+thermos de conservation
+housse de protection
+porte-clés de rangement
+balance de pesée
+microphone d'enregistrement
+bassine +d'eau de lavage
+loupe d'observation
+sac à dos de transport
+bougie d'éclairage
+lunettes +de soleil de protection
+thermomètre de mesure
+gourde d'hydratation
+tapis d'adhérence
+cintre de suspension
+manteau de protection
+épluche-légumes d'épluchage
+
+
+r_lieu
+
+forêt d'Amazonie
+montagne des Andes
+île de Bali
+ville de Paris
+lac du Canada
+plage de Copacabana
+désert d'Arizona
+baie d'Halong
+rue de Londres
+château de Versailles
+parc de Yellowstone
+quartier du Marais
+caverne de l'île
+maison de campagne
+boutique du coin
+café du quartier
+temple d'Angkor
+place de la Concorde
+grotte de Lascaux
+piscine du jardin
+musée du Louvre
+station de métro
+cathédrale de Notre-Dame
+cinéma du centre-ville
+colline de San Francisco
+plaine du sud
+église du village
+bureau de l'entreprise
+restaurant de l'avenue
+théâtre de Broadway
+plage de Waikiki
+université de Harvard
+maison de campagne
+île de méditerranée
+pâtisserie du quartier
+stade de Wembley
+péninsule de la Floride
+immeuble du centre
+cimetière du village
+chambre de l'hôtel
+centre commercial du coin
+patinoire de la ville
+chambre d'hôtel
+pont de Brooklyn
+terrain du parc
+ferme de la campagne
+brasserie du coin
+gare du Nord
+hall du bâtiment
+péniche du canal
+
+
+r_origine
+
+café de Colombie
+vin de Bordeaux
+chocolat de Belgique
+thé du Japon
+pizza d'Italie
+fromage de France
+saumon d'Écosse
+porcelaine de Chine
+sushi du Japon
+vodka de Russie
+tulipe des Pays-Bas
+cigare de Cuba
+poutine du Québec
+tapis de Perse
+olives de Grèce
+caviar d'Iran
+champagne de France
+kiwi de Nouvelle-Zélande
+tiramisu d'Italie
+cannelle de Sri Lanka
+cacao de Ghana
+rhum de Martinique
+safran d'Inde
+encre de Chine
+citron de Sicile
+perle de Tahiti
+tabasco du Mexique
+montre de Suisse
+argent de Bolivie
+papier de Chine
+citrouille du Canada
+sable des Maldives
+jambon de Parme
+soie de Thaïlande
+maïs du Mexique
+jade de Birmanie
+tapisserie d'Aubusson
+oranges de Floride
+brocart de Lyon
+mandarine de Murcie
+parmesan d'Italie
+olive de Grèce
+arak du Liban
+cèdre du Liban
+porc ibérique d'Espagne
+soja du Brésil
+tungstène de Chine
+coton d'Égypte
+ananas de Costa Rica
+marbre de Carrare
+
+
+r_patient
+
+examen du patient
+réparation du véhicule
+étude du phénomène
+analyse du texte
+inspection du bâtiment
+révision de la voiture
+exploration du territoire
+exposition du tableau
+décryptage du code
+mise en oeuvre du projet
+interprétation du rêve
+traitement du dossier
+observation de l'animal
+consultation du médecin
+réalisation du film
+rédaction du rapport
+évaluation du candidat
+production du document
+réparation du dispositif
+inventaire du stock
+présentation du projet
+assemblage du puzzle
+nettoyage du lieu
+synthèse du discours
+développement du logiciel
+capture de l'instant
+étiquetage du produit
+enquête du détective
+acquisition du bien
+élaboration du plan
+conception du produit
+démontage de l'appareil
+compilation du code
+assemblage du meuble
+découpage du tissu
+soutien du projet
+réparation de l'ordinateur
+sondage de l'opinion
+exploration de la grotte
+exploitation de la mine
+préparation du repas
+fabrication du bijou
+gravure du métal
+réalisation du dessin
+dévoilement du secret
+décodage du message
+adaptation du livre
+modification du plan
+vérification du processus
+application du principe
+
+
+r_possession
+
+voiture de l'homme
+maison de la femme
+chapeau du cycliste
+téléphone du professeur
+guitare du musicien
+ordinateur du graphiste
+chemise du serveur
+livre de l'écrivain
+pinceau du peintre
+sac à dos de l'étudiant
+appareil photo du photographe
+crayon du dessinateur
+parapluie de la passante
+vélo du livreur
+casquette du gardien
+clé du concierge
+journal du lecteur
+canapé du designer
+tasse du buveur de thé
+chaussures du joggeur
+piano du pianiste
+veste du skieur
+boussole de l'aventurier
+montre du plongeur
+brosse à dents du dentiste
+caméra du réalisateur
+tablette du programmeur
+ballon du joueur +de football
+microphone du chanteur
+portefeuille du banquier
+clavier du pianiste
+lunettes du cinéphile
+ciseaux du couturier
+bouquet du fleuriste
+canne à pêche du pêcheur
+gants du skieur
+luge du sportif
+porte-monnaie du commerçant
+ruban du cadeau
+tapis du décorateur
+microscope du scientifique
+brosse à cheveux du coiffeur
+télécommande du téléphile
+cravate du businessman
+fourchette du cuisinier
+chaîne du bijoutier
+radio du mélomane
+lampe du lecteur de nuit
+patins à roulettes du patineur
+couteau du chef cuisinier
+
+
+r_quantification
+
+litre d'eau
+poignée de bonbons
+mètre de tissu
+tonne de minerai
+paquet de cartes
+poignée de cheveux
+kilogramme de pommes
+bouteille de vin
+rouleau de papier
+kilomètre de route
+goutte d'eau
+tonneau de pétrole
+brassée de fleurs
+sceau de peinture
+palette de couleurs
+années de recherche
+paquet de cigarettes
+centimètres de neige
+verre de farine
+hectares de terrain
+poignée de bonbons
+jours de congé
+bouquet de fleurs
+tonnes de déchets
+sac de riz
+grain de sable
+mètre cube d'air
+cuillerée de miel
+filet de pêche
+pincée de sel
+flocon d'avoine
+pluie de confettis
+poignée de sable
+nuage de poussière
+feuille de papier
+goutte d'huile
+boule de neige
+tasse de farine
+centimètre de ruban
+morceau de sucre
+tasse de café
+grain de riz
+pinte de bière
+brin de laine
+gousse d'ail
+pincée de poivre
+pluie de météores
+tasse de lait
+flocon de maïs
+sceau d'eau
+
+
+r_relationnel - parenté
+
+mère de l'élève
+directeur de l'entreprise
+ami du voisin
+gendre du gars
+petit-fils de la dame
+voisin de l'artiste
+soeur du fiancé
+chef de l'équipe
+professeur de la classe
+oncle du musicien
+maire du village
+cousin de l'architecte
+collègue du photographe
+tante du peintre
+manager de l'acteur
+infirmière du patient
+grand-père de l'écrivain
+avocat du client
+cousin de l'athlète
+mentor du chercheur
+pasteur de la paroisse
+fille du diplomate
+chef de la tribu
+éditeur du journaliste
+camarade du soldat
+coach de l'athlète
+épouse du politicien
+père du danseur
+directrice de l'école
+médecin de la patiente
+fils du chef
+architecte du designer
+belle-soeur du cuisinier
+professeur du poète
+actrice du réalisateur
+ami du conférencier
+neveu de l'entrepreneur
+propriétaire du locataire
+cousine du philanthrope
+employé du patron
+soeur du scientifique
+pianiste du compositeur
+frère du mécanicien
+conseiller du manager
+artiste du collectionneur
+collègue du psychologue
+président du membre
+fille du diplomate
+architecte du constructeur
+parent du volontaire
+
+
+r_topique - thème -genre
+
+école de danse
+livre de poésie
+jardin de roses
+université de médecine
+université de science
+université de finance
+université de lettre
+faculté de médecine
+faculté de sport
+faculté de droit
+faculté de finance
+galerie d'art contemporain
+film d'aventure
+club de tennis
+club de rugby
+magazine de mode
+salle de concert
+hôtel de luxe
+centre de recherche scientifique
+café de bienvenue
+boutique de jouets
+festival de musique
+parc d'attractions
+collège de sciences politiques
+magazine de voyage
+centre de soins
+théâtre de marionnettes
+maison de couture
+série de romans policiers
+exposition de photographie
+festival de cinéma
+cinéma d'horreur
+émission de télé-réalité
+école de cuisine française
+parc de sculptures en plein air
+café de musique live
+équipe de football professionnel
+camp de vacances d'été
+musée d'histoire naturelle
+bar de danse
+centre de yoga
+festival de théâtre
+club de plongée sous-marine
+exposition de design
+école de journalisme
+romans d'histoire
+bar de tapas
+studio de jazz
+centre de fitness
+concours de cuisine gastronomique

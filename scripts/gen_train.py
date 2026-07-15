@@ -18,25 +18,11 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import numpy as np
 from jdm_agent.client.client import JDMClient
-
-_CONN = re.compile(r"(?<= )(de la |de l'|de l’|du |des |de |d'|d’)")
-
-
-def parse_pair(line: str):
-    """« A de B » → (A, B). Gère « +de/+d' » = connecteur INTERNE (composé), le
-    vrai split est le 1er connecteur précédé d'une espace (pas d'un « + »)."""
-    s = re.sub(r"\s+", " ", line.strip())
-    m = _CONN.search(s)
-    if not m:
-        return None
-    a = s[:m.start()].replace("+", "").strip()
-    b = s[m.end():].replace("+", "").strip()
-    if not a or not b:
-        return None
-    return a, b
+from jdm_agent.genitive import parse_pair   # site UNIQUE du parse « A de B » (+ connecteur)
 
 
 def load_corpus(path):
+    """→ [(A, B, classe, connecteur)] ; le connecteur porte la définitude de B."""
     cls = None
     data = []
     for raw in open(path, encoding="utf-8"):
@@ -51,7 +37,7 @@ def load_corpus(path):
             continue                        # sections vides de contrôle
         p = parse_pair(st)
         if p:
-            data.append((p[0], p[1], cls))
+            data.append((p[0], p[1], cls, p[2]))
     return data
 
 
@@ -84,13 +70,13 @@ def _feats(client, term, cache, rid_isa):
 def main():
     path = sys.argv[1]
     data = load_corpus(path)
-    print(f"{len(data)} exemples · {len(set(c for *_, c in data))} classes")
+    print(f"{len(data)} exemples · {len(set(t[2] for t in data))} classes")
 
     client = JDMClient()
     rid_isa = client.relation_type_id("r_isa")
     cache = {}
     X_dicts, y = [], []
-    for i, (a, b, c) in enumerate(data):
+    for i, (a, b, c, _conn) in enumerate(data):
         fa = _feats(client, a, cache, rid_isa)
         fb = _feats(client, b, cache, rid_isa)
         fv = {}

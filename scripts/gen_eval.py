@@ -17,7 +17,8 @@ from gen_train import load_corpus, _feats, parse_pair
 
 def _vec(client, pairs, rid_isa, cache):
     dicts, y = [], []
-    for i, (a, b, c) in enumerate(pairs):
+    for i, item in enumerate(pairs):
+        a, b, c = item[0], item[1], item[2]
         fa, fb = _feats(client, a, cache, rid_isa), _feats(client, b, cache, rid_isa)
         fv = {}
         for k, v in fa.items():
@@ -35,7 +36,8 @@ def main():
     learn_path, test_path = sys.argv[1], sys.argv[2]
     learn = load_corpus(learn_path)
     order = []
-    for *_, c in learn:
+    for t in learn:
+        c = t[2]
         if c not in order:
             order.append(c)
     print(f"learn: {len(learn)} ex · {len(order)} classes (ordre): {order}")
@@ -47,7 +49,7 @@ def main():
     for i, ln in enumerate(lines):
         p = parse_pair(ln)
         if p:
-            test.append((p[0], p[1], order[i // per]))
+            test.append((p[0], p[1], order[i // per], p[2]))
 
     client = JDMClient()
     rid_isa = client.relation_type_id("r_isa")

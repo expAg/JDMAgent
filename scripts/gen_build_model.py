@@ -16,12 +16,12 @@ from gen_train import load_corpus
 
 def main():
     learn = load_corpus(sys.argv[1])
-    print(f"{len(learn)} exemples · {len(set(c for *_, c in learn))} classes")
+    print(f"{len(learn)} exemples · {len(set(t[2] for t in learn))} classes")
     client = JDMClient()
     cache = {}
     X, y = [], []
-    for i, (a, b, c) in enumerate(learn):
-        fv, _ev = featurize(client, a, b, cache)
+    for i, (a, b, c, conn) in enumerate(learn):
+        fv, _ev = featurize(client, a, b, cache, conn=conn)
         X.append(fv)
         y.append(c)
         if (i + 1) % 100 == 0:

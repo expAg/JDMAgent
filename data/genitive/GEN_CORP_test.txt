@@ -1,0 +1,476 @@
+
+
+r_agent
+
+évaluation du médecin : r_agent 
+négociation du client : r_agent 
+aménagement du paysagiste : r_agent 
+confection du créateur : r_agent 
+calcul du mathématicien : r_agent 
+pose du mannequin : r_agent 
+connexion de l'utilisateur : r_agent 
+leçon du maître : r_agent 
+composition de l'artiste : r_agent 
+édition de l'éditeur : r_agent 
+composition du musicien : r_agent 
+amélioration de l'étudiant : r_agent 
+préparation du chef : r_agent 
+programmation du technicien : r_agent 
+arrangement du musicien : r_agent 
+étude du chercheur : r_agent 
+intégration du spécialiste : r_agent 
+travail du réalisateur : r_agent 
+organisation de manager : r_agent 
+mise en oeuvre de l'employé : r_agent 
+étude du chercheur : r_agent 
+production de l'agriculteur : r_agent 
+installation de l'artisan : r_agent 
+promotion du fabricant : r_agent 
+confection de l'artisan : r_agent 
+installation du plombier : r_agent 
+réparation du technicien : r_agent 
+don de l'altruiste : r_agent 
+dessin de l'artiste : r_agent 
+représentation de l'artiste : r_agent 
+
+
+r_caractérisation
+
+articulation de la parole : r_caractérisation 
+richesse du royaume : r_caractérisation 
+tendresse du câlin : r_caractérisation 
+discrétion du confident : r_caractérisation 
+écoute du musicien : r_caractérisation 
+originalité du tableau : r_caractérisation 
+dynamisme du mouvement : r_caractérisation 
+douleur de la blessure : r_caractérisation 
+prestige du titre : r_caractérisation 
+pureté de l'or : r_caractérisation 
+douceur de la voix : r_caractérisation 
+conviction du croyant : r_caractérisation 
+efficacité du remède : r_caractérisation 
+autorité du leader : r_caractérisation 
+capacité du cerveau : r_caractérisation 
+rareté du phénomène : r_caractérisation 
+importance de la tradition : r_caractérisation 
+persistence du passé : r_caractérisation 
+douceur du coucher de soleil : r_caractérisation 
+ombre de l'arbre : r_caractérisation 
+résilience de la nature : r_caractérisation 
+chaleur du foyer : r_caractérisation 
+innocence de l'enfant : r_caractérisation 
+sagesse du proverbe : r_caractérisation 
+rigueur de la règle : r_caractérisation 
+consistance du pudding : r_caractérisation 
+habileté du chirurgien : r_caractérisation 
+énergie du vent : r_caractérisation 
+intensité du regard : r_caractérisation 
+clarté du ciel : r_caractérisation 
+
+
+r_causalité
+
+saccages de la révolte : r_causalité 
+critiques de l'opinion : r_causalité 
+conflits de l'incompréhension : r_causalité 
+malentendus de la communication : r_causalité 
+luttes de la résistance : r_causalité 
+injustices de la discrimination : r_causalité 
+insatisfactions de l'insuffisance : r_causalité 
+désordres de la rébellion : r_causalité 
+inondations de la pluie : r_causalité 
+déceptions de l'espoir : r_causalité 
+dégâts de la tempête : r_causalité 
+luttes de la survie : r_causalité 
+embarras de la situation : r_causalité 
+baisse de la demande : r_causalité 
+détérioration de la situation : r_causalité 
+ruptures de la trahison : r_causalité 
+compressions de la crise : r_causalité 
+impacts de la collision : r_causalité 
+déviations de la norme : r_causalité 
+condamnations de la culpabilité : r_causalité 
+épuisements de la surcharge : r_causalité 
+tensions de la rivalité : r_causalité 
+obstacles de l'opposition : r_causalité 
+frictions de la rivalité : r_causalité 
+doutes de l'incertitude : r_causalité 
+ruptures de la confiance : r_causalité 
+abandons de la déception : r_causalité 
+fractures de la tension : r_causalité 
+oublis de la mémoire : r_causalité 
+effets secondaires du médicament : r_causalité 
+
+
+r_composition
+
+lorgnette d'or : r_composition 
+housse de coussin : r_composition 
+abat-jour de soie : r_composition 
+costume de laine : r_composition 
+selle de cuir : r_composition 
+escalier de marbre : r_composition 
+portefeuille de cuir : r_composition 
+château de sable : r_composition 
+lanterne de cuivre : r_composition 
+tabouret de bois : r_composition 
+échiquier de bois : r_composition 
+tuyau de plomb : r_composition 
+volant de cuir : r_composition 
+carreau de céramique : r_composition 
+bouteille de verre : r_composition 
+bougeoir de bronze : r_composition 
+statue d'argile : r_composition 
+charme de bronze : r_composition 
+ceinture de cuir : r_composition 
+gâteau de mariage : r_composition 
+sculpture de bois : r_composition 
+chapeau de paille : r_composition 
+casque de métal : r_composition 
+escalier de bois : r_composition 
+salade de fruits : r_composition 
+colonne de marbre : r_composition 
+horloge de bois : r_composition 
+chandelier d'argent : r_composition 
+pelote de laine : r_composition 
+pelote de ficelle : r_composition 
+
+
+r_dépiction
+
+photo du musicien : r_dépiction 
+peinture de nu : r_dépiction 
+chanson d'espoir : r_dépiction 
+portrait de l'adolescente : r_dépiction 
+sculpture du roi : r_dépiction 
+dessin du monument : r_dépiction 
+esquisse du visage : r_dépiction 
+image du lac : r_dépiction 
+photo de l'artiste : r_dépiction 
+peinture de ville : r_dépiction 
+chanson d'inspiration : r_dépiction 
+portrait du groupe : r_dépiction 
+sculpture de l'animal : r_dépiction 
+dessin de l'animal : r_dépiction 
+esquisse du paysage : r_dépiction 
+image du parc : r_dépiction 
+collage de souvenirs : r_dépiction 
+symphonie de bonheur : r_dépiction 
+script de comédie romantique : r_dépiction 
+tableau de coucher de soleil : r_dépiction 
+photographie de nostalgie : r_dépiction 
+pièce de théâtre historique : r_dépiction 
+poème de réflexion : r_dépiction 
+photo de l'événement : r_dépiction 
+peinture de forêt : r_dépiction 
+portrait du sportif : r_dépiction 
+sculpture du corps : r_dépiction 
+dessin de la foule : r_dépiction 
+esquisse du spectacle : r_dépiction 
+rapport du projet : r_dépiction 
+
+
+r_holonymie
+
+roues du vélo : r_holonymie 
+pages du livre : r_holonymie 
+vagues de la mer : r_holonymie 
+pépins de la pomme : r_holonymie 
+pétales de la marguerite : r_holonymie 
+brindilles de l'oiseau : r_holonymie 
+pédoncules des fraises : r_holonymie 
+gouttes de la rosée : r_holonymie 
+pavillons de l'oreille : r_holonymie 
+écailles du reptile : r_holonymie 
+grains du raisin : r_holonymie 
+pépins de la grenade : r_holonymie 
+touches du clavier : r_holonymie 
+pixels de l'image : r_holonymie 
+fils de la toile d'araignée : r_holonymie 
+pixels de l'écran : r_holonymie 
+flèches de l'arc : r_holonymie 
+gondoles du carrousel : r_holonymie 
+pales du ventilateur : r_holonymie 
+graines de la citrouille : r_holonymie 
+volants de la voiture : r_holonymie 
+fils de la broderie : r_holonymie 
+gouttes du miel : r_holonymie 
+doigts du gant : r_holonymie 
+pédoncules des cerises : r_holonymie 
+tuyaux de l'orgue : r_holonymie 
+poils de la brosse : r_holonymie 
+pépites de la mine : r_holonymie 
+cornes de l'animal : r_holonymie 
+pixels de la photographie : r_holonymie 
+
+
+r_instrument ou instrument d'une action portant sur
+
+brosse à vaisselle de nettoyage : r_instrument ou instrument d'une action portant sur 
+coussin de soutien : r_instrument ou instrument d'une action portant sur 
+porte-revues de rangement : r_instrument ou instrument d'une action portant sur 
+porte-parapluie de support : r_instrument ou instrument d'une action portant sur 
+sac de couchage de sommeil : r_instrument ou instrument d'une action portant sur 
+thermos de conservation : r_instrument ou instrument d'une action portant sur 
+pinceau de peinture : r_instrument ou instrument d'une action portant sur 
+sifflet de signalisation : r_instrument ou instrument d'une action portant sur 
+canne à pêche de pêche : r_instrument ou instrument d'une action portant sur 
+cadenas de verrouillage : r_instrument ou instrument d'une action portant sur 
+parapluie de protection : r_instrument ou instrument d'une action portant sur 
+détecteur de mouvement de sécurité : r_instrument ou instrument d'une action portant sur 
+étui de protection : r_instrument ou instrument d'une action portant sur 
+rouleau à pâtisserie d'aplatissage : r_instrument ou instrument d'une action portant sur 
+table de repas : r_instrument ou instrument d'une action portant sur 
+râteau de jardinage : r_instrument ou instrument d'une action portant sur 
+sacoche de transport : r_instrument ou instrument d'une action portant sur 
+décapsuleur de décapsulage : r_instrument ou instrument d'une action portant sur 
+couteau de cuisine : r_instrument ou instrument d'une action portant sur 
+porte-serviettes de rangement : r_instrument ou instrument d'une action portant sur 
+râteau à feuilles de ramassage : r_instrument ou instrument d'une action portant sur 
+poubelle de déchets : r_instrument ou instrument d'une action portant sur 
+gants de boxe de protection : r_instrument ou instrument d'une action portant sur 
+raquette de tennis : r_instrument ou instrument d'une action portant sur 
+cendrier de tabagisme : r_instrument ou instrument d'une action portant sur 
+haltère de musculation : r_instrument ou instrument d'une action portant sur 
+enregistreur vocal d'espionnage : r_instrument ou instrument d'une action portant sur 
+support de rangement : r_instrument ou instrument d'une action portant sur 
+marteau de frappe : r_instrument ou instrument d'une action portant sur 
+appareil de chauffage : r_instrument ou instrument d'une action portant sur 
+
+
+r_lieu
+
+glacier du Mont-Blanc : r_lieu 
+salle de bains de la maison : r_lieu 
+collège de Cambridge : r_lieu 
+château de la Loire : r_lieu 
+port de Marseille : r_lieu 
+librairie du quartier : r_lieu 
+hôtel de luxe : r_lieu 
+parc national du Yellowstone : r_lieu 
+magasin du centre-ville : r_lieu 
+boulangerie du coin : r_lieu 
+sommet des Alpes : r_lieu 
+pâturage de la ferme : r_lieu 
+chemin de campagne : r_lieu 
+ruelle de Kyoto : r_lieu 
+cascades d'Afrique : r_lieu 
+bassin de la piscine : r_lieu 
+rue piétonne du quartier : r_lieu 
+hôpital du centre-ville : r_lieu 
+bar du coin : r_lieu 
+volcan d'Islande : r_lieu 
+magasin de la rue : r_lieu 
+détroit de Gibraltar : r_lieu 
+bibliothèque du quartier : r_lieu 
+chambre d'hôtel : r_lieu 
+boutique de luxe : r_lieu 
+atelier de l'école : r_lieu 
+parc d'attractions du coin : r_lieu 
+café du parc : r_lieu 
+château de la forêt : r_lieu 
+bibliothèque de l'étage : r_lieu 
+
+
+r_origine
+
+agate du Brésil : r_origine 
+miel de Nouvelle-Zélande : r_origine 
+truffe de Périgord : r_origine 
+bois de teck de Birmanie : r_origine 
+grenat de Madagascar : r_origine 
+safran d'Espagne : r_origine 
+diamant d'Afrique : r_origine 
+porc de Bigorre : r_origine 
+riz de Camargue : r_origine 
+huîtres de Cancale : r_origine 
+rythme du Brésil : r_origine 
+opale d'Australie : r_origine 
+lin de Belgique : r_origine 
+grenade d'Espagne : r_origine 
+vanille de Madagascar : r_origine 
+or de Californie : r_origine 
+granit de Suède : r_origine 
+citron vert de Mexique : r_origine 
+bois d'acajou du Honduras : r_origine 
+musique de Jamaïque : r_origine 
+saumon de Norvège : r_origine 
+thé de Ceylan : r_origine 
+haricots noirs de Chine : r_origine 
+soja du Paraguay : r_origine 
+savon de Marseille : r_origine 
+saucisse de Toulouse : r_origine 
+porcelaine de Limoges : r_origine 
+érable du Vermont : r_origine 
+açaï du Brésil : r_origine 
+pamplemousse de Floride : r_origine 
+
+
+r_patient
+
+utilisation du produit : r_patient 
+ingénierie du système : r_patient 
+test du prototype : r_patient 
+installation du logiciel : r_patient 
+réparation du système : r_patient 
+analyse du marché : r_patient 
+calcul du résultat : r_patient 
+interrogation du suspect : r_patient 
+production de l'énergie : r_patient 
+traitement du signal : r_patient 
+exploitation du champ : r_patient 
+examen du document : r_patient 
+harmonisation du son : r_patient 
+transformation du matériau : r_patient 
+recrutement du chercheur : r_patient 
+adaptation du scénario : r_patient 
+présentation du rapport : r_patient 
+confection du vêtement : r_patient 
+aménagement du jardin : r_patient 
+nettoyage du tapis : r_patient 
+restauration du tableau : r_patient 
+élaboration du plan : r_patient 
+épuration de l'eau : r_patient 
+dissolution du sucre : r_patient 
+développement du marché : r_patient 
+révision du manuscrit : r_patient 
+synthèse du produit : r_patient 
+composition du morceau : r_patient 
+formation du personnel : r_patient 
+création du site web : r_patient 
+
+
+r_possession
+
+journal intime de l'écrivain : r_possession 
+écharpe du voyageur : r_possession 
+jouet du collectionneur : r_possession 
+noeud papillon du dandy : r_possession 
+parfum du parfumeur : r_possession 
+machine à café du barista : r_possession 
+trottinette du citadin : r_possession 
+jumelles de l'observateur : r_possession 
+carte du joueur : r_possession 
+boucle d'oreille de la femme : r_possession 
+canard en plastique du baigneur : r_possession 
+lunettes de soleil du vacancier : r_possession 
+palette du peintre : r_possession 
+clé USB de l'informaticien : r_possession 
+poussette du parent : r_possession 
+canapé-lit du visiteur : r_possession 
+chargeur du voyageur : r_possession 
+ceinture du fashionista : r_possession 
+télévision du cinéphile : r_possession 
+carte du géographe : r_possession 
+cadenas du voyageur : r_possession 
+parapluie du citoyen : r_possession 
+tapis de yoga du pratiquant : r_possession 
+maillot du nageur : r_possession 
+coffret à bijoux de la collectionneuse : r_possession 
+panier de basket du joueur : r_possession 
+disque dur du photographe : r_possession 
+journal de l'historien : r_possession 
+gobelet du buveur de café : r_possession 
+tondeuse du jardinier : r_possession 
+
+
+r_quantification
+
+goutte de pluie : r_quantification 
+poignée de terre : r_quantification 
+goutte de sang : r_quantification 
+mètre carré de tissu : r_quantification 
+pinte de glace : r_quantification 
+série de romans : r_quantification 
+série de documentaires : r_quantification 
+liste de films : r_quantification 
+groupe de mots : r_quantification 
+poignée de feuilles : r_quantification 
+mètre cube de béton : r_quantification 
+tonneau de bière : r_quantification 
+goutte de rosée : r_quantification 
+tasse de soupe : r_quantification 
+centimètre de fil : r_quantification 
+poignée de sable : r_quantification 
+pincée de cendres : r_quantification 
+goutte d'essence : r_quantification 
+rouleau de pellicule : r_quantification 
+poignée de pétales : r_quantification 
+cuillerée de confiture : r_quantification 
+pinte de lait : r_quantification 
+goutte d'encre : r_quantification 
+litre de lait : r_quantification 
+filet de lumière : r_quantification 
+brassée de blé : r_quantification 
+cuillerée de sauce : r_quantification 
+gramme de chocolat : r_quantification 
+goutte d'acide : r_quantification 
+tonne de coton : r_quantification 
+
+
+r_relationnel - parenté
+
+cousin du pilote : r_relationnel - parenté 
+cousin du boulanger : r_relationnel - parenté 
+directeur de la compagnie : r_relationnel - parenté 
+guide du touriste : r_relationnel - parenté 
+entraîneur de l'athlète : r_relationnel - parenté 
+soeur du sculpteur : r_relationnel - parenté 
+directeur de l'artiste : r_relationnel - parenté 
+oncle du scénariste : r_relationnel - parenté 
+patron du vendeur : r_relationnel - parenté 
+cousine du violoniste : r_relationnel - parenté 
+frère du voyageur : r_relationnel - parenté 
+médecin du patient : r_relationnel - parenté 
+cousin du critique : r_relationnel - parenté 
+professeur de l'étudiant : r_relationnel - parenté 
+éditeur du romancier : r_relationnel - parenté 
+voisin du chanteur : r_relationnel - parenté 
+cousin du chercheur : r_relationnel - parenté 
+président du membre : r_relationnel - parenté 
+soeur du philosophe : r_relationnel - parenté 
+cousin du journaliste : r_relationnel - parenté 
+ami du photographe : r_relationnel - parenté 
+cousin du linguiste : r_relationnel - parenté 
+directeur du designer : r_relationnel - parenté 
+mentor du stagiaire : r_relationnel - parenté 
+cousine du biologiste : r_relationnel - parenté 
+frère de l'ami : r_relationnel - parenté 
+voisin du peintre : r_relationnel - parenté 
+collègue du graphiste : r_relationnel - parenté 
+médecin du scientifique : r_relationnel - parenté 
+ami du diplomate : r_relationnel - parenté 
+
+
+r_topique - thème -genre
+
+agence de voyage : r_topique - thème -genre 
+collection de sculptures : r_topique - thème -genre 
+club de lecture : r_topique - thème -genre 
+café de jeux : r_topique - thème -genre 
+école de sculpture sur bois : r_topique - thème -genre 
+parc de sculptures : r_topique - thème -genre 
+festival de musique électronique : r_topique - thème -genre 
+couteau de boucherie : r_topique - thème -genre 
+compagnie de théâtre amateur : r_topique - thème -genre 
+livre de recettes : r_topique - thème -genre 
+studio de hip-hop : r_topique - thème -genre 
+boutique de vêtements : r_topique - thème -genre 
+agence de de tourisme : r_topique - thème -genre 
+club de randonnée pédestre : r_topique - thème -genre 
+galerie de design : r_topique - thème -genre 
+festival de cinéma indépendant : r_topique - thème -genre 
+musée de la mode : r_topique - thème -genre 
+restaurant de fruits de mer : r_topique - thème -genre 
+concert de musique classique : r_topique - thème -genre 
+société de production : r_topique - thème -genre 
+atelier de poterie : r_topique - thème -genre 
+spectacle de magie : r_topique - thème -genre 
+parc de randonnée : r_topique - thème -genre 
+compagnie de cirque : r_topique - thème -genre 
+exposition de sculptures : r_topique - thème -genre 
+festival de bande dessinée : r_topique - thème -genre 
+chaîne de télévision : r_topique - thème -genre 
+agence de voyage : r_topique - thème -genre 
+spectacle de danse : r_topique - thème -genre 
+maison de couture : r_topique - thème -genre 

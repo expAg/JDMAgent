@@ -87,8 +87,10 @@ def _vec(client, pairs, cache):
     # Utilise EXACTEMENT les features déployées (genitive.featurize, filtrées).
     from jdm_agent.genitive import featurize
     dicts, y = [], []
-    for i, (a, b, c) in enumerate(pairs):
-        fv, _ev = featurize(client, a, b, cache)
+    for i, item in enumerate(pairs):
+        a, b, c = item[0], item[1], item[2]
+        conn = item[3] if len(item) > 3 else None
+        fv, _ev = featurize(client, a, b, cache, conn=conn)
         dicts.append(fv)
         y.append(c)
         if (i + 1) % 100 == 0:

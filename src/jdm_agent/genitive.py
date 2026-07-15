@@ -76,19 +76,65 @@ _NL = {
 }
 
 
+# Classe génitive interne → nom de relation JDM canonique (affichage).
+_CLASS2JDM = {
+    "r_agent": "r_agent",
+    "r_patient": "r_patient",
+    "r_possession": "r_own",
+    "r_auteur": "r_has_auteur",
+    "r_caractérisation": "r_carac",
+    "r_causalité": "r_has_causatif",
+    "r_composition": "r_object>mater",
+    "r_dépiction": "r_depict",
+    "r_holonymie": "r_holo",
+    "r_instrument": "r_instr",
+    "r_lieu": "r_lieu",
+    "r_origine": "r_lieu>origine",
+    "r_quantification": "r_quantificateur",
+    "r_relationnel": "r_has_social_tie_with",
+    "r_topique": "r_domain",
+}
+
+
+def jdm_name(relation: str) -> str:
+    return _CLASS2JDM.get(relation, relation)
+
+
 def nl(relation: str, a: str, b: str) -> str:
     return _NL.get(relation, "{a} — " + relation + " — {b}").format(a=a, b=b)
 
 
+# Connecteurs marquant un B DÉFINI (article) vs BRUT (massif / indéfini).
+_DEF_CONN = {"du", "de la", "de l'", "de l’", "des"}
+
+
+def _norm_conn(conn):
+    """Normalise le connecteur (« De La » → « de la ») ; None si absent."""
+    if not conn:
+        return None
+    return re.sub(r"\s+", " ", conn.strip().lower())
+
+
+def _definite(conn):
+    """True si B est introduit par un article défini (du/de la/de l'/des),
+    False si brut (de/d'), None si inconnu. La définitude discrimine p.ex.
+    « café de Colombie » (origine, brut) de « voiture de l'homme » (possession)."""
+    c = _norm_conn(conn)
+    if c is None:
+        return None
+    return c in _DEF_CONN
+
+
 def parse_pair(text: str):
-    """« A de B » → (A, B). Gère « +de/+d' » internes aux composés."""
+    """« A de B » → (A, B, connecteur). Gère « +de/+d' » internes aux composés.
+    Le connecteur (du/de la/de/d'…) est conservé pour le trait de définitude."""
     s = re.sub(r"\s+", " ", (text or "").strip())
     m = _CONN.search(s)
     if not m:
         return None
     a = s[:m.start()].replace("+", "").strip()
     b = s[m.end():].replace("+", "").strip()
-    return (a, b) if a and b else None
+    return (a, b, _norm_conn(m.group(1))) if a and b else None
 
 
 def _term_feats(client, term, cache):
@@ -152,8 +198,47 @@ def _pair_feats(client, a, b, cache):
     return out
 
 
-def featurize(client, a, b, cache=None):
-    """Vecteur de features (dict) d'une paire + évidence (relations A↔B trouvées)."""
+def _has(fv, *keys):
+    return any(k in fv for k in keys)
+
+
+def _has_pref(fv, *prefixes):
+    return any(any(k.startswith(p) for p in prefixes) for k in fv)
+
+
+def _conjunctions(fv):
+    """Traits d'INTERACTION A×B — un modèle linéaire ne peut pas ET-er les traits
+    d'un même côté (« A est une action » ET « B est une personne » → agent, PAS
+    possession). On matérialise les conjonctions utiles au génitif :
+      action × personne → agent ;  objet × personne → possession ;
+      action/objet × lieu → lieu.  (Une personne possède un OBJET, pas une action.)"""
+    a_action = _has(fv, "A_OUT:procag", "A_OUT:procpa", "A_INFO:_info-sem-action",
+                    "A_INFO:_info-sem-event", "A_ISA:action")
+    a_object = _has(fv, "A_OUT:mater", "A_OUT:holo") or _has_pref(
+        fv, "A_INFO:_info-sem-thing", "A_INFO:_info-sem-artefact",
+        "A_INFO:_info-sem-subst", "A_INFO:_info-sem-object")
+    b_pers = _has(fv, "B_INFO:_info-sem-pers", "B_INFO:_info-sem-living-being")
+    b_place = _has(fv, "B_INFO:_info-sem-place", "B_OUT:lieu1", "B_OUT:lieuact")
+    out = {}
+    if a_action:
+        out["X:A_action"] = 1.0
+    if a_object:
+        out["X:A_object"] = 1.0
+    if a_action and b_pers:
+        out["X:action×pers"] = 1.0
+    if a_object and b_pers:
+        out["X:object×pers"] = 1.0
+    if a_action and b_place:
+        out["X:action×place"] = 1.0
+    if a_object and b_place:
+        out["X:object×place"] = 1.0
+    return out
+
+
+def featurize(client, a, b, cache=None, conn=None):
+    """Vecteur de features (dict) d'une paire + évidence (relations A↔B trouvées).
+
+    `conn` = connecteur du génitif (du/de la/de/d'…) → trait de DÉFINITUDE de B."""
     cache = cache if cache is not None else {}
     fv = {}
     for k, v in _term_feats(client, a, cache).items():
@@ -162,6 +247,12 @@ def featurize(client, a, b, cache=None):
         fv["B_" + k] = v
     pf, ev = _pair_feats(client, a, b, cache)
     fv.update(pf)
+    fv.update(_conjunctions(fv))
+    d = _definite(conn)
+    if d is True:
+        fv["B_DET:def"] = 1.0      # « du / de la / de l' / des B » → B défini
+    elif d is False:
+        fv["B_DET:bare"] = 1.0     # « de / d' B » → B brut (massif / indéfini)
     return fv, ev
 
 
@@ -220,13 +311,13 @@ def predict(text: str, client, *, top_k: int = 3) -> dict:
     p = parse_pair(text)
     if p is None:
         return {"ok": False, "error": "Format attendu : « A de B »."}
-    a, b = p
+    a, b, conn = p
     model = _load()
-    fv, ev = featurize(client, a, b)
+    fv, ev = featurize(client, a, b, conn=conn)
     proba = _proba(model, fv)
     classes = model["classes"]
     order = sorted(range(len(classes)), key=lambda i: -proba[i])
-    top = [{"relation": classes[i], "proba": round(proba[i], 3),
+    top = [{"relation": jdm_name(classes[i]), "proba": round(proba[i], 3),
             "nl": nl(classes[i], a, b)} for i in order[:top_k]]
     best = classes[order[0]]
 
@@ -242,10 +333,10 @@ def predict(text: str, client, *, top_k: int = 3) -> dict:
     # on classe APRÈS les relations structurelles/prédicatives.
     _lieu_like = {"r_lieu", "r_lieu-1", "r_domain", "r_domain-1", "r_has_topic"}
     direct_list = sorted(
-        [{"relation": c, "via": via, "weight": int(w), "nl": nl(c, a, b)}
+        [{"relation": jdm_name(c), "via": via, "weight": int(w), "nl": nl(c, a, b)}
          for c, (w, via, d) in direct.items()],
         key=lambda x: (x["via"] in _lieu_like, -x["weight"]))
 
-    return {"ok": True, "a": a, "b": b, "relation": best, "nl": nl(best, a, b),
+    return {"ok": True, "a": a, "b": b, "relation": jdm_name(best), "nl": nl(best, a, b),
             "top": top, "signals": _signals(fv), "direct": direct_list,
             "evidence": [f"{d} : {t} ({int(w)})" for d, t, w in ev[:6]]}

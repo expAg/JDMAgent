@@ -24,7 +24,7 @@ def load_labeled(path):
         label = right.strip().split()[0]  # « r_relationnel - parenté » → r_relationnel
         p = parse_pair(left.strip())
         if p:
-            out.append((p[0], p[1], label))
+            out.append((p[0], p[1], label, p[2]))   # + connecteur (définitude de B)
     return out
 
 
@@ -33,7 +33,7 @@ def main():
     test = load_labeled(sys.argv[2])
     import collections
     print(f"learn: {len(learn)} · test: {len(test)}")
-    print("classes test:", dict(collections.Counter(c for *_, c in test)))
+    print("classes test:", dict(collections.Counter(t[2] for t in test)))
 
     client = JDMClient()
     rid_isa = client.relation_type_id("r_isa")
