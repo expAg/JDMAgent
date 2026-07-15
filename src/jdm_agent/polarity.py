@@ -36,7 +36,9 @@ def _opinion_token(t) -> bool:
 def _pol_of(client, word: str):
     """(pos, neg, neutre) du terme via r_infopot. (0,0,0) si non marqué."""
     try:
-        res = client.relations_from(word, types_ids=[_POL_ID], limit=40)
+        # limit large + min_weight : l'API ne trie pas par poids → limit=40 pouvait
+        # tronquer les tags _POL-* (mot marqué qui paraissait neutre à tort).
+        res = client.relations_from(word, types_ids=[_POL_ID], min_weight=1, limit=300)
     except Exception:
         return 0.0, 0.0, 0.0
     idx = res.node_index()

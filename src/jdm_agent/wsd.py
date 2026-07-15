@@ -33,7 +33,7 @@ _PATIENT_DEP = {"obj", "iobj", "nsubj:pass"}
 _AGENT_INV_ID, _PATIENT_INV_ID = 24, 26
 _LAMBDA = 1.0
 _MAX_SENSES = 10          # on montre tous les sens sémantiques (pas juste 3)
-_FETCH_LIMIT = 250
+_FETCH_LIMIT = 1500
 
 
 def _wordlike(w: str) -> bool:
@@ -66,7 +66,9 @@ def _node_rels(client, name: str, cache: dict) -> list:
     if hit is not None:
         return hit
     try:
-        res = client.relations_from(name, limit=_FETCH_LIMIT)
+        # min_weight + limit large : l'API JDM ne trie pas par poids → un petit limit
+        # jetait les associations les plus fortes (voisinage tronqué/arbitraire).
+        res = client.relations_from(name, min_weight=1, limit=_FETCH_LIMIT)
     except Exception:
         cache[name] = []
         return []
@@ -130,15 +132,16 @@ def _annot(client, rel_id):
 
 
 def _gated_edge(client, node: str, tid: int, verb: str):
-    """(poids annoté, label) de l'arête `node -tid-> verb`. None si absente (typée)."""
+    """(poids annoté, label) de l'arête `node -tid-> verb`. None si absente (typée).
+    On interroge l'arête DIRECTEMENT entre les deux nœuds (relations_between) : borné
+    et exact — un `relations_from(..., limit)` tronquait et pouvait rater le verbe
+    (l'API JDM ne trie pas par poids)."""
     try:
-        res = client.relations_from(node, types_ids=[tid], limit=200)
+        res = client.relations_between(node, verb)
     except Exception:
         return None
-    idx = res.node_index()
     for r in res.relations:
-        n = idx.get(r.node2)
-        if n is not None and n.name.strip().lower() == verb:
+        if r.type == tid and r.w != 0:
             factor, label = _annot(client, r.id)
             return (r.w * factor, label)
     return None

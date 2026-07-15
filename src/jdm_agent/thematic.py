@@ -128,11 +128,16 @@ def analyze_thematic(text: str, client, *, max_words: int = 150,
     analyzed = items[:max_words]
 
     def _domains(term):
-        res = client.relations_from(term, types_ids=[rid], min_weight=min_weight, limit=per_word)
+        # L'API JDM ne trie pas par poids → limit=per_word prenait 15 domaines EN ORDRE
+        # NATIF (pas les plus forts) : on rate les vrais thèmes. On fetche large puis on
+        # trie et garde les per_word domaines les PLUS FORTS.
+        res = client.relations_from(term, types_ids=[rid], min_weight=min_weight, limit=500)
         idx = res.node_index()
-        return [(idx[r.node2].name.strip().lower(), r.w)
+        doms = [(idx[r.node2].name.strip().lower(), r.w)
                 for r in res.relations
                 if r.node2 in idx and r.w > 0 and idx[r.node2].name.strip()]
+        doms.sort(key=lambda x: -x[1])
+        return doms[:per_word]
 
     agg: dict = {}
     if rid is not None:
