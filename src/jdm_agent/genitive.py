@@ -269,6 +269,65 @@ def _verb_feats(client, a, b, fv, cache):
     return f
 
 
+# Transitivité CARACTÉRISATION : nom de qualité → adjectif → r_carac du porteur.
+_RID_NOMADJ, _RID_CARAC = 165, 17
+
+
+def _adj_of(client, term, cache):
+    """Adjectif d'un nom de qualité via r_nom>adj (165) : dureté→dur, douceur→doux."""
+    key = ("ADJ", term)
+    if key in cache:
+        return cache[key]
+    adj, best = None, 0.0
+    try:
+        res = client.relations_from(term, types_ids=[_RID_NOMADJ], limit=20)
+        idx = res.node_index()
+        for r in res.relations:
+            n = idx.get(r.node2)
+            if n and r.w > best:
+                best, adj = r.w, n.name.strip().lower()
+    except Exception:
+        pass
+    cache[key] = adj
+    return adj
+
+
+def _carac_adjs(client, term, cache):
+    """{adjectif: poids} caractérisant le terme (r_carac 17) : diamant→{dur, brillant…}."""
+    key = ("CARAC", term)
+    if key in cache:
+        return cache[key]
+    m = {}
+    try:
+        res = client.relations_from(term, types_ids=[_RID_CARAC], limit=80)
+        idx = res.node_index()
+        for r in sorted(res.relations, key=lambda x: -x.w)[:30]:
+            n = idx.get(r.node2)
+            if n and r.w > 0:
+                m[n.name.strip().lower().split(">")[0]] = float(r.w)
+    except Exception:
+        pass
+    cache[key] = m
+    return m
+
+
+def _adj_match(a, b):
+    """Égalité tolérant l'accord simple (dur/dure, brillant/brillante)."""
+    return a == b or (len(a) >= 3 and len(b) >= 3 and (a.startswith(b) or b.startswith(a)))
+
+
+def _carac_feats(client, a, b, cache):
+    """Par TRANSITIVITÉ : A(nom de qualité) →r_nom>adj→ adjectif ; si le porteur B
+    a ce même adjectif en r_carac (« diamant r_carac dur » pour « dureté du diamant »),
+    c'est une caractérisation. Haute précision (ne se déclenche pas hors qualité)."""
+    adj = _adj_of(client, a, cache)
+    if not adj:
+        return {}
+    cadj = _carac_adjs(client, b, cache)
+    best = max((w for bad, w in cadj.items() if _adj_match(adj, bad)), default=0.0)
+    return {"VW:B_carac_of_A": math.log1p(best)} if best > 0 else {}
+
+
 def _pair_feats(client, a, b, cache):
     """Relation DIRECTE A↔B (les deux sens). Renvoie (dict_features, evidence)."""
     key = ("PAIR", a, b)
@@ -358,6 +417,7 @@ def featurize(client, a, b, cache=None, conn=None):
     pf, ev = _pair_feats(client, a, b, cache)
     fv.update(pf)
     fv.update(_verb_feats(client, a, b, fv, cache))
+    fv.update(_carac_feats(client, a, b, cache))
     fv.update(_conjunctions(fv))
     d = _definite(conn)
     if d is True:
