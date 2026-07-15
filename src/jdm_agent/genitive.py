@@ -76,23 +76,27 @@ _NL = {
 }
 
 
-# Classe génitive interne → nom de relation JDM canonique (affichage).
+# Classe génitive interne → relation JDM (affichage), d'après la typologie de
+# référence : Guenoune & Lafourcade, « Extraction automatique de règles pour la
+# détermination de types de relations sémantiques dans les constructions génitives
+# en français » (PFIA/IC 2024), Tableau 1. Les relations 'r_x-1' sont conversives
+# (A→B) : « beauté de la fille » = A(propriété) r_has_property-1 B(porteur).
 _CLASS2JDM = {
-    "r_agent": "r_agent",
-    "r_patient": "r_patient",
-    "r_possession": "r_own",
-    "r_auteur": "r_has_auteur",
-    "r_caractérisation": "r_carac",
+    "r_agent": "r_processus>agent",
+    "r_patient": "r_processus>patient",
+    "r_possession": "r_own-1",
+    "r_auteur": "r_product_of",
+    "r_caractérisation": "r_has_property-1",
     "r_causalité": "r_has_causatif",
-    "r_composition": "r_object>mater",
+    "r_composition": "r_objet>matière",
     "r_dépiction": "r_depict",
     "r_holonymie": "r_holo",
-    "r_instrument": "r_instr",
+    "r_instrument": "r_processus>instr-1",
     "r_lieu": "r_lieu",
     "r_origine": "r_lieu>origine",
     "r_quantification": "r_quantificateur",
-    "r_relationnel": "r_has_social_tie_with",
-    "r_topique": "r_domain",
+    "r_relationnel": "r_social_tie",
+    "r_topique": "r_topic",
 }
 
 
