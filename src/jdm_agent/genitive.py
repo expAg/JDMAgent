@@ -95,7 +95,7 @@ _CLASS2JDM = {
     "r_lieu": "r_lieu",
     "r_origine": "r_lieu>origine",
     "r_quantification": "r_quantificateur",
-    "r_relationnel": "r_social_tie",
+    "r_relationnel": "r_has_social_tie_with",   # Table 1 dit 'r_social_tie' (coquille) → vrai nom JDM (id 113)
     "r_topique": "r_topic",
 }
 
