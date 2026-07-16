@@ -399,13 +399,14 @@ def _type_tags(fv, pref):
         tags.add("subst")
     if eq("OUT:lieu1", "OUT:lieuact", "OUT:origin") or pre("INFO:_info-sem-place"):
         tags.add("place")
-    if pre("INFO:_info-sem-pers"):
+    # NB : _info-sem-living-being est volontairement rangé avec 'pers' (= animé).
+    # Séparer les deux a été essayé et REJETÉ : mesuré, ça coûtait 0.9 pt de hold-out
+    # (0.826→0.817) et, surtout, ça AGGRAVAIT la confusion animal→lien social sur 6
+    # cas sur 8 (cheval du fermier soc 0.97→0.99, chien de la voisine 0.16→0.29).
+    # Ces buckets sont un outil de discrimination, pas une ontologie : ils se jugent
+    # aux résultats.
+    if pre("INFO:_info-sem-pers", "INFO:_info-sem-living-being"):
         tags.add("pers")
-    # Un être VIVANT n'est PAS une personne : confondre les deux mettait « chatte »
-    # (living-being) dans le bucket pers → l'interaction pers×pers s'allumait et
-    # poussait « chatte de la voisine » vers le lien social au lieu de la possession.
-    if pre("INFO:_info-sem-living-being"):
-        tags.add("living")
     if pre("INFO:_info-sem-abstr"):
         tags.add("abstr")
     return tags
