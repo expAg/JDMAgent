@@ -309,15 +309,25 @@ function GenitivePanel() {
             </div>
           )}
 
-          {/* Prédiction du modèle GRASP-IT (pour les paires inconnues de JDM) */}
-          <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>prédiction du modèle</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-            <span className="mono" style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>{d.relation}</span>
-            {d.top && d.top[0] && (
-              <span className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{Math.round(d.top[0].proba * 100)}%</span>
+          {/* Tête relationnelle : la relation vient du LEXIQUE, pas du modèle → on
+              n'affiche PAS le % du modèle à côté (il porte sur une autre classe). */}
+          <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>
+            {d.lexical ? 'tête nominale relationnelle (lexical)' : 'prédiction du modèle'}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+            <span className="mono" style={{ fontSize: d.lexical ? 13 : 16, fontWeight: 700, color: 'var(--accent)', minWidth: 0, overflowWrap: 'anywhere' }}>{d.relation}</span>
+            {!d.lexical && d.top && d.top[0] && (
+              <span className="mono" style={{ flexShrink: 0, fontSize: 12, color: 'var(--ink-3)' }}>{Math.round(d.top[0].proba * 100)}%</span>
             )}
           </div>
           <div style={{ fontSize: 16, marginBottom: 16 }}>« {d.nl} »</div>
+          {d.lexical && (
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: -8, marginBottom: 16, lineHeight: 1.6 }}>
+              {d.lexical.note}<br />
+              prédiction du modèle (écartée) : <b style={{ color: 'var(--ink-2)' }}>{d.lexical.model_relation}</b>
+              {d.top && d.top[0] ? ` (${Math.round(d.top[0].proba * 100)}%)` : ''}
+            </div>
+          )}
 
           {/* Top-3 des classes */}
           {d.top && d.top.length > 1 && (

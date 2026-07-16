@@ -543,9 +543,15 @@ _REL_SPAT = {
     "pourtour", "intérieur", "extérieur", "dessus", "dessous", "devant",
     "derrière", "arrière", "avant", "revers", "fond",
 }
-_REL_LABEL = {
-    "temporalité": "{a} est un repère temporel de {b}",
-    "spatialité": "{a} est un repère spatial de {b}",
+# Sortie : l'étiquette explicite que la tête est un nom RELATIONNEL — par opposition
+# aux noms de TYPE/CATÉGORIE (sortal nouns, cf. article §2) — car c'est de là que
+# vient la relation, et non du type de B.
+_REL_KIND = "nom relationnel (par opposition aux noms de type/catégorie)"
+_REL_OUT = {
+    "temporalité": (f"r_associated ({_REL_KIND} de temporalité)",
+                    "{a} est un descripteur relationnel temporel de {b}"),
+    "spatialité": (f"r_associated ({_REL_KIND} de spatialité)",
+                   "{a} est un descripteur relationnel spatial de {b}"),
 }
 
 
@@ -565,7 +571,8 @@ def _relational(a, b, fv):
             "spatialité" if ("place" in bt or "object" in bt) else "temporalité")
     else:
         kind = "temporalité" if in_t else "spatialité"
-    return (f"r_associated ({kind})", _REL_LABEL[kind].format(a=a, b=b),
+    relation, tmpl = _REL_OUT[kind]
+    return (relation, tmpl.format(a=a, b=b),
             "relation non présente dans JDM — nom relationnel")
 
 
