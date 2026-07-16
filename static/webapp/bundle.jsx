@@ -16305,11 +16305,16 @@ function WsdColumn({ occ: w }) {
               background: top ? `color-mix(in srgb, ${accent} 16%, transparent)` : 'var(--bg)',
               border: `1px solid ${top ? accent : 'var(--line-soft)'}`,
             }}>
+              {/* minWidth:0 : sans lui, un flex item refuse de rétrécir sous son
+                  contenu (min-width:auto) → les libellés longs (« bâtiment, salle de
+                  théâtre ») débordaient de la carte et poussaient le score dehors.
+                  On laisse le libellé passer à la ligne (lisibilité) ; le score ne
+                  rétrécit jamais (flexShrink:0). */}
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                <span className="mono" style={{ fontSize: 12, color: top ? 'var(--ink)' : 'var(--ink-2)', fontWeight: top ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span className="mono" style={{ fontSize: 12, color: top ? 'var(--ink)' : 'var(--ink-2)', fontWeight: top ? 600 : 400, minWidth: 0, flex: '1 1 auto', overflowWrap: 'anywhere' }}>
                   {j + 1}. {_senseTag(s.sense)}
                 </span>
-                <span className="mono" style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: scoreCol }}>{s.score}</span>
+                <span className="mono" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 12, fontWeight: 600, color: scoreCol }}>{s.score}</span>
               </div>
               {!w.mwe && (
                 <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 3, lineHeight: 1.55 }}>
