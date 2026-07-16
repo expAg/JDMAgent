@@ -399,8 +399,13 @@ def _type_tags(fv, pref):
         tags.add("subst")
     if eq("OUT:lieu1", "OUT:lieuact", "OUT:origin") or pre("INFO:_info-sem-place"):
         tags.add("place")
-    if pre("INFO:_info-sem-pers", "INFO:_info-sem-living-being"):
+    if pre("INFO:_info-sem-pers"):
         tags.add("pers")
+    # Un être VIVANT n'est PAS une personne : confondre les deux mettait « chatte »
+    # (living-being) dans le bucket pers → l'interaction pers×pers s'allumait et
+    # poussait « chatte de la voisine » vers le lien social au lieu de la possession.
+    if pre("INFO:_info-sem-living-being"):
+        tags.add("living")
     if pre("INFO:_info-sem-abstr"):
         tags.add("abstr")
     return tags
