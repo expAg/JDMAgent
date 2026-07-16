@@ -27,7 +27,14 @@ from __future__ import annotations
 from jdm_agent.thematic import _content_words
 
 _CONTENT_POS = {"NOUN", "PROPN", "ADJ", "VERB"}   # contexte
-_CAND_POS = {"NOUN", "PROPN"}                       # mots à désambiguïser
+# Mots à désambiguïser : TOUS les mots pleins, pas seulement les noms. Les verbes et
+# adjectifs sont tout aussi polysémiques (« jouer » musique/sport/théâtre, « marquer »
+# un but/une trace, « tirer » au but/sur une corde). Un verbe n'ayant pas de rôle
+# d'actant, _role_and_verb renvoie (None, None) → score générique seul, ce qui est
+# le comportement correct.
+_CAND_POS = {"NOUN", "PROPN", "VERB", "ADJ"}
+# Auxiliaires / copules : pas de sens à désambiguïser (« a joué », « est »).
+_AUX_DEP = {"aux", "cop"}
 _AGENT_DEP = {"nsubj"}
 _PATIENT_DEP = {"obj", "iobj", "nsubj:pass"}
 _AGENT_INV_ID, _PATIENT_INV_ID = 24, 26
@@ -311,6 +318,8 @@ def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES):
         for k, t in enumerate(toks):
             g = base + k
             if g in absorbed or t.upos not in _CAND_POS:
+                continue
+            if t.deprel.split(":")[0] in _AUX_DEP:      # auxiliaire/copule → pas un sens
                 continue
             role, verb = _role_and_verb(sent, t)
             mwe = _mwe_span(sent, k, client)
