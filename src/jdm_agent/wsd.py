@@ -27,12 +27,12 @@ from __future__ import annotations
 from jdm_agent.thematic import _content_words
 
 _CONTENT_POS = {"NOUN", "PROPN", "ADJ", "VERB"}   # contexte
-# Mots à désambiguïser : TOUS les mots pleins, pas seulement les noms. Les verbes et
-# adjectifs sont tout aussi polysémiques (« jouer » musique/sport/théâtre, « marquer »
-# un but/une trace, « tirer » au but/sur une corde). Un verbe n'ayant pas de rôle
-# d'actant, _role_and_verb renvoie (None, None) → score générique seul, ce qui est
-# le comportement correct.
-_CAND_POS = {"NOUN", "PROPN", "VERB", "ADJ"}
+# Catégories désambiguïsables. Verbes et adjectifs sont tout aussi polysémiques que
+# les noms (« jouer » musique/sport, « marquer » un but/une trace), mais chaque
+# catégorie ajoutée coûte des requêtes JDM → le CHOIX est laissé à l'appelant.
+# Défaut = noms seuls (rapide) ; l'UI permet de cocher verbes/adjectifs.
+_POS_ALL = ("NOUN", "PROPN", "VERB", "ADJ")
+_CAND_POS = {"NOUN", "PROPN"}
 # Auxiliaires / copules : pas de sens à désambiguïser (« a joué », « est »).
 _AUX_DEP = {"aux", "cop"}
 _AGENT_DEP = {"nsubj"}
@@ -278,12 +278,25 @@ def _fallback_by_type(text: str, client, cache) -> dict:
 _MODE = "syntaxe (UDPipe) + sélectionnel + générique"
 
 
-def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES):
+def _norm_pos(pos):
+    """Catégories demandées → set valide ; défaut (ou vide/inconnu) = noms seuls."""
+    if not pos:
+        return set(_CAND_POS)
+    want = {str(p).strip().upper() for p in pos}
+    keep = want & set(_POS_ALL)
+    return keep or set(_CAND_POS)
+
+
+def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES, pos=None):
     """Générateur d'ÉVÉNEMENTS pour un affichage TEMPS RÉEL :
       {"type":"tokens", ...}  d'abord (le texte peut se rendre tout de suite),
       {"type":"occ", ...}     à chaque occurrence traitée,
       {"type":"done", ...}    à la fin.
+
+    `pos` : catégories à désambiguïser (défaut : noms + noms propres). Ajouter VERB
+    et/ou ADJ élargit la couverture au prix de requêtes JDM supplémentaires.
     """
+    cand_pos = _norm_pos(pos)
     cache: dict = {}
     try:
         from jdm_agent.relext.udpipe import analyse
@@ -317,7 +330,7 @@ def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES):
         ctx_neigh = {w: _neigh_of(_node_rels(client, w, cache)) for w in set(ctx)}
         for k, t in enumerate(toks):
             g = base + k
-            if g in absorbed or t.upos not in _CAND_POS:
+            if g in absorbed or t.upos not in cand_pos:
                 continue
             if t.deprel.split(":")[0] in _AUX_DEP:      # auxiliaire/copule → pas un sens
                 continue
@@ -391,10 +404,10 @@ def resolved_terms(text: str, client, *, max_senses: int = _MAX_SENSES) -> list:
     return out
 
 
-def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES) -> dict:
+def disambiguate(text: str, client, *, max_senses: int = _MAX_SENSES, pos=None) -> dict:
     """Version non-streaming (collecte le générateur) — pour tests / thématique."""
     tokens, occ, analyzed, mode = [], [], 0, _MODE
-    for ev in disambiguate_iter(text, client, max_senses=max_senses):
+    for ev in disambiguate_iter(text, client, max_senses=max_senses, pos=pos):
         if ev["type"] == "tokens":
             tokens, mode = ev["tokens"], ev["mode"]
         elif ev["type"] == "occ":

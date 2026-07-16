@@ -2979,6 +2979,7 @@ class ToolTextRequest(BaseModel):
     model: str = ""      # modèle choisi dans l'UI (transmis tel quel au service)
     resolve_anaphora: bool = False   # relations JDM : résoudre les pronoms (coref)
     wsd: bool = False                # thématique : désambiguïser avant r_domain
+    pos: list[str] | None = None     # WSD : catégories à désambiguïser (déf. NOUN+PROPN)
 
 
 class ToolGenitiveRequest(BaseModel):
@@ -3075,7 +3076,8 @@ async def api_tools_wsd(req: ToolTextRequest) -> dict:
         import anyio
         from jdm_agent.wsd import disambiguate
         c = get_client()
-        out = await anyio.to_thread.run_sync(lambda: disambiguate(req.text or "", c))
+        out = await anyio.to_thread.run_sync(
+            lambda: disambiguate(req.text or "", c, pos=req.pos))
         return {"ok": True, "service": "désambiguïsation (WSD)", "data": out}
     except Exception as e:
         return {"ok": False, "service": "désambiguïsation (WSD)",
@@ -3093,7 +3095,7 @@ def api_tools_wsd_stream(req: ToolTextRequest):
         try:
             from jdm_agent.wsd import disambiguate_iter
             c = get_client()
-            for ev in disambiguate_iter(req.text or "", c):
+            for ev in disambiguate_iter(req.text or "", c, pos=req.pos):
                 yield _json.dumps(ev, ensure_ascii=False) + "\n"
         except Exception as e:
             yield _json.dumps({"type": "error", "error": f"Erreur WSD : {e!r}"},

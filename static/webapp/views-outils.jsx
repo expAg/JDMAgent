@@ -603,6 +603,15 @@ function WsdView({ tokens, occ, mode, loading }) {
 }
 
 // Panneau WSD : streaming NDJSON → occurrences affichées en temps réel.
+// Catégories désambiguïsables. Noms cochés par défaut (rapide) ; verbes/adjectifs
+// sont tout aussi polysémiques mais chaque catégorie coûte des requêtes JDM.
+const WSD_POS = [
+  { key: 'NOUN', label: 'Nom' },
+  { key: 'PROPN', label: 'Nom propre' },
+  { key: 'VERB', label: 'Verbe' },
+  { key: 'ADJ', label: 'Adjectif' },
+];
+
 function WsdPanel() {
   const [text, setText] = React.useState("L'avocat mange l'avocat. Au tribunal, l'avocat défend son client.");
   const [model, setModel] = React.useState(TOOL_MODELS.wsd[0].value);
@@ -611,10 +620,13 @@ function WsdPanel() {
   const [mode, setMode] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState(null);
+  const [pos, setPos] = React.useState({ NOUN: true, PROPN: true, VERB: false, ADJ: false });
+  const allOn = WSD_POS.every((o) => pos[o.key]);
+  const selected = WSD_POS.filter((o) => pos[o.key]).map((o) => o.key);
   const run = async () => {
     setLoading(true); setErr(null); setTokens([]); setOcc([]); setMode('');
     try {
-      await _streamTool('wsd/stream', { text, model }, (ev) => {
+      await _streamTool('wsd/stream', { text, model, pos: selected }, (ev) => {
         if (ev.type === 'tokens') { setTokens(ev.tokens || []); setMode(ev.mode || ''); }
         else if (ev.type === 'occ') { setOcc((prev) => [...prev, ev.occurrence]); }
         else if (ev.type === 'error') { setErr(ev.error); }
@@ -626,7 +638,27 @@ function WsdPanel() {
     <div style={panelGrid()}>
       <ToolForm text={text} setText={setText} run={run} loading={loading}
         placeholder="Un texte à désambiguïser (le bon sens de chaque mot polysémique)…"
-        model={model} setModel={setModel} models={TOOL_MODELS.wsd} />
+        model={model} setModel={setModel} models={TOOL_MODELS.wsd}
+        belowText={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 12 }}>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              catégories à désambiguïser
+            </span>
+            {WSD_POS.map((o) => (
+              <label key={o.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!pos[o.key]}
+                  onChange={(e) => setPos({ ...pos, [o.key]: e.target.checked })} />
+                {o.label}
+              </label>
+            ))}
+            <label title="Désambiguïser aussi les verbes et adjectifs (plus complet, mais plus lent)"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink)', cursor: 'pointer', fontWeight: 600 }}>
+              <input type="checkbox" checked={allOn}
+                onChange={(e) => setPos(Object.fromEntries(WSD_POS.map((o) => [o.key, e.target.checked])))} />
+              Tout
+            </label>
+          </div>
+        } />
       {err && <ToolNotice tone="warn" msg={err} />}
       {(tokens.length > 0 || occ.length > 0) && (
         <WsdView tokens={tokens} occ={occ} mode={mode} loading={loading} />
