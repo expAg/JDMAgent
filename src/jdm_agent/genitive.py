@@ -469,8 +469,11 @@ def _proba(model, fv: dict):
     """Régression logistique multinomiale en Python pur → liste de probas."""
     feats, idx = model["features"], model["index"]
     mean, scale = model["mean"], model["scale"]
-    # vecteur standardisé (features absentes = 0)
-    x = [0.0] * len(feats)
+    # Vecteur standardisé. ATTENTION : le scaler CENTRE, donc une feature ABSENTE
+    # (valeur brute 0) ne vaut PAS 0 après standardisation mais (0 − mean)/scale.
+    # Les laisser à 0 faisait diverger le serving du modèle entraîné (26 désaccords
+    # sur 420, 0.826 → 0.817) : sklearn transforme le vecteur ENTIER, zéros compris.
+    x = [(0.0 - mean[i]) / (scale[i] or 1.0) for i in range(len(feats))]
     for k, v in fv.items():
         i = idx.get(k)
         if i is not None:
