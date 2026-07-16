@@ -23,10 +23,14 @@ _EXCL_NOUN_DEP = {"obl", "advmod", "discourse", "vocative", "dislocated"}
 _BAND = 0.15  # bande morte autour de 0 → neutre
 # Pronoms réfléchis (on teste la FORME : UDPipe lemmatise « me » → « moi »).
 _REFL = {"se", "me", "te", "nous", "vous", "s'", "m'", "t'"}
-# Au-delà de ce poids, un objet est jugé FORTEMENT polaire : il porte le contenu de
-# la prédication et la polarité propre du verbe ne doit pas l'annuler
-# (« j'aime la mort » : aimer +1000 annulait mort −1000 → neutre, absurde).
+# Un objet ne « porte le contenu » (et n'écrase la polarité du verbe) que s'il est
+# polaire de façon NON AMBIGUË : poids fort ET faible masse NEUTRE. Sans la seconde
+# condition, « j'aime le froid » devenait négatif et — pire — donnait le MÊME score
+# que « je déteste le froid » (verbe ignoré = attitude perdue).
+#   mort  : neg=1000, neu=  53 → non ambigu   → l'objet domine  (« j'aime la mort »)
+#   froid : neg= 540, neu= 511 → affaire de goût → le verbe garde sa polarité
 _STRONG_OBJ = 500.0
+_AMBIG_RATIO = 2.0        # polarité non ambiguë si max(pos,neg) > 2 × neutre
 
 
 def _opinion_token(t) -> bool:
@@ -147,8 +151,8 @@ def analyze_polarity(text: str, client, *, max_words: int = 200) -> dict:
                 if obj is None:
                     continue
                 p, n, u = _pol_of(client, (obj.lemma or obj.form or "").lower())
-                if max(p, n) > u and max(p, n) >= _STRONG_OBJ:
-                    consumed.add(t.id)
+                if max(p, n) >= _STRONG_OBJ and max(p, n) > _AMBIG_RATIO * u:
+                    consumed.add(t.id)      # objet non ambigu → il porte le contenu
             # 1c) verbe modal/attitude régissant un xcomp déjà pris en charge
             #     (« je veux [me donner la mort] ») → sa polarité ne doit pas diluer.
             for t in sent.tokens:
