@@ -267,7 +267,7 @@ def _fallback_by_type(text: str, client, cache) -> dict:
     occ = []
     for w in words:
         senses = _semantic_senses(client, w, _MAX_SENSES)
-        if len(senses) < 2:
+        if not senses:              # AUCUN raffinement sémantique → rien à résoudre
             continue
         others = [cw for cw in words if cw != w]
         occ.append(_occ(w, None, None, None, _rank(client, senses, others, ctx_neigh, None, None, cache)))
@@ -347,8 +347,8 @@ def disambiguate_iter(text: str, client, *, max_senses: int = _MAX_SENSES, pos=N
             if len(w) < 3 or not _wordlike(w):
                 continue
             senses = _semantic_senses(client, w, max_senses)
-            if len(senses) < 2:
-                continue
+            if not senses:          # AUCUN raffinement sémantique → rien à résoudre
+                continue            # (un sens unique reste informatif : on le rend)
             n_words += 1
             others = [cw for cw in ctx if cw != w]
             scored = _rank(client, senses, others, ctx_neigh, role, verb, cache)
@@ -395,8 +395,8 @@ def resolved_terms(text: str, client, *, max_senses: int = _MAX_SENSES) -> list:
             if len(w) < 3 or not _wordlike(w):
                 continue
             senses = _semantic_senses(client, w, max_senses)
-            if len(senses) < 2:
-                out.append((w, w, None))          # monosémique → mot brut
+            if not senses:                        # aucun raffinement → mot brut, sans sens
+                out.append((w, w, None))          # (il doit rester pour le thématique)
                 continue
             others = [cw for cw in ctx if cw != w]
             scored = _rank(client, senses, others, ctx_neigh, None, None, cache)  # générique seul
