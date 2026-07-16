@@ -21,6 +21,12 @@ _POL_POS_LABEL, _POL_NEG_LABEL, _POL_NEUTRE = "positif", "négatif", "neutre"
 # (« en revanche », « de toute façon ») → à exclure de la polarité.
 _EXCL_NOUN_DEP = {"obl", "advmod", "discourse", "vocative", "dislocated"}
 _BAND = 0.15  # bande morte autour de 0 → neutre
+# Pronoms réfléchis (on teste la FORME : UDPipe lemmatise « me » → « moi »).
+_REFL = {"se", "me", "te", "nous", "vous", "s'", "m'", "t'"}
+# Au-delà de ce poids, un objet est jugé FORTEMENT polaire : il porte le contenu de
+# la prédication et la polarité propre du verbe ne doit pas l'annuler
+# (« j'aime la mort » : aimer +1000 annulait mort −1000 → neutre, absurde).
+_STRONG_OBJ = 500.0
 
 
 def _opinion_token(t) -> bool:
@@ -57,6 +63,38 @@ def _pol_of(client, word: str):
     return pos, neg, neu
 
 
+def _composed(client, sent, t):
+    """COMPOSITION prédicat-argument par la SYNTAXE : un verbe et son objet ne
+    s'additionnent pas — « donner la mort » (neg) vs « donner la vie » (pos) alors
+    que « donner » seul est positif. On reconstruit l'expression depuis la relation
+    de dépendance `obj` (+ déterminant, + réfléchi) et on demande à JDM SA polarité.
+    Renvoie (entry, {ids consommés}) si JDM connaît l'expression, sinon None."""
+    obj = None
+    for c in sent.children(t.id):
+        if c.deprel.split(":")[0] == "obj" and c.upos in ("NOUN", "PROPN"):
+            obj = c
+            break
+    if obj is None:
+        return None
+    verb = (t.lemma or t.form or "").lower()
+    noun = (obj.lemma or obj.form or "").lower()
+    if len(verb) < 2 or len(noun) < 2:
+        return None
+    det = next((( c.form or "").lower() for c in sent.children(obj.id)
+                if c.deprel.split(":")[0] == "det"), None)
+    refl = any((c.form or "").lower() in _REFL           # FORME (lemme = « moi »)
+               for c in sent.children(t.id)
+               if c.deprel.split(":")[0] in ("expl", "obj", "iobj"))
+    core = f"{verb} {det} {noun}" if det else f"{verb} {noun}"
+    cands = (["se " + core] if refl else []) + [core]
+    for cand in cands:
+        pos, neg, neu = _pol_of(client, cand)
+        if max(pos, neg) > neu and max(pos, neg) > 0:   # JDM connaît l'expression
+            return ({"word": cand, "pos": pos, "neg": neg, "negated": False,
+                     "composed": True}, {t.id, obj.id})
+    return None
+
+
 def _label(pos: float, neg: float) -> str:
     d = pos - neg
     return _POL_POS_LABEL if d > 0 else (_POL_NEG_LABEL if d < 0 else _POL_NEUTRE)
@@ -82,8 +120,46 @@ def analyze_polarity(text: str, client, *, max_words: int = 200) -> dict:
                 lem = (t.lemma or t.form or "").lower()
                 if lem in _NEG or t.feats.get("Polarity") == "Neg":
                     negated.add(t.head)
+            # 1) EXPRESSIONS COMPOSÉES verbe+objet connues de JDM : une seule unité,
+            #    et on NE recompte PAS les parties (sinon « donner »+ écraserait).
+            consumed = set()
             for t in sent.tokens:
-                if not _opinion_token(t):
+                if t.upos != "VERB" or t.id in consumed:
+                    continue
+                got = _composed(client, sent, t)
+                if got is None:
+                    continue
+                e, ids = got
+                if t.id in negated:                  # « il ne veut pas se donner la mort »
+                    e["pos"], e["neg"] = e["neg"], e["pos"]
+                    e["negated"] = True
+                entries.append(e)
+                consumed |= ids
+            # 1b) verbe régissant un objet FORTEMENT polaire non lexicalisé dans JDM :
+            #     l'objet porte le contenu → on n'ajoute pas la polarité propre du verbe
+            #     (« j'aime la mort » → négatif, et non neutre par annulation).
+            for t in sent.tokens:
+                if t.upos != "VERB" or t.id in consumed:
+                    continue
+                obj = next((c for c in sent.children(t.id)
+                            if c.deprel.split(":")[0] == "obj"
+                            and c.upos in ("NOUN", "PROPN")), None)
+                if obj is None:
+                    continue
+                p, n, u = _pol_of(client, (obj.lemma or obj.form or "").lower())
+                if max(p, n) > u and max(p, n) >= _STRONG_OBJ:
+                    consumed.add(t.id)
+            # 1c) verbe modal/attitude régissant un xcomp déjà pris en charge
+            #     (« je veux [me donner la mort] ») → sa polarité ne doit pas diluer.
+            for t in sent.tokens:
+                if t.upos != "VERB" or t.id in consumed:
+                    continue
+                if any(c.deprel.split(":")[0] == "xcomp" and c.id in consumed
+                       for c in sent.children(t.id)):
+                    consumed.add(t.id)
+            # 2) mots restants, un par un
+            for t in sent.tokens:
+                if t.id in consumed or not _opinion_token(t):
                     continue
                 w = (t.lemma or t.form or "").lower()
                 if len(w) < 2 or w in _NEG:      # mots de négation : pas de polarité propre
