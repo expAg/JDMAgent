@@ -488,11 +488,43 @@ def _proba(model, fv: dict):
     return [e / tot for e in exps]
 
 
+def _dedup(seq):
+    """Dédoublonne en gardant l'ordre."""
+    seen, out = set(), []
+    for x in seq:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def _isa_key(s):
+    """Clé de dédoublonnage des hyperonymes, insensible aux variantes orthographiques
+    (JDM a « évènement » ET « événement » comme nœuds distincts) et aux entrées
+    étrangères (« en:conclusion »)."""
+    s = s.strip().lower()
+    for a, b in (("è", "é"), ("ê", "é"), ("ï", "i"), ("î", "i"), ("ô", "o"), ("û", "u")):
+        s = s.replace(a, b)
+    return s
+
+
 def _signals(fv: dict) -> dict:
-    """Explique les signaux de type par côté : A est-il une action ? B un lieu/personne ?"""
+    """Explique les signaux de type par côté : A est-il une action ? B un lieu/personne ?
+    Dédoublonné : plusieurs relations partagent un même libellé (r_holo ET r_has_part
+    = « a des parties ») et JDM expose des variantes orthographiques d'un hyperonyme."""
     def side(pref):
-        types = [_OUT_LABEL.get(k[6:], k[6:]) for k in fv if k.startswith(pref + "OUT:")]
-        isa = [k[6:] for k in fv if k.startswith(pref + "ISA:")]
+        types = _dedup(_OUT_LABEL.get(k[6:], k[6:]) for k in fv if k.startswith(pref + "OUT:"))
+        isa, seen = [], set()
+        for k in fv:
+            if not k.startswith(pref + "ISA:"):
+                continue
+            nm = k[6:]
+            if nm.startswith("en:") or ":" in nm:      # entrées étrangères / étiquettes
+                continue
+            key = _isa_key(nm)
+            if key not in seen:
+                seen.add(key)
+                isa.append(nm)
         return {"types": types, "isa": isa[:4]}
     return {"a": side("A_"), "b": side("B_")}
 
