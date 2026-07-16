@@ -45,7 +45,10 @@ La carrière de Lester décolle lorsqu'il rencontre Lightnin' Slim dans un bus t
 En septembre 2002, la Boston Blues Society lui décerne un Lifetime Achievement Award. En 2003, Martin Scorsese inclut Lester dans son concert hommage au blues au Radio City Music Hall. Lester vit alors à Paradise, en Californie, avec sa petite amie et apparaît dans le film documentaire de 2015 I Am the Blues. Lester continue à se produire jusqu'en 2018, retournant souvent en Louisiane. Lester décède d'un cancer le 22 août 2018, à l'âge de 85 ans.`;
 
 // Texte d'exemple pour l'analyse thématique (domaines JeuxDeMots variés).
-const THEMATIC_DEFAULT = "Le guitariste et le pianiste ont joué une symphonie lors du concert. Le chef d'orchestre a dirigé les musiciens sur la scène du théâtre, et le public a applaudi la mélodie. Plus tard, l'équipe a marqué un but au stade : l'attaquant a dribblé le défenseur avant de tirer, et l'arbitre a sifflé la fin du match.";
+// Texte de démo partagé (thématique ET WSD) : deux moitiés musique / sport, dont
+// les mots sont polysémiques ENTRE les deux (jouer, marquer, tirer, scène, but…)
+// → il illustre aussi bien les thèmes que la désambiguïsation par le contexte.
+const DEMO_DEFAULT = "Le guitariste et le pianiste ont joué une symphonie lors du concert. Le chef d'orchestre a dirigé les musiciens sur la scène du théâtre, et le public a applaudi la mélodie. Plus tard, l'équipe a marqué un but au stade : l'attaquant a dribblé le défenseur avant de tirer, et l'arbitre a sifflé la fin du match.";
 
 // Encart d'erreur / placeholder homogène (service down ou non branché).
 function ToolNotice({ msg, tone }) {
@@ -613,7 +616,7 @@ const WSD_POS = [
 ];
 
 function WsdPanel() {
-  const [text, setText] = React.useState("L'avocat mange l'avocat. Au tribunal, l'avocat défend son client.");
+  const [text, setText] = React.useState(DEMO_DEFAULT);
   const [model, setModel] = React.useState(TOOL_MODELS.wsd[0].value);
   const [tokens, setTokens] = React.useState([]);
   const [occ, setOcc] = React.useState([]);
@@ -669,7 +672,7 @@ function WsdPanel() {
 
 // ───────── Analyse thématique (domaines JeuxDeMots) ─────────
 function ThematicPanel() {
-  const [text, setText] = React.useState(THEMATIC_DEFAULT);
+  const [text, setText] = React.useState(DEMO_DEFAULT);
   const [model, setModel] = React.useState(TOOL_MODELS.thematic[0].value);
   const [res, setRes] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
