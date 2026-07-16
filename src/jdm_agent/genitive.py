@@ -488,6 +488,87 @@ def _proba(model, fv: dict):
     return [e / tot for e in exps]
 
 
+# ── NOMS RELATIONNELS (couche symbolique lexicale) ──────────────────────────
+# Cf. Guenoune & Lafourcade §2 : un nom RELATIONNEL porte lui-même le type de la
+# relation (« mère de X »), il n'est pas déductible du type de B — d'où un filtre
+# LEXICAL plutôt qu'un apprentissage. Les relations temporelle/spatiale relatives
+# n'existent pas dans JDM (§2.2.1 les signale hors typologie) → on rend un
+# r_associated qualifié entre parenthèses.
+_REL_KIN = {
+    # parenté
+    "mère", "père", "maman", "papa", "fils", "fille", "frère", "sœur", "soeur",
+    "cousin", "cousine", "oncle", "tante", "neveu", "nièce", "grand-père",
+    "grand-mère", "petit-fils", "petite-fille", "beau-père", "belle-mère",
+    "beau-frère", "belle-sœur", "beau-fils", "belle-fille", "gendre", "bru",
+    "époux", "épouse", "mari", "conjoint", "conjointe", "compagnon", "compagne",
+    "fiancé", "fiancée", "veuf", "veuve", "parent", "enfant", "aîné", "cadet",
+    "jumeau", "jumelle", "filleul", "filleule", "parrain", "marraine",
+    "ancêtre", "descendant", "héritier", "héritière", "aïeul",
+    # lien social / rôle tenu vis-à-vis de quelqu'un
+    "ami", "amie", "copain", "copine", "camarade", "voisin", "voisine",
+    "collègue", "associé", "partenaire", "complice", "rival", "adversaire",
+    "ennemi", "allié", "mentor", "protégé", "disciple", "élève", "étudiant",
+    "professeur", "maître", "instituteur", "enseignant", "tuteur", "formateur",
+    "entraîneur", "coach", "patron", "employeur", "employé", "salarié",
+    "subordonné", "chef", "directeur", "directrice", "président", "secrétaire",
+    "assistant", "adjoint", "avocat", "médecin", "docteur", "infirmier",
+    "infirmière", "thérapeute", "psychologue", "client", "fournisseur",
+    "vendeur", "agent", "représentant", "éditeur", "producteur", "manager",
+    "guide", "conseiller", "confident", "témoin", "garant", "propriétaire",
+    "locataire", "hôte", "invité", "capitaine", "maire", "pasteur", "curé",
+    "leader", "membre", "adhérent", "partisan", "supporter", "coéquipier",
+}
+# Repères TEMPOREL et SPATIAL. Beaucoup sont AMBIGUS (début/fin/milieu/bout) :
+# c'est le type de B qui tranche (« fin du match » vs « fin de la rue »).
+_REL_TEMP = {
+    "début", "commencement", "démarrage", "ouverture", "lancement", "départ",
+    "fin", "terme", "clôture", "achèvement", "conclusion", "issue", "dénouement",
+    "épilogue", "prélude", "prologue", "veille", "lendemain", "surlendemain",
+    "avant-veille", "aube", "aurore", "crépuscule", "matinée", "soirée",
+    "mi-temps", "entracte", "milieu", "moitié", "période", "phase", "étape",
+    "durée", "suite", "reprise", "pause", "interruption", "anniversaire",
+}
+# POSITIONS RELATIVES uniquement (« milieu de la pièce », « bas de page ») — le cas
+# que l'article signale hors typologie. On EXCLUT volontairement :
+#  - les repères géographiques (sommet, cime, rive, flanc, orée, entrée…) : ce sont
+#    de vrais LIEUX, couverts par r_lieu (« sommet des Alpes » est un lieu) ;
+#  - les dimensions (hauteur, largeur, profondeur…) : ce sont des PROPRIÉTÉS
+#    (r_has_property-1), pas des positions.
+_REL_SPAT = {
+    # ambigus temporel/spatial (« début/fin de la rue » vs « du match ») : présents
+    # dans les DEUX lexiques, c'est le type de B qui tranche.
+    "début", "fin", "commencement", "terme", "départ",
+    "milieu", "centre", "bord", "bordure", "base", "pied", "haut", "bas",
+    "côté", "coin", "angle", "extrémité", "bout", "périphérie", "contour",
+    "pourtour", "intérieur", "extérieur", "dessus", "dessous", "devant",
+    "derrière", "arrière", "avant", "revers", "fond",
+}
+_REL_LABEL = {
+    "temporalité": "{a} est un repère temporel de {b}",
+    "spatialité": "{a} est un repère spatial de {b}",
+}
+
+
+def _relational(a, b, fv):
+    """Couche LEXICALE des noms relationnels. Renvoie (relation, nl, note) ou None.
+    Gardes : la parenté exige B=personne (sinon « avocat du Mexique » → lien social) ;
+    temporel vs spatial est arbitré par le TYPE DE B, pas par le lexique seul."""
+    a_low = (a or "").strip().lower()
+    bt = _type_tags(fv, "B_")
+    if a_low in _REL_KIN and "pers" in bt:
+        return ("r_has_social_tie_with", nl("r_relationnel", a, b), None)
+    in_t, in_s = a_low in _REL_TEMP, a_low in _REL_SPAT
+    if not (in_t or in_s):
+        return None
+    if in_t and in_s:                       # ambigu → B tranche
+        kind = "temporalité" if "action" in bt else (
+            "spatialité" if ("place" in bt or "object" in bt) else "temporalité")
+    else:
+        kind = "temporalité" if in_t else "spatialité"
+    return (f"r_associated ({kind})", _REL_LABEL[kind].format(a=a, b=b),
+            "relation non présente dans JDM — nom relationnel")
+
+
 def _dedup(seq):
     """Dédoublonne en gardant l'ordre."""
     seen, out = set(), []
@@ -567,6 +648,16 @@ def predict(text: str, client, *, top_k: int = 3) -> dict:
          for c, (w, via, d) in direct.items()],
         key=lambda x: (x["via"] in _lieu_like, -x["weight"]))
 
-    return {"ok": True, "a": a, "b": b, "relation": jdm_name(best), "nl": nl(best, a, b),
-            "top": top, "signals": _signals(fv), "direct": direct_list,
-            "evidence": [f"{d} : {t} ({int(w)})" for d, t, w in ev[:6]]}
+    # Couche LEXICALE des noms relationnels : elle PRIME sur le modèle, car un nom
+    # relationnel porte lexicalement sa relation (§2 de l'article) — le modèle, qui
+    # infère depuis les types de A et B, ne peut structurellement pas la retrouver.
+    rel = _relational(a, b, fv)
+    out = {"ok": True, "a": a, "b": b, "relation": jdm_name(best), "nl": nl(best, a, b),
+           "top": top, "signals": _signals(fv), "direct": direct_list,
+           "evidence": [f"{d} : {t} ({int(w)})" for d, t, w in ev[:6]]}
+    if rel is not None:
+        relation, rel_nl, note = rel
+        out["relation"], out["nl"] = relation, rel_nl
+        out["lexical"] = {"relation": relation, "nl": rel_nl, "note": note,
+                          "model_relation": jdm_name(best)}
+    return out
