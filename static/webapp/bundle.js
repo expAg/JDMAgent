@@ -15481,12 +15481,6 @@ if (typeof window !== "undefined") {
 function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const _initialRoute = typeof window !== "undefined" ? _parseRoute(window.location.pathname) : { view: "projet", sub: null };
-  if (typeof window !== "undefined" && typeof _tabFromHash === "function") {
-    try {
-      if (_tabFromHash()) _initialRoute.view = "outils";
-    } catch (e) {
-    }
-  }
   if (_initialRoute.view === "jarvis" && _initialRoute.sub && typeof window !== "undefined") {
     window.__jdmPendingPayload = window.__jdmPendingPayload || {};
     window.__jdmPendingPayload.jarvis = Object.assign(
@@ -15583,17 +15577,6 @@ function App() {
     };
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
-  }, []);
-  useEffect(() => {
-    if (typeof _tabFromHash !== "function") return void 0;
-    const onHash = () => {
-      try {
-        if (_tabFromHash()) setView((v) => v === "outils" ? v : "outils");
-      } catch (e) {
-      }
-    };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
   }, []);
   useEffect(() => {
     const handler = (e) => {
