@@ -852,17 +852,39 @@ function _tabFromHash() {
   return (t && !t.disabled) ? id : null;   // on n'ouvre pas un onglet grisé
 }
 
+// URL canonique d'un onglet : toujours <base>/outils#<slug> (chemin EXPLICITE, jamais
+// relatif — sinon un replaceState('#slug') pendant que le path est encore la racine
+// produisait /#slug au lieu de /outils#slug).
+function _outilsUrl(slug) {
+  let base = '/';
+  if (typeof document !== 'undefined') {
+    const b = document.querySelector('base');
+    base = ((b && b.getAttribute('href')) || '/').replace(/\/+$/, '');
+  }
+  return base + '/outils#' + slug;
+}
+
 function ViewOutils() {
-  const [tab, _setTab] = React.useState(() => _tabFromHash() || 'coref');
-  const setTab = React.useCallback((id) => {
-    _setTab(id);
-    if (typeof window !== 'undefined' && window.history) {
-      window.history.replaceState(null, '', '#' + (TAB_SLUG[id] || id));
-    }
-  }, []);
+  const [tab, setTab] = React.useState(() => _tabFromHash() || 'coref');
+  // L'URL reflète TOUJOURS l'onglet (au montage ET à chaque changement) → chaque
+  // service est adressable/copiable : /outils#gen, #pol, #wsd… replaceState = pas
+  // de rechargement, pas d'entrée d'historique en trop.
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !window.history) return undefined;
+    const url = _outilsUrl(TAB_SLUG[tab] || tab);
+    // différé d'un tick : le routeur (App) pousse /outils APRÈS ce montage
+    // (effet enfant avant parent) ; on écrit donc le hash sur l'entrée /outils
+    // finale au lieu d'écraser l'entrée précédente.
+    const id = setTimeout(() => {
+      if ((window.location.pathname + window.location.hash) !== url) {
+        window.history.replaceState(null, '', url);
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [tab]);
   // Lien direct / back-forward / hash édité à la main → on suit le hash.
   React.useEffect(() => {
-    const onHash = () => { const id = _tabFromHash(); if (id) _setTab(id); };
+    const onHash = () => { const id = _tabFromHash(); if (id) setTab(id); };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);

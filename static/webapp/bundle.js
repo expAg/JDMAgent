@@ -14466,18 +14466,30 @@ function _tabFromHash() {
   const t = OUTILS_TABS.find((x) => x.id === id);
   return t && !t.disabled ? id : null;
 }
+function _outilsUrl(slug) {
+  let base = "/";
+  if (typeof document !== "undefined") {
+    const b = document.querySelector("base");
+    base = (b && b.getAttribute("href") || "/").replace(/\/+$/, "");
+  }
+  return base + "/outils#" + slug;
+}
 function ViewOutils() {
-  const [tab, _setTab] = React.useState(() => _tabFromHash() || "coref");
-  const setTab = React.useCallback((id) => {
-    _setTab(id);
-    if (typeof window !== "undefined" && window.history) {
-      window.history.replaceState(null, "", "#" + (TAB_SLUG[id] || id));
-    }
-  }, []);
+  const [tab, setTab] = React.useState(() => _tabFromHash() || "coref");
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.history) return void 0;
+    const url = _outilsUrl(TAB_SLUG[tab] || tab);
+    const id = setTimeout(() => {
+      if (window.location.pathname + window.location.hash !== url) {
+        window.history.replaceState(null, "", url);
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [tab]);
   React.useEffect(() => {
     const onHash = () => {
       const id = _tabFromHash();
-      if (id) _setTab(id);
+      if (id) setTab(id);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
