@@ -633,7 +633,7 @@ function WsdPanel() {
   const [mode, setMode] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState(null);
-  const [pos, setPos] = React.useState({ NOUN: true, PROPN: true, VERB: false, ADJ: false });
+  const [pos, setPos] = React.useState({ NOUN: true, PROPN: true, VERB: true, ADJ: true });
   const allOn = WSD_POS.every((o) => pos[o.key]);
   const selected = WSD_POS.filter((o) => pos[o.key]).map((o) => o.key);
   const run = async () => {
