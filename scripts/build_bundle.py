@@ -16,6 +16,7 @@ variables globales `window.ViewX`).
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -69,12 +70,15 @@ def precompile() -> bool:
     sémantiques qu'aujourd'hui (React en global UMD, partage via window). Résultat :
     plus de Babel dans le navigateur → chargement quasi instantané. Le serveur bascule
     automatiquement sur les .js s'ils existent (cf. _use_precompiled_js dans
-    app_fastapi.py) ; sinon il garde le chemin Babel. `esbuild` s'installe sur le
-    serveur (Debian) via `npm i -g esbuild` (ou `npx esbuild`)."""
-    exe = shutil.which("esbuild")
-    if not exe:
-        print("[i] esbuild absent → pas de précompilation (le navigateur gardera "
-              "Babel). Pour accélérer : `npm i -g esbuild` puis relancer.")
+    app_fastapi.py) ; sinon il garde le chemin Babel.
+
+    esbuild est un binaire AUTONOME (Go) — pas besoin de node. On le cherche via la
+    variable d'env ESBUILD (chemin direct), puis le PATH. Binaire téléchargeable :
+    npm i -g esbuild, OU le tarball @esbuild/<plateforme> sur registry.npmjs.org."""
+    exe = os.environ.get("ESBUILD") or shutil.which("esbuild")
+    if not exe or not Path(exe).exists() and not shutil.which(exe):
+        print("[i] esbuild introuvable (ni $ESBUILD ni PATH) → .js NON régénérés. "
+              "Les .js committés restent servis ; installe esbuild pour les rebâtir.")
         return False
     for name in _PRECOMPILE:
         src, out = WEBAPP / name, WEBAPP / (name[:-1])   # .jsx → .js
