@@ -47,9 +47,15 @@ function _parseRoute(pathname) {
 
 function _buildPath(view, sub) {
   const base = _appBase();
-  if (!view || view === 'projet') return base + '/';
-  let p = base + '/' + view;
-  if (sub) p += '/' + sub;
+  let p;
+  if (!view || view === 'projet') p = base + '/';
+  else { p = base + '/' + view; if (sub) p += '/' + sub; }
+  // Le sous-onglet des Services TALN est porté par le HASH (#gen, #pol…) géré
+  // par ViewOutils. On le préserve UNIQUEMENT sur la vue outils → un lien direct
+  // /outils#gen reste copiable, et le hash disparaît proprement en quittant la vue.
+  if (typeof window !== 'undefined' && view === 'outils' && window.location.hash) {
+    p += window.location.hash;
+  }
   return p;
 }
 

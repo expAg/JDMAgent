@@ -824,8 +824,48 @@ function ToolForm({ text, setText, run, loading, placeholder, rows = 4, model, s
   );
 }
 
+// Slug canonique par onglet (écrit dans le hash) + alias acceptés en lecture.
+// Chaque service est ainsi adressable : /outils#gen, /outils#pol, /outils#wsd…
+const TAB_SLUG = {
+  coref: 'coref', syntax: 'syntax', wsd: 'wsd', thematic: 'theme',
+  polarity: 'pol', jdmrel: 'extraction', semviz: 'semviz',
+  genitive: 'gen', analogy: 'analogie',
+};
+const TAB_BY_SLUG = {
+  coref: 'coref', coreference: 'coref',
+  syntax: 'syntax', synt: 'syntax', syntaxe: 'syntax',
+  wsd: 'wsd', desamb: 'wsd', desambiguisation: 'wsd',
+  theme: 'thematic', thematic: 'thematic', thematique: 'thematic', thematique2: 'thematic',
+  pol: 'polarity', polarite: 'polarity', polarity: 'polarity',
+  rel: 'jdmrel', extraction: 'jdmrel', relations: 'jdmrel', jdmrel: 'jdmrel',
+  semviz: 'semviz', viz: 'semviz',
+  gen: 'genitive', genitif: 'genitive', genitifs: 'genitive', genitive: 'genitive',
+  analogie: 'analogy', analogies: 'analogy', analogy: 'analogy',
+};
+
+function _tabFromHash() {
+  if (typeof window === 'undefined') return null;
+  const raw = (window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
+  const id = TAB_BY_SLUG[raw];
+  if (!id) return null;
+  const t = OUTILS_TABS.find((x) => x.id === id);
+  return (t && !t.disabled) ? id : null;   // on n'ouvre pas un onglet grisé
+}
+
 function ViewOutils() {
-  const [tab, setTab] = React.useState('coref');
+  const [tab, _setTab] = React.useState(() => _tabFromHash() || 'coref');
+  const setTab = React.useCallback((id) => {
+    _setTab(id);
+    if (typeof window !== 'undefined' && window.history) {
+      window.history.replaceState(null, '', '#' + (TAB_SLUG[id] || id));
+    }
+  }, []);
+  // Lien direct / back-forward / hash édité à la main → on suit le hash.
+  React.useEffect(() => {
+    const onHash = () => { const id = _tabFromHash(); if (id) _setTab(id); };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   return (
     <PageShell>
       <SectionTitle
