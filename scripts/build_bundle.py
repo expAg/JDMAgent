@@ -16,6 +16,8 @@ variables globales `window.ViewX`).
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 # Ordre de concaténation. shared en premier (helpers utilisés par les
@@ -56,6 +58,35 @@ def build() -> int:
     return len(content.encode("utf-8"))
 
 
+# Modules chargés par index.html (mêmes noms que _JS_MODULES côté serveur).
+_PRECOMPILE = ["tweaks-panel.jsx", "jarvis-banner.jsx", "bundle.jsx"]
+
+
+def precompile() -> bool:
+    """Transpile les .jsx en .js (JSX → React.createElement) via esbuild, si présent.
+
+    Sans --bundle : chaque fichier reste un script GLOBAL (pas de module) → mêmes
+    sémantiques qu'aujourd'hui (React en global UMD, partage via window). Résultat :
+    plus de Babel dans le navigateur → chargement quasi instantané. Le serveur bascule
+    automatiquement sur les .js s'ils existent (cf. _use_precompiled_js dans
+    app_fastapi.py) ; sinon il garde le chemin Babel. `esbuild` s'installe sur le
+    serveur (Debian) via `npm i -g esbuild` (ou `npx esbuild`)."""
+    exe = shutil.which("esbuild")
+    if not exe:
+        print("[i] esbuild absent → pas de précompilation (le navigateur gardera "
+              "Babel). Pour accélérer : `npm i -g esbuild` puis relancer.")
+        return False
+    for name in _PRECOMPILE:
+        src, out = WEBAPP / name, WEBAPP / (name[:-1])   # .jsx → .js
+        cmd = [exe, str(src), "--loader:.jsx=jsx",
+               "--jsx-factory=React.createElement", "--jsx-fragment=React.Fragment",
+               "--charset=utf8", "--target=es2019", f"--outfile={out}"]
+        subprocess.run(cmd, check=True)
+        print(f"[OK] {out.name} ({out.stat().st_size:,} octets)")
+    return True
+
+
 if __name__ == "__main__":
     n = build()
     print(f"[OK] bundle.jsx regenerated ({n:,} bytes from {len(FILES)} sources)")
+    precompile()

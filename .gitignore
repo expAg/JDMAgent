@@ -38,3 +38,8 @@ _tmp_redesign/
 
 # Corpus génitifs (non versionnés — cf. GRASP-IT)
 data/genitive/
+
+# JS precompile (produits par build_bundle.py via esbuild au deploy — sources = .jsx)
+static/webapp/bundle.js
+static/webapp/tweaks-panel.js
+static/webapp/jarvis-banner.js

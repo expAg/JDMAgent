@@ -84,6 +84,12 @@ function App() {
   const _initialRoute = (typeof window !== 'undefined')
     ? _parseRoute(window.location.pathname)
     : { view: 'projet', sub: null };
+  // Un hash de service (#gen, #pol…) route vers la vue outils, à N'IMPORTE quel
+  // path : /jdm-agent/#gen fonctionne directement, et comme le path ne change pas
+  // entre deux services, basculer de hash ne recharge JAMAIS la page.
+  if (typeof window !== 'undefined' && typeof _tabFromHash === 'function') {
+    try { if (_tabFromHash()) _initialRoute.view = 'outils'; } catch (e) {}
+  }
   if (_initialRoute.view === 'jarvis' && _initialRoute.sub
       && typeof window !== 'undefined') {
     window.__jdmPendingPayload = window.__jdmPendingPayload || {};
@@ -216,6 +222,20 @@ function App() {
     };
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
+  }, []);
+
+  // Un hash de service tapé/collé pendant qu'on est ailleurs → on bascule vers
+  // outils sans rechargement (pur état React). ViewOutils lit ensuite le hash
+  // pour l'onglet. Guarde contre la boucle : on ne fait que setView.
+  useEffect(() => {
+    if (typeof _tabFromHash !== 'function') return undefined;
+    const onHash = () => {
+      try {
+        if (_tabFromHash()) setView((v) => (v === 'outils' ? v : 'outils'));
+      } catch (e) { /* no-op */ }
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
   // Routing inter-vues : permet à n'importe quel composant de naviguer

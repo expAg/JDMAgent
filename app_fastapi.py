@@ -3179,6 +3179,34 @@ def _serve_index_html() -> str:
         html = re.sub(r"<base[^>]*>", base_tag, html, count=1)
     else:
         html = re.sub(r"(<head[^>]*>)", r"\1\n" + base_tag, html, count=1)
+    return _use_precompiled_js(html)
+
+
+# PERF : par défaut, index.html charge @babel/standalone et transpile ~840 Ko de JSX
+# DANS le navigateur à CHAQUE chargement (plusieurs secondes d'écran blanc). Si des
+# fichiers PRÉCOMPILÉS .js existent (produits par `python scripts/build_bundle.py`
+# quand esbuild est présent, cf. le script), on charge du JS normal et on retire
+# Babel → chargement quasi instantané. Sinon : comportement Babel inchangé (fallback).
+_JS_MODULES = ["webapp/tweaks-panel", "webapp/jarvis-banner", "webapp/bundle"]
+
+
+def _use_precompiled_js(html: str) -> str:
+    import re
+    js_paths = [(STATIC_DIR / (m + ".js")) for m in _JS_MODULES]
+    if not all(p.exists() for p in js_paths):
+        return html                        # pas de build → on garde Babel
+    # cache-busting par mtime du bundle (le plus gros / le plus souvent rebâti)
+    try:
+        ver = int(js_paths[-1].stat().st_mtime)
+    except Exception:
+        ver = 0
+    for m in _JS_MODULES:
+        html = re.sub(
+            r'<script type="text/babel" src="' + re.escape(m) + r'\.jsx"></script>',
+            f'<script src="{m}.js?v={ver}"></script>', html, count=1)
+    # Babel n'est plus utile : on retire son <script> (économise ~3 Mo + le parse).
+    html = re.sub(r'<script src="https://unpkg\.com/@babel/standalone[^>]*></script>\s*',
+                  '', html, count=1)
     return html
 
 
